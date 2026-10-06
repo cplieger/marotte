@@ -1,6 +1,3 @@
-// Actions for the file browser: create, delete, rename, upload.
-// ---------------------------------------------------------------------------
-
 import {
   apiAction,
   defineAction,
@@ -15,14 +12,9 @@ import {
 
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
-// Aliased: `joinPath` above joins PATH segments, `joinKey` joins KEY
-// components. Every idempotency/dedupe key in this file is built with the
-// latter so no field's content can forge a component boundary.
-//
-// These keys leave the client as an `Idempotency-Key` HTTP header, which
-// marotte's Go middleware (internal/server/idempotency.go) treats as an
-// OPAQUE string — it never parses or builds one — so byte parity with a
-// Go-side key is not required here, only consistency within this client.
+// `joinKey` (not `joinPath`) builds every idempotency/dedupe key here, so no field's content can
+// forge a component boundary. The Go middleware treats the key as opaque, so only within-client
+// consistency matters.
 import { join as joinKey } from "@cplieger/keyenc";
 
 const API_FILES_ACTION = "/api/files/action";
@@ -31,14 +23,10 @@ const API_FILES_DOWNLOAD = "/api/files/download";
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 import { truncate } from "../strings.js";
 
-// --- Shared types for create actions ---
-
 interface CreateArgs {
   dir: string;
   name: string;
 }
-
-// --- files.create_file ---
 
 export const createFile = apiAction<CreateArgs>({
   name: "files.create_file",
@@ -54,8 +42,6 @@ export const createFile = apiAction<CreateArgs>({
   error: "Could not create file",
 });
 
-// --- files.create_folder ---
-
 export const createFolder = apiAction<CreateArgs>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
@@ -70,17 +56,11 @@ export const createFolder = apiAction<CreateArgs>({
   error: "Could not create folder",
 });
 
-// --- files.rename ---
-
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
-  // The one key in this file that was reachably BROKEN: the old form was
-  // `files.rename:${dir}/${original}->${newName}`, and "->" is a legal
-  // filename sequence — renaming "a" to "b->c" and "a->b" to "c" in the same
-  // directory both produced the same key, so the second rename silently
-  // replayed the first's cached 200 for the idempotency TTL. Joining the
-  // three fields as components removes the ambiguity.
+  // Components, not a string: "->" is a legal filename sequence, so a built key collided and the
+  // second rename replayed the first's cached 200.
   idempotencyKey: (args) => joinKey("files.rename", args.dir, args.original, args.newName),
   request: ({ dir, original, newName }) => ({
     method: "POST",
@@ -92,8 +72,6 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   error: (args) => `Could not rename "${truncate(args.original)}"`,
 });
 
-// --- files.delete ---
-
 interface DeleteArgs {
   dir: string;
   names: string[];
@@ -104,13 +82,10 @@ interface DeleteArgs {
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
   scope: (args) => "dir:" + args.dir,
-  // Nested join: the sorted filename LIST gets its own `joinKey`, becoming
-  // one component of the outer key — a comma-joined list could not
-  // distinguish ["a,b"] from ["a","b"].
+  // Nested join: a comma-joined list could not distinguish ["a,b"] from ["a","b"].
   dedupe: (args) => joinKey("files.delete", joinKey(...args.names.slice().sort())),
-  // Batch delete must NOT retry: a timeout/network error may mean some
-  // items were already deleted server-side. `listEl` (non-serializable) is
-  // safe here since retry is off and dedupe reads only `names`.
+  // Must NOT retry: a timeout may mean some items were already deleted. `listEl` is non-serializable,
+  // which is safe only because retry is off and dedupe reads only `names`.
   run: async (args, signal) => {
     const timedSignal = withTimeout(signal, API_TIMEOUT_MS);
     const results = await Promise.all(
@@ -158,7 +133,6 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
       (r): r is { ok: false; name: string; error: string; status: number } => !r.ok,
     );
     if (failed.length > 0) {
-      // If all failures are network/timeout/cancelled, classify the aggregate error
       const allNetwork = failed.every((f) => f.status === 0);
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by failed.length > 0
       const firstErr = failed[0]!.error;
@@ -189,9 +163,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
     return undefined;
   },
   rollback: (args) => {
-    // NOTE: This rollback is a no-op if loadDir() has already replaced
-    // the list's children (the exiting rows no longer exist in the DOM).
-    // That's fine — the fresh listing from the server is the source of truth.
+    // A no-op once loadDir() has replaced the rows; the fresh listing is the source of truth.
     for (const row of [...args.listEl.children]) {
       if (!(row instanceof HTMLDivElement)) {
         continue;
@@ -201,8 +173,6 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   },
   error: (_args, err) => err.message,
 });
-
-// --- files.download ---
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const downloadFiles = defineAction<{ paths: string[] }, void>({
@@ -227,7 +197,6 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
     if (signal.aborted) {
       return;
     }
-    // Trigger browser download via objectURL anchor
     const url = URL.createObjectURL(blob);
     try {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check after async
@@ -254,10 +223,8 @@ interface UploadArgs {
   targetDir: string;
 }
 
-/** The paths a failed upload batch DID write, carried on the rejection's
- *  `cause`. A partially-failed batch is not rolled back, so the caller can
- *  still attach what landed. Read it with partialUploadOf rather than by
- *  casting: the cause of a rejection is `unknown` by contract. */
+/** The paths a failed upload batch DID write, on the rejection's `cause` (a partial batch is not
+ *  rolled back). Read it with partialUploadOf: a rejection's cause is `unknown`. */
 interface PartialUpload {
   uploaded: string[];
 }
@@ -275,10 +242,8 @@ export function partialUploadOf(cause: unknown): string[] {
 export const upload = defineAction<UploadArgs, string[]>({
   name: "files.upload",
   scope: "upload",
-  // retryable intentionally omitted: XHR-based multipart upload cannot safely
-  // retry after partial byte transmission without data-resend implications.
-  // scope: "upload" serializes concurrent dispatches through the framework
-  // queue, preventing the race where two rapid drops both-reject or both-pass.
+  // Not retryable: a multipart XHR cannot safely retry after partial transmission. `scope: "upload"`
+  // serializes dispatches, so two rapid drops cannot both pass or both reject.
   run: (args, signal) => {
     return new Promise<string[]>((resolve, reject) => {
       uploadFiles({
@@ -289,8 +254,6 @@ export const upload = defineAction<UploadArgs, string[]>({
           resolve(paths);
         },
         onError: (msg, uploaded) => {
-          // cause carries the partial batch: the upload is not rolled back, so
-          // a caller that attaches paths still wants the ones that landed.
           const partial: PartialUpload = { uploaded };
           reject(new ActionError(msg, { cause: partial }));
         },

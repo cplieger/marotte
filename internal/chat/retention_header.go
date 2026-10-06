@@ -2,6 +2,7 @@ package chat
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -12,13 +13,13 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The projection's keys, which are marotte.Chat's JSON names — so a rename there
-// has to land here too, the one cost of projecting by key instead of by struct.
+// The projection's keys are marotte.Chat's JSON names; a rename there must land here.
 const (
 	keyUpdatedAt     = "updated_at"
 	keySessionID     = "acp_session_id"
 	keyPriorSessions = "prior_acp_session_ids"
 	keyDraft         = "draft"
+	keyQueued        = "queued_prompts"
 )
 
 // LoadRetentionHeader reads the retention projection of chatID's header.
@@ -30,14 +31,8 @@ func (s *Store) LoadRetentionHeader(chatID marotte.ChatID) (archive.RetentionHea
 	return readRetentionHeader(filepath.Join(dir, headerFileName), "chat "+string(chatID))
 }
 
-// readRetentionHeader streams a chat header and decodes ONLY the retention fields,
-// token-skipping every other value.
-//
-// A projection rather than a sidecar the writer keeps in step: a second copy can
-// disagree with the record, and the reaper would then age a chat from a stamp that
-// is not the chat's. The walk does not stop at the last field it wants, though
-// write order would allow it — a later `draft` key would be missed and a chat
-// somebody is typing in purged.
+// readRetentionHeader streams a chat header, decoding only the retention fields. A projection, not a sidecar that
+// could disagree with the record. It reads to the end: a later `draft` key would otherwise be missed and the chat purged.
 func readRetentionHeader(path, label string) (archive.RetentionHeader, error) {
 	// openChatFile carries the path guard and the OpenRegular reasoning.
 	f, info, err := openChatFile(path, label)
@@ -55,9 +50,8 @@ func readRetentionHeader(path, label string) (archive.RetentionHeader, error) {
 	return h, nil
 }
 
-// decodeRetentionHeader is the projection itself, over any reader, so the parsing
-// contract is testable without a file. Nothing the verdict does not need is
-// materialized: every other key is skipped at the token level.
+// decodeRetentionHeader is the projection over any reader, testable without a file; other keys are skipped at the
+// token level.
 func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 	var (
 		h        archive.RetentionHeader
@@ -65,12 +59,8 @@ func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 	)
 	dec := jsoncap.NewDecoder(r, 0)
 	err := dec.Object(func(key string) error {
-		// EqualFold, not ==, because encoding/json matches a field tag
-		// case-insensitively and encoding/json is the OTHER reader of this same
-		// file. A chat carrying "Draft" would read as draft-free here and be
-		// unlinked with unsent words in it, while the store's full load found the
-		// draft — two readers of one file disagreeing silently. jsoncap.Object's
-		// own doc comment asks for this predicate for exactly that reason.
+		// EqualFold: encoding/json, this file's other reader, matches tags case-insensitively, so a "Draft" key must still
+		// count (jsoncap.Object).
 		switch {
 		case strings.EqualFold(key, keyUpdatedAt):
 			return dec.Decode(&h.UpdatedAt)
@@ -79,13 +69,20 @@ func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 		case strings.EqualFold(key, keyPriorSessions):
 			return dec.Decode(&sessions.PriorACPSessionIDs)
 		case strings.EqualFold(key, keyDraft):
-			// The draft's PRESENCE, not its text: keeping the words would put a
-			// draft-sized copy of every chat in memory to answer a boolean.
+			// The draft's presence, not its text.
 			var draft string
 			if derr := dec.Decode(&draft); derr != nil {
 				return derr
 			}
-			h.Drafting = draft != ""
+			h.Drafting = h.Drafting || draft != ""
+			return nil
+		case strings.EqualFold(key, keyQueued):
+			// A queued follow-up is unsent words, so it keeps the chat like a draft; presence only.
+			var queued []json.RawMessage
+			if derr := dec.Decode(&queued); derr != nil {
+				return derr
+			}
+			h.Drafting = h.Drafting || len(queued) > 0
 			return nil
 		default:
 			return dec.Skip()
@@ -94,13 +91,11 @@ func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 	if err != nil {
 		return archive.RetentionHeader{}, err
 	}
-	// Trailing bytes after the object make encoding/json refuse the file, so the
-	// store cannot open this chat; retention must not read a verdict out of it.
+	// Trailing bytes make encoding/json refuse the file, so retention must not read a verdict from it.
 	if err := dec.End(); err != nil {
 		return archive.RetentionHeader{}, err
 	}
-	// marotte's own composition of the two id fields, called rather than
-	// reimplemented so this view cannot disagree about a chat's retention set.
+	// marotte's own composition of the two id fields, so this view agrees on a chat's retention set.
 	h.SessionChain = sessions.SessionChain()
 	return h, nil
 }

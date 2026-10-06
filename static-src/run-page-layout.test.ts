@@ -1,42 +1,20 @@
-// ---------------------------------------------------------------------------
 // The run page's LAYOUT contract, as CSS rules rather than as rendered pixels.
-//
-// Why a stylesheet test and not a DOM one: the defect this pins was invisible to
-// every DOM test and to every screenshot taken at the component level. `#run-view`
-// was simply absent from the list of views that claim the height `#chat-area`
-// gives them (16-login.css), so a chain of individually-correct rules resolved to
-// a `.page-content` 32px tall holding 565px of content. Nothing threw, nothing
-// logged, and the card rendered perfectly inside a collapsed wrapper — measured on
-// a 1440x900 desktop before the fix.
-//
-// A membership omission in a shared selector list cannot be caught by testing the
-// member; it can only be caught by asserting the membership. So that is what these
-// cases do, plus the rules that make the page a page rather than a tall box.
-//
-// The SECOND defect pinned here is of the same family and needed a different
-// mechanism: one selector carried two contradictory blocks in one file at equal
-// specificity, so the later declaration silently won and `ruleBody` — which returns
-// the first match — could not see it. Counting occurrences is the only thing that
-// can, so `allRules` is used for that pair rather than `ruleBody`.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
 import { loadCSS, ruleBody, allRules } from "./__test-helpers__/css-rules.js";
 
-/** A rule's DECLARATIONS, with its comments stripped. Required by every negative
- *  assertion below: `ruleBody` returns the authored text, and each of these rules
- *  explains in prose which declaration it no longer carries — so a bare
- *  `not.toMatch(/overflow: hidden/)` reads the comment and fails on the fix. */
+/** A rule's DECLARATIONS, with its comments stripped. Required by every negative assertion
+ *  below: `ruleBody` returns the authored text, and each of these rules explains in prose which
+ *  declaration it does not carry — so a bare `not.toMatch(/overflow: hidden/)` reads the
+ *  comment and fails on the fix. */
 function decls(css: string, selector: string): string {
   return ruleBody(css, selector).replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
-/** Every `overflow*` declaration a rule carries, in source order.
- *
- *  The EXACT set rather than a substring match, because both defects this pins are
- *  invisible to one: `overflow: hidden` is a prefix of `overflow: hidden auto`, so a
- *  negative substring assertion fails on the correct value, and two competing
- *  declarations in one rule is precisely the shape that shipped. */
+/** Every `overflow*` declaration a rule carries, in source order. The EXACT set rather than a
+ *  substring match, because both defects this pins are invisible to one: `overflow: hidden` is a
+ *  prefix of `overflow: hidden auto`, so a negative substring assertion fails on the correct
+ *  value, and two competing declarations in one rule is precisely the shape that shipped. */
 function overflowDecls(css: string, selector: string): string[] {
   return [...decls(css, selector).matchAll(/^\s*(overflow[a-z-]*\s*:[^;]+);/gm)].map((m) =>
     (m[1] ?? "").replace(/\s+/g, " ").trim(),
@@ -44,14 +22,8 @@ function overflowDecls(css: string, selector: string): string[] {
 }
 
 describe("the run page claims its height", () => {
-  // The omission itself. Every full-page view is in this list; a new one that is
-  // not renders inside a wrapper with no height and looks like a styling bug.
-  //
-  // Keyed on the WHOLE selector list rather than through `ruleContaining`, because
-  // every member appears twice at top level in this file — once here and once in
-  // its own `view-transition-name` rule — and that helper requires a unique match.
-  // Spelling the list out is also what makes the MEMBERSHIP the assertion:
-  // reordering it is fine, dropping a member is not.
+  // The omission itself. Every full-page view is in this list; a new one that is not renders inside
+  // a wrapper with no height and looks like a styling bug.
   const heightSet = [
     '[id="chat-view"]',
     '[id="settings-view"]',
@@ -69,47 +41,36 @@ describe("the run page claims its height", () => {
   it("puts run-view in the view-height set with every other full-page view", () => {
     const body = ruleBody(loadCSS("16-login.css"), heightSet.join(",\n"));
     expect(/flex:\s*1/.test(body)).toBe(true);
-    // Without `min-height: 0` a flex child refuses to shrink below its content, so
-    // the growing region would push the pinned bottom bar off-screen instead of
-    // scrolling.
+    // Without `min-height: 0` a flex child refuses to shrink below its content, so the growing
+    // region would push the pinned bottom bar off-screen instead of scrolling.
     expect(/min-height:\s*0/.test(body)).toBe(true);
   });
 
-  // THE PAGE SCROLLS, and it is `.page-content` that scrolls rather than the view,
-  // because `.run-bottom-bar` is pinned outside it. Inverted from what this case used
-  // to assert: the panes each carried their own scrollport, which is what crushed a
-  // run's content into fixed cages and trapped it there.
+  // THE PAGE SCROLLS, and it is `.page-content` that scrolls rather than the view, because
+  // `.run-bottom-bar` is pinned outside it.
   it("scrolls the page wrapper, not the panes", () => {
-    // `overflow: hidden auto` is the two-value shorthand: `hidden` across, `auto`
-    // down. Exactly one declaration, so the retired `overflow: hidden` cannot be
-    // sitting beside it.
+    // `overflow: hidden auto` is the two-value shorthand: `hidden` across, `auto` down. Exactly one
+    // declaration, so no plain `overflow: hidden` can sit beside it.
     expect(overflowDecls(loadCSS("18-pages.css"), '[id="run-view"] .page-content')).toEqual([
       "overflow: hidden auto",
     ]);
 
-    // A pane with an `overflow` on either axis is a scroll container again, and a
-    // scroll container's automatic minimum size is 0 — the defect the retired
-    // `.ev-r-val` recorded.
+    // A pane with an `overflow` on either axis is a scroll container again, and a scroll
+    // container's automatic minimum size is 0.
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-pane")).toEqual([]);
   });
 
-  // The second consumer of the same exec page. It has no bottom bar, so it could
-  // have scrolled the view instead — but leaving it `overflow: hidden` while
-  // `.ev-page` stops clamping itself would clip a delegate's transcript outright.
+  // The second consumer of the same exec page. It has no bottom bar, so it could have scrolled the
+  // view instead — but leaving it `overflow: hidden` while `.ev-page` stops clamping itself would
+  // clip a delegate's transcript outright.
   it("scrolls the subagent page too", () => {
     expect(overflowDecls(loadCSS("18-pages.css"), '[id="subagent-view"] .page-content')).toEqual([
       "overflow: hidden auto",
     ]);
   });
 
-  // THE GUARD for the defect this batch fixed: `[id="run-view"] .page-content` carried
-  // TWO contradictory blocks 63 lines apart — `overflow: hidden` with a comment reading
-  // "NOT the scroller", then `overflow-y: auto` calling itself "this scroller" — at
-  // equal specificity in one file, so the later declaration silently won.
-  //
-  // `ruleBody` cannot catch this: it returns the FIRST rule with that selector line,
-  // which is why the contradiction never failed a test. Counting the occurrences is
-  // the only mechanism that would have, and it will catch the next one.
+  // One block per page owns `overflow`: two contradictory blocks at equal specificity in one file
+  // let the later declaration silently win.
   it.each(['[id="run-view"] .page-content', '[id="subagent-view"] .page-content'])(
     "declares %s exactly once",
     (selector) => {
@@ -118,10 +79,9 @@ describe("the run page claims its height", () => {
     },
   );
 
-  // The page must SIZE TO CONTENT, or the scroller above has nothing taller than
-  // itself to scroll: `flex: 1 1 0` plus `min-height: 0` made this column exactly the
-  // free space of its parent, so `scrollHeight === clientHeight` and no scrollbar
-  // could ever appear.
+  // The page must SIZE TO CONTENT, or the scroller above has nothing taller than itself to scroll:
+  // `flex: 1 1 0` plus `min-height: 0` made this column exactly the free space of its parent, so
+  // `scrollHeight === clientHeight` and no scrollbar could ever appear.
   it("makes the exec page a content-sized column", () => {
     const page = ruleBody(loadCSS("31-exec-view.css"), ".ev-page");
     expect(/display:\s*flex/.test(page)).toBe(true);
@@ -129,10 +89,9 @@ describe("the run page claims its height", () => {
     expect(/flex:\s*1 0 auto/.test(page)).toBe(true);
   });
 
-  // The floor this replaced (`min-block-size: 16rem`) existed because the results
-  // region competed with the panes for a fixed page height and crushed them to
-  // ~90px. With nothing clamped to the scrollport there is no competition, so the
-  // panes size to content and each shrink-wraps its own.
+  // The floor this replaced (`min-block-size: 16rem`) existed because the results region competed
+  // with the panes for a fixed page height and crushed them to ~90px. With nothing clamped to the
+  // scrollport there is no competition, so the panes size to content and each shrink-wraps its own.
   it("sizes the panes to their content rather than flooring them", () => {
     const panes = decls(loadCSS("31-exec-view.css"), ".ev-panes");
     expect(/flex:\s*0 0 auto/.test(panes)).toBe(true);
@@ -140,47 +99,24 @@ describe("the run page claims its height", () => {
     expect(/align-items:\s*start/.test(panes)).toBe(true);
   });
 
-  // The results are the selected step's PRODUCT, so they render whole and the page
-  // scrolls. A `max-block-size` on the region was a peek sized for scanning, and it
-  // only existed because the region was competing for a fixed height.
-  //
-  // `.ev-results` joined this case with the toggle's deletion: its `overflow: hidden`
-  // existed to clip the box's own corners while the disclosure animated its height,
-  // and with no animation it was left being a scroll container nothing scrolls.
+  // The results are the selected step's PRODUCT, so they render whole and the page scrolls. A
+  // `max-block-size` on the region was a peek sized for scanning, and it only existed because the
+  // region was competing for a fixed height.
   it("uncages the results region", () => {
     expect(decls(loadCSS("31-exec-view.css"), ".ev-r-body")).not.toMatch(/max-block-size:/);
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-r-body")).toEqual([]);
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-results")).toEqual([]);
   });
 
-  // A per-result box may carry NO `overflow` on either axis: an `auto` on one side
-  // makes it a scroll container, whose automatic minimum size is 0, which is exactly
-  // how a 331px report ended up rendered in a 16px box.
+  // A per-result box may carry NO `overflow` on either axis: an `auto` on one side makes it a
+  // scroll container, whose automatic minimum size is 0, which is exactly how a 331px report ended
+  // up rendered in a 16px box.
   it("leaves a per-result box's overflow at its initial value", () => {
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-r-item-body")).toEqual([]);
   });
 
-  // THE CLAMP IS THE ONE PLACE THAT SHAPE IS DELIBERATE, and it is the shape the
-  // `.ev-r-val` scar above warns about — so it is spelled out rather than left to
-  // read as the same mistake. `overflow: hidden` does make this box a scroll
-  // container, so its `min-block-size: auto` resolves to 0; what keeps that harmless
-  // is that NO ancestor is capped (`.ev-results` is `flex: 0 0 auto`, `.ev-r-item` is
-  // `flex-shrink: 0`, `.ev-r-body` has no cap), so nothing exerts shrink pressure and
-  // the only thing bounding the box is the `max-block-size` beside it.
-  //
-  // Both declarations are asserted together because either alone is a defect: a cap
-  // with no clip overflows the box visibly, and a clip with no cap clips nothing —
-  // which is also what silently withdraws the show-more, since `attachClamp` decides
-  // by measurement. The CAP is what this case owns; the COUNT inside it belongs to
-  // `clamp-line-count.test.ts`, which holds it against `RESULT_CLAMP` in
-  // `exec-view/page.ts` — so moving the clamp is one edit rather than three.
-  //
-  // The cap is the FALLBACK of a `var()` because no fixed cap can land on a line
-  // boundary over a markdown bubble's block children (each carries its own metrics
-  // and margins), so `clamp-text.ts`'s `snapToLine` measures the rendered lines and
-  // writes `--clamp-h`. Asserted in that shape rather than as a bare length: the
-  // authored count still has to be there, and a cap that stopped reading the
-  // property would leave the snap inert with nothing else failing.
+  // THE CLAMP IS THE ONE PLACE THAT SHAPE IS DELIBERATE, and it is the shape the `.ev-r-val` scar
+  // above warns about — so it is spelled out rather than left to read as the same mistake.
   it("gives the clamped report exactly one overflow, beside its cap", () => {
     const css = loadCSS("31-exec-view.css");
     expect(overflowDecls(css, ".ev-r-text[data-clamped]")).toEqual(["overflow: hidden"]);
@@ -189,11 +125,7 @@ describe("the run page claims its height", () => {
     );
   });
 
-  // ONE OWNER for the two clamp openers on this page. Asserted as MEMBERSHIP of the
-  // shared selector list rather than as two rules with equal declarations, for this
-  // file's own reason: equal declarations are exactly what a fork starts from, and
-  // only the membership says they cannot drift. `exec-view-css.test.ts` asserts the
-  // rendered halves match, which is the other direction.
+  // ONE OWNER for the two clamp openers on this page.
   it("gives both clamp openers one rule rather than a copy each", () => {
     const css = loadCSS("31-exec-view.css");
     const owners = allRules(css).filter((r) => /(^|,)\s*\.ev-r-more\s*$/m.test(r.selector));
@@ -202,9 +134,6 @@ describe("the run page claims its height", () => {
   });
 
   // A container's state is a ROLL-UP of its children and must never repaint them.
-  // `.ev-kids` nests inside `.ev-row`, so a descendant selector here reached every
-  // glyph in the subtree: measured on a running repeat, both finished children rendered
-  // a spinning ring beside their own check character.
   it("keeps every tree state rule on the child combinator", () => {
     const css = loadCSS("31-exec-view.css");
     const selectors = [...css.matchAll(/^\.ev-row\[data-state=[^\n{]*$/gm)].map((m) => m[0]);
@@ -214,29 +143,17 @@ describe("the run page claims its height", () => {
     }
   });
 
-  // `#run-body` sits between the scroller and the page, so it has to SIZE TO CONTENT
-  // like everything else below the scroller. `flex: 1 0 auto` is this file's
-  // established page-scrolling shape (see the `[id="git-view"] > .page-content`
-  // group); `flex-basis: 0` plus `min-height: 0` is what pinned it to the scrollport.
+  // `#run-body` sits between the scroller and the page, so it has to SIZE TO CONTENT like
+  // everything else below the scroller.
   it.each(['[id="run-body"]', '[id="subagent-body"]'])("sizes %s to its content", (selector) => {
     const host = decls(loadCSS("18-pages.css"), selector);
     expect(/flex:\s*1 0 auto/.test(host)).toBe(true);
     expect(host).not.toMatch(/min-height:\s*0/);
   });
 
-  // WHICH BOX carries the measure is the half worth pinning, and it moved: a capped
-  // scroller puts its scrollbar against the right edge of the cards rather than the
-  // view's, which reads as a panel's inner scroller instead of the page's.
-  // `#messages-wrap` / `.transcript-view` has always been the other shape —
-  // full-width scroller, capped child — and both exec pages now match it. Both
-  // halves are asserted because either alone is a defect: an uncapped scroller over
-  // an uncapped body is a page with no measure at all, and a capped scroller over a
-  // capped body puts the scrollbar back on the content.
-  //
-  // WHICH TOKEN is `--content-max-w` for both, and the assertion is the TOKEN rather
-  // than a length because "the same width as the chat" is only true while every
-  // surface reads one declaration. Two pages carrying 50rem literally would pass a
-  // width assertion and drift on the next retune.
+  // WHICH BOX carries the measure is the half worth pinning, and it moved: a capped scroller puts
+  // its scrollbar against the right edge of the cards rather than the view's, which reads as a
+  // panel's inner scroller instead of the page's.
   it.each([
     ['[id="run-view"] .page-content', '[id="run-body"]'],
     ['[id="subagent-view"] .page-content', '[id="subagent-body"]'],
@@ -246,28 +163,15 @@ describe("the run page claims its height", () => {
     expect(decls(css, body)).toMatch(/max-width:\s*var\(--content-max-w\)/);
   });
 
-  // The transcript is the OTHER side of that contract, and it is what makes the
-  // token assertion above mean "the chat's column" rather than "some token both
-  // pages happen to share". `.transcript-view` is the chat's own capped child
-  // (13-messages.css), the shape both exec bodies were aligned onto.
+  // The transcript is the OTHER side of that contract, and it is what makes the token assertion
+  // above mean "the chat's column" rather than "some token both pages happen to share".
   it("measures the exec pages at the transcript's own token", () => {
     expect(decls(loadCSS("13-messages.css"), ".transcript-view")).toMatch(
       /max-width:\s*var\(--content-max-w\)/,
     );
   });
 
-  // The exec pages carried `--run-page-max-w: 68rem` until 2026-09-10, on the
-  // argument that machine output wants more room than prose. That argument was
-  // withdrawn and the token deleted with it, so this is a NEGATIVE pin: a
-  // re-introduction is a second full-page measure, which is the state the run page
-  // rendering 288px wider than its own chat came from. Swept over every stylesheet
-  // rather than the two that used it, because a re-introduction would land at the
-  // consumer as readily as at the token.
-  //
-  // COMMENTS ARE STRIPPED, and that is the point rather than a convenience: both
-  // files still NAME the deleted token in prose, because a record of what was
-  // withdrawn and why is what stops the next audit re-proposing it. Only a
-  // declaration or a `var()` is the defect.
+  // The exec pages share the prose measure; there is no wider `--run-page-max-w`.
   it("keeps the wide exec measure deleted", () => {
     const stripped = (name: string): string => loadCSS(name).replace(/\/\*[\s\S]*?\*\//g, " ");
     for (const name of ["01-tokens.css", "18-pages.css", "31-exec-view.css"]) {
@@ -277,9 +181,6 @@ describe("the run page claims its height", () => {
     }
   });
 
-  // An `auto` cross-axis margin suppresses a flex item's `stretch`, so the cap
-  // WITHOUT this shrink-wraps the column to its content and the measure never
-  // binds (an inert `margin-inline: auto` against a cap that never binds).
   it.each(['[id="run-body"]', '[id="subagent-body"]'])(
     "lets %s fill its measure rather than shrink-wrapping to content",
     (selector) => {

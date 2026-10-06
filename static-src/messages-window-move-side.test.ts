@@ -1,30 +1,13 @@
-// ---------------------------------------------------------------------------
-// Which BATCH a folded card's window move is collected into, and the read that
-// used to decide it.
-//
-// `applyFoldPass` splits its queued changes in two: a "head" change runs inside
-// `preserveReadingPosition` (its height delta is compensated out of the reader's
-// scroll position), a "tail" change runs outside it. `collectWindowMove` reads the
-// BODY's own `offsetTop` to pick a side — and a folded card's body is
-// `block-size: 0`, so it reports 0 and answers "head" whatever the card's real
-// position is. Reading it also forces the browser to render the subtree
-// `content-visibility: hidden` told it to skip.
-//
-// Two observables, because the defect had two halves. The READ: a move over a folded
-// card's body must measure nothing inside the skipped subtree. The ANSWER: the change
-// must be filed under the CARD's side, so a mutant hardcoding "head" for a skipped
-// body is caught rather than waved through. The compensation itself needs geometry the
-// scroll mock has none of; the SIDE is observable, because a "head" change runs inside
-// `preserveReadingPosition` and a "tail" change after it.
-// ---------------------------------------------------------------------------
+// `collectWindowMove` must pick a folded card's head/tail side from the CARD: its body is `block-size: 0`, so the
+// body's `offsetTop` answers "head" and reading it forces a render of a `content-visibility: hidden` subtree.
+// A head change runs inside `preserveReadingPosition`, a tail change after it, so the filing is observable.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry } from "./wire/types.gen.js";
 import type { ShiftKind } from "./scroll.js";
 
-// messages.ts's graph reads the shared DOM registry at module scope, and `byId`
-// throws on a missing element, so the hosts exist before any import resolves.
+// The graph reads the DOM registry at module scope and `byId` throws on a missing element.
 for (const id of [
   "chat-view",
   "messages-wrap-outer",
@@ -49,9 +32,7 @@ for (const id of [
 }
 
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
-// The network edge, stubbed as a full factory rather than a spy: this graph reaches the
-// run store's fetch, and a spy would call through to a real request. Inert — no run is
-// in play here.
+// A full factory rather than a spy, which would call through to a real request.
 vi.mock("./api-client.js", () => ({
   apiPost: vi.fn(),
   apiGet: vi.fn(),
@@ -69,8 +50,7 @@ const { KEY_ATTR } = await import("./reconcile.js");
 
 messages.mountChatView();
 
-/** Entries in the folded turn: several overscan windows, so a demand range around one
- *  ordinal is a strict subset of the body and moving the pin genuinely moves the window. */
+/** Several overscan windows, so a demand range around one ordinal is a strict subset of the body. */
 const ENTRIES = OVERSCAN_ENTRIES * 6;
 
 let seq = 0;
@@ -94,13 +74,10 @@ function turnOpen(turnID: string, n: number, text = "go"): Entry {
   });
 }
 
-/** A turn of `count` REASONING entries plus its close.
- *
- *  Reasoning rather than prose, and that is the fixture the entry model forces: `sliceTurn`
- *  snaps a window down to a prose run's first entry and up past its last, so a body of N
- *  `text` entries is ONE run and every window over it is the same window — the moves below
- *  would be unobservable. A `thinking` entry renders at its own position and joins no run,
- *  so the body has `count` ordinals a window can sit inside. */
+/**
+ * A turn of `count` reasoning entries plus its close. Not `text`: `sliceTurn` snaps a window to a prose run's
+ * bounds, so a text body is one run and every window over it is the same.
+ */
 function reasoningTurn(turnID: string, n: number, count: number): Entry[] {
   const out: Entry[] = [turnOpen(turnID, n)];
   for (let at = 1; at <= count; at++) {
@@ -147,9 +124,7 @@ function bodyOf(turnID: string): HTMLElement {
   return body;
 }
 
-/** TWO turns so the policy folds the older one, a body big enough that a demand range is
- *  a strict subset of it, and the reveal grant that gives that folded card a body WITHOUT
- *  unfolding it — the "hidden build" the boot fold pass performs. */
+/** Two turns so the older folds, plus the reveal grant that gives the folded card a body without unfolding it. */
 async function arrangeFoldedBodiedCard(): Promise<{
   chat: string;
   first: ReturnType<typeof mountedWindow>;
@@ -162,8 +137,7 @@ async function arrangeFoldedBodiedCard(): Promise<{
   const first = mountedWindow("t-fold");
   expect(first).toBeDefined();
 
-  // The body IS inside the skipped subtree, or either case below would pass for a read
-  // nothing guards.
+  // The body is inside the skipped subtree, or the cases below would pass for an unguarded read.
   expect(geometrySkipped(bodyOf("t-fold"))).toBe(true);
 
   return { chat, first };
@@ -179,38 +153,22 @@ beforeEach(() => {
 });
 
 describe("a window move over a folded card's body", () => {
-  // ONE ORACLE DROPPED OUT LOUD: "moves the window without measuring a row the page is not
-  // rendering". It cannot fail from here. The pass collects its move during the demand
-  // grant's own settle rather than at the store bump, so a counting window narrow enough to
-  // exclude the builder's unguarded read of this same body excludes the guarded read too —
-  // measured, with `bodySide` mutated to read the body: this file's read assertion stayed
-  // green while the filing assertion below went red. Both halves come from `bodySide`, so
-  // what is left uncovered is the forced render, and it is unobservable until the builder's
-  // own read is guarded (the hand-off in the box report). That fix is what makes this case
-  // writable again.
+  // The no-measure half is not asserted here: the move is collected during the demand grant's settle, so no
+  // counting window separates the guarded read from the builder's own unguarded one.
   it("files the move under the card's own side, not the folded body's", async () => {
     const { chat, first } = await arrangeFoldedBodiedCard();
 
-    // A scroller position the two sides DISAGREE about, or the case is a null check: the
-    // mock's own `getScrollEl` answers a fresh detached div, so `scrollTop` is 0, and at 0
-    // the card and the body both answer "tail" — which is what the pre-migration case
-    // asserted, and it passed with the guard deleted. Between the two offsets, the CARD is
-    // "head" and the body "tail", so the filing says which one was read.
+    // A scroll position the two sides disagree about: at 0 both answer "tail", which passes with the guard deleted.
     const card = turnCard("t-fold");
     const body = bodyOf("t-fold");
     expect(body.offsetTop).toBeGreaterThan(card.offsetTop);
-    // A GETTER, because assigning `scrollTop` on a detached div is clamped to 0 — which is
-    // the zero the pre-migration case was reading without saying so. Production only reads
-    // this, so a read-only stand-in is the honest stub.
+    // A getter, because assigning `scrollTop` on a detached div is clamped to 0.
     const scroller = document.createElement("div");
     Object.defineProperty(scroller, "scrollTop", { get: () => body.offsetTop });
     vi.mocked(scroll.getScrollEl).mockReturnValue(scroller);
 
-    // The HEAD DROP is the change `bodySide` files, so the head ordinal leaving the DOM is
-    // what says which batch it ran in. `mountedWindow` is the wrong observable for it: the
-    // window is also written by the tail extension beside it, which is filed "tail"
-    // unconditionally, so a move that dropped its head inside the batch still reports its
-    // range moving outside it.
+    // The head drop is what `bodySide` files; `mountedWindow` is also written by the tail extension, filed "tail"
+    // unconditionally, so it cannot say which batch ran the drop.
     const lowestSeq = (): number =>
       Math.min(
         ...[...body.querySelectorAll<HTMLElement>("[data-entry-seq]")].map((e) =>
@@ -241,10 +199,9 @@ describe("a window move over a folded card's body", () => {
 
     expect(mountedWindow("t-fold")).not.toEqual(first);
     expect(lowestSeq()).toBeGreaterThan(wasLowest);
-    // The batch ran, so either filing would have been observable in it.
+    // The batch ran, so either filing would have been observable.
     expect(batches).toBeGreaterThan(0);
-    // The card is above the reader, so its own side is "head" and the drop belongs INSIDE
-    // the compensated batch. Reading the body instead answers "tail" and files it after.
+    // The card is above the reader, so its side is "head"; reading the body would answer "tail".
     expect(droppedInside).toBe(true);
   });
 });

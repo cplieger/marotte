@@ -1,14 +1,6 @@
-// ---------------------------------------------------------------------------
-// The cross-language pin for the registry search's two bodies.
-//
-// mcp.RegistrySearchResult, its entry family and mcp.RegistrySearchFailure are
-// wiregen-registered; Go's TestRegistrySearchWireContract writes the fixture from
-// a real normalisation of the captured upstream reply, and this decodes both
-// bodies through the generated decoders `searchRegistry` runs on every live
-// answer — so the encoder cannot drift from what the search panel reads.
-//
-// Node placement because the fixture is a disk read.
-// ---------------------------------------------------------------------------
+// Cross-language pin: Go's TestRegistrySearchWireContract writes the fixture from a real
+// normalisation of the captured upstream reply; this decodes both bodies through the generated
+// decoders `searchRegistry` runs.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
@@ -35,8 +27,7 @@ describe("the registry search reply shared with the Go implementation", () => {
 
   it("carries the cut as a fact beside the list, and every row as installable", () => {
     const r = decodeRegistrySearchResult(fx.search);
-    // Normalised at a limit of five from a six-row upstream page: the sixth row
-    // is the sentinel that sets `truncated` and is dropped.
+    // A limit of five over a six-row page: the sixth row is the sentinel that sets `truncated`.
     expect(r.servers).toHaveLength(5);
     expect(r.truncated).toBe(true);
     expect(r.filtered).toBe(0);
@@ -47,8 +38,7 @@ describe("the registry search reply shared with the Go implementation", () => {
   });
 
   it("refuses a reply that omits either count", () => {
-    // Both are REQUIRED on the wire (no omitempty), so a client cannot read an
-    // absent cut or an absent drop count as zero.
+    // REQUIRED on the wire (no omitempty), so an absent cut or drop count cannot read as zero.
     const r = fx.search as Record<string, unknown>;
     const { truncated: _t, ...noTruncated } = r;
     const { filtered: _f, ...noFiltered } = r;
@@ -65,9 +55,7 @@ describe("the registry search reply shared with the Go implementation", () => {
   });
 
   it("refuses a failure whose reason the client has no arm for", () => {
-    // The enum is registered, so the decoder is strict: the panel branches on the
-    // reason to say "wait" or "narrow the query", and a class it cannot map must
-    // not reach that branch as no classification.
+    // The registered enum is strict: an unmappable class must not reach the panel's branch.
     const forged = { ...(fx.failure as Record<string, unknown>), reason: "throttled" };
     expect(() => decodeRegistrySearchFailure(forged)).toThrow(/reason/);
   });

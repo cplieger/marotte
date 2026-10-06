@@ -1,25 +1,4 @@
-// ---------------------------------------------------------------------------
 // DOM renderer for smd-parser.
-//
-// The renderer supports two streaming concerns:
-//
-//   1. Per-block animation. When a top-level block closes (paragraph,
-//      pre/code, heading, list, blockquote, table), the renderer fires
-//      `onBlockComplete(element)`. Callers tag the element with
-//      `data-vk-block-enter` so a single CSS rule fades it in. This
-//      complements the per-chunk fade (add_text_dom wraps each streamed
-//      text fragment in a `<span data-vk-chunk-enter>`): the block-level
-//      fade covers structural elements (pre/table/blockquote) that
-//      shouldn't be split into per-fragment spans.
-//
-//   2. Inline decoration. Same hook lets callers run code-block
-//      syntax highlighting + path linkification per block as it
-//      arrives, so users see colored code and clickable paths during
-//      streaming, not only after `parser_end`.
-//
-// The renderer doesn't own animation policy or decoration — it
-// exposes the structural events and lets callers decide.
-// ---------------------------------------------------------------------------
 
 import {
   DOCUMENT,
@@ -59,7 +38,8 @@ import {
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { isSafeUrl, rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
+import { exfilShaped, isSafeUrl, rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
+import { formPayloadLink, linkAnchor } from "./link-guard.js";
 import { buildPath } from "./route-path.js";
 import { bindFileLink } from "./linkify.js";
 import { mediaElementFor } from "./media-block.js";
@@ -73,22 +53,19 @@ export interface DomRendererData {
   nodes: (Element | null)[];
   index: number;
   onBlockComplete: ((block: HTMLElement) => void) | undefined;
-  /** Wrap each text emission in a `<span data-vk-chunk-enter>` so the
-   *  per-chunk fade-in CSS animation fires as text streams in. Off
-   *  for replay paths so historical chats don't animate. Skipped
-   *  inside `<code>` / `<pre>` because spans there break syntax
-   *  highlighters that expect raw text children. */
+  /** Wrap each text emission in a `<span data-vk-chunk-enter>` so the per-chunk fade-in CSS
+   *  animation fires as text streams in. Skipped inside `<code>` / `<pre>` because spans there
+   *  break syntax highlighters that expect raw text children. */
   animateText: boolean;
-  /** The current `data-vk-caret` holder — the element the stream last wrote
-   *  text into, where the CSS caret renders. See moveCaret. */
+  /** The current `data-vk-caret` holder — the element the stream last wrote text into, where the
+   *  CSS caret renders. See moveCaret. */
   caretEl?: Element | null;
-  /** Set by `set_attr(UNCLOSED, …)` and consumed by the `end_token` that must
-   *  immediately follow it: the literal to restore in place of an inline
-   *  element whose token never closed. */
+  /** Set by `set_attr(UNCLOSED, …)` and consumed by the `end_token` that must immediately follow
+   *  it: the literal to restore in place of an inline element whose token never closed. */
   unclosedDelim?: string | null;
-  /** The open table's per-column `text-align`, and how many cells of the current
-   *  row have been created. A table cannot contain a table, so one of each is
-   *  enough; both are reset when a TABLE or a TABLE_ROW opens. */
+  /** The open table's per-column `text-align`, and how many cells of the current row have been
+   *  created. A table cannot contain a table, so one of each is enough; both are reset when a
+   *  TABLE or a TABLE_ROW opens. */
   align?: readonly string[] | null;
   cellIndex?: number;
 }
@@ -121,34 +98,19 @@ const TOKEN_TAG_MAP: Readonly<Record<number, string>> = {
   [TABLE]: "table",
 };
 
-/** Attribute marking an equation host, and the state it is in.
- *
- *  `data-math` is the kind (`inline` / `block`); `data-math-raw` says the host
- *  is still showing LaTeX rather than mathematics. Set at creation — a
- *  mid-stream equation genuinely IS raw text at that moment — and removed only
- *  when the conversion succeeds, so a half-arrived or unsupported expression is
- *  styled as source without a second code path. */
+/** Attribute marking an equation host, and the state it is in. */
 const MATH_ATTR = "data-math";
 
-/** The marker every streamed text emission's wrapper span carries, so the
- *  per-chunk fade in `13-messages.css` can animate each delta once on mount.
- *
- *  Exported because a reader that MIRRORS this DOM as text has to know the span
- *  is a rendering artefact rather than a boundary in the content: one sentence
- *  arrives as dozens of these, and the delegate card's rolling tail
- *  (`fundamentals/subagent-block.ts`) put a space at every element boundary, so
- *  it printed gaps inside words for as long as a delegate streamed. One
- *  definition, two readers. */
+/** The marker every streamed text emission's wrapper span carries, so the per-chunk fade in
+ *  `13-messages.css` can animate each delta once on mount. Exported because a reader that
+ *  MIRRORS this DOM as text has to know the span is a rendering artefact rather than a boundary
+ *  in the content: one sentence arrives as dozens of these, and the delegate card's rolling tail
+ *  (`fundamentals/subagent-block.ts`) put a space at every element boundary, so it printed gaps
+ *  inside words for as long as a delegate streamed. */
 const CHUNK_ENTER_ATTR = "data-vk-chunk-enter";
 const MATH_RAW_ATTR = "data-math-raw";
 
-/** Turn a closed equation host's LaTeX into MathML in place.
- *
- *  Runs at end_token, not at add_token: the parser hands the expression over as
- *  text (possibly across several chunks), so the full source only exists once
- *  the closing delimiter arrives. An expression the converter rejects keeps the
- *  raw text it already holds — the degradation the equation tokens gave for
- *  free before there was a converter at all. */
+/** Turn a closed equation host's LaTeX into MathML in place. */
 function finalizeMath(host: Element): void {
   const src = host.textContent;
   const math = latexToMathML(src, host.getAttribute(MATH_ATTR) === "block");
@@ -186,11 +148,9 @@ function add_token_dom(data: DomRendererData, type: Token): void {
     }
     case EQUATION_BLOCK:
     case EQUATION_INLINE: {
-      // A plain host in the HTML namespace, holding the raw LaTeX until the
-      // expression closes. It cannot BE the `<math>` element: makeEl is
-      // document.createElement, and a `math` element outside the MathML
-      // namespace is an unknown inline element rather than mathematics. The
-      // namespaced subtree is built by mathml.ts and swapped in at end_token.
+      // A plain host in the HTML namespace, holding the raw LaTeX until the expression closes. It
+      // cannot BE the `<math>` element: makeEl is document.createElement, and a `math` element
+      // outside the MathML namespace is an unknown inline element rather than mathematics.
       const host = makeEl("span");
       host.setAttribute(MATH_ATTR, type === EQUATION_BLOCK ? "block" : "inline");
       host.setAttribute(MATH_RAW_ATTR, "");
@@ -199,10 +159,7 @@ function add_token_dom(data: DomRendererData, type: Token): void {
     }
     case LINK:
     case RAW_URL: {
-      const a = makeEl("a") as HTMLAnchorElement;
-      a.target = "_blank";
-      a.rel = "noopener";
-      data.nodes[++data.index] = parent.appendChild(a);
+      data.nodes[++data.index] = parent.appendChild(linkAnchor());
       return;
     }
     case TABLE: {
@@ -211,10 +168,9 @@ function add_token_dom(data: DomRendererData, type: Token): void {
       return;
     }
     case TABLE_ROW: {
-      // Asked of the DOM rather than counted: `children.length` meant the first
-      // row landed in a `<thead>`, the second in a `<tbody>` and every later one
-      // in `children[1]`, so anything a third party appended to the `<table>`
-      // shifted the index and sent rows to the wrong section.
+      // Asked of the DOM rather than counted: `children.length` meant the first row landed in a
+      // `<thead>`, the second in a `<tbody>` and every later one in `children[1]`, so anything a
+      // third party appended to the `<table>` shifted the index and sent rows to the wrong section.
       const table = parent as HTMLTableElement;
       const section =
         table.tHead === null
@@ -247,18 +203,16 @@ function add_token_dom(data: DomRendererData, type: Token): void {
   data.nodes[++data.index] = parent.appendChild(makeEl(tag));
 }
 
-/** Marks a per-chunk span whose fade has already played, so the CSS rule that
- *  animates one on mount skips it. Set only by the unwrap below: MEASURED in
- *  Chromium, re-inserting a node restarts its CSS animation, so re-parenting a
- *  settled span would re-run the fade over text already on screen — the flash the
- *  mount-once design exists to avoid. The marker survives, because the delegate
- *  card's text walk reads it to tell a rendering artefact from a word boundary. */
+/** Marks a per-chunk span whose fade has already played, so the CSS rule that animates one on
+ *  mount skips it. Set only by the unwrap below: MEASURED in Chromium, re-inserting a node
+ *  restarts its CSS animation, so re-parenting a settled span would re-run the fade over text
+ *  already on screen — the flash the mount-once design exists to avoid. */
 const CHUNK_SETTLED_ATTR = "data-vk-chunk-settled";
 
-/** Replace an inline element whose token never closed with its own delimiter
- *  followed by its children, which is what CommonMark renders for an unclosed
- *  delimiter run. The parser is append-only and cannot un-open a token; the
- *  renderer still holds the element at close time and can. */
+/** Replace an inline element whose token never closed with its own delimiter followed by its
+ *  children, which is what CommonMark renders for an unclosed delimiter run. The parser is
+ *  append-only and cannot un-open a token; the renderer still holds the element at close time
+ *  and can. */
 function unwrap_unclosed(data: DomRendererData, el: Element, delim: string): void {
   const parent = el.parentElement;
   if (parent === null) {
@@ -273,8 +227,8 @@ function unwrap_unclosed(data: DomRendererData, el: Element, delim: string): voi
   for (const span of el.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
     span.setAttribute(CHUNK_SETTLED_ATTR, "");
   }
-  // IMG is void: markdown's `![alt]` puts the swallowed text in `alt`, so the
-  // replacement is one text node rather than a delimiter plus children.
+  // IMG is void: markdown's `![alt]` puts the swallowed text in `alt`, so the replacement is one
+  // text node rather than a delimiter plus children.
   const head = el.tagName === "IMG" ? delim + (el.getAttribute("alt") ?? "") : delim;
   el.replaceWith(document.createTextNode(head), ...el.childNodes);
 }
@@ -286,9 +240,8 @@ function end_token_dom(data: DomRendererData): void {
   if (unclosed !== null && unclosed !== undefined) {
     data.unclosedDelim = null;
     if (closing !== null && closing !== undefined) {
-      // Ordered before finalizeMath: an equation host being unwrapped must not
-      // be converted, and an inline token never brings `index` to 0, so
-      // onBlockComplete is unreachable from here.
+      // Ordered before finalizeMath: an equation host being unwrapped must not be converted, and an
+      // inline token never brings `index` to 0, so onBlockComplete is unreachable from here.
       unwrap_unclosed(data, closing, unclosed);
       return;
     }
@@ -296,11 +249,9 @@ function end_token_dom(data: DomRendererData): void {
   if (closing?.hasAttribute(MATH_ATTR) === true) {
     finalizeMath(closing);
   }
-  // If decrementing brought us back to the root (index 0), the node
-  // that just closed was a top-level block. Fire the callback so
-  // callers can decorate / animate the freshly-completed block.
-  // Code blocks are special: the "closing" node is the inner <code>,
-  // but the visible block is its <pre> parent — surface that instead.
+  // If decrementing brought us back to the root (index 0), the node that just closed was a
+  // top-level block. Fire the callback so callers can decorate / animate the freshly-completed
+  // block.
   if (
     data.index === 0 &&
     closing !== null &&
@@ -316,13 +267,9 @@ function end_token_dom(data: DomRendererData): void {
   }
 }
 
-/** The streaming caret's home: the element text last landed in carries
- *  `data-vk-caret`, so the CSS caret (13-messages.css) renders inline after the
- *  last word rather than on its own line after the last block — a container
- *  `::after` is what put the cursor "on the next line". One holder at a time,
- *  moved only when the insertion element changes; gated on `animateText`, so a
- *  replay never pays the attribute writes. The bubble's `.streaming` class
- *  scopes the CSS, so the attribute is inert once the bubble seals. */
+/** The streaming caret's home: the element text last landed in carries `data-vk-caret`, so the
+ *  CSS caret (13-messages.css) renders inline after the last word rather than on its own line
+ *  after the last block — a container `::after` is what put the cursor "on the next line". */
 const CARET_ATTR = "data-vk-caret";
 
 function moveCaret(data: DomRendererData, target: Element): void {
@@ -342,9 +289,8 @@ function add_text_dom(data: DomRendererData, text: string): void {
 
   const tag = parent.tagName;
 
-  // IMG is void — text inside an image node is the alt text per
-  // markdown syntax `![alt](url)`. Append to the alt attribute rather
-  // than creating (ignored) child text nodes.
+  // IMG is void — text inside an image node is the alt text per markdown syntax `![alt](url)`.
+  // Append to the alt attribute rather than creating (ignored) child text nodes.
   if (tag === "IMG") {
     const img = parent as HTMLImageElement;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -354,13 +300,9 @@ function add_text_dom(data: DomRendererData, text: string): void {
 
   moveCaret(data, parent);
 
-  // For streaming render, wrap the text in an inline span so per-chunk
-  // fade-in CSS can animate each delta as it arrives. Skipped inside
-  // <code>/<pre> (their syntax highlighter expects unwrapped text
-  // children). Replay path leaves animateText=false so historical
-  // content paints flat.
-  // An equation host is skipped too: its children are replaced wholesale when
-  // the expression closes, so a per-chunk wrapper is work thrown away.
+  // For streaming render, wrap the text in an inline span so per-chunk fade-in CSS can animate each
+  // delta as it arrives. Skipped inside <code>/<pre> (their syntax highlighter expects unwrapped
+  // text children).
   if (data.animateText && tag !== "CODE" && tag !== "PRE" && !parent.hasAttribute(MATH_ATTR)) {
     const span = makeEl("span");
     span.setAttribute(CHUNK_ENTER_ATTR, "");
@@ -371,8 +313,8 @@ function add_text_dom(data: DomRendererData, text: string): void {
   parent.appendChild(document.createTextNode(text));
 }
 
-/** A bracket link's href arrives after its label, so the label's nodes exist
- *  and are MOVED into the card; the node stack and the caret follow them. */
+/** A bracket link's href arrives after its label, so the label's nodes exist and are MOVED into
+ *  the card; the node stack and the caret follow them. */
 function swapForPreviewCard(data: DomRendererData, link: Element, href: string): void {
   for (const span of link.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
     span.setAttribute(CHUNK_SETTLED_ATTR, "");
@@ -416,41 +358,43 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
     node.setAttribute("data-tooltip", value);
     return;
   }
-  // An agent-written workspace path is a real file, not a URL the SPA can serve.
-  // Rewritten AFTER the safety gate so the rewrite can never launder a scheme
-  // isSafeUrl just rejected.
+  // AFTER the scheme gate, so a rejected scheme stays a dead `#` whatever the switch says. The href
+  // lands when `)` closes, so the link text is already complete here.
+  if (attrName === "href" && node.tagName === "A" && exfilShaped(value)) {
+    const formed = formPayloadLink(node as HTMLAnchorElement, value);
+    if (formed !== node) {
+      data.nodes[data.index] = formed;
+      if (data.caretEl === node) {
+        node.removeAttribute(CARET_ATTR);
+        formed.setAttribute(CARET_ATTR, "");
+        data.caretEl = formed;
+      }
+    }
+    return;
+  }
+  // An agent-written workspace path is a real file, not a URL the SPA can serve. Rewritten AFTER
+  // the safety gate so the rewrite can never launder a scheme isSafeUrl just rejected.
   if (attrName === "src" && node.tagName === "IMG") {
-    // The FILE-ROLE swap, and it has to happen here rather than at add_token:
-    // the tag is chosen when `![` opens and the path only arrives when `)`
-    // closes, so this is the first moment the role is knowable. `![clip](x.mp3)`
-    // rendered a broken `<img>` before this.
+    // The FILE-ROLE swap, and it has to happen here rather than at add_token: the tag is chosen
+    // when `![` opens and the path only arrives when `)` closes, so this is the first moment the
+    // role is knowable.
     const swapped = mediaElementFor(value, node.getAttribute("alt") ?? "");
     if (swapped !== null) {
       node.replaceWith(swapped);
-      // Re-point the node stack, or end_token would close a node no longer in
-      // the document and any later emission would land on the departed `<img>`.
+      // Re-point the node stack, or end_token would close a node no longer in the document and any
+      // later emission would land on the departed `<img>`.
       data.nodes[data.index] = swapped;
       return;
     }
     node.setAttribute(attrName, rewriteServedImageSrc(value));
-    // Defer the fetch until the image is near the viewport, and set it HERE
-    // rather than at add_token so it reaches exactly the nodes that are still
-    // images with a real src: the unsafe-URL gate above returned early with
-    // `src="#"`, and `mediaElementFor` may already have replaced this `<img>`
-    // with an `<audio>` or a download link. Three consumers read off-screen
-    // transcript images — a whole markdown FILE in the editor, the compaction
-    // summary inside a collapsed `<details>`, and replayed history — and
-    // `.msg-row`'s `content-visibility: auto` does not help, because it skips
-    // layout and paint and not loading. No `width`/`height` to pair with it:
-    // the transcript wire carries no image dimensions. Two costs accepted with
-    // it: the `error` event defers too, so the fallback below waits for the
-    // scroll, and a late load reflows content that may sit above the reader.
+    // Defer the fetch until the image is near the viewport, and set it HERE rather than at
+    // add_token so it reaches exactly the nodes that are still images with a real src: the
+    // unsafe-URL gate above returned early with `src="#"`, and `mediaElementFor` may already have
+    // replaced this `<img>` with an `<audio>` or a download link.
     node.setAttribute("loading", "lazy");
-    // Name the file when it fails to load. The browser's default broken-image
-    // icon identifies nothing, and "the picture did not appear" is the
-    // characteristic failure of the agent's screenshot loop — the one fact
-    // worth having then is which path was asked for. Swapping to text also
-    // avoids leaving a broken-icon-sized hole mid-transcript.
+    // Name the file when it fails to load. The browser's default broken-image icon identifies
+    // nothing, and "the picture did not appear" is the characteristic failure of the agent's
+    // screenshot loop — the one fact worth having then is which path was asked for.
     node.addEventListener(
       "error",
       () => {
@@ -485,12 +429,9 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   node.setAttribute(attrName, value);
 }
 
-/** Factory for a DOM renderer rooted at `root`. Caller can register
- *  `onBlockComplete` to receive a callback when each top-level block
- *  finishes (paragraph, pre/code, heading, list, blockquote, table).
- *  `animateText` (default false) opts into per-chunk fade-in: each
- *  text emission is wrapped in `<span data-vk-chunk-enter>` so the
- *  CSS animation in 13-messages.css runs as each delta lands. */
+/** Factory for a DOM renderer rooted at `root`. Caller can register `onBlockComplete` to receive
+ *  a callback when each top-level block finishes (paragraph, pre/code, heading, list,
+ *  blockquote, table). */
 export function domRenderer(
   root: HTMLElement,
   options: { onBlockComplete?: (block: HTMLElement) => void; animateText?: boolean } = {},

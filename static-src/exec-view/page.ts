@@ -133,11 +133,8 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   );
   const results = el("div", { className: "ev-results", hidden: true }, resultsHead, resultsBody);
 
-  // Results sit BELOW the panes: the region appears and disappears as the reader
-  // clicks between a settled step and an unsettled one, so above the panes its
-  // `hidden` flip moved the tree and the detail under the pointer. Last, nothing it
-  // does moves anything the reader is aiming at, and the reading order matches the
-  // gesture — pick a step, then read what it produced.
+  // Results sit BELOW the panes: the region toggles as the reader clicks between steps, and above
+  // them its `hidden` flip moved the tree and detail under the pointer.
   const root = el("div", { className: "ev-page" }, head, alert, timeline.root, panes, results);
 
   let current: ExecRun | undefined;
@@ -189,12 +186,8 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     // In `repaint` rather than in `render`, because the region is the SELECTED node's:
     // a selection change is a change of subject, and only this path runs on one.
     renderResults(node);
-    // AFTER the pane has been told, so a consumer reacting synchronously finds the
-    // host it is about to write into already created. Guarded on the shown node's
-    // PATH and STATE: `repaint` runs on every store invalidation and on every
-    // selection, so notifying unconditionally would fire per repaint rather than per
-    // attention — while a path-only guard misses a node that settles where it
-    // stands, which `select()`'s pin makes the common shape rather than an edge.
+    // AFTER the pane, so a synchronous consumer finds its host created. Guarded on PATH and STATE:
+    // `repaint` runs per invalidation, and a path-only guard misses a node settling in place.
     const path = node?.path ?? "";
     const state = node?.state ?? "";
     if (path !== shownPath || state !== shownState) {
@@ -372,12 +365,8 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         controlsHost.replaceChildren(row);
       }
 
-      // A render carrying NO focus clears the watermark, so the next assertion of
-      // the same path is honoured. Without it a door could name a node only once
-      // per page instance: the reader moves in the tree, clicks the same door
-      // again, and it is a control that does nothing. The clear is safe because a
-      // focus-free render is also one that asserts nothing — `userPicked` still
-      // holds whatever the reader last chose.
+      // A focus-free render clears the watermark, or a door could name a node only once per page;
+      // safe, since such a render asserts nothing (`userPicked` keeps the reader's choice).
       if (run.focus === undefined) {
         focused = "";
       }

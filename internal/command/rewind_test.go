@@ -1,9 +1,5 @@
 package command
 
-// Rewind is destructive and has no undo, so what is pinned here is the shape of
-// the damage: which messages leave, that a refusal leaves the record untouched,
-// and that the two id rules KAS enforces are honoured before the call is made.
-
 import (
 	"context"
 	"encoding/json"
@@ -26,10 +22,8 @@ type recordingBridge struct {
 	// order, when set, records each Call in a slice the host double shares, so a test
 	// can assert a host-side step ran BEFORE the wire call.
 	order *[]string
-	// duringCall, when set, runs while the wire call is IN FLIGHT. It is the seam for
-	// a property about state a notification would observe mid-call, which `order`
-	// cannot express: KAS emits some notifications before answering the RPC, so a
-	// test needs to read host state at that instant rather than afterwards.
+	// duringCall, when set, runs while the wire call is IN FLIGHT, for state a notification would
+	// observe mid-call.
 	duringCall func()
 	gotMethod  string
 	gotParams  map[string]any
@@ -352,7 +346,6 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 	if b.gotParams["messageId"] != "u1" {
 		t.Errorf("messageId = %v, want u1", b.gotParams["messageId"])
 	}
-	// SessionParams supplies sessionId; KAS rejects the call without it.
 	if b.gotParams["sessionId"] != marotte.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", b.gotParams["sessionId"])
 	}

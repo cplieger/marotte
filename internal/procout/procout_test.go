@@ -109,14 +109,10 @@ func TestBuffer_SequentialWritesAcrossCap(t *testing.T) {
 	}
 }
 
-// TestBuffer_ReachedCapIsNotACommandFailure is the regression test for the
-// defect this type was extracted to fix. A capping writer that reports the
-// number of bytes it KEPT makes os/exec's io.Copy return io.ErrShortWrite,
-// which reaches the caller one of two ways depending on whether the child is
-// still writing when the copier gives up — as a killed process ("signal:
-// broken pipe") or as the copy error on a process that exited 0 ("short
-// write"). Both scripts below are measured shapes of the predecessor's failure,
-// so both must come back nil here.
+// TestBuffer_ReachedCapIsNotACommandFailure — a capping writer that reports the
+// number of bytes it KEPT makes os/exec's io.Copy return io.ErrShortWrite, which
+// surfaces as a killed process ("signal: broken pipe") or as the copy error on a
+// process that exited 0 ("short write"). Both scripts below must come back nil.
 func TestBuffer_ReachedCapIsNotACommandFailure(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
@@ -131,8 +127,8 @@ func TestBuffer_ReachedCapIsNotACommandFailure(t *testing.T) {
 		wantLen       int
 	}{
 		// Writes 100 bytes to stderr one at a time, so the child is still
-		// writing when the cap is crossed: the predecessor's pipe closed under
-		// it and the child died of SIGPIPE.
+		// writing when the cap is crossed: a pipe closed under it kills the
+		// child with SIGPIPE.
 		{
 			name:          "cap reached while the child is still writing",
 			script:        `i=0; while [ $i -lt 100 ]; do printf x >&2; i=$((i+1)); done; exit 0`,
@@ -141,7 +137,7 @@ func TestBuffer_ReachedCapIsNotACommandFailure(t *testing.T) {
 			wantLen:       10,
 		},
 		// One 100-byte write then exit, so the child is usually gone before the
-		// copier reports: the predecessor surfaced io.ErrShortWrite from Wait.
+		// copier reports, so a short write would surface as io.ErrShortWrite from Wait.
 		{
 			name:          "cap reached in a single write before exit",
 			script:        `printf '%0100d' 0 >&2; exit 0`,
@@ -233,16 +229,8 @@ func FuzzBufferNeverExceedsItsCap(f *testing.F) {
 	})
 }
 
-// TestBuffer_EmptyWriteAtAFullBufferIsNotTruncation is the one behaviour where
-// this type deliberately differs from the ShellCappedBuffer it absorbed.
-//
-// That type set its Truncated flag on ANY write once the cap was reached, a
-// zero-length one included, and had a table case asserting exactly that. A
-// zero-length write dropped no byte, so reporting truncation for it would make
-// the shell interception append "[output truncated at 1 MiB]" to output that lost
-// nothing. Unreachable through os/exec either way — io.Copy skips a zero-length
-// read — which is why the divergence is pinned here rather than left to be
-// rediscovered as a difference.
+// TestBuffer_EmptyWriteAtAFullBufferIsNotTruncation asserts that an empty write at a full buffer drops nothing,
+// so Truncated stays false.
 func TestBuffer_EmptyWriteAtAFullBufferIsNotTruncation(t *testing.T) {
 	b := NewBuffer(3)
 	if _, err := b.Write([]byte("abc")); err != nil {
@@ -260,15 +248,8 @@ func TestBuffer_EmptyWriteAtAFullBufferIsNotTruncation(t *testing.T) {
 	}
 }
 
-// FuzzBufferAccumulatesAcrossWrites is the property the two hand-rolled capped
-// writers this type replaced fuzzed and FuzzBufferNeverExceedsItsCap does not:
-// the cap holds across a SEQUENCE of writes, not only within one.
-//
-// It is strictly wider than either predecessor. Both of those pinned the limit at
-// a hardcoded 1 MiB — which meant three seed inputs of a megabyte each in the
-// committed corpus for a property that has nothing to do with the value — and one
-// of them chunked its input at a fixed 137 bytes and asserted no Truncated
-// invariant at all. Here the limit and both chunk boundaries are fuzz inputs.
+// FuzzBufferAccumulatesAcrossWrites asserts that the cap holds across a SEQUENCE of writes, not only within
+// one.
 func FuzzBufferAccumulatesAcrossWrites(f *testing.F) {
 	f.Add(5, []byte("abc"), []byte("defgh"))
 	f.Add(0, []byte("a"), []byte("b"))

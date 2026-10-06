@@ -1,9 +1,5 @@
-// Shell subsystem: a single global PTY session with server-side VT parsing
-// over a WebSocket at /api/shell/ws (github.com/cplieger/web-terminal-engine/v6).
-//
-// Client control messages are JSON prefixed with 0x00 (e.g. resize); the
-// prefix distinguishes them from raw input, since no valid terminal input
-// starts with NUL.
+// A single global PTY session with server-side VT parsing over /api/shell/ws
+// (github.com/cplieger/web-terminal-engine/v6). Control messages are JSON prefixed with 0x00, which no terminal input starts with.
 
 package agent
 
@@ -14,23 +10,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 	"github.com/cplieger/webhttp/v3"
 )
 
-// shutdownBudget bounds one PTY teardown. Sized above the engine's 5s reap
-// ceiling so an expiry means the teardown genuinely hung rather than that a
-// child took its time dying.
+// shutdownBudget bounds one PTY teardown, above the engine's 5s reap ceiling so expiry means a real hang.
 const shutdownBudget = 10 * time.Second
 
-// retireHandler shuts a handler down and WAITS, bounded. All three teardown
-// paths go through it — lazy replacement, explicit restart, Runtime.Shutdown —
-// because engine v4's Shutdown blocks until the child is reaped, so a caller
-// that does not wait leaves a process alive past its panel.
-//
-// shutdownBudget caps ctx: Shutdown passes the one shutdown grace, while the
-// two user actions have nothing to cancel them and pass Background. A spent
-// ctx still SIGNALS — engine Shutdown closes first and waits second.
+// retireHandler shuts a handler down and waits, bounded; all three teardown paths use it, since engine v4's
+// Shutdown blocks until the child is reaped. A spent ctx still signals: Shutdown closes first, then waits.
 func retireHandler(ctx context.Context, h *terminal.Handler, why string) {
 	ctx, cancel := context.WithTimeout(ctx, shutdownBudget)
 	defer cancel()
@@ -40,14 +29,8 @@ func retireHandler(ctx context.Context, h *terminal.Handler, why string) {
 	}
 }
 
-// ShellManager wraps terminal.Handler to give the Runtime a stable interface;
-// the terminal package owns PTY lifecycle, VT parsing, wire encoding, client
-// fan-out and reconnect replay.
-//
-// The handler is REPLACEABLE: terminal.Handler is single-use, so marotte
-// swaps it on `exit` (spent, latched by the process-exit callback) or on
-// restart() for a WEDGED shell (a stuck foreground process never fires
-// process-exit, so the lazy path cannot reach it).
+// ShellManager wraps terminal.Handler, which owns the PTY, VT parsing, wire encoding, fan-out and replay.
+// The handler is single-use, so it is replaced on exit (spent) or on restart() for a wedged shell.
 type ShellManager struct {
 	handler *terminal.Handler
 	workDir string
@@ -56,31 +39,20 @@ type ShellManager struct {
 	spent bool
 }
 
-// NewShellManager creates a ShellManager backed by the terminal package.
-// The command is always bash --login; workDir is the initial CWD. ctx is
-// unused (the terminal package manages its own lifecycle via Shutdown).
+// NewShellManager creates a ShellManager running bash --login in workDir. ctx is unused.
 func NewShellManager(_ context.Context, workDir string) *ShellManager {
 	sm := &ShellManager{workDir: workDir}
 	sm.handler = sm.newHandler()
 	return sm
 }
 
-// newHandler builds a fresh PTY handler for this manager's workDir.
-//
-// --login costs the container's PATH unless something puts it back: Debian's
-// /etc/profile ASSIGNS PATH for uid 0 rather than appending, so a login shell
-// drops the /config entries this process inherited and an engine-installed CLI
-// stops resolving by name. entrypoint.sh's /etc/profile.d/10-marotte-path.sh
-// drop-in is what restores it, for this PTY and for every other login
-// shell in the container alike.
-// Deliberately no terminal.WithEnv: the handler inherits the correct PATH, and
-// pinning one here would only mask a broken drop-in for the PTY while every
-// other login shell in the container stayed wrong.
+// newHandler builds a fresh PTY handler. Debian's /etc/profile assigns PATH for uid 0, so a login shell loses
+// the /config entries; entrypoint.sh's /etc/profile.d/10-marotte-path.sh restores them for every login
+// shell. No terminal.WithEnv: that would mask a broken drop-in here only.
 func (sm *ShellManager) newHandler() *terminal.Handler {
 	return terminal.NewHandler([]string{"bash", "--login"},
 		terminal.WithWorkDir(sm.workDir),
-		// Latch spent rather than notify: the client reattaches on the socket
-		// close and lands on a fresh handler via current(); no SSE needed.
+		// Latch spent: the client reattaches on socket close and gets a fresh handler.
 		terminal.WithOnProcessExit(func(err error) {
 			sm.mu.Lock()
 			sm.spent = true
@@ -90,10 +62,8 @@ func (sm *ShellManager) newHandler() *terminal.Handler {
 	)
 }
 
-// current returns the handler to serve this connection with, replacing a spent
-// one first. Returns the old handler for the caller to shut down after the lock
-// is released: Shutdown can run the process-exit callback synchronously, which
-// takes this same mutex.
+// current returns the handler for this connection, replacing a spent one, and returns the old one for the
+// caller to shut down after unlocking: Shutdown can run the exit callback, which takes this mutex.
 func (sm *ShellManager) current() (h, retire *terminal.Handler) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -105,8 +75,7 @@ func (sm *ShellManager) current() (h, retire *terminal.Handler) {
 	return sm.handler, retire
 }
 
-// restart replaces the PTY unconditionally. For a wedged shell, where the child
-// is alive and stuck so the process-exit latch never fires.
+// restart replaces the PTY unconditionally, for a wedged shell whose child never exits.
 func (sm *ShellManager) restart() {
 	sm.mu.Lock()
 	retire := sm.handler
@@ -126,21 +95,26 @@ func (sm *ShellManager) handleWS(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
-// handleRestart kills the PTY and installs a fresh one. POST because it destroys
-// running processes; the client confirms before calling it.
+// handleRestart kills the PTY and installs a fresh one; POST because it destroys running processes.
 func (sm *ShellManager) handleRestart(w http.ResponseWriter, _ *http.Request) {
 	sm.restart()
 	webhttp.Ok(w)
 }
 
-// kill ends the PTY session and waits for its teardown: reaping the child and
-// telling attached clients the process is gone. Its one caller is Runtime.Shutdown,
-// which runs at process exit, and work still in flight then is work that is
-// lost, so this takes the engine's blocking form rather than a bare close.
-//
-// The handler is read under the mutex because restart() can swap it: killing
-// the field directly would race a restart and could tear down the replacement
-// while leaving the one it replaced running.
+// ReadShell answers a `#` terminal reference from the handler as it stands: current() would swap out a just-exited shell and lose its final output.
+func (sm *ShellManager) ReadShell(maxLines int) (command.ShellText, bool) {
+	sm.mu.Lock()
+	h := sm.handler
+	sm.mu.Unlock()
+	snap, ok := h.Text(maxLines)
+	if !ok {
+		return command.ShellText{}, false
+	}
+	return command.ShellText{Text: snap.Text, AltScreen: snap.AltScreen, Exited: h.Exited()}, true
+}
+
+// kill ends the PTY session and waits for its teardown, using the engine's blocking form (its one caller is
+// Runtime.Shutdown). Read under the mutex: restart() can swap the handler.
 func (sm *ShellManager) kill(ctx context.Context) {
 	sm.mu.Lock()
 	h := sm.handler

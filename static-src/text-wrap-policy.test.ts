@@ -1,10 +1,6 @@
-// The app asks for NO `text-wrap: pretty`, anywhere. `pretty` optimizes a
-// paragraph's closing lines, so while text is appended it revises breaks in lines
-// the reader is already looking at; `auto` is greedy and a chosen break only ever
-// has text added after it. Measured in Chromium 151 over 1,408 appends: `pretty`
-// moved an on-screen break on 40 and a settled line's on 7, `auto` on none. A SOURCE
-// guard, because the fact is that no stylesheet carries the declaration. `balance`
-// stays legal (static headings, no streaming exposure).
+// The app asks for NO `text-wrap: pretty`: it revises breaks in lines already on screen as text
+// streams in, while `auto` only appends after a chosen break. A SOURCE guard, since a rendered
+// check covers only what a test page mounts. `balance` on static headings stays legal.
 
 import { describe, it, expect } from "vitest";
 import { allRules, loadCSS } from "./__test-helpers__/css-rules.js";
@@ -34,19 +30,8 @@ describe("text-wrap policy", () => {
   });
 
   it("needs no carve-out on form controls, because nothing sets the style", () => {
-    // The reset used to spend `text-wrap: wrap` on `:where(input, textarea,
-    // select)` purely to undo the body rule — Safari 26 re-runs whole-paragraph
-    // optimization on every keystroke, so a draft visibly re-wrapped while
-    // typing. With the body rule gone there is nothing to undo, and a reset that
-    // resets a default is the line that rots.
-    //
-    // A SWEEP over every form-control selector rather than a lookup of one rule.
-    // It used to key on `:where(input, textarea, select)` and assert that rule
-    // existed, which tied this guard to whatever ELSE that rule happened to
-    // carry: the anchor was a `caret-color` declaration with nothing to do with
-    // text-wrap, so deleting that unrelated line took the guard's subject with
-    // it. Sweeping also covers a carve-out re-added under a different selector or
-    // in a different sheet, which the lookup could not see.
+    // No form-control carve-out either (Safari 26 re-wraps whole paragraphs per keystroke): swept over
+    // every form-control selector in every sheet, so the guard is tied to no single rule.
     const offenders: string[] = [];
     for (const name of ownSheets()) {
       for (const rule of allRules(loadCSS(name))) {
@@ -62,12 +47,7 @@ describe("text-wrap policy", () => {
   });
 
   it("leaves `balance` alone", () => {
-    // Not a blanket blessing: these are the declarations that existed, all on
-    // short static text. A new one wants its own reasoning, not this test's.
-    //
-    // Was three. `.page-title` was the fourth-to-last and went with the title bar:
-    // every view's heading is the bar's `<h1>` now, which is a single nowrap line
-    // that ellipsizes, so it has nothing to balance.
+    // Not a blanket blessing: these existed, all on short static text. A new one needs its own reason.
     const found: string[] = [];
     for (const name of ownSheets()) {
       for (const rule of allRules(loadCSS(name))) {

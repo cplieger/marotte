@@ -11,12 +11,14 @@ import {
   invalidateRun,
   invalidateRunControls,
   noteRunChat,
+  noteRunLabel,
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
   openRunEntry,
   openRunTurn,
   runChatID,
+  runLabelOf,
   sealRunEntry,
 } from "../run-store.js";
 import { submitPrompt } from "../submit.js";
@@ -32,33 +34,27 @@ import { answerRunInput, continueRunStep } from "../actions/runs.js";
 import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
 import { runTarget } from "../push-subject.js";
 
-// ---------------------------------------------------------------------------
-// The signal half: an ephemeral toast at each end of a run.
-//
-// A START is only worth announcing for a SCHEDULED run: a manual launch
-// already has the user's attention and an agent-launched one grows a card
-// in the transcript. A COMPLETION is worth announcing for any run, since
-// nothing else tells anyone. `scheduled` has to come from the server — a
-// parentless run's frames are workspace-global and a manual launch is
-// parentless too, so nothing observable here separates the two.
-// ---------------------------------------------------------------------------
+// Toasts at each end of a run. A START only for a SCHEDULED run (manual and agent launches already
+// have attention); a COMPLETION for any run. `scheduled` must come from the server: a manual launch
+// is parentless too.
 
 /** Runs whose start has already been announced. `run_start` re-fires on
  *  every resume, so without this a scheduled run produces duplicate
  *  toasts. Cleared when the run reports finished. */
 const announcedStarts = new Set<string>();
 
-/** How a run's own name reads in a toast, or a generic label. */
-function runLabel(name: string | undefined): string {
-  return name === undefined || name === "" ? "Workflow run" : name;
+function runLabel(workflowID: string, name: string | undefined): string {
+  const label = runLabelOf(workflowID);
+  if (label !== "") {
+    return label;
+  }
+  return name !== undefined && name !== "" ? name : "Workflow run";
 }
 
-/** The completion signal. Level follows the outcome, not the event: failed
- *  and aborted are failures, cancelled is what the user asked for, and
- *  `paused` gets no toast (KAS reports an onMaxIterations stop through this
- *  same frame; the run is still resumable). */
-function toastCompletion(status: string, name: string | undefined): void {
-  const label = runLabel(name);
+/** The completion toast; level follows the outcome (failed/aborted fail, cancelled was asked for).
+ *  `paused` gets none: an onMaxIterations stop reports here and stays resumable. */
+function toastCompletion(status: string, workflowID: string, name: string | undefined): void {
+  const label = runLabel(workflowID, name);
   switch (status) {
     case "completed":
       success(`${label} finished`);
@@ -84,6 +80,7 @@ function toastCompletion(status: string, name: string | undefined): void {
 onSSE("run_started", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
+  noteRunLabel(p.workflow_id, p.name);
   // A start frame is proof of execution: it fires on the launch and again on every
   // resume, so it is exactly the moment frames begin arriving into this chat.
   noteRunLive(p.workflow_id, chatID, true);
@@ -91,7 +88,7 @@ onSSE("run_started", (chatID, p) => {
   emitBus(BUS_RUNS_CHANGED);
   if (p.scheduled === true && !announcedStarts.has(p.workflow_id)) {
     announcedStarts.add(p.workflow_id);
-    info(`Scheduled run started: ${runLabel(p.name)}`);
+    info(`Scheduled run started: ${runLabel(p.workflow_id, p.name)}`);
   }
 });
 
@@ -99,6 +96,7 @@ onSSE("run_finished", (chatID, p) => {
   trackRun(p.workflow_id);
   // Recorded even here: a later re-open nests under the launching chat.
   noteRunChat(p.workflow_id, chatID);
+  noteRunLabel(p.workflow_id, p.name);
   // `paused` stays live: stopped waiting for something, not over. Anything
   // else is an ending.
   if (p.status === "paused") {
@@ -111,24 +109,10 @@ onSSE("run_finished", (chatID, p) => {
     // A run that is over cannot still be waiting on a person. Which asks that
     // reaches, and why each kind needs it, is `dropRunAsks`' own doc.
     dropRunAsks(p.workflow_id);
-    // And the ORPHANS that sweep cannot name: a step's request-shaped ask whose
-    // `run_id` arrived EMPTY (the step-session registry had not seen its
-    // sub-session). Every run-scoped remover keys on `runID`, so such an ask is
-    // reachable only by the turn-scoped sweep — and its one other trigger,
-    // `turn_closed` on this chat, never fires for a step-driven turn, because the
-    // attribution gate drops that turn's `turn_end`.
-    //
-    // A run's terminal frame is the turn-boundary-equivalent moment for it: the
-    // launching turn ended when the run was created, so anything still queued here
-    // with no `runID` is moot. Both gates are load-bearing. Without the first, a
-    // user who prompted this chat while the run was going has that turn's own
-    // permission ask swept, stranding a live JSON-RPC request. Without the second,
-    // a SIBLING run's orphan — also `runID: ""`, and indistinguishable from this
-    // run's — is swept while that run is still executing; `noteRunSettled` ran two
-    // lines above, so the predicate answers about siblings only.
-    //
-    // An empty envelope chat id is a parentless run, whose asks `dropRunAsks`
-    // already reached through the `run:<id>` key. There is no chat to sweep.
+    // The ORPHANS: a step's ask with an EMPTY `run_id` is reachable only by the turn-scoped sweep,
+    // whose `turn_closed` trigger never fires for a step-driven turn. Gate 1 spares the turn of a user
+    // who prompted meanwhile (a live JSON-RPC request); gate 2 spares a still-running sibling run's
+    // orphan. An empty chat id is a parentless run, already reached through `run:<id>`.
     if (chatID !== "" && !isThinking(chatID) && !hasLiveRunForChat(chatID)) {
       dropTurnDecisions(chatID);
     }
@@ -142,14 +126,11 @@ onSSE("run_finished", (chatID, p) => {
   invalidateRunControls(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);
-  toastCompletion(p.status, p.name);
+  toastCompletion(p.status, p.workflow_id, p.name);
 });
 
-// --- The run's LOG: the six entry events, scoped to a run ---
-//
-// Each is one call into a run-store operation behind the workflow-id guard, the mirror
-// of `handlers/entries.ts`'s own, so two subscribers over one registration partition
-// every frame between them.
+// The run's LOG: each event into a run-store operation behind the workflow-id guard, mirroring
+// `handlers/entries.ts`.
 
 onSSE("turn_opened", (_chatID, p) => {
   const runID = forRun(p);
@@ -199,19 +180,10 @@ function forRun(p: { workflow_id?: string }): string {
   return p.workflow_id ?? "";
 }
 
-/** Ask the agent that launched this run to answer its open question.
- *
- *  Through `submit.ts`, which is the single owner of what Send means and already
- *  decides prompt-vs-steer from whether a turn is running, so there is no second
- *  send path and no `transport.send` here. It THROWS on a refusal, which is what
- *  re-enables the card's button; no toast, because submit.ts already surfaces a
- *  refusal through send-state.
- *
- *  The text names the RUN and embeds neither the question (the thing the reader did
- *  not want to read) nor the ask id (opaque, and measured at 2,053 bytes). It DOES
- *  name the answer body's two fields, because they are unguessable: `text` rather
- *  than the `answer` an agent reaches for first, and a wrong guess spends a 400 on
- *  a hand-off the reader is waiting on. */
+/** Ask the launching agent to answer the run's open question, through `submit.ts` (the owner of
+ *  what Send means). THROWS on refusal, re-enabling the card's button; submit.ts surfaces it. Names
+ *  the RUN and the answer body's two unguessable fields; embeds neither the question nor the
+ *  (opaque, large) ask id. */
 async function deferToParentAgent(chatID: string, workflowID: string): Promise<void> {
   const text =
     `Please answer the open question on workflow run ${workflowID}.\n` +
@@ -222,37 +194,20 @@ async function deferToParentAgent(chatID: string, workflowID: string): Promise<v
   }
 }
 
-// A workflow STEP asked a person a question and its run is parked until somebody
-// answers. The one run event that reaches the interaction dock, and the reason it
-// carries a payload rather than an invalidation: KAS parks the run with a fixed
-// pauseReason literal and an empty pauseDetail, so refetching `inspect` says a
-// step wants input and never says what it asked.
-//
-// The chat id comes off the ENVELOPE, exactly as the three request-shaped asks
-// take theirs: the launching chat for an agent-parented run, `run:<workflowId>`
-// for a parentless one. That is what puts the card in the parent tab's composer
-// dock and in the run tab's at once, since one Decision matches both hosts.
-//
-// `notifyIfHidden` like the other three, and with the strongest case of the four:
-// this ask blocks a run indefinitely and the run may have no surface anyone is
-// looking at.
+// A workflow STEP asked a person and its run is parked; a payload, not an invalidation, because
+// KAS's pause reason says nothing of the question. The ENVELOPE's chat id puts one Decision in the
+// parent tab's dock and the run tab's. `notifyIfHidden`: it blocks the run indefinitely.
 onSSE("run_input_needed", (chatID, p) => {
   trackRun(p.workflow_id);
-  // The launching chat, like run_started and run_progress record it. It matters most
-  // on the connect replay: after a reload the replayed ask can be the FIRST frame
-  // this client sees for a run, and without it the run card's footer link opens the
-  // tab top-level instead of beside the conversation that launched it. A parentless
-  // run's ask arrives keyed to the synthetic `run:<workflowId>`, which noteRunChat
-  // refuses — that is not a chat id.
+  // After a reload the replayed ask can be the FIRST frame for a run; without the chat the footer
+  // link opens the tab top-level. noteRunChat refuses the synthetic `run:<workflowId>`.
   noteRunChat(p.workflow_id, chatID);
   // The chat-parented discriminator, and it needs no wire field: noteRunChat refuses
   // both "" and the synthetic `run:` prefix, so a non-empty answer here means this
   // run was launched from a conversation AND names it.
   const parentChat = runChatID(p.workflow_id);
-  // Live but PARKED: a run waiting on a person writes nothing, so `executing` is
-  // false and the chat row's mark withholds rather than claiming work is moving.
-  // `parentChat` because that getter has already refused both spellings of "no
-  // launching chat".
+  // Live but PARKED: `executing` false, so the row's mark withholds. `parentChat` already refused
+  // both spellings of "no launching chat".
   noteRunLive(p.workflow_id, parentChat, false);
   notifyIfHidden(
     NOTIFY_TITLE,
@@ -270,10 +225,8 @@ onSSE("run_input_needed", (chatID, p) => {
     ...(parentChat === "" ? {} : { defer: () => deferToParentAgent(parentChat, p.workflow_id) }),
     submit: (text) => {
       if (text === null) {
-        // Continue without answering. Addressed by NODE rather than by ask, because
-        // that is what the step-status verb takes — which is also why the card does
-        // not offer the button at all for an ask carrying no node id (the verb refuses
-        // 400 without one). The server settles the ask when the status write lands.
+        // By NODE, which the step-status verb takes (it 400s without one, so the card hides the button).
+        // The server settles the ask when the status write lands.
         void continueRunStep.dispatch({ workflowID: p.workflow_id, nodeID: p.node_id });
         return;
       }
@@ -290,25 +243,14 @@ onSSE("run_input_settled", (_chatID, p) => {
   void closeNotificationsFor(runTarget(p.workflow_id));
 });
 
-// The one lifecycle frame that carries CONTENT rather than a nudge: what
-// happened to one node of the run, addressed by its path. It is applied to
-// the cached tree, and the refetch runs only when it cannot be —
-// `loop_iteration` and `steps_queued` change the tree's shape, `paused` is
-// run-level, and a run this client holds no state for has nothing to patch.
-//
-// That is what a burst of node events used to cost: one `GET /api/runs/{id}`
-// per frame, each a JSON-RPC round trip to KAS for the whole state tree, up
-// to five runs concurrently.
+// The one lifecycle frame carrying CONTENT: applied to the cached tree, refetching only when it
+// cannot be (`loop_iteration` and `steps_queued` reshape the tree, `paused` is run-level, or no
+// state is held). A refetch per node event is a KAS round trip for the whole tree.
 onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
-  // A progress frame is proof of life: a client that missed run_started
-  // re-learns the run here. Whether it is proof of EXECUTION is the kind's to
-  // say — the run-level `paused` folds into this event, so treating every
-  // progress frame as executing would let a parked run keep its chat's window
-  // resident on the strength of the frame that parked it. A node-level pause
-  // (`node_paused`) is a step waiting inside a run that is still going, so it
-  // deliberately reads as executing.
+  // Proof of life; proof of EXECUTION unless run-level `paused`. A node-level `node_paused` is a step
+  // waiting inside a running run, so it reads as executing.
   noteRunLive(p.workflow_id, chatID, p.kind !== "paused");
   if (!applyRunProgress(p)) {
     invalidateRun(p.workflow_id);

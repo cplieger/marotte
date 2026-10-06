@@ -1,12 +1,5 @@
-// What `git stash push` can actually take, which is not what the tree holds.
-//
-// The Stash button used to render unconditionally — the only control in the git
-// action bar with no state gate, against a documented convention in the same
-// function that an action the repo state cannot service does not render at all.
-// The gate needs the exact count, not `files.length`: the server runs
-// `stash push` with no `-u`, so an untracked file is not stashed, while the
-// status parse runs `-uall` and reports it. Gating on the wrong one puts the
-// button back on a tree where git answers "No local changes to save".
+// What `git stash push` can take: the server runs it without `-u`, so untracked files are not stashed, while the
+// status parse reports them. Gating Stash on `files.length` would offer it where git answers "No local changes".
 
 import { describe, it, expect } from "vitest";
 import {
@@ -28,14 +21,12 @@ describe("stashableCount", () => {
   });
 
   it("is zero when every change is an untracked file", () => {
-    // The case `files.length` gets wrong. Both entries are real changes on disk
-    // and neither is going into a stash.
+    // Both are real changes on disk and neither goes into a stash.
     expect(stashableCount([entry("?"), entry("?")])).toBe(0);
   });
 
   it("counts tracked changes on both sides of the index", () => {
-    // A path modified in the index AND in the worktree arrives as two entries
-    // (parse.go appendStatusEntries), and stash takes both.
+    // A path modified in both the index and the worktree arrives as two entries, and stash takes both.
     expect(stashableCount([entry("M", true), entry("M", false)])).toBe(2);
   });
 
@@ -49,11 +40,7 @@ describe("stashableCount", () => {
   });
 });
 
-// --- The status vocabulary ------------------------------------------------
-//
-// This table mirrors the server's (internal/git/parse.go statusLabels), and it
-// was missing two of git's letters. Both are the letters whose meaning is least
-// guessable from the character, which is exactly when a reader needs the word.
+// Mirrors the server's table (internal/git/parse.go statusLabels), including the least guessable letters.
 
 describe("describeStatus", () => {
   it("names every letter git status --porcelain=v1 can emit", () => {
@@ -77,7 +64,7 @@ describe("describeStatus", () => {
   });
 
   it("names a typechange, which used to come back as the bare letter", () => {
-    // ` T`/`T ` is what git reports for a regular file swapped with a symlink.
+    // ` T`/`T ` is a regular file swapped with a symlink.
     expect(describeStatus("T")).not.toBe("T");
   });
 
@@ -86,13 +73,7 @@ describe("describeStatus", () => {
   });
 });
 
-// --- Counting files rather than index sides -------------------------------
-//
-// One path yields TWO entries when it is staged and then edited again
-// (parse.go appendStatusEntries), so an entry count and a file count differ on
-// exactly that input. A count a person reads has to be the second: the old
-// repo-level "Discard all (N)" used the first and offered to discard "2
-// uncommitted changes" for one file.
+// A path staged and edited again yields two entries; a count a person reads is per file.
 
 describe("changedPathCount", () => {
   it("is zero on a clean tree", () => {

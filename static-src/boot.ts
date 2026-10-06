@@ -1,15 +1,7 @@
-// ---------------------------------------------------------------------------
-// The boot: five reads in the FIRST FRAME, each answer adopted in its own region as
-// it lands. Nothing waits on the identity verdict, not even an empty workspace.
-//
-// TWO ORDERINGS ARE REAL. The tab set follows the chat fold, because a chat tab's
-// row is named from the chat store (tab-materialize.ts `chatName`); retention
-// precedes it, because closing a tab has to know whether the record is kept.
-//
-// `applyRoute` is INJECTED so it can be OBSERVED: boot.test.ts drives boot with a fake
-// one, and importing the real route-apply.ts would put its whole graph (chat, files,
-// editor, deep-link) into every boot test.
-// ---------------------------------------------------------------------------
+// The boot: five reads in the FIRST FRAME, each adopted in its own region as it lands;
+// nothing waits on the identity verdict. Two orderings are real: the tab set follows the
+// chat fold (a chat tab is named from the chat store), and retention precedes it.
+// `applyRoute` is injected so boot.test.ts can observe it without route-apply's graph.
 
 import { subscribeByName } from "./actions/index.js";
 import { logout } from "./actions/settings.js";
@@ -44,6 +36,7 @@ import {
 } from "./settings.js";
 import type { EffectiveSettings } from "./persist.js";
 import { restoreLastEffort, restoreLastModel } from "./session-context.js";
+import { adoptLinkGuard } from "./link-guard.js";
 import { resolveIdentity } from "./identity.js";
 import type { IdentityVerdict } from "./identity.js";
 import { fetchCatalog } from "./session-catalog.js";
@@ -80,9 +73,10 @@ import { error as toastError } from "./toast.js";
 
 /** What the boot chain needs from the composition root. */
 export interface BootDeps {
-  /** Navigate to a route. Owned by `app.ts`, which is the only place that can
-   *  reach every view a route can name. RESOLVES when the view is open, which is
-   *  what the router's location claim is held across. */
+  /**
+   * Navigate to a route (owned by `app.ts`). RESOLVES when the view is open; the router's
+   * location claim is held across it.
+   */
   applyRoute: (route: Route, origin?: RouteOrigin) => Promise<void>;
 }
 
@@ -91,9 +85,8 @@ let deps: BootDeps | null = null;
 export async function startBoot(d: BootDeps): Promise<void> {
   deps = d;
 
-  // Claim the location the DOCUMENT loaded at, before anything can push: it is the one
-  // thing here that knows what the reader asked for, and it stands until the route has
-  // been applied. Released in the workspace region's `finally` below.
+  // Claim the location the DOCUMENT loaded at before anything can push, until the route is
+  // applied (released in the workspace region's `finally`).
   claimLocation(location.pathname + location.hash);
 
   try {
@@ -102,9 +95,7 @@ export async function startBoot(d: BootDeps): Promise<void> {
     noteBootAlive();
     const reduced = bootMode() === "reduced";
     if (reduced) {
-      // `autofocus` has already fired by the time a deferred module runs, so a blur is
-      // the only lever left. The point is the on-screen KEYBOARD, which shortens the
-      // viewport, not the zoom, which the composer's own 16px floor closes.
+      // `autofocus` already fired, so blur: the on-screen keyboard would shorten the viewport.
       $.promptInput.blur();
       announceReloadLoop();
     }
@@ -139,18 +130,17 @@ export async function startBoot(d: BootDeps): Promise<void> {
   }
 }
 
-/** The settings answer: theme, the model and effort seeds, the workspace prefs.
- *
- *  Null means the fetch FAILED, which is not "the settings are the defaults", so
- *  nothing is restored and boot continues: the theme keeps the pre-paint cache and
- *  the seeds stay unset. Inventing a value here would persist it on the next
- *  write. */
+/**
+ * The settings answer: theme, model and effort seeds, workspace prefs. Null means the
+ * fetch FAILED, so nothing is restored: an invented value would persist on the next write.
+ */
 function adoptSettings(settings: EffectiveSettings | null): void {
   if (settings === null) {
     return;
   }
   restoreLastModel(settings.last_model);
   restoreLastEffort(settings.last_effort_by_model);
+  adoptLinkGuard(settings);
   // Where the server's choice replaces the pre-paint cache, and where that cache
   // is carried across if the server has none.
   adoptThemeFromSettings(settings);
@@ -164,10 +154,10 @@ function adoptSettings(settings: EffectiveSettings | null): void {
   suppressPush(false);
 }
 
-/** This device's shell panel. No settings answer gates it, because it is per-device
- *  state; the identity verdict does, because a restore opens the terminal's socket
- *  and the login screen makes no calls. So a signed-out boot, which forgets this
- *  device's records, shuts the pre-painted panel at once. */
+/**
+ * This device's shell panel, gated on the identity verdict (a restore opens the terminal's
+ * socket), not on settings. A signed-out boot shuts the pre-painted panel at once.
+ */
 function adoptShell(v: IdentityVerdict): void {
   try {
     if (v.state === "signed_out") {
@@ -181,14 +171,11 @@ function adoptShell(v: IdentityVerdict): void {
   }
 }
 
-/** The identity answer: one sidebar row, the post-auth fan-out, and the two things
- *  that genuinely need a verdict.
- *
- *  `signed_out` raises the login modal over an already-painted shell and holds the
- *  post-auth fetches back, so the login screen makes no API calls. `unavailable`
- *  means marotte could not ASK, so it comes up working with a re-read offered.
- *  `workspace` is awaited because "is there anything to show" needs the chats, the
- *  tab set and any share to have landed; that region has painted by then. */
+/**
+ * The identity answer: one sidebar row, the post-auth fan-out, and what needs a verdict.
+ * `signed_out` raises the login modal and holds the post-auth fetches; `unavailable` comes
+ * up working with a re-read offered. `workspace` is awaited for "anything to show".
+ */
 async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): Promise<void> {
   renderIdentity(v);
   if (v.state === "signed_out") {
@@ -217,30 +204,22 @@ async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): P
     toastError("Could not load your chats.", { label: "Reload", onClick: reload });
   }
   if (getSessions().length === 0) {
-    // The chat STORE is the test rather than `chatsOK`: a failed fetch over a
-    // painted snapshot has rows on screen already, and a share has already created
-    // its chat inside the region.
+    // The chat STORE, not `chatsOK`: a painted snapshot or a share may already have rows.
     await createSession();
   }
 }
 
-/** The local snapshot, then the chats answer, then the tab set, then the route.
- *  Resolves whether the chat list was READ, which is the identity region's cue.
- *
- *  One region because these are genuinely ordered (see the header): the store
- *  names the strip's rows, and the strip is what the URL is resolved against. */
+/**
+ * The local snapshot, the chats answer, the tab set, then the route, resolving whether the
+ * chat list was READ. One region because these are ordered (see the header).
+ */
 async function restoreWorkspace(
   chatsRead: Promise<boolean>,
   retentionRead: Promise<void>,
   snapshotRead: Promise<BootSnapshot | null>,
 ): Promise<boolean> {
-  // RACED against the chat list because the paint REPLACES the chat store, so it may
-  // only run BEFORE the answer that supersedes it. Store emptiness is not the test:
-  // an empty list is an ANSWER, and painting over one resurrects every deleted chat.
-  //
-  // Only a read that SUCCEEDED is an answer: `loadList` resolves false on a network
-  // failure without retrying, so it frequently settles first, and counting that as
-  // an answer discards the hint on the one resume it exists for.
+  // RACED against the chat list: the paint REPLACES the chat store, so it may only precede
+  // the answer. An empty list IS an answer; only a read that SUCCEEDED counts as one.
   const hint = await Promise.race([
     snapshotRead,
     chatsRead.then(
@@ -249,9 +228,7 @@ async function restoreWorkspace(
     ),
   ]);
 
-  // BEST-EFFORT: the restore below is authoritative, so a throw leaves `resumed` false
-  // and a half-painted resume falls through to the tab set's own activation. A REDUCED
-  // boot skips the paint outright, so its first frame draws no transcript.
+  // Best-effort: the restore below is authoritative. A REDUCED boot skips the paint.
   let resumed = false;
   try {
     resumed = bootMode() === "full" && resumeSnapshot(hint);
@@ -265,16 +242,13 @@ async function restoreWorkspace(
   // The rule both of these follow is at `bootChatsRead`.
   bootChatsRead = chatsOK;
   recoverFailedBootRead();
-  // Release the frames held since the connection opened: they need a chat ROW and
-  // nothing more, so waiting for the tabs would delay the busy dot for no gain.
-  // Idempotent. See sse-adapter.ts holdUntilHydrated.
+  // Release the held frames: they need only a chat ROW (see sse-adapter.ts
+  // holdUntilHydrated). Idempotent.
   sse.markHydrated();
 
   try {
-    // Runs on every path: a chat list and a tab set are different collections, and only
-    // the first can be empty here without the second being meaningless. BOTH awaits sit
-    // OUTSIDE the suppression window below, because a window spanning an await silences
-    // every push the shell makes; the deep link is the location claim's to protect.
+    // Both awaits sit OUTSIDE the suppression window below: a window spanning an await
+    // silences every shell push.
     try {
       await retentionRead;
     } catch {
@@ -299,9 +273,7 @@ async function restoreWorkspace(
     clearTabStripSkeleton();
   }
 
-  // OUTSIDE the window: both WRITE the URL and a suppressed write is a no-op —
-  // `applyInitialRoute`'s `replaceRoute` is what makes the address bar agree with
-  // the screen, and a `?agent=planner` launch needs the chat the share created.
+  // OUTSIDE the window: both WRITE the URL, and `?agent=planner` needs the share's chat.
   await applyShareTarget();
   // AWAITED: the claim is released when this region settles, and an arm that opens its
   // view through a dynamic import has not opened it yet when the call returns.
@@ -309,14 +281,12 @@ async function restoreWorkspace(
   return chatsOK;
 }
 
-/** Paint the snapshot AND run the activation it enables, in ONE window with every
- *  push suppressed. Reports whether the resume COMPLETED.
- *
- *  The activation is what needs it: `activateRestoredTab` ends in `pushRoute` (tabs.ts
- *  `activateTab`), which here would add a history entry Back walks into and rewrite
- *  `location.pathname` before `applyInitialRoute` parses it, losing a launch at
- *  /chat/{id} to whatever tab the snapshot was last on. Its OWN window rather than the
- *  boot's widened, which would swallow a real click from the painted shell. */
+/**
+ * Paint the snapshot AND run its activation in ONE window with pushes suppressed; reports
+ * whether the resume COMPLETED. `activateRestoredTab` ends in `pushRoute`, which would
+ * add a history entry and rewrite `location.pathname` before `applyInitialRoute` reads
+ * it. Its own window, so a real click from the painted shell is not swallowed.
+ */
 function resumeSnapshot(snap: BootSnapshot | null): boolean {
   suppressPush(true);
   try {
@@ -337,10 +307,10 @@ function reload(): void {
   location.reload();
 }
 
-/** Say what the reader saw and what it cost them. Not dismissible: it explains why the
- *  screen is thinner than usual, and its link is the only control that clears the count.
- *  No DURATION claim, because the count is a sliding run with no ceiling and a sustained
- *  loop reaches numbers no span of seconds could hold. */
+/**
+ * Say what the reader saw and what it cost. Not dismissible; its link is the only control
+ * that clears the count. No duration claim: the count is an unbounded sliding run.
+ */
 function announceReloadLoop(): void {
   const n = reloadCount();
   showBanner(
@@ -359,10 +329,7 @@ function announceReloadLoop(): void {
   );
 }
 
-/** Drop the tab strip's authored placeholder (index.html #tab-strip-skeleton).
- *
- *  Removed by id rather than by clearing the container: `tabs.ts` owns the rows
- *  and reconciles them by `data-tab-id`, so the two never contend. Idempotent. */
+/** Drop the tab strip's authored placeholder by id; `tabs.ts` owns the rows. Idempotent. */
 function clearTabStripSkeleton(): void {
   document.getElementById("tab-strip-skeleton")?.remove();
 }
@@ -384,9 +351,8 @@ export function initPostAuth(): void {
   initPostAuthUI();
   // Degraded-runtime banner; re-checks on every gap so recovery self-heals.
   initRuntimeHealth();
-  // The FETCH-ONLY fan-outs a reduced boot withholds: three calls across two concerns,
-  // each fire-and-forget with a usable empty state, so the app still reads a chat. The
-  // two above are KEPT: one gates capability, the other reports a degraded runtime.
+  // The FETCH-ONLY fan-outs a reduced boot withholds, each with a usable empty state; the two
+  // above stay (capability, degraded runtime).
   if (bootMode() === "full") {
     // The marotte + kiro-cli build pair. Fire-and-forget: the lines repaint through a
     // signal, so nothing waits on the `--version` subprocess behind it.
@@ -395,13 +361,8 @@ export function initPostAuth(): void {
     // So the pickers have content before the first chat's session/new lands.
     void fetchCatalog();
   }
-  // Registered here because store.ts is a leaf and may not import run-store.ts or
-  // tabs.ts. Registrations rather than reads, so a reduced boot keeps them.
-  //
-  // The range read of the entry log is the same shape one direction further out: the store
-  // DETECTS a `seq` hole and never fetches, `store-load.ts` owns every read, so the repair
-  // is injected rather than imported — which is also what keeps the loader's one-way edge
-  // onto the store.
+  // Registered here because store.ts is a leaf. The store DETECTS a `seq` hole and
+  // `store-load.ts` owns every read, so the repair is injected.
   registerTurnRepair(requestTurnRange);
   // The revert's own half of that inversion: the handler drops turns, and the reads
   // already out for one of them are this module's to cancel.
@@ -409,19 +370,14 @@ export function initPostAuth(): void {
   // The run log's twin: `run-store.ts` detects the `seq` hole and `run-turn-range.ts`
   // owns the read, so the repair is injected here rather than imported.
   registerRunTurnRepair(requestRunTurnRange);
-  // Both run-shaped exemptions are gone: a step's entries are the RUN's, so no
-  // surface pins a chat's window on a run's account. The delegate page's stays,
-  // because a delegate's entries really are in the chat's log.
+  // A step's entries are the RUN's, so only the delegate page pins a chat's window.
   registerEvictionExemption(subagentTabProjectsChat);
-  // The same shape over the RUN store's cache: who still needs a run's state cell,
-  // so `forgetRun` needs no enumeration of its readers at the call site. The run TAB
-  // renders that state; the chat-row fold reads it for every live run of an open chat.
+  // Who still needs a run's state cell, so `forgetRun` needs no enumeration of its readers.
   registerRunStateDemand((id) => hasTab("run", id));
   registerRunStateDemand(chatTabFoldsRun);
   startEvictionSweep();
-  // The logout button leaves the page running, so without this the debounce keeps
-  // writing a signed-out user's workspace to disk. Watches the ACTION so every
-  // logout door is covered, by `logout.name` so a rename cannot unwire it.
+  // Logout leaves the page running, so stop the debounce writing the workspace; keyed on
+  // `logout.name` so every door and a rename are covered.
   subscribeByName(logout.name, (inst) => {
     if (inst.status === "success") {
       forgetDeviceState();
@@ -429,12 +385,10 @@ export function initPostAuth(): void {
   });
 }
 
-/** Forget everything this SCREEN remembers about the workspace it was signed in to.
- *
- *  Both sign-out doors reach it: the boot's `signed_out` verdict and a successful
- *  `logout`. It does NOT un-paint the current frame; what it buys is that the next
- *  boot, and any login in this page, start from nothing. Each callee owns why it is
- *  needed. */
+/**
+ * Forget everything this SCREEN remembers about the signed-in workspace, from both sign-out
+ * doors. The current frame stays; the next boot or login starts from nothing.
+ */
 function forgetDeviceState(): void {
   void clearBootSnapshot();
   clearDeviceKeys();
@@ -447,9 +401,7 @@ async function applyInitialRoute(): Promise<void> {
     await deps?.applyRoute(route, navigationOrigin());
     return;
   }
-  // Default "/": canonicalize the URL to what is visible. An active chat wins,
-  // whether or not it has messages yet; otherwise a restored non-chat tab, whose
-  // own boot-time push was suppressed.
+  // Canonicalize "/" to what is visible: the active chat, else a restored non-chat tab.
   const active = getActive();
   if (getActiveId() !== "" && active !== undefined) {
     replaceRoute({ kind: "chat", id: getActiveId() });
@@ -461,32 +413,25 @@ async function applyInitialRoute(): Promise<void> {
   }
 }
 
-/** Whether the boot's own chat-list read has SETTLED, and whether it ANSWERED.
- *  `undefined` while it is still out.
- *
- *  Both halves are consumed. `onTransportStatus` reads the settled half: the
- *  connection the boot rides lands while the read is in flight and is covered by
- *  it. `recoverFailedBootRead` reads the answer. */
+/**
+ * Whether the boot's own chat-list read has SETTLED and whether it ANSWERED; `undefined`
+ * while out. `onTransportStatus` reads the first half, `recoverFailedBootRead` the second.
+ */
 let bootChatsRead: boolean | undefined;
 
-/** The same latch for the TAB set, and only the ANSWER half is consumed: a
- *  connection is not on its own a reason to re-list, because the tab set is a digest
- *  subject the wake digest names when it moved and a whole reconcile re-lists
- *  (app.ts wires `transport:reconcile` to `listTabs`). The one hole that leaves is a
- *  BOOT read that never landed: the boot connection's first hello holds nothing to
- *  digest and clears nothing, so it runs no reconcile. */
+/**
+ * The same latch for the TAB set, ANSWER half only: digests and reconciles re-list it,
+ * except for a boot read that never landed.
+ */
 let bootTabsRead: boolean | undefined;
 
 /** Whether the EventSource is open, as last reported. */
 let streamUp = false;
 
-/** Fetch the chat list when the boot's own read FAILED under a stream that is
- *  already up.
- *
- *  Nothing else covers that case: the connection which would have carried the
- *  fetch was skipped while the read was in flight, and a stream that never dropped
- *  delivers no later `connected` — so the store kept whatever the snapshot painted
- *  until the user took the toast's Reload. */
+/**
+ * Fetch the chat list when the boot's read FAILED under an already-up stream, which no
+ * later `connected` will cover.
+ */
 function recoverFailedBootRead(): void {
   if (bootChatsRead === false && streamUp) {
     void loadList();
@@ -500,11 +445,10 @@ function recoverFailedBootTabs(): void {
   }
 }
 
-/** Read the tab set, record the answer, and say so when it did not answer.
- *
- *  The notice re-enters HERE rather than reloading: a reload restarts the whole boot,
- *  and the GET is the only thing that failed. Its button dismisses the toast, so a
- *  retry that fails again has to raise it again. */
+/**
+ * Read the tab set, record the answer, and say so when it did not answer. The notice
+ * retries HERE (only the GET failed); a repeat failure raises it again.
+ */
 async function readTabSet(): Promise<void> {
   bootTabsRead = await listTabs();
   if (!bootTabsRead) {
@@ -517,15 +461,12 @@ async function readTabSet(): Promise<void> {
   }
 }
 
-/** The stream's status callback: paint the indicator, and load the chat list on
- *  every connection the boot's own read does not already cover.
- *
- *  `app.ts` opens the stream before the boot, so a cold boot's first `connected` lands
- *  while that read is in flight — fetching there is what made every cold boot read the
- *  whole list twice. Once it has settled EVERY connection fetches: an offline boot that
- *  reaches the server minutes later has no list and no held version to digest, so
- *  nothing else would ever load it. On an ordinary reconnect this read is redundant
- *  with the digest's `chats` answer and cheap. */
+/**
+ * The stream's status callback: paint the indicator and load the chat list on every
+ * connection the boot's read does not cover. The first `connected` lands mid-read and is
+ * covered; once settled EVERY connection fetches, since an offline boot has nothing to
+ * digest.
+ */
 export function onTransportStatus(status: ConnectionStatus): void {
   setStatus(status);
   streamUp = status === "connected";

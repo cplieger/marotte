@@ -1,10 +1,4 @@
-// Tests for the one action that reads /api/forges.
-//
-// It was `git-badge.forges` in `actions/git-badge.ts`, named for the only
-// consumer that polled it. Three modules fetched the endpoint by then, so the
-// name claimed an ownership that was not real; forge-store.ts owns the poll now
-// and every consumer reads through it. What is tested here is the request, the
-// decode and the dedupe. The store's own behaviour is forge-store.test.ts.
+// The request, decode and dedupe of the one /api/forges action; the store is forge-store.test.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -18,9 +12,7 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
-  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
-  // modules reached through it import `apiGet`. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: vi.fn(),
 }));
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
@@ -69,8 +61,7 @@ describe("listForges", () => {
     expect(result?.oauth).toEqual({ github: true });
     const urls = mockFetch.mock.calls.map((c) => c[0]);
     expect(urls).toContain("/api/forges");
-    // Git status is the other shared store's endpoint. A second fetch here is
-    // the duplication these two stores exist to remove.
+    // Git status belongs to the other shared store; fetching it here is the duplication they remove.
     expect(urls).not.toContain("/api/git/status-all");
   });
 
@@ -99,9 +90,7 @@ describe("listForges", () => {
   });
 
   it("resolves null on a malformed payload rather than handing it on", async () => {
-    // The decoder is the store's guard: `forges` missing entirely is what a
-    // route returning an early empty body looks like, and a consumer that read
-    // it as an empty list would render "no connected forges".
+    // A missing `forges` (an early empty body) must not read as "no connected forges".
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ kinds: [] }), { status: 200 }));
     await expect(listForges.dispatch(undefined)).resolves.toBeNull();
   });

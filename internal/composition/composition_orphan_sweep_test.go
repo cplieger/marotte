@@ -1,8 +1,7 @@
 package composition
 
-// The sweep needs the utility bridge, which needs an active kiro-cli, so a boot
-// that finds the pinned version still downloading answers `run list unavailable`.
-// Without a retry that process keeps its stale leases for its whole life.
+// The sweep needs an active kiro-cli, so a boot that finds it still downloading must retry the
+// sweep once the install completes.
 
 import (
 	"context"
@@ -75,7 +74,7 @@ func TestStartOrphanSweep_DoesNotRetryASweepThatReachedKAS(t *testing.T) {
 	t.Parallel()
 	rec := newSweepRecorder(true)
 	installed := make(chan struct{})
-	close(installed) // already active, which is every ordinary boot
+	close(installed)
 
 	t.Cleanup(startOrphanSweep(t.Context(), rec.sweep, installed))
 
@@ -89,7 +88,6 @@ func TestStartOrphanSweep_SweepsImmediatelyRatherThanWaitingForTheInstall(t *tes
 	t.Parallel()
 	rec := newSweepRecorder(true)
 
-	// Never closed: an install still in flight.
 	t.Cleanup(startOrphanSweep(t.Context(), rec.sweep, make(chan struct{})))
 
 	rec.awaitCall(t, "the boot attempt with the install still pending")
@@ -118,7 +116,6 @@ func TestStartOrphanSweep_StopsAtShutdown(t *testing.T) {
 	t.Parallel()
 	rec := newSweepRecorder(false)
 
-	// Never closed: an install that will not finish.
 	stop := startOrphanSweep(t.Context(), rec.sweep, make(chan struct{}))
 	rec.awaitCall(t, "the boot attempt")
 

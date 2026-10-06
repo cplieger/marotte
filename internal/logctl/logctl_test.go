@@ -16,14 +16,8 @@ import (
 // observable signal of Install/SetDebug, so the test lives in-package.
 func snapshotLevel() slog.Level { return levelVar.Level() }
 
-// restoreDefaultLogger snapshots slog.Default at entry and restores it at
-// cleanup so Install's slog.SetDefault side-effect does not leak across
-// tests or into other packages in the same test binary.
-//
-// The log package's writer and flags are restored too: Install's slog.SetDefault
-// also points log at its handler, and the restore skips pointing it back because
-// the snapshotted handler is the stock one (which reaches log.Output), so every
-// later line in the package would land in Install's handler.
+// restoreDefaultLogger snapshots slog.Default and restores it at cleanup, so Install's
+// slog.SetDefault does not leak across tests.
 func restoreDefaultLogger(t *testing.T) {
 	t.Helper()
 	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
@@ -41,19 +35,8 @@ func writeSettings(t *testing.T, dir, content string) {
 	}
 }
 
-// readDebugFlag is a test helper that exercises the same code path as
-// Install: settings.Field[bool] for the "debug_logs" key. Returns
-// (value, ok) matching the settings.Field contract.
-//
-// Takes the testing.TB so the read is parented on the test's context rather
-// than context.Background(). That context is load-bearing rather than
-// decorative: settings.readBytes checks ctx.Err() before touching the cache and
-// returns the error, which Field turns into (zero, false) plus a Warn — so a
-// helper on Background() is the one caller in the package that could not observe
-// a cancelled read. The previous comment here justified Background() with "no
-// *testing.T is in scope", which was true of the signature and false as a
-// reason: testing.TB carries Context() (Go 1.24), and the single caller is
-// inside a subtest holding a *testing.T.
+// readDebugFlag exercises Install's read: settings.Field[bool] for "debug_logs", returning (value,
+// ok).
 func readDebugFlag(tb testing.TB, dir string) (bool, bool) {
 	tb.Helper()
 	return settings.Field[bool](tb.Context(), dir, "debug_logs")
@@ -62,14 +45,14 @@ func readDebugFlag(tb testing.TB, dir string) (bool, bool) {
 func TestReadDebugFlag(t *testing.T) {
 	cases := []struct {
 		name    string
-		setup   func(t *testing.T, dir string) // optional custom setup instead of writeSettings
-		content string                         // written via writeSettings when setup is nil
+		setup   func(t *testing.T, dir string)
+		content string
 		want    bool
 		wantOK  bool
 	}{
 		{
 			name:   "MissingFile_ReturnsFalseNoError",
-			setup:  func(*testing.T, string) {}, // no file written
+			setup:  func(*testing.T, string) {},
 			want:   false,
 			wantOK: false,
 		},
@@ -199,7 +182,7 @@ func TestInstall_WithDebugFalse_SetsInfoLevel(t *testing.T) {
 
 func TestInstall_WithMissingSettings_DefaultsToInfo(t *testing.T) {
 	restoreDefaultLogger(t)
-	dir := t.TempDir() // no config.json written
+	dir := t.TempDir()
 
 	Install(t.Context(), dir)
 
@@ -265,8 +248,6 @@ func TestSetDebug_Off_SwitchesToInfo(t *testing.T) {
 }
 
 func TestSetDebug_TogglesIdempotent(t *testing.T) {
-	// Invariant: calling SetDebug with the same value twice leaves the
-	// level in the same state (no drift from repeated calls).
 	restoreDefaultLogger(t)
 	Install(t.Context(), t.TempDir())
 

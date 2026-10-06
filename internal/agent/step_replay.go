@@ -1,9 +1,7 @@
 package agent
 
-// The step-replay registry: one workflow step's `session/load` replay, keyed by
-// ACP session id because a step has no chat. It touches no chat store — the
-// projection is TAKEN by the reader and dropped, never swapped into a record.
-// The completion condition is the shared `replayDrain` in replay_drain.go.
+// The step-replay registry: one step's `session/load` replay, keyed by ACP session id (a step has no chat). The
+// reader takes and drops the projection; no chat store is touched. Completion is replay_drain.go's.
 
 import (
 	"encoding/json"
@@ -32,13 +30,8 @@ type stepReplay struct {
 	drain replayDrain
 }
 
-// open starts a replay for a session about to be `session/load`ed, and reports
-// whether it is the FIRST reader. A second concurrent reader is refused rather
-// than superseded: superseding would leave the first waiting on a barrier nothing
-// closes.
-//
-// The caller BUILDS the projection, so this registry needs no workspace root of its
-// own and its zero value stays usable.
+// open starts a replay for a session about to load and reports whether it is the first reader. A second is
+// refused: superseding would strand the first on a barrier nothing closes. The caller builds the projection.
 func (sr *stepReplays) open(sessionID string, proj *translate.EntryProjection) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -55,9 +48,8 @@ func (sr *stepReplays) open(sessionID string, proj *translate.EntryProjection) b
 	return true
 }
 
-// ingest folds one frame into the open replay for sessionID, reporting whether a
-// replay consumed it. False is ordinary — no reader — so the forward goroutine
-// consults this before warning about a foreign frame.
+// ingest folds one frame into sessionID's replay, reporting whether one consumed it; false (no reader) is
+// ordinary, checked before a foreign-frame warning.
 func (sr *stepReplays) ingest(sessionID string, kind marotte.ACPUpdateKind, raw json.RawMessage) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -70,10 +62,8 @@ func (sr *stepReplays) ingest(sessionID string, kind marotte.ACPUpdateKind, raw 
 	return true
 }
 
-// markLoadedAt records the read-loop position the `session/load` response arrived
-// at, and ATTEMPTS one settle. Called from the reader's own goroutine. The attempt
-// is what makes the barrier reachable when the forward goroutine has already
-// drained every frame the replay waits for.
+// markLoadedAt records the `session/load` response's position and attempts one settle, from the reader's
+// goroutine: forward may already have drained every frame.
 func (sr *stepReplays) markLoadedAt(sessionID string, at drainPoint) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -85,17 +75,14 @@ func (sr *stepReplays) markLoadedAt(sessionID string, at drainPoint) {
 	sr.settleLocked(sessionID, rep, at.gen, false, settleOnLoad)
 }
 
-// closedBarrier is barrier's answer for a step with no replay open. One value for
-// the whole process: a closed channel is stateless and always ready.
+// closedBarrier answers barrier for a session with no replay; a closed channel is stateless.
 var closedBarrier = func() chan struct{} {
 	ch := make(chan struct{})
 	close(ch)
 	return ch
 }()
 
-// barrier returns a channel closed once the replay for sessionID has drained, or
-// an already-closed one when no replay is open — so a reader never waits for a
-// load that is not happening.
+// barrier returns a channel closed once sessionID's replay drained, or already closed with no replay open.
 func (sr *stepReplays) barrier(sessionID string) <-chan struct{} {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -105,10 +92,8 @@ func (sr *stepReplays) barrier(sessionID string) <-chan struct{} {
 	return closedBarrier
 }
 
-// settleConsumed folds one drain observation into every open replay and closes the
-// barrier of each one the consumer has caught up with. No session id: the position
-// is a property of the BRIDGE's read loop, and it holds per session because a
-// replay's frames were all pushed before its own load result. `force` seals at exit.
+// settleConsumed folds one observation into every open replay and closes each caught-up barrier. No session id:
+// the position is the bridge's read loop's. `force` seals at exit.
 func (sr *stepReplays) settleConsumed(at drainPoint, force bool) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -134,9 +119,7 @@ func (sr *stepReplays) settleLocked(sessionID string, rep *stepReplay, gen uint6
 	}
 }
 
-// take removes the replay for sessionID and returns what it projected. Runs
-// whether the barrier closed or the budget expired, so an abandoned replay leaks
-// neither an entry nor a waiter.
+// take removes sessionID's replay and returns its projection, on success and timeout alike, so nothing leaks.
 func (sr *stepReplays) take(sessionID string) []translate.ProjectedTurn {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -145,14 +128,12 @@ func (sr *stepReplays) take(sessionID string) []translate.ProjectedTurn {
 		return nil
 	}
 	delete(sr.replays, sessionID)
-	// A take on the timeout path leaves a barrier nothing else can close.
+	// The timeout path's barrier has nothing else to close it.
 	sr.closeLocked(rep)
 	return rep.proj.Turns()
 }
 
-// closeLocked closes a replay's barrier at most once, reporting whether THIS call
-// closed it. Caller holds sr.mu. Three paths reach a settled replay and closing a
-// closed channel panics; the report keeps the settle log to one line per replay.
+// closeLocked closes a barrier at most once, reporting whether this call did (three paths reach it). Caller holds sr.mu.
 func (sr *stepReplays) closeLocked(rep *stepReplay) bool {
 	select {
 	case <-rep.settled:

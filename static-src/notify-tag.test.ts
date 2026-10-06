@@ -1,17 +1,3 @@
-// ---------------------------------------------------------------------------
-// One tray slot per SUBJECT, asserted through notifyIfHidden.
-//
-// pushTargetTag's own values are pinned in push-subject.test.ts; the claim here is
-// the BINDING, which that unit test cannot make: that notifyIfHidden hands the
-// per-subject tag to the Notification constructor, so an agent-finished note on one
-// chat cannot silently replace the note on another. A constant tag would coalesce
-// them into one slot and lose every note but the last.
-//
-// Notification is shadowed rather than driven, for notify-permission.test.ts's
-// reason: a real notification in a headless browser is auto-dismissed, which would
-// make this pass for the wrong reason.
-// ---------------------------------------------------------------------------
-
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { chatTarget } from "./push-subject.js";
 
@@ -66,8 +52,6 @@ describe("notifyIfHidden tags a notification by its subject", () => {
   });
 
   it("gives the workspace-global subject the constant tag", () => {
-    // `chatTarget("")` is how production reaches the workspace: an ask with no
-    // envelope chat id resolves there through askTarget.
     expect(notify.notifyIfHidden("Marotte", "Permission needed", chatTarget(""))).toBe(true);
     expect(opts[0]?.tag).toBe("marotte");
   });

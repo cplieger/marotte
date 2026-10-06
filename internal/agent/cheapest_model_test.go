@@ -102,6 +102,14 @@ func TestCheapestModel(t *testing.T) {
 			want: "claude-haiku-4.5",
 		},
 		{
+			name: "SkipsProseExperimentalPreview",
+			models: []marotte.SessionModel{
+				{ID: "qwen3-coder-next", Description: "Experimental preview of Qwen3 Coder Next", RateMultiplier: 0.05},
+				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
+			},
+			want: "claude-haiku-4.5",
+		},
+		{
 			name: "SelectsCheapestByRate",
 			models: []marotte.SessionModel{
 				{ID: "claude-opus-4.6", RateMultiplier: 2.2},
@@ -144,7 +152,9 @@ func TestModelExcluded(t *testing.T) {
 		{"[Internal] AGI Nova", true},
 		{"[Experimental] Beta model", true},
 		{"This model is deprecated", false},
-		{"experimental preview", false},
+		{"Experimental preview of Qwen3 Coder Next", true},
+		{"[EOL] Hybrid reasoning. Model reaches end of life on October 14, 2026.", true},
+		{"Supports an experimental preview of tool search", false},
 		{"Claude Sonnet 4.6 with 1M context", false},
 	}
 	for _, tc := range cases {

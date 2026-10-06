@@ -1,8 +1,5 @@
 package agent
 
-// Tests for agent.go: top-level agent lifecycle (Shutdown) and the compile-time
-// interface-satisfaction check for the shared fakes.
-
 import (
 	"context"
 	"errors"
@@ -20,8 +17,7 @@ func TestShutdownCompletesWithoutHanging(t *testing.T) {
 	h, _, _ := newTestHub()
 	done := make(chan struct{})
 	go func() {
-		// An unbounded context: the assertion is that Shutdown returns on its
-		// OWN, so a budget here would satisfy it by expiring.
+		// Unbounded: Shutdown must return on its own.
 		_ = h.Shutdown(context.Background())
 		close(done)
 	}()
@@ -32,9 +28,7 @@ func TestShutdownCompletesWithoutHanging(t *testing.T) {
 	}
 }
 
-// hangingBridge's Call blocks forever until Stop() is invoked. Used to
-// exercise the Shutdown ordering fix: Stop must fire before inflight.Wait
-// so stuck Calls can unblock via the bridge's own teardown.
+// hangingBridge's Call blocks until Stop, so Shutdown must stop bridges before inflight.Wait.
 type hangingBridge struct {
 	*fakeBridge
 
@@ -62,9 +56,7 @@ func (b *hangingBridge) Stop() {
 }
 
 func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
-	// Reproduces the pre-fix deadlock: an in-flight Call that can only
-	// return when the bridge is Stop'd. Shutdown must Stop first,
-	// otherwise inflight.Wait blocks forever.
+	// A Call that returns only when its bridge stops.
 	cs := newTestChatStore()
 	hb := newHangingBridge()
 	factory := func() ACPBridge { return hb }
@@ -73,15 +65,13 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Register the bridge directly so we don't have to drive a full
-	// cmdPrompt flow; we're testing Shutdown ordering, not prompt
-	// mechanics.
+	// Registered directly: this tests Shutdown ordering.
 	sb := &sharedBridge{bridge: hb}
 	h.bridge.mgr.mu.Lock()
 	h.bridge.mgr.bridges["c1"] = sb
 	h.bridge.mgr.mu.Unlock()
 
-	// Simulate an in-flight prompt holding sb.mu and awaiting the Call.
+	// An in-flight prompt awaiting the Call.
 	h.lifecycle.inflight.Add(1)
 	callDone := make(chan struct{})
 	go func() {
@@ -92,8 +82,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		// An unbounded context: the assertion is that Shutdown returns on its
-		// OWN, so a budget here would satisfy it by expiring.
+		// Unbounded: Shutdown must return on its own.
 		_ = h.Shutdown(context.Background())
 		close(done)
 	}()
@@ -113,23 +102,66 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	}
 }
 
-// Compile-time check that the shared fakes still satisfy the public
-// interfaces they impersonate. Breaks the build, not just the test suite,
-// if the interfaces drift.
+// barrierBridge's Stop returns once every bridge in its group entered Stop, so a serial shutdown never fills it.
+type barrierBridge struct {
+	*fakeBridge
+
+	entered *sync.WaitGroup
+	all     chan struct{}
+	timeout chan struct{}
+}
+
+func (b *barrierBridge) Stop() {
+	b.entered.Done()
+	select {
+	case <-b.all:
+	case <-time.After(5 * time.Second):
+		close(b.timeout)
+	}
+	b.fakeBridge.Stop()
+}
+
+// Stops must run side by side, or N bridges cost N graces.
+func TestShutdown_StopsBridgesConcurrently(t *testing.T) {
+	h, _, _ := newTestHub()
+	var entered sync.WaitGroup
+	all := make(chan struct{})
+	ids := []marotte.ChatID{"c1", "c2", "c3"}
+	entered.Add(len(ids))
+	timeouts := make([]chan struct{}, 0, len(ids))
+	h.bridge.mgr.mu.Lock()
+	for _, id := range ids {
+		tc := make(chan struct{})
+		timeouts = append(timeouts, tc)
+		h.bridge.mgr.bridges[id] = &sharedBridge{bridge: &barrierBridge{fakeBridge: newFakeBridge(), entered: &entered, all: all, timeout: tc}}
+	}
+	h.bridge.mgr.mu.Unlock()
+	go func() { entered.Wait(); close(all) }()
+
+	if err := h.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	for i, tc := range timeouts {
+		select {
+		case <-tc:
+			t.Errorf("bridge %s waited 5s in Stop for its siblings; Shutdown stopped the bridges one at a time", ids[i])
+		default:
+		}
+	}
+}
+
+// TestInterfaceSatisfaction breaks the build if the shared fakes drift from their interfaces.
 func TestInterfaceSatisfaction(_ *testing.T) {
 	var _ chatRecords = (*testChatStore)(nil)
 	var _ ACPBridge = (*fakeBridge)(nil)
 }
 
-// TestShutdown_BoundsAWedgedHandler is what the context arm is for: a prompt
-// handler that never decrements inflight must not take the shutdown with it.
-// Unbounded, this wait blocked forever — and because webhttp.Run calls the
-// pre-drain hook Shutdown runs in SYNCHRONOUSLY, that also meant srv.Shutdown
-// never ran and the process died to SIGKILL with the HTTP drain unspent.
+// TestShutdown_BoundsAWedgedHandler pins that a handler that never decrements inflight must not hold Shutdown, which
+// runs synchronously inside webhttp.Run's pre-drain hook.
 func TestShutdown_BoundsAWedgedHandler(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	// A handler that will never come back: the wedged prompt, minus kiro-cli.
+	// A handler that never returns.
 	h.lifecycle.inflight.Add(1)
 	t.Cleanup(h.lifecycle.inflight.Done)
 
@@ -155,9 +187,45 @@ func TestShutdown_BoundsAWedgedHandler(t *testing.T) {
 	}
 }
 
-// TestShutdown_WaitsForARunningSweep holds sweepSessionsLoop inside its boot
-// sweep and asserts Shutdown notices. Signalling alone cannot: closing
-// lifecycle.done tells the loop to leave and says nothing about whether it has.
+// stallingStopBridge's Stop blocks until released, like kiro-cli in its SIGTERM grace.
+type stallingStopBridge struct {
+	*fakeBridge
+
+	release chan struct{}
+}
+
+func (b *stallingStopBridge) Stop() {
+	<-b.release
+	b.fakeBridge.Stop()
+}
+
+// The utility bridge's Stop is bounded by ctx too.
+func TestShutdown_BoundsAStallingUtilityStop(t *testing.T) {
+	h, _, _ := newTestHub()
+	br := &stallingStopBridge{fakeBridge: newFakeBridge(), release: make(chan struct{})}
+	t.Cleanup(func() { close(br.release) })
+	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: br}
+	h.lifecycle.mu.Lock()
+	h.utility = &utilityLease{rt: &utilityRuntime{session: s, textgen: newUtilityAgent(s)}}
+	h.lifecycle.mu.Unlock()
+
+	const budget = 150 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- h.Shutdown(ctx) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "utility bridge teardown") {
+			t.Errorf("Shutdown = %v, want an error naming the utility bridge teardown", err)
+		}
+	case <-time.After(20 * budget):
+		t.Fatalf("Shutdown still running %v into a %v budget: the utility Stop is unbounded", 20*budget, budget)
+	}
+}
+
+// TestShutdown_WaitsForARunningSweep pins that closing lifecycle.done does not say the loop left.
 func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -188,21 +256,14 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 		t.Errorf("error %q does not name the background-loop wait", err)
 	}
 
-	// Released, the loop returns and a second pass joins it cleanly — the
-	// control that keeps the assertion above from passing on a bound that can
-	// never succeed.
+	// Released, the loop returns: the control.
 	close(release)
 	shutdownHub(t, h)
 }
 
-// TestSweepSessionsLoop_WaitsForTheListenerToBind is the destructive sweep's ownership
-// precondition. The reaper's root comes from $KIRO_HOME and never from the config dir, so a
-// boot pointed at the wrong one reaps the REAL instance's KAS session trees — and the sweep
-// starts inside agent.New, long before App.Run binds anything.
-//
-// The held-gate half needs no negative time window: Shutdown closes lifecycle.done and then
-// WAITS on the loop group, and an ungated loop calls refs before it could reach a select, so
-// zero calls after Shutdown returns can only mean the gate held.
+// TestSweepSessionsLoop_WaitsForTheListenerToBind pins that the reaper roots at $KIRO_HOME, so a misconfigured boot
+// could reap the real instance's sessions before App.Run binds. Shutdown waits on the loop group, so zero
+// calls afterwards proves the gate held.
 func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) (map[string]struct{}, bool)) *Runtime {
 		t.Helper()
@@ -214,8 +275,7 @@ func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 		cs.wire(h)
 		return h
 	}
-	// Non-empty and complete, so the sweep reaches Reaper.Sweep rather than
-	// declining on its own keep-list guard.
+	// Non-empty and complete, so the sweep reaches Reaper.Sweep.
 	keepList := func(context.Context) (map[string]struct{}, bool) {
 		return map[string]struct{}{"sess_live": {}}, true
 	}
@@ -259,11 +319,7 @@ func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 	})
 }
 
-// TestShutdown_JoinsTheTickerLoops covers the two loops no fixture can hold
-// inside their work, both of which sit in a ticker select until lifecycle.done
-// closes. The reaper is deliberately unwired, so sweepSessionsLoop returns at
-// once and the group's occupants are exactly those two: a group that is empty
-// while the runtime runs means New never registered them.
+// TestShutdown_JoinsTheTickerLoops pins that with the reaper unwired the group holds exactly the two ticker loops.
 func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -287,11 +343,8 @@ func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 	}
 }
 
-// TestShutdown_WaitsForARunningMCPNotifier holds the debounced notifier inside its callback
-// — in production the environment.md generator, a .kiro walk plus an atomic write — and
-// asserts Shutdown notices. Nothing else catches an unjoined loop here: it exits on
-// lifecycle.done correctly, so no test hangs and no linter reports it, and the only symptom
-// is that Shutdown's wait is silent about one of the three loops it claims to cover.
+// TestShutdown_WaitsForARunningMCPNotifier holds the notifier inside its callback (the environment.md
+// generator): an unjoined loop here produces no other symptom.
 func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 
@@ -302,8 +355,8 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 		once.Do(func() { close(entered) })
 		<-release
 	})
-	// Any mutation signals the notifier; it debounces 100ms before calling back.
-	h.mcpRegistry.RecordConnected(t.Context(), "a", nil, nil, nil)
+	// Any mutation signals the notifier, which debounces 100ms.
+	h.mcpRegistry.RecordConnected(t.Context(), "a", marotte.MCPSource{}, nil, nil, nil, nil)
 
 	select {
 	case <-entered:
@@ -320,15 +373,12 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 		t.Errorf("error %q does not name the background-loop wait", err)
 	}
 
-	// The control that keeps the assertion above off a bound that can never be
-	// met: released, the loop returns and a second pass joins it cleanly.
+	// Released, the loop joins: the control.
 	close(release)
 	shutdownHub(t, h)
 }
 
-// lifetimeWatchingBridge records what the runtime's lifetime looked like at the
-// instant its Stop landed, which is the one observation the ordering question
-// turns on.
+// lifetimeWatchingBridge records the lifetime's state when its Stop landed.
 type lifetimeWatchingBridge struct {
 	*fakeBridge
 
@@ -345,14 +395,8 @@ func (b *lifetimeWatchingBridge) Stop() {
 	b.fakeBridge.Stop()
 }
 
-// TestShutdown_CancelsTheLifetimeAfterDrainingBridges closes the bridge-death
-// door for the WHOLE shutdown rather than almost all of it.
-//
-// drain() removes every bridge from the map before any Stop, so the death closer
-// is skipped for each one this teardown kills. Cancelling the lifetime FIRST left
-// a window between that cancel and the drain where a bridge dying on its own
-// still reached that closer, on a bare goroutine holding a dead context.
-// close(lifecycle.done) stays at step 0: the tickers select on it.
+// TestShutdown_CancelsTheLifetimeAfterDrainingBridges pins that cancelling before the drain left a bridge dying on its
+// own to reach the death closer with a dead context. close(lifecycle.done) stays at step 0.
 func TestShutdown_CancelsTheLifetimeAfterDrainingBridges(t *testing.T) {
 	cs := newTestChatStore()
 	watcher := &lifetimeWatchingBridge{fakeBridge: newFakeBridge()}
@@ -375,7 +419,7 @@ func TestShutdown_CancelsTheLifetimeAfterDrainingBridges(t *testing.T) {
 			"window reaches the death closer with a dead context on an untracked goroutine",
 			watcher.stopErr)
 	}
-	// And the cancel still happens: the reorder moves it, it does not drop it.
+	// The cancel still happens.
 	if h.lifecycle.shutdownCtx.Err() == nil {
 		t.Error("the lifetime is still live after Shutdown returned")
 	}

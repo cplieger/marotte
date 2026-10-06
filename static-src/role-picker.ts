@@ -1,23 +1,6 @@
-// ---------------------------------------------------------------------------
-// Mode / role picker: an expandable pill in the prompt bar that shows the
-// active chat's current mode and lets the user switch to any other — a
-// bundled workflow mode (Default / Spec / Quick Spec / Bug Fix / Plan /
-// Autonomous) or a workspace custom agent from .kiro/agents/.
-//
-// On kiro-cli v3 (KAS) every role is a *mode* in the session's
-// availableModes, switched in place via session/set_mode — no new chat, no
-// teardown, even on a chat with history. Selecting a mode dispatches the
-// chat.set_mode action for the active chat; the server switches the live
-// session (or, for an as-yet-unstarted chat, persists the choice and applies
-// it at session/new). The pill's icon + label always reflect the active
-// chat's current_mode_id.
-//
-// The list is grouped: bundled modes first, workspace custom agents below
-// (the wire tags each with _meta.kiro.source). Before a chat has a live
-// session — so availableModes is still empty — the list is seeded from the
-// static bundled catalog plus the workspace agents reported by
-// /api/workspace/kiro-config, so a mode can be picked before the first prompt.
-// ---------------------------------------------------------------------------
+// Mode / role picker: an expandable pill in the prompt bar that shows the active chat's current
+// mode and lets the user switch to any other — a bundled workflow mode (Default / Spec / Quick Spec
+// / Bug Fix / Plan / Autonomous) or a workspace custom agent from .kiro/agents/.
 
 import { $, byId } from "./dom.js";
 import { el, effect } from "@cplieger/reactive";
@@ -40,13 +23,12 @@ import {
   scopeLabel,
 } from "./roles.js";
 
-// Cache of workspace custom-agent names; refreshed on each expand so the
-// list renders instantly from cache, then folds in any changes. Only used
-// to seed the list before a live session reports availableModes.
+// Cache of workspace custom-agent names; refreshed on each expand so the list renders instantly
+// from cache, then folds in any changes.
 let customAgents: string[] = [];
 
-// Roving-focus controller over the mode options — wired once in
-// initRolePicker; renderOptions refreshes it after each re-render.
+// Roving-focus controller over the mode options — wired once in initRolePicker; renderOptions
+// refreshes it after each re-render.
 let roleNav: RovingFocusController | null = null;
 
 /** Wire the prompt-bar mode pill. Call once at startup. */
@@ -58,9 +40,9 @@ export function initRolePicker(): void {
       renderList(list);
     },
   });
-  // The list announces role=listbox, so it owes AT the composite-widget
-  // keyboard contract: one Tab stop + arrow keys, via roving-focus (wired
-  // once; renderOptions calls refresh() after each re-render).
+  // The list announces role=listbox, so it owes AT the composite-widget keyboard contract: one Tab
+  // stop + arrow keys, via roving-focus (wired once; renderOptions calls refresh() after each
+  // re-render).
   roleNav = rovingFocus(list, ".pill-role-item");
   // Keep the pill's icon + label in sync with the active chat's mode.
   effect(() => {
@@ -74,26 +56,15 @@ function refreshPill(modeID: string): void {
   byId<HTMLSpanElement>("role-pill-label").textContent = labelForMode(modeID);
 }
 
-/** The modes to offer: the workspace catalog merged with the workspace agents
- *  from kiro-config.
- *
- *  There is no longer a per-session branch. It used to prefer the active chat's
- *  `available_modes` because KAS had already resolved the shadowing there, but
- *  that list was the same 59 entries on every one of 29 chats and 93.1% of the
- *  chat-list response. The catalog now carries KAS's own report once a session
- *  has run (the server prefers it over the session-less template), so the
- *  resolution is not lost — what changes is that the merge's shadow marking is
- *  always on rather than only before the first bridge, which is the honest
- *  answer: a workspace agent shadows a bundled mode of the same id whether or
- *  not a session has started. */
+/** The modes to offer: the workspace catalog merged with the workspace agents from kiro-config. */
 function currentModes(): PickerMode[] {
   return mergeCatalogAndWorkspace(catalogBaseModes(), customAgents);
 }
 
 function renderList(list: HTMLElement): void {
   renderOptions(list);
-  // Refresh the workspace-agent seed in the background; only matters before a
-  // live session exists (once it does, availableModes already includes them).
+  // Refresh the workspace-agent seed in the background; only matters before a live session exists
+  // (once it does, availableModes already includes them).
   void apiGet<{ items: { name: string; type: string }[] }>("/api/workspace/kiro-config").then(
     (data) => {
       const next = (data?.items ?? []).filter((i) => i.type === "agent").map((i) => i.name);
@@ -112,21 +83,16 @@ function renderOptions(list: HTMLElement): void {
   list.setAttribute("aria-label", "Chat mode");
   const currentMode = normalizeModeID(getActive()?.current_mode_id ?? "");
   const modes = currentModes();
-  // Group is "bundled" vs everything else. The server reports source as
-  // bundled | global | workspace; both global and workspace custom agents
-  // belong under the "Custom agents" divider, so only "bundled" (and any
-  // unset source, which the built-in catalog uses) stays in the top group.
-  //
-  // The predicate is roles.ts's, beside scopeLabel, so this grouping and the
-  // row labels read one source vocabulary.
+  // Group is "bundled" vs everything else. The server reports source as bundled | global |
+  // workspace; both global and workspace custom agents belong under the "Custom agents" divider, so
+  // only "bundled" (and any unset source, which the built-in catalog uses) stays in the top group.
   const isCustomAgent = (p: PickerMode): boolean => isCustomSource(p.mode.source);
   const bundled = modes.filter((p) => !isCustomAgent(p));
   const workspace = modes.filter(isCustomAgent);
 
-  // No "Switch mode for this chat" heading: the pill's own tooltip says that,
-  // and a menu that opened from a control labelled with its purpose does not
-  // need to restate it in its first row. The "Custom agents" divider below IS
-  // needed — it separates two groups.
+  // No "Switch mode for this chat" heading: the pill's own tooltip says that, and a menu that
+  // opened from a control labelled with its purpose does not need to restate it in its first row.
+  // The "Custom agents" divider below IS needed — it separates two groups.
   const items: HTMLElement[] = [];
   for (const m of bundled) {
     items.push(modeOption(m, currentMode));
@@ -149,19 +115,18 @@ function modeOption(entry: PickerMode, currentMode: string): HTMLButtonElement {
     el("span", { className: "pill-role-item-icon" }, iconEl(iconForMode(mode.id))),
     el("span", { className: "pill-role-name" }, displayModeName(mode.name || mode.id)),
   ];
-  // The shadowed entry, marked. There is one row per id, so without this the
-  // collision is invisible: the user sees a "workspace" agent and cannot tell
-  // that a same-named global definition exists and is NOT the one a run loads.
-  // Ahead of the scope chip, which holds the row's final slot at every mix.
+  // The shadowed entry, marked. There is one row per id, so without this the collision is
+  // invisible: the user sees a "workspace" agent and cannot tell that a same-named global
+  // definition exists and is NOT the one a run loads.
   let tooltip = mode.description ?? "";
   if (entry.shadowed !== undefined) {
     children.push(el("span", { className: "pill-role-shadow" }, "shadows " + entry.shadowed));
     const note = `This workspace agent shadows the ${entry.shadowed} agent of the same name. The workspace definition is the one a run uses.`;
     tooltip = tooltip === "" ? note : tooltip + " " + note;
   }
-  // Scope on the row. It was already on the wire and already read (the grouping
-  // above keys on it) and simply was not shown, so a user looking at two custom
-  // agents could not tell which tree each came from.
+  // Scope on the row. It was already on the wire and already read (the grouping above keys on it)
+  // and simply was not shown, so a user looking at two custom agents could not tell which tree each
+  // came from.
   const scope = scopeLabel(mode.source);
   if (scope !== "") {
     children.push(el("span", { className: "pill-role-scope" }, scope));
@@ -191,12 +156,8 @@ function selectMode(modeID: string): void {
     dispatchMode(active.id, modeID);
     return;
   }
-  // No active chat, so one has to be created first — and the id is the SERVER's
-  // now, so this cannot be read back synchronously. It used to be
-  // `createSession(); active = getActive();`, which worked only because the mint
-  // was local. Detaching with a `void` and reading `getActive()` on the next line
-  // would send set_mode to whatever chat happened to be active before, or to
-  // nothing at all on a first-ever visit — the exact failure a bare `void` hides.
+  // No active chat, so one has to be created first — and the id is the SERVER's now, so this cannot
+  // be read back synchronously.
   void createSession().then((id) => {
     if (id === "") {
       return;
@@ -205,9 +166,9 @@ function selectMode(modeID: string): void {
   });
 }
 
-/** Send the pick. No tab write: a chat tab's leading element is its activity dot,
- *  not a mode glyph, so the only optimistic surface is the pill — which the
- *  action's own update flips, confirmed by the server's mode_changed. */
+/** Send the pick. No tab write: a chat tab's leading element is its activity dot, not a mode
+ *  glyph, so the only optimistic surface is the pill — which the action's own update flips,
+ *  confirmed by the server's mode_changed. */
 function dispatchMode(chatID: string, modeID: string): void {
   void setMode.dispatch({ chatID, modeID });
 }

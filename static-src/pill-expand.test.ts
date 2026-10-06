@@ -1,25 +1,12 @@
 // Structural guard for the expandable-pill markup (static/index.html).
-//
-// Every expanded card is a SIBLING of its trigger, never a descendant of it.
-// Two things break the moment a card is nested back inside its button:
-//
-//   1. The universal press scale (`:active { transform: scale(0.96) }`,
-//      03-base.css) shrinks the open menu along with its trigger. The
-//      workaround that lived here before pressed the pill's CHILDREN and
-//      pinned the pill itself to `transform: none`, so a pressed trigger's
-//      border and background did not move at all.
-//   2. A card holding buttons (the model list, the mode list) puts
-//      interactive content inside a <button>: invalid HTML, and assistive
-//      tech flattens it.
 
 import { afterEach, describe, it, expect, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import { makeExpandable } from "./pill-expand.js";
 
-// Parse only the two regions that hold expandable pills, rather than the whole
-// document: a full-document parse would make the runner chase the
-// <link rel=stylesheet> over the network.
+// Parse only the two regions that hold expandable pills, rather than the whole document: a
+// full-document parse would make the runner chase the <link rel=stylesheet> over the network.
 function slice(html: string, from: string, to: string): HTMLElement {
   const start = html.indexOf(from);
   const end = html.indexOf(to, start + 1);
@@ -34,10 +21,8 @@ describe("expandable pill markup (static/index.html)", () => {
   it("puts every expand card beside its trigger, never inside a button", () => {
     const regions = [
       slice(indexHtml, '<div class="prompt-pills">', "</form>"),
-      // The closing marker was `'<a id="user-email"'`, which no longer exists: the
-      // address is a SPAN inside the trigger now. `.sidebar-footer-actions` is the
-      // next thing after the whole anchor, so the region still covers the card and
-      // its trigger and nothing else.
+      // `.sidebar-footer-actions` follows the whole anchor, so the region covers the account card
+      // and its trigger and nothing else.
       slice(indexHtml, '<div class="sidebar-footer">', '<div class="sidebar-footer-actions">'),
     ];
 
@@ -61,10 +46,6 @@ describe("expandable pill markup (static/index.html)", () => {
   it("gives every expandable trigger a card next to it", () => {
     const regions = [
       slice(indexHtml, '<div class="prompt-pills">', "</form>"),
-      // The closing marker was `'<a id="user-email"'`, which no longer exists: the
-      // address is a SPAN inside the trigger now. `.sidebar-footer-actions` is the
-      // next thing after the whole anchor, so the region still covers the card and
-      // its trigger and nothing else.
       slice(indexHtml, '<div class="sidebar-footer">', '<div class="sidebar-footer-actions">'),
     ];
 
@@ -120,13 +101,9 @@ describe("expandable pill viewport clamp", () => {
   });
 });
 
-// The clamp has to TRACK the frame while a card is open, because tapping a pill blurs
-// the composer and iOS then spends several frames closing the keyboard: the open's own
-// read lands against a viewport that is about to stop existing.
-//
-// `window.visualViewport` is replaced by a fake carrying the four fields the clamp
-// reads, installed after import because the module reads the global per call. No
-// stylesheet is loaded, so `--pill-viewport-margin` falls back to MARGIN.
+// The clamp has to TRACK the frame while a card is open, because tapping a pill blurs the composer
+// and iOS then spends several frames closing the keyboard: the open's own read lands against a
+// viewport that is about to stop existing.
 
 type Listener = () => void;
 
@@ -190,8 +167,8 @@ function capOf(card: HTMLElement): number {
   return parseFloat(card.style.getPropertyValue("--pill-max-block"));
 }
 
-/** The declarations production's `.pill-expand-content` rule supplies, so the published
- *  cap drives a real scrolling box over real overflowing content. */
+/** The declarations production's `.pill-expand-content` rule supplies, so the published cap
+ *  drives a real scrolling box over real overflowing content. */
 function scrollableCard(card: HTMLElement): void {
   card.style.overflowY = "auto";
   card.style.maxBlockSize = "var(--pill-max-block)";
@@ -220,12 +197,8 @@ async function frames(n = 2): Promise<void> {
 const controllers: AbortController[] = [];
 const hosts: HTMLElement[] = [];
 
-/** A pill and its sibling card, with the geometry the clamp reads held fixed so only
- *  the frame's `offsetTop` can move the published cap. The card's BOTTOM is stubbed
- *  rather than measured because production anchors the card upward from the composer,
- *  so its bottom edge does not follow its own height; measuring it in flow instead
- *  makes the room track the content and no cap can ever bind. Everything the box does
- *  — `clientHeight`, `scrollHeight`, `scrollTop`, focus — stays real. */
+/** A pill and its sibling card, with the geometry the clamp reads held fixed so only the frame's
+ *  `offsetTop` can move the published cap. */
 function stubbedPill(fill?: (card: HTMLElement) => void): {
   pill: HTMLElement;
   card: HTMLElement;
@@ -365,8 +338,8 @@ describe(
       expect(document.activeElement).toBe(child);
       expect(card.scrollTop).toBe(120);
 
-      // A SHRINKING cap only ever raises the maximum scroll offset, so the engine
-      // cannot clamp and an unchanged scrollTop is a real assertion.
+      // A SHRINKING cap only ever raises the maximum scroll offset, so the engine cannot clamp and
+      // an unchanged scrollTop is a real assertion.
       fake.offsetTop = 300;
       fake.fire("scroll");
       await frames();

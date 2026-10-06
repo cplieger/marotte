@@ -1,13 +1,9 @@
 package agent
 
-// The pending-run-ask registry, and the two doors a step's question arrives through.
-//
-// IT IS NOT pendingPermsTracker and the two must not be merged: that tracker holds an open
-// JSON-RPC request keyed by (chat, id) which cannot outlive its bridge, while a run ask has
-// no request id, blocks nothing upstream, and is DURABLE across a bridge death and a
-// container restart — hence a different identity, a different clearing rule, and a reconcile
-// against KAS's own state. GROWTH IS BOUNDED BY THE RUN, not by an expiry: every clear is
-// idempotent, so the answer and lifecycle paths both run for one ask independently.
+// The pending run-ask registry and the two doors a step's question arrives through. Not
+// pendingPermsTracker: a run ask has no request id, blocks nothing upstream, and survives a bridge
+// death and a restart, so it has its own identity and clearing rule plus a reconcile against KAS.
+// Bounded by the run; every clear is idempotent.
 
 import (
 	"context"
@@ -22,53 +18,37 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// scrubLog strips the CR and LF a wire-sourced value could carry to forge extra
-// log lines (CWE-117). A real workflow id, node id or pause reason never contains
-// them, so it is a no-op on honest input and a barrier on hostile input.
+// scrubLog strips CR and LF from a wire value before logging (CWE-117).
 func scrubLog(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
 }
 
-// runAskKey is a pending ask's identity: the run it parks, plus the ask within it. THE
-// PAIR, never the ask id alone — a synthesised id derives from a node path, which two
-// concurrent runs of one recipe share, so an id-only key would let one run's reconcile
-// overwrite the other's ask.
+// runAskKey is the run plus the ask within it, never the ask id alone: a synthesised id derives
+// from a node path two runs of one recipe share.
 type runAskKey struct {
 	workflowID string
 	askID      string
 }
 
-// runAsk is one unanswered ask plus the surface it was keyed to. The chat id is STORED
-// rather than re-derived: it is the client's queue key and not a property of the run, so
-// only the door the frame arrived through knows it.
-//
-// Shared out by pointer safely rather than merely cheaply: an entry is immutable after
-// Add, and every method that hands one back has already DELETED it, so the registry and
-// its caller never hold the same ask at once.
+// runAsk is one unanswered ask plus its queue key (the chat id, known only to the arrival door).
+// Immutable after Add, and every method returning one has deleted it, so pointers are never shared.
 type runAsk struct {
 	chatID  marotte.ChatID
 	payload marotte.RunInputNeededPayload
 }
 
-// event renders an ask as the frame a client consumes, so the live broadcast and
-// the connect-time replay cannot disagree about its shape.
+// event renders an ask as the client frame, shared by live broadcast and connect replay.
 func (a *runAsk) event() marotte.ServerEvent {
 	return marotte.NewEvent(marotte.EventRunInputNeeded, a.chatID, a.payload)
 }
 
-// pendingRunAsks holds the asks nobody has answered.
-//
-// Its own mutex: it is read from every SSE connect and written from every bridge's
-// forward goroutine, so contending on the run surface's lock would put an unrelated
-// launch behind a connect. ITS ZERO VALUE IS USABLE — the map is created on first write
-// — so it is a value field on Runs and a bare `&Runs{}` still works. It holds a mutex,
-// so it travels by pointer only. `answering` counts the answers in flight per run, the
-// second half of "does this run have an open question"; see beginAnswer.
+// pendingRunAsks holds the unanswered asks under its own mutex: it is read on every SSE connect and
+// written from every forward goroutine. Zero value usable; travels by pointer. `answering` counts
+// in-flight answers per run (beginAnswer).
 type pendingRunAsks struct {
 	asks      map[runAskKey]*runAsk
 	answering map[string]int
-	// versions holds the shared `pending` counter every add and settle bumps under
-	// mu; see mintPending.
+	// versions holds the shared `pending` counter every add and settle bumps under mu (mintPending).
 	versions *subject.Versions
 	mu       sync.Mutex
 }
@@ -80,9 +60,7 @@ func (r *pendingRunAsks) ensure() {
 	}
 }
 
-// Add records an ask and reports whether it is NEW, which is what makes a redelivered
-// frame free — KAS's notification bridge can replay one. The stored entry is left alone
-// on a repeat, so the ORIGINAL `asked_at` survives.
+// Add records an ask, reporting whether it is new; a redelivered frame keeps the original `asked_at`.
 func (r *pendingRunAsks) Add(a *runAsk) bool {
 	if a.payload.WorkflowID == "" || a.payload.AskID == "" {
 		return false
@@ -99,13 +77,8 @@ func (r *pendingRunAsks) Add(a *runAsk) bool {
 	return true
 }
 
-// TakeIfPresent claims one ask: it deletes the entry and returns it, reporting false
-// when something else got there first.
-//
-// The lock spans BOTH the lookup and the delete, which is the whole point: several
-// surfaces are offered one ask and KAS accepts exactly one answer, so a loser's
-// `session/prompt` falls through to an ORDINARY prompt on the step's session — a message
-// injected into a step nobody asked to steer.
+// TakeIfPresent claims one ask, deleting and returning it, false when beaten. One lock spans both:
+// KAS accepts one answer, and a loser's `session/prompt` would become an ordinary prompt on the step.
 func (r *pendingRunAsks) TakeIfPresent(workflowID, askID string) (*runAsk, bool) {
 	k := runAskKey{workflowID: workflowID, askID: askID}
 	r.mu.Lock()
@@ -119,20 +92,14 @@ func (r *pendingRunAsks) TakeIfPresent(workflowID, askID string) (*runAsk, bool)
 	return a, true
 }
 
-// Restore puts a claimed ask back, reporting whether it went in. Required rather than
-// tidy: the answer path claims BEFORE it sends, so a transport failure would otherwise
-// leave the run parked with its card gone from every surface. Callers go through
-// (*Runs).restoreAsk, because an entry with no frame behind it is visible to nobody
-// until the next SSE connect.
+// Restore puts a claimed ask back, reporting whether it went in: the answer path claims before it
+// sends. Go through (*Runs).restoreAsk, which re-broadcasts.
 func (r *pendingRunAsks) Restore(a *runAsk) bool {
 	return r.Add(a)
 }
 
-// HasRun reports whether a run's question is already accounted for: an ask nobody has
-// answered, OR an answer in flight for one just claimed. BOTH arms, because in the window
-// between the claim and the send the registry holds nothing while `inspect` still reports
-// a need_input pause, so an entries-only read lets a concurrent refetch mint a text-less
-// TWIN the following settle cannot retire.
+// HasRun reports whether a run's question is accounted for: an unanswered ask OR an answer in
+// flight. Both, or a refetch in the claim-to-send gap mints a text-less twin.
 func (r *pendingRunAsks) HasRun(workflowID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -147,10 +114,8 @@ func (r *pendingRunAsks) HasRun(workflowID string) bool {
 	return false
 }
 
-// beginAnswer opens an answer window for a run; endAnswer closes it. PAIRED by the
-// CALLER: AnswerInput opens it BEFORE it claims and defers the close, or the gap HasRun
-// covers is left one statement wide. A COUNT, not a flag: two parked steps of one run can
-// be answered at once, and a flag would let the first close the second's window.
+// beginAnswer opens a run's answer window; the caller opens it before claiming and defers
+// endAnswer. A count: two parked steps of one run can be answered at once.
 func (r *pendingRunAsks) beginAnswer(workflowID string) {
 	if workflowID == "" {
 		return
@@ -163,8 +128,7 @@ func (r *pendingRunAsks) beginAnswer(workflowID string) {
 	r.answering[workflowID]++
 }
 
-// endAnswer closes one answer window, dropping the key at zero so the map does
-// not grow by one entry per run this process ever answered.
+// endAnswer closes one answer window, dropping the key at zero.
 func (r *pendingRunAsks) endAnswer(workflowID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -175,10 +139,8 @@ func (r *pendingRunAsks) endAnswer(workflowID string) {
 	delete(r.answering, workflowID)
 }
 
-// TakeRun claims every ask of a run whose wait is over and RETURNS them, so the caller
-// can tell the surfaces still showing them: dropping an entry changes nothing anybody can
-// see, and the head of a per-chat queue is the only entry rendered, so a stale run card
-// also hides every card queued behind it for that chat.
+// TakeRun claims and returns every ask of a run whose wait is over, so the caller can retire the
+// cards: a stale head card hides every card queued behind it.
 func (r *pendingRunAsks) TakeRun(workflowID string) []*runAsk {
 	if workflowID == "" {
 		return nil
@@ -198,10 +160,8 @@ func (r *pendingRunAsks) TakeRun(workflowID string) []*runAsk {
 	return out
 }
 
-// TakeNode claims every ask naming one node and returns them. NODE-scoped rather than
-// run-scoped, which is what makes it safe on a `node_complete`: a parallel branch's node
-// can finish while a sibling's step is still parked. An ask with an EMPTY node id cannot
-// be matched and is left for the terminal clear.
+// TakeNode claims and returns every ask naming one node, safe on `node_complete` while a sibling
+// branch is parked. An empty node id is left for the terminal clear.
 func (r *pendingRunAsks) TakeNode(workflowID, nodeID string) []*runAsk {
 	if workflowID == "" || nodeID == "" {
 		return nil
@@ -221,9 +181,7 @@ func (r *pendingRunAsks) TakeNode(workflowID, nodeID string) []*runAsk {
 	return out
 }
 
-// ClearChat drops every ask keyed to a chat that has gone away. A chat's delete also
-// cancels the runs its sessions launched, so an ask keyed here is answerable by nobody
-// and replaying it would show a card for a conversation that no longer exists.
+// ClearChat drops every ask keyed to a chat that went away.
 func (r *pendingRunAsks) ClearChat(chatID marotte.ChatID) {
 	if chatID == "" {
 		return
@@ -242,12 +200,8 @@ func (r *pendingRunAsks) ClearChat(chatID marotte.ChatID) {
 	}
 }
 
-// SnapshotRun reports one run's unanswered asks, for the read endpoint to expose so an
-// agent handed a deferral can find the question. VALUE COPIES rather than the stored
-// pointers, which is what keeps this type's standing invariant literally true: every
-// other method handing an ask back has already DELETED it, so the registry and its
-// caller never hold the same entry. Sorted by ask id because map iteration is random
-// and both an agent and a test want one answer.
+// SnapshotRun returns copies of a run's unanswered asks, sorted by ask id, for the read endpoint.
+// Copies keep the never-shared invariant.
 func (r *pendingRunAsks) SnapshotRun(workflowID string) []marotte.RunOpenAsk {
 	if workflowID == "" {
 		return nil
@@ -273,10 +227,8 @@ func (r *pendingRunAsks) SnapshotRun(workflowID string) []marotte.RunOpenAsk {
 	return out
 }
 
-// List snapshots every unanswered ask, optionally filtered to one surface. EVERY entry is
-// replayed however old: a parked run has no deadline, so an ask a client saw an hour ago
-// is still all that stands between that run and its next step. The filter matches the SSE
-// subscriber's topic, and a `run:<id>` key is deliberately not a chat.
+// List snapshots every unanswered ask, however old, optionally for one surface: a parked run has
+// no deadline. A `run:<id>` key is not a chat.
 func (r *pendingRunAsks) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -290,14 +242,8 @@ func (r *pendingRunAsks) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
 	return out
 }
 
-// --- The two doors ---
-
-// handleSessionNotify records a step's question and broadcasts it.
-//
-// RECORD BEFORE BROADCAST: a client that opens its stream between the two gets the ask
-// from the replay rather than waiting for a frame that will never re-fire. chatID is the
-// ask's QUEUE KEY and comes from the door, never from the payload — whose `sessionId`
-// names a KAS session, which the client indexes nothing by.
+// handleSessionNotify records a step's question, then broadcasts it, so a stream opening between
+// the two gets it from the replay. chatID comes from the door, never the payload's KAS `sessionId`.
 func (rs *Runs) handleSessionNotify(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := rs.translate.SessionNotifyAsk(msg)
 	if !ok {
@@ -315,12 +261,8 @@ func (rs *Runs) handleSessionNotify(ctx context.Context, chatID marotte.ChatID, 
 	rs.bus.Broadcast(ctx, a.event())
 }
 
-// settleAskForNode retires the asks a node was holding and tells every surface so. The
-// announcement is not optional: `run_input_settled` is what takes those cards down.
-//
-// `by` is the CALLER's, because only one of the two doors is an answer. Continue-without-
-// answering did settle it (SettledByUser); a node completing did not, so that is
-// SettledByMoot — the question stopped being answerable rather than being decided.
+// settleAskForNode retires a node's asks and announces `run_input_settled`. `by` is the caller's:
+// continue-without-answering is SettledByUser, a node completing SettledByMoot.
 func (rs *Runs) settleAskForNode(
 	ctx context.Context, workflowID, nodeID string, by marotte.SettledBy,
 ) {
@@ -332,9 +274,7 @@ func (rs *Runs) settleAskForNode(
 	}
 }
 
-// settleAsksForRun retires every ask a run still held and tells every surface so.
-// SettledByMoot always: the run ending is not an answer, and the answer path settles the
-// entry it took, so anything left here is a question nobody replied to.
+// settleAsksForRun retires every ask a run still held, as SettledByMoot.
 func (rs *Runs) settleAsksForRun(ctx context.Context, workflowID string) {
 	for _, a := range rs.asks.TakeRun(workflowID) {
 		slog.Info("a run ended still holding a question, so the card is retired",
@@ -344,10 +284,8 @@ func (rs *Runs) settleAsksForRun(ctx context.Context, workflowID string) {
 	}
 }
 
-// restoreAsk puts a claimed ask back AND re-offers it. BOTH halves, because the click
-// spliced the dock entry before the dispatch: an entry back in the registry with no frame
-// behind it is invisible until the next SSE connect. Re-broadcast rather than a settle —
-// the question is still open, and the dock de-duplicates by (kind, askID).
+// restoreAsk puts a claimed ask back and re-broadcasts it: the click already spliced the dock entry.
+// The dock de-duplicates by (kind, askID).
 func (rs *Runs) restoreAsk(ctx context.Context, a *runAsk) {
 	if !rs.asks.Restore(a) {
 		return
@@ -357,9 +295,7 @@ func (rs *Runs) restoreAsk(ctx context.Context, a *runAsk) {
 	rs.bus.Broadcast(ctx, a.event())
 }
 
-// announceSettled publishes one ask's settlement on the surface it was keyed to — the
-// ASK's own chat id rather than the run's, because a client filtering its stream to one
-// chat has to receive the retirement of the card it was shown.
+// announceSettled publishes a settlement on the ask's own chat id, so a chat-filtered stream receives it.
 func (rs *Runs) announceSettled(ctx context.Context, a *runAsk, by marotte.SettledBy) {
 	rs.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunInputSettled, a.chatID,
 		marotte.RunInputSettledPayload{
@@ -369,13 +305,8 @@ func (rs *Runs) announceSettled(ctx context.Context, a *runAsk, by marotte.Settl
 		}))
 }
 
-// --- The restart reconcile ---
-
-// The two pauseReason literals KAS writes for a step waiting on a person: `send_message`'s
-// own park, and the re-park a plain Resume produces (resume clears state.pauseReason
-// without clearing the node's completionSignal, so the next executeStep parks again on a
-// sentence naming the node). Literals, because several sites write a pauseReason and only
-// these two mean "a person owes an answer".
+// The two pauseReason literals meaning a person owes an answer: `send_message`'s park, and the
+// re-park a plain Resume produces (resume keeps the node's completionSignal).
 const (
 	needInputPauseReason  = "Step requested user input via send_message."
 	reparkPausePrefix     = "Step '"
@@ -383,14 +314,11 @@ const (
 	waitingForNextMessage = "' is waiting for the next user message."
 )
 
-// needInputSignal is KAS's node-level completionSignal for a step waiting on a person, and
-// the only thing a parallel branch's park can be recognised by; see needInputParked.
+// needInputSignal is KAS's node completionSignal for a step waiting on a person, the only mark a parallel branch's park keeps.
 const needInputSignal = "need_input"
 
-// needInputPause reports whether a pause reason means a step is waiting on a person. The
-// re-park sentence is matched by its two ends, because KAS interpolates the node id into
-// it. It cannot see a park inside a PARALLEL BRANCH and must not be widened to the wrapper
-// sentence KAS composes there — needInputParked is that arm.
+// needInputPause reports whether a pause reason means a step waits on a person; the re-park sentence
+// is matched by its two ends (KAS interpolates the node id). needInputParked covers parallel branches.
 func needInputPause(reason string) bool {
 	if reason == needInputPauseReason {
 		return true
@@ -402,10 +330,8 @@ func needInputPause(reason string) bool {
 		strings.HasSuffix(reason, waitingForNextMessage)
 }
 
-// askInspect is the reconcile's own minimal decode of an `inspect` reply, deliberately not
-// a share of internal/workflow's State: the read endpoint passes the whole tree through, so
-// a field decoded there becomes a second definition that can only drift. Pointers ahead of
-// the strings for govet's fieldalignment; the JSON tags carry the wire names.
+// askInspect is the reconcile's own minimal `inspect` decode, deliberately not internal/workflow's
+// State, which the read endpoint passes through whole.
 type askInspect struct {
 	State *struct {
 		PauseDetail *askPauseDetail   `json:"pauseDetail"`
@@ -415,18 +341,14 @@ type askInspect struct {
 	} `json:"state"`
 }
 
-// askPauseDetail is the ONE field this reconcile reads off `state.pauseDetail`: when the
-// step started waiting. Deliberately not the package's own `pauseDetail`, which the resume
-// and cancel PREDICATES decode — every field there is another way a wire change can reach
-// the heal, and `occurredAt` has no predicate reading it. Do not fold the two together.
+// askPauseDetail reads only `occurredAt`. Kept apart from the resume and cancel predicates'
+// `pauseDetail`, so a wire change cannot reach the heal through this.
 type askPauseDetail struct {
 	OccurredAt string `json:"occurredAt"`
 }
 
-// askNode is one node of the state tree, decoded to what naming a step needs.
-// CompletionSignal is the pause's machine-readable half, per-NODE, so it survives a
-// parallel branch where the run-level pauseReason does not. Type has ONE reader,
-// statusUpdateTarget, because KAS considers `type: "step"` nodes alone.
+// askNode is one state-tree node. CompletionSignal survives a parallel branch where pauseReason does not;
+// Type's one reader is statusUpdateTarget (KAS considers `step` nodes only).
 type askNode struct {
 	NodeID           string                `json:"nodeId"`
 	Type             string                `json:"type"`
@@ -437,14 +359,9 @@ type askNode struct {
 	Children         []askNode             `json:"children"`
 }
 
-// reconcileNeedInput mints an ask for a run parked on a person with nothing in the registry
-// to answer with. The registry is IN MEMORY while the run is not, so a restart would leave
-// the run parked forever with cancelling as the only recourse; not only a restart, which is
-// why askChatID resolves the surface rather than assuming it.
-//
-// IDEMPOTENT twice over, since it runs on every read: the ask id derives from the paused
-// leaf's node PATH, and the pass is skipped while HasRun answers true. From the READ path
-// rather than a sweep, or a run nobody has opened broadcasts a card nobody is watching.
+// reconcileNeedInput mints an ask for a run parked on a person with nothing in the in-memory
+// registry, or a restart leaves it parked forever. Idempotent: the id derives from the paused leaf's
+// path, and HasRun skips the pass. Run from the read path, so nobody gets a card for an unopened run.
 func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw json.RawMessage) {
 	var res askInspect
 	if json.Unmarshal(raw, &res) != nil || res.State == nil {
@@ -453,8 +370,7 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 	if res.State.Status != marotte.RunStatusPaused {
 		return
 	}
-	// The signal arm leads: it reaches a park inside a parallel branch, whose reason the
-	// run never keeps, and it NAMES the step, so it wins over pausedLeaf's first match.
+	// The signal arm leads: it reaches a parallel-branch park and names the step.
 	leaf, path := needInputParked(res.State.Root, nil)
 	if leaf == nil {
 		if !needInputPause(res.State.PauseReason) {
@@ -480,7 +396,7 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 			NodeID:        leaf.NodeID,
 			StepSessionID: leaf.SessionID,
 			AgentName:     leaf.AgentName,
-			// Empty: inventing one would put words in the step's mouth.
+			// Empty rather than invented.
 			Question: "",
 			AskedAt:  askedAt,
 		},
@@ -494,10 +410,8 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 	rs.bus.Broadcast(ctx, a.event())
 }
 
-// askChatID resolves the surface a synthesised ask is keyed to: the LAUNCHING CHAT when a
-// live bridge still hosts the run, `run:<workflowId>` when none does. The chat is preferred
-// because keying there reaches both docks while `run:` reaches one — the composer's matcher
-// is the chat id alone. The fallback is also already the right key for a parentless run.
+// askChatID keys a synthesised ask to the launching chat while a live bridge hosts the run (both
+// docks match it), else `run:<workflowId>`, also right for a parentless run.
 func (rs *Runs) askChatID(ctx context.Context, workflowID string) marotte.ChatID {
 	if chatID, sb := rs.hostBridgeChat(ctx, workflowID); sb != nil && chatID != "" {
 		return chatID
@@ -505,11 +419,8 @@ func (rs *Runs) askChatID(ctx context.Context, workflowID string) marotte.ChatID
 	return runChatID(workflowID)
 }
 
-// needInputParked finds a PAUSED node whose own completion signal says it is waiting on a
-// person, with its node path. The arm that reaches a park inside a PARALLEL BRANCH, which no
-// pause reason can: executeParallel copies the run STATE and not the node records, so the
-// signal survives where the reason does not. It also names the right step where pausedLeaf's
-// first depth-first match cannot.
+// needInputParked finds a paused node whose completion signal waits on a person, with its path.
+// It reaches a parallel-branch park (executeParallel copies state, not node records).
 func needInputParked(n *askNode, trail []string) (leaf *askNode, path []string) {
 	if n == nil {
 		return nil, nil
@@ -526,9 +437,7 @@ func needInputParked(n *askNode, trail []string) (leaf *askNode, path []string) 
 	return nil, nil
 }
 
-// pausedLeaf finds the paused LEAF a run is waiting at, with its node path. The leaf rather
-// than the root's own status, because the step holding the question is somewhere below it
-// and its session id is the answer address. Depth-first, first match wins.
+// pausedLeaf finds the paused leaf a run waits at, with its path; the leaf's session is the answer address. Depth-first, first match.
 func pausedLeaf(n *askNode, trail []string) (leaf *askNode, path []string) {
 	if n == nil {
 		return nil, nil

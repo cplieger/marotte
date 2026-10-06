@@ -1,21 +1,8 @@
-// Package rpcerr turns a JSON-RPC error from kiro-cli into text a person can
-// read.
+// Package rpcerr turns a JSON-RPC error from kiro-cli into text a person can read.
 //
-// It exists as its own package because THREE packages surface an ACP failure and
-// none of them owns the rule: internal/command (the prompt path, the retry, the
-// bridge-start failure and the dispatcher's shared 502), internal/agent (the model
-// switch and every workflow read endpoint) and internal/workflow (Classify's
-// feature detection). It used to live in internal/workflow as Details, reachable
-// only from the run handlers, so the 127-of-137 error frames that carry their
-// text in `error.data` rendered to chat users as the literal
-// "ACP error -32603: Internal error". Then it lived in internal/marotte beside the
-// wire and domain TYPES, which is what made that package's own claim to declare
-// no interfaces false — the detailer below is the interface it was declaring
-// three files away.
-//
-// Nothing here imports another marotte package. The one shape it needs is
-// reached through detailer rather than through *marotte.RPCError, so an error is
-// found by errors.AsType at any wrapping depth and this package stays a leaf.
+// It is shared by internal/command, internal/agent and internal/workflow, none of which
+// owns the rule. It imports no other marotte package: the one shape it needs is reached
+// through detailer, so errors.AsType finds it at any wrapping depth.
 package rpcerr
 
 import (
@@ -26,52 +13,24 @@ import (
 	"github.com/cplieger/runesafe/v2"
 )
 
-// maxTextBytes bounds one error string on its way to a user surface.
-//
-// A bound is required rather than tidy: Details' last fallback returns the
-// raw `error.data` blob, which on a Zod failure over a large params object is
-// unbounded, and the same value reaches an SSE payload, a chat banner and a log
-// line. 2 KiB is far more than any real cause needs and far less than a
-// transcript-sized blob.
+// maxTextBytes bounds one error string on its way to a user surface: Details' last
+// fallback returns the raw `error.data`, which is unbounded on a Zod failure.
 const maxTextBytes = 2048
 
-// detailer is satisfied by an error carrying KAS's `error.data`. An interface
-// rather than *RPCError so a wrapped error is found at any depth.
-//
-// It EMBEDS error, which is what lets Details read it with errors.AsType.
-// errors.AsType's type parameter is constrained to error, so a capability-only
-// interface does not compile against it — measured on go1.27.0: `bare does not
-// satisfy error (missing method Error)`. The declaration was strictly wider than
-// the set of values that can inhabit it: this is read ONLY by walking an error
-// tree, every node of such a tree is an error by construction, and no non-error
-// implementation was ever reachable. net.Error is the stdlib's answer to the same
-// question and embeds error for the same reason.
-//
-// Consumer cost is zero: the sole implementation is *marotte.RPCError, which had
-// to have an Error method to be in a chain at all.
+// detailer is satisfied by an error carrying KAS's `error.data`; an interface rather than
+// *RPCError so a wrapped error is found at any depth. It embeds error because
+// errors.AsType's type parameter is constrained to error.
 type detailer interface {
 	error
 	ErrorData() json.RawMessage
 }
 
-// Stated as an assertion rather than left to Details' call of errors.AsType so a
-// future widening of the interface fails here, next to the reason.
+// A future widening of detailer past error fails here.
 var _ error = detailer(nil)
 
-// Details extracts the text KAS put in `error.data`, or "" when there is
-// none.
-//
-// Returning "" for an error whose text is in `error.message` is why this is not
-// the function callers should reach for: use Text, which composes both.
-// It stays exported because workflow.Classify's feature detection wants the data
-// half specifically, and matching its marker against the message too would widen
-// it to any error that merely quotes KAS.
+// Details extracts the text KAS put in `error.data`, or "" when there is none. Callers
+// want Text; Details stays exported for workflow.Classify, which wants the data half only.
 func Details(err error) string {
-	// errors.AsType rather than errors.As: one expression, no var declaration, and
-	// no addressable target to get wrong. Note go fix could not have found this
-	// site — its errorsastype modernizer only fires on a bare POSITIVE
-	// `if errors.As(...)`, so the negated guard this replaces was invisible to
-	// both the fixer and golangci-lint's copy of the same analyzer.
 	d, ok := errors.AsType[detailer](err)
 	if !ok {
 		return ""
@@ -80,20 +39,17 @@ func Details(err error) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	// The common shape: {"details": "…"}.
+	// A typed KAS error's data is a machine envelope; its prose is in message.
+	if _, ok := mappedOf(raw); ok {
+		return ""
+	}
 	var obj struct {
 		Details string `json:"details"`
 	}
 	if json.Unmarshal(raw, &obj) == nil && obj.Details != "" {
 		return obj.Details
 	}
-	// The other shape: a Zod issue array. Its messages are what a caller wants.
-	//
-	// Only Message is decoded. The struct used to carry a `Path []any` beside it
-	// that nothing ever read, so every issue in every failure allocated a slice
-	// and an interface box per path element for a field with no consumer — on the
-	// path whose whole reason for existing is a Zod failure over a large params
-	// object.
+	// The other shape: a Zod issue array. Only Message is decoded.
 	var issues []struct {
 		Message string `json:"message"`
 	}
@@ -108,30 +64,13 @@ func Details(err error) string {
 			return strings.Join(msgs, "; ")
 		}
 	}
-	// Neither shape parsed: the raw JSON still beats an empty string, because it
-	// is what KAS actually said. This is the branch the byte cap exists for.
+	// Neither shape parsed: the raw JSON beats an empty string. maxTextBytes exists for this.
 	return string(raw)
 }
 
-// Text is the one function a user-facing surface should call on an ACP
-// error. It answers the most specific text the error carries, sanitized and
-// bounded.
-//
-// BOTH fields have to be read, and that is measured rather than defensive.
-// Counted over every engine-emitted frame in the wire logs: 127 `-32603` errors
-// put the text in `error.data` (as `{"details": …}` or a Zod issue array) and
-// set `error.message` to the literal "Internal error", while 6 `-32602` and 4
-// `-32000` errors put it in `error.message`. So reading only `data` renders an
-// empty string for every parameter-validation failure, and reading only
-// `message` renders "Internal error" for the overwhelming majority. Preferring
-// data and falling back to the error string covers both without a code switch.
-//
-// The value is sanitized because it is upstream text bound for a log line, an
-// SSE payload and a banner: runesafe's single-line preset turns C0/C1 controls,
-// DEL, Bidi overrides and the paragraph separators into spaces, so a hostile or
-// merely mangled provider message cannot forge a log record or reorder a
-// sentence in a viewer. It is capped on a rune boundary for the reason
-// maxTextBytes gives.
+// Text is the one function a user-facing surface should call on an ACP error: the most
+// specific text it carries (`error.data`, else `error.message`), sanitized single-line
+// and capped on a rune boundary at maxTextBytes.
 func Text(err error) string {
 	if err == nil {
 		return ""
@@ -139,30 +78,130 @@ func Text(err error) string {
 	text := Details(err)
 	if text == "" {
 		text = err.Error()
+		if d, ok := errors.AsType[detailer](err); ok {
+			if _, mapped := mappedOf(d.ErrorData()); mapped {
+				text = d.Error()
+			}
+		}
 	}
 	return Sanitize(text, maxTextBytes)
 }
 
-// Sanitize is the treatment Text applies, without the compose: one upstream
-// string made safe for a user surface and bounded to maxBytes.
-//
-// It is exported for the caller that must NOT compose — a MAPPED backend error,
-// whose `data` is the machine triplet rather than the text, so Details falls
-// through to its raw-JSON fallback and Text is the wrong function. That caller
-// still owes the sanitize and the cap, and this is the one place the rule lives:
-// a second runesafe call in a consumer is a second cap constant to keep in step.
-//
-// maxBytes is a parameter rather than maxTextBytes because such a caller
-// composes its own remedy text around the result and needs the room; a bound
-// applied to the whole composition is what cuts the actionable half off.
+// Mapped is KAS's typed-error envelope, `error.data` = {errorType,
+// retryErrorType, requestId}. It is independent of the JSON-RPC code, and its
+// prose is always in `error.message`.
+type Mapped struct {
+	ErrorType      string `json:"errorType"`
+	RetryErrorType string `json:"retryErrorType"`
+	RequestID      string `json:"requestId"`
+}
+
+// The KAS class names and retry types marotte keys a remedy on.
+const (
+	RetryThrottling                = "THROTTLING"
+	ContextWindowExceededError     = "ContextWindowExceededError"
+	modelRegistryUnavailableError  = "ModelRegistryUnavailableError"
+	mappedProseCap                 = 1024
+	mappedRequestIDCap             = 128
+	contextLimitSentence           = "This chat reached the model's context limit. Compact the context, then send the prompt again."
+	modelRegistryUnavailableRemedy = " Run `kiro-cli login`, then send the prompt again."
+	throttledRemedy                = " kiro-cli already retried. Wait a moment and send again, or switch to another model."
+	mappedFallbackProse            = "the model backend refused the request"
+)
+
+// knownClasses are KAS error class names worth showing a reader: the classes
+// marotte keys a remedy on, plus the ones measured on real session logs. Any
+// other errorType is an unmapped error whose class name the bundle minified.
+var knownClasses = map[string]struct{}{
+	ContextWindowExceededError:          {},
+	modelRegistryUnavailableError:       {},
+	"ModelRegistryUnauthenticatedError": {},
+	"ModelRegistryAccessDeniedError":    {},
+	"ClientThrottleError":               {},
+	"ModelThrottleError":                {},
+	"ServiceThrottleError":              {},
+	"OverageLimitReachedError":          {},
+	"InternalServerException":           {},
+	"ServerConnectionResetError":        {},
+	"ConnectionResetError":              {},
+	"StreamIdleTimeoutError":            {},
+	"ModelRefreshTimeoutError":          {},
+	"GenericValidationError":            {},
+	"BedrockValidationError":            {},
+	"InvalidModelError":                 {},
+	"TokenInvalidError":                 {},
+	"TokenExpiredError":                 {},
+	"AuthRefreshFailedError":            {},
+	"AccessDeniedError":                 {},
+	"AbortedError":                      {},
+}
+
+// KnownClass reports whether name is a KAS error class a reader can be shown.
+func KnownClass(name string) bool {
+	_, ok := knownClasses[name]
+	return ok
+}
+
+// MappedOf finds the typed-error envelope at any wrapping depth. ok is false for
+// an error with no data, or whose data is not an object naming a class.
+func MappedOf(err error) (Mapped, bool) {
+	d, ok := errors.AsType[detailer](err)
+	if !ok {
+		return Mapped{}, false
+	}
+	return mappedOf(d.ErrorData())
+}
+
+func mappedOf(raw json.RawMessage) (Mapped, bool) {
+	if len(raw) == 0 {
+		return Mapped{}, false
+	}
+	var m Mapped
+	if json.Unmarshal(raw, &m) != nil || (m.ErrorType == "" && m.RetryErrorType == "") {
+		return Mapped{}, false
+	}
+	return m, true
+}
+
+// Account is what a typed KAS error says on a turn card: KAS's message plus
+// marotte's remedy for its class, keyed on exact class names only, so a minified
+// errorType gets the message alone. Each half has its own budget, so a long
+// message cannot cut off the remedy or the request id.
+func Account(m Mapped, message string) string {
+	if m.ErrorType == ContextWindowExceededError {
+		// KAS's own sentence names a setting the reader cannot reach.
+		return withRequestID(contextLimitSentence, m.RequestID)
+	}
+	msg := strings.TrimSpace(Sanitize(message, mappedProseCap))
+	if m.ErrorType == modelRegistryUnavailableError {
+		return msg + modelRegistryUnavailableRemedy
+	}
+	if msg == "" {
+		msg = strings.TrimSpace(Sanitize(m.ErrorType, mappedProseCap))
+		if msg == "" {
+			msg = mappedFallbackProse
+		}
+	}
+	if m.RetryErrorType == RetryThrottling {
+		msg += throttledRemedy
+	}
+	return withRequestID(msg, m.RequestID)
+}
+
+func withRequestID(msg, id string) string {
+	if id = strings.TrimSpace(Sanitize(id, mappedRequestIDCap)); id != "" {
+		msg += " (request " + id + ")"
+	}
+	return msg
+}
+
+// Sanitize is Text's treatment without the compose: one upstream string made safe for a
+// user surface and bounded to maxBytes (a parameter so a caller can leave room for a remedy).
 func Sanitize(s string, maxBytes int) string {
 	if s == "" {
 		return ""
 	}
-	// SanitizeSingleLineCapped, not SanitizeSingleLineBounded: Bounded puts its
-	// elision marker OUTSIDE the cap, so a truncated value runs to n+3 bytes and
-	// every caller with a real budget subtracts the marker width by hand. Capped
-	// bounds the TOTAL, which is what a cap is for.
+	// Capped, not Bounded: Bounded puts the marker OUTSIDE the cap (n+3 bytes).
 	capped, _ := runesafe.SanitizeSingleLineCapped(s, maxBytes, "...")
 	return capped
 }

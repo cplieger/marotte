@@ -1,12 +1,5 @@
-//
-// Table-driven tests for the runtime-validation helpers in validators.ts.
-//
-// The per-shape decoders (decodeChatHeader, decodeMessage, etc.) are
-// generated from Go structs by cmd/wire-codegen and live in
-// wire/decoders.gen.ts. They aren't tested here individually; they are
-// exercised by the property tests in wire/decoders.property.test.ts
-// (auto-discovers them via the registry) and by the integration paths
-// at every SSE event and apiGetTyped call site.
+// Table-driven tests for validators.ts. The generated per-shape decoders (wire/decoders.gen.ts) are
+// covered by wire/decoders.property.test.ts and every SSE and apiGetTyped call site.
 
 import { describe, it, expect } from "vitest";
 

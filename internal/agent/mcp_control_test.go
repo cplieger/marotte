@@ -1,11 +1,7 @@
 package agent
 
-// Tests for mcp_control.go: the live MCP control operations (reconnect
-// fan-out, getPrompt/getResource one-bridge reads) and their HTTP handlers,
-// plus that recordConnected surfaces discovery (prompts/resources) in the
-// /api/mcp/status snapshot.
-
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -35,11 +31,9 @@ func bridgeCalled(b *fakeBridge, method string) bool {
 	return slices.Contains(b.calls, method)
 }
 
-// enabledConfig stages names as the user's own, enabled servers: present in all
-// three sets, which is the nesting a real store produces for an enabled entry.
+// enabledConfig stages names as the user's own enabled servers, in both sets as a real store nests them.
 func enabledConfig(names ...string) *fakeMCPConfig {
-	set := nameSet(names...)
-	return &fakeMCPConfig{enabled: set, configured: nameSet(names...), all: nameSet(names...)}
+	return &fakeMCPConfig{enabled: nameSet(names...), configured: nameSet(names...)}
 }
 
 func nameSet(names ...string) map[string]struct{} {
@@ -84,7 +78,6 @@ func TestGetMCPPrompt_CallsBridgeAndReturnsResult(t *testing.T) {
 	if !bridgeCalled(b, methodV3MCPGetPrompt) {
 		t.Errorf("bridge did not receive %s", methodV3MCPGetPrompt)
 	}
-	// The fake echoes a canned result; we only assert it round-trips.
 	if len(res) == 0 {
 		t.Error("empty result")
 	}
@@ -146,6 +139,45 @@ func TestHandleMCPReconnect_OK(t *testing.T) {
 	}
 }
 
+// TestHandleMCPReconnect_ReachesAServerKASReportsLive pins Reconnect for a live-reported workspace
+// server, and not for one KAS reports disabled.
+func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
+	cases := map[string]struct {
+		record func(ctx context.Context, h *Runtime)
+		want   int
+	}{
+		"a workspace server reported connected": {
+			record: func(ctx context.Context, h *Runtime) {
+				h.mcpRegistry.RecordConnected(ctx, "theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"}, nil, nil, nil, nil)
+			},
+			want: http.StatusOK,
+		},
+		"a power's server reported failed": {
+			record: func(ctx context.Context, h *Runtime) {
+				h.mcpRegistry.RecordInitFailure(ctx, "theirs", marotte.MCPSource{Origin: "power", Power: "p"}, "boom")
+			},
+			want: http.StatusOK,
+		},
+		"a workspace server reported disabled": {
+			record: func(ctx context.Context, h *Runtime) {
+				h.mcpRegistry.RecordDisabled(ctx, "theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"})
+			},
+			want: http.StatusNotFound,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHubWithMCPConfig(enabledConfig("mine"))
+			insertLiveBridge(t, h, "c1")
+			tc.record(t.Context(), h)
+			rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"theirs"}`)
+			if rec.Code != tc.want {
+				t.Errorf("handleReconnect(theirs) code = %d, want %d (%s)", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandleMCPGetPrompt_MissingPrompt(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	rec := postJSON(h.mcpRegistry.handlePrompt, "/api/mcp/prompt", `{"server":"everything"}`)
@@ -171,13 +203,13 @@ func TestHandleMCPGetResource_OK(t *testing.T) {
 	}
 }
 
-// TestMCPRegistry_RecordConnectedStoresDiscovery verifies prompts/resources
-// captured at connect time surface in the /api/mcp/status snapshot.
+// TestMCPRegistry_RecordConnectedStoresDiscovery pins connect-time prompts, resources and templates in /api/mcp/status.
 func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	prompts := []marotte.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
 	resources := []marotte.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
-	h.mcpRegistry.RecordConnected(t.Context(), "everything", nil, prompts, resources)
+	templates := []marotte.MCPResourceTemplateInfo{{Name: "issue", URITemplate: "gh://issues/{number}"}}
+	h.mcpRegistry.RecordConnected(t.Context(), "everything", marotte.MCPSource{}, nil, prompts, resources, templates)
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
@@ -189,9 +221,12 @@ func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	if len(snap[0].Resources) != 1 || snap[0].Resources[0].URI != "demo://doc" {
 		t.Errorf("resources = %+v", snap[0].Resources)
 	}
+	if len(snap[0].ResourceTemplates) != 1 || snap[0].ResourceTemplates[0].URITemplate != "gh://issues/{number}" {
+		t.Errorf("resource templates = %+v", snap[0].ResourceTemplates)
+	}
 }
 
-// postJSON is a tiny helper: POST a JSON body to an http.HandlerFunc.
+// postJSON posts a JSON body to an http.HandlerFunc.
 func postJSON(handler http.HandlerFunc, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -200,14 +235,8 @@ func postJSON(handler http.HandlerFunc, path, body string) *httptest.ResponseRec
 	return rec
 }
 
-// TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset is the failure half of
-// the fan-out, in both directions.
-//
-// A per-bridge failure is deliberately not fatal — one wedged chat must not stop the
-// others reconnecting — and the count returned is bridges TARGETED, so the HTTP
-// reply says "reconnected: 1" whether the reset landed or not. The log line is the
-// only place a refusal is recorded, and a guard flipped here emits one on every
-// successful reconnect instead, which buries the real ones.
+// TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset pins that the count is bridges targeted, so the
+// log line is the only record of a refusal, and must not fire on success.
 func TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset(t *testing.T) {
 	const wantLine = "mcp reconnect: bridge call failed"
 
@@ -244,14 +273,8 @@ func TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset(t *testing.T) {
 	})
 }
 
-// TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay pins the argument shape
-// TestGetMCPPrompt_CallsBridgeAndReturnsResult leaves unasserted.
-//
-// An MCP server's prompt schema is generated from its argument list, and a server
-// with no arguments still declares an object — so `"arguments": null` fails
-// validation server-side where `{}` passes. Substituting the empty object for
-// arguments the caller DID supply is the same bug inverted: the prompt renders with
-// every placeholder unfilled and nothing reports why.
+// TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay pins that `null` fails server validation where `{}`
+// passes, and supplied arguments must not be replaced.
 func TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay(t *testing.T) {
 	cases := []struct {
 		args map[string]any
@@ -292,14 +315,7 @@ func TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay(t *testing.T) {
 	}
 }
 
-// TestWriteMCPResult_AlwaysWritesADecodableObject pins the fallback's purpose and
-// its limit.
-//
-// The result is relayed VERBATIM because marotte models no MCP payload shapes, which
-// leaves one gap the client cannot handle: a server that answered with nothing
-// produces an empty body, and the client's decode fails on a reply that is not an
-// error either. The fallback covers exactly that case, and must not reach a result
-// that does exist — a replaced payload is a prompt or resource silently emptied.
+// TestWriteMCPResult_AlwaysWritesADecodableObject pins the {} fallback for an empty result only.
 func TestWriteMCPResult_AlwaysWritesADecodableObject(t *testing.T) {
 	cases := []struct {
 		name string

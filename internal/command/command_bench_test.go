@@ -24,6 +24,10 @@ type benchDeps struct {
 	// assert one write for an accepted tier and NONE for the three cases that
 	// must leave no transcript row.
 	effortRecords []effortRecord
+	// thinkingDefaultOff names the models whose own default is thinking off.
+	thinkingDefaultOff map[string]bool
+	// stops is every chat RequestStop recorded, in order.
+	stops []marotte.ChatID
 }
 
 // effortRecord is one call to the transcript recorder.
@@ -37,8 +41,7 @@ func newBenchDeps() *benchDeps {
 	return &benchDeps{holder: marotte.TurnSourcePrompt, holderOpen: true}
 }
 
-// The store methods are answered directly now: Roles holds ChatStore, so the
-// ChatStore() getter it used to return is gone.
+// Roles holds ChatStore, so benchDeps answers the store methods directly.
 func (d *benchDeps) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) { return nil, false }
 
 func (d *benchDeps) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
@@ -93,19 +96,18 @@ func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, contex
 }
 func (d *benchDeps) InflightAdd(int)                                 {}
 func (d *benchDeps) InflightDone()                                   {}
+func (d *benchDeps) Draining() bool                                  { return false }
 func (d *benchDeps) DeleteChatState(context.Context, marotte.ChatID) {}
-func (d *benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string) {
+func (d *benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string, RunStopCause) {
 }
-func (d *benchDeps) CloseChatState(context.Context, marotte.ChatID)   {}
-func (d *benchDeps) BeginChatTeardown(marotte.ChatID, bool)           {}
-func (d *benchDeps) KillForTurn(marotte.ChatID)                       {}
-func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool { return true }
-func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary { return MCPPendingSummary{} }
+func (d *benchDeps) CloseChatState(context.Context, marotte.ChatID) {}
+func (d *benchDeps) BeginChatTeardown(marotte.ChatID, bool)         {}
+func (d *benchDeps) KillForTurn(marotte.ChatID)                     {}
 
 // benchTurnID is the one turn the stub ever opens; every id-keyed method accepts it.
 const benchTurnID = "t-bench"
 
-func (d *benchDeps) OpenTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource, *marotte.EntryPrompt, func(*marotte.Chat)) (string, error) {
+func (d *benchDeps) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, error) {
 	return benchTurnID, nil
 }
 
@@ -121,7 +123,11 @@ func (d *benchDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.D
 }
 
 func (d *benchDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
-func (d *benchDeps) ReleaseTurnReservation(marotte.ChatID)                      {}
+func (d *benchDeps) TryReserveTurnFenced(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
+	return true
+}
+func (d *benchDeps) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
+func (d *benchDeps) ReleaseTurnReservation(marotte.ChatID)      {}
 
 func (d *benchDeps) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
@@ -133,6 +139,10 @@ func (d *benchDeps) SettleTurnOnResponse(context.Context, marotte.ChatID, string
 
 func (d *benchDeps) TurnOpenedAfter(marotte.ChatID, string) bool { return false }
 
+func (d *benchDeps) StopRequestedAfter(marotte.ChatID, string) bool { return false }
+
+func (d *benchDeps) RequestStop(chatID marotte.ChatID) { d.stops = append(d.stops, chatID) }
+
 // AdmissionHolderSource reports the configured admission holder.
 func (d *benchDeps) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return d.holder, d.holderOpen
@@ -140,7 +150,7 @@ func (d *benchDeps) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSourc
 
 func (d *benchDeps) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
 
-func (d *benchDeps) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string) {
+func (d *benchDeps) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 }
 
 // The mode recorder is a sink here: the tests that assert on the entry a mode
@@ -152,6 +162,8 @@ func (d *benchDeps) PersistEffortChange(_ context.Context, chatID marotte.ChatID
 	d.effortRecords = append(d.effortRecords, effortRecord{chatID: chatID, model: model, level: level})
 }
 
+func (d *benchDeps) ThinkingDefaultOff(model string) bool { return d.thinkingDefaultOff[model] }
+
 // The bench host launched no runs, so a rewind's cut never holds one.
 func (d *benchDeps) LiveRuns([]string) []LiveRunRef          { return nil }
 func (d *benchDeps) CancelRun(context.Context, string) error { return nil }
@@ -161,18 +173,12 @@ func (d *benchDeps) CancelRun(context.Context, string) error { return nil }
 func TestBenchDeps_NoPanic(t *testing.T) {
 	d := newBenchDeps()
 
-	// Boolean/scalar returns. The workspace paths are not here any more: they
-	// are a Workspace value, so there is no double method to exercise.
 	if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
 		t.Error("TurnContext() returned a nil context")
 	} else {
 		cancel()
 	}
-	if !d.WaitForReady(t.Context(), time.Millisecond) {
-		t.Error("MCPWaitForReady returned false")
-	}
 
-	// No-op methods must not panic.
 	d.Broadcast(t.Context(), marotte.ServerEvent{})
 	d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
 	d.ClearPendingPermsForChat("x")
@@ -190,7 +196,6 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 func TestBenchDeps_Contract(t *testing.T) {
 	d := newBenchDeps()
 
-	// --- Safe usable values (dispatch path depends on these) ---
 	t.Run("usable_values", func(t *testing.T) {
 		if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
 			t.Error("TurnContext must return a non-nil context")
@@ -199,14 +204,12 @@ func TestBenchDeps_Contract(t *testing.T) {
 		}
 	})
 
-	// --- Intentionally nil (safe only for dispatch-overhead benchmarks) ---
 	t.Run("intentionally_nil", func(t *testing.T) {
 		if d.Bridge("any") != nil {
 			t.Error("Bridge expected nil for bench stub")
 		}
 	})
 
-	// --- No-panic on zero-value calls ---
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
 		d.Broadcast(t.Context(), marotte.ServerEvent{})
 		d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
@@ -230,11 +233,8 @@ func TestBenchDeps_Contract(t *testing.T) {
 	})
 }
 
-// BenchmarkDispatcherServeHTTP measures the envelope path: decode, validate,
-// table lookup, handler. It had cache_miss / cache_hit sub-benchmarks when the
-// dispatcher ran its own request_id dedup; both now measure the identical path,
-// so there is one. Replay cost belongs to the header middleware and is
-// benchmarked with it.
+// BenchmarkDispatcherServeHTTP measures the envelope path: decode, validate, table lookup, handler.
+// Replay cost belongs to the header middleware.
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	d := New()
 	d.Register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
@@ -269,12 +269,8 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	})
 }
 
-// hostDouble is what a single all-in-one test double answers: every role a
-// handler declares. It exists ONLY for the doubles in
-// this package's tests — production code has no aggregate over the roles, and
-// the shape pin in shape_test.go reads production files only, for exactly this
-// reason. A double stands in for the whole host, so naming every role once is
-// what lets one value fill every slot a handler asks for.
+// hostDouble is every role a handler declares, for this package's all-in-one test doubles only;
+// production has no aggregate over the roles (shape_test.go reads production files only).
 type hostDouble interface {
 	BridgeAccess
 	ChatStore
@@ -282,8 +278,8 @@ type hostDouble interface {
 	ChatTeardown
 	PendingPermAccess
 	TerminalAccess
+	TurnStopper
 	LifecycleAccess
-	MCPAccess
 	TurnAdmission
 	TurnOutcomeAccess
 	EffortRecorder
@@ -302,7 +298,6 @@ func promptRolesOf(d hostDouble) *promptRoles {
 		bus:         d,
 		workspace:   Workspace{Dir: "/tmp", ConfigDir: "/tmp"},
 		lifecycle:   d,
-		mcp:         d,
 		admission:   d,
 		turnOutcome: d,
 		steers:      NewSteerLedger(),

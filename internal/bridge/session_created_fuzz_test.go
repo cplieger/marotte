@@ -7,11 +7,8 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 )
 
-// FuzzSessionCreatedUnmarshal targets the session/new result parsing.
-// Bug class: accepting invalid session IDs from kiro-cli response that
-// would later be used as filesystem path components — a crafted sessionId
-// with path separators could escape the sessions directory. Also validates
-// that mode/model arrays survive round-trip without corruption.
+// FuzzSessionCreatedUnmarshal fuzzes session/new result parsing: a crafted sessionId with path separators must not
+// pass validation, and modes and models survive a round trip.
 func FuzzSessionCreatedUnmarshal(f *testing.F) {
 	f.Add(`{"sessionId":"abc-123","modes":{"currentModeId":"code","availableModes":[{"id":"code","name":"Code"}]},"configOptions":[{"id":"model","currentValue":"m1","options":[{"value":"m1","name":"M1","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}`)
 	f.Add(`{"sessionId":"../escape"}`)
@@ -27,8 +24,7 @@ func FuzzSessionCreatedUnmarshal(f *testing.F) {
 			return
 		}
 
-		// Invariant 1: if sessionId passes ValidSessionID, it must not
-		// contain path separators or traversal patterns.
+		// An id passing ValidSessionID has no separators or traversal.
 		if ids.ValidSessionID(result.SessionID) {
 			for _, ch := range result.SessionID {
 				if ch == '/' || ch == '\\' || ch == 0 {
@@ -40,27 +36,23 @@ func FuzzSessionCreatedUnmarshal(f *testing.F) {
 			}
 		}
 
-		// Invariant 2: if Modes is non-nil, availableModes must be a valid slice.
+		// Non-nil Modes has a valid slice.
 		if result.Modes != nil {
 			for i, mode := range result.Modes.AvailableModes {
 				if mode.ID == "" && mode.Name == "" {
-					// Empty modes are technically valid but suspicious.
 					_ = i
 				}
 			}
 		}
 
-		// Invariant 3: the v3 model catalog rides configOptions (the
-		// "model" select). Documented boundary: kiro-cli MAY send invalid
-		// model ids that pass through unchecked; we only assert no panic
-		// while walking the choices.
+		// The catalog rides configOptions; kiro-cli may send invalid model ids, so only no-panic is asserted.
 		for i := range result.ConfigOptions {
 			for _, choice := range result.ConfigOptions[i].Options {
 				_ = choice.Value
 			}
 		}
 
-		// Invariant 4: round-trip marshal must not lose the sessionId.
+		// The round trip keeps the sessionId.
 		marshalled, err := json.Marshal(result)
 		if err != nil {
 			t.Fatalf("re-marshal failed: %v", err)

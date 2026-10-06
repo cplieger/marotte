@@ -1,7 +1,3 @@
-// Clone and re-clone handlers extracted from handlers_repo.go.
-// These workspace-mutating operations share the URL scheme allowlist
-// and are grouped for focused security review.
-
 package git
 
 import (
@@ -40,26 +36,16 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "only https:// and git@ URLs allowed")
 		return
 	}
-	// Defense in depth against git argument-injection CVEs (1000117,
-	// 11235, and future variants): pass `--` so git treats the URL
-	// strictly as a positional argument even if parsing quirks would
-	// otherwise interpret leading dashes as flags. The explicit scheme
-	// prefix above already blocks `--flag=...`, but `--` is cheap and
-	// makes the guarantee lexical rather than prefix-based.
+	// `--` keeps the URL a positional argument against git argument-injection CVEs
+	// (CVE-2017-1000117, CVE-2018-11235 and variants), on top of the scheme prefix.
 	slog.Info("git clone", "url", logField(body.URL))
-	// From here the response is a PROGRESS STREAM: NDJSON progress lines
-	// while git transfers, then one final line carrying the {output}/{error}
-	// envelope writeCmdResult produces. Streaming is what lets the client
-	// measure that the download is still happening instead of holding a
-	// wall-clock timeout that kills a large repo mid-transfer; the server's
-	// own liveness bound is the stall watchdog in runTransfer, with
-	// cloneCeiling as the runaway backstop.
+	// From here the response is NDJSON progress lines while git transfers, then one final
+	// {output}/{error} line, so the client measures liveness rather than holding a wall-clock
+	// timeout.
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	rc := http.NewResponseController(w)
 	lastSent := time.Time{}
 	progress := func(line string) {
-		// Git rewrites its progress line many times a second; one update
-		// per interval is plenty for a liveness signal and a percent label.
 		if time.Since(lastSent) < progressInterval {
 			return
 		}
@@ -93,20 +79,14 @@ func writeCloneStreamLine(w http.ResponseWriter, rc *http.ResponseController, v 
 		return
 	}
 	// A ResponseWriter with no Flusher underneath buffers until the handler
-	// returns, which degrades to the old single-body behavior; nothing to
+	// returns, which degrades to a single body; nothing to
 	// repair from here.
 	_ = rc.Flush()
 }
 
-// clone runs the clone for handleClone, choosing between a plain
-// `git clone` and adoptDestination by what already sits at the
-// destination — and on failure restores the destination to that
-// pre-clone state. Restoring is load-bearing, not tidiness: a clone
-// killed mid-transfer (the client aborted, the budget expired) leaves
-// a directory holding a commitless .git skeleton, which IsRepo counts
-// as a repository — so discovery lists it as cloned, the Sources row
-// offers "delete local copy", and a re-clone is refused as "already
-// exists", all over a corpse. Measured live on a 511 MB clone.
+// clone runs the clone for handleClone, choosing a plain `git clone` or adoptDestination by what
+// sits at the destination, and on failure restores the destination to its pre-clone state, so a
+// killed clone leaves no half-written directory behind.
 func (h *Handler) clone(ctx context.Context, remote string, onProgress func(string)) (string, error) {
 	name := cloneDirName(remote)
 	if name == "" {
@@ -143,10 +123,8 @@ func (h *Handler) clone(ctx context.Context, remote string, onProgress func(stri
 		}
 		return out, err
 	}
-	// destAbsent: git creates the directory, so a failure removes it whole.
-	// A state added to destState later lands here too, which is the safe
-	// default for the clone itself; its cleanup takes the whole-directory
-	// form because anything at the name was git's creation.
+	// destAbsent: git created the directory, so a failure removes it whole; also the safe default
+	// for a destState added later.
 	out, err := runTransfer(ctx, h.workDir, onProgress, "clone", "--progress", "--", remote)
 	if err != nil {
 		if rmErr := h.removeRepoDir(dir); rmErr != nil {
@@ -156,17 +134,9 @@ func (h *Handler) clone(ctx context.Context, remote string, onProgress func(stri
 	return out, err
 }
 
-// discardCloneDebris removes what a failed clone or adoption left inside a
-// destination that existed BEFORE the operation. sweepAll removes every
-// entry (a previously-empty directory: whatever is inside is git's);
-// otherwise only .git goes (an adopted directory: the user's content
-// predates the operation and only `git init`'s tree is ours).
-//
-// git cleans its own destination after an ordinary fatal error, so this
-// usually finds nothing; what it exists for is the SIGKILL case (a
-// cancelled request context kills the subprocess), where git never gets
-// the chance. Best-effort: the clone's own error is the answer the caller
-// reports, so a cleanup failure warns rather than masking it.
+// discardCloneDebris removes what a failed clone or adoption left inside a destination that existed
+// before: sweepAll removes every entry (it was empty, so all is git's), otherwise only `git init`'s
+// .git (the user's content predates it).
 func (h *Handler) discardCloneDebris(dir, name string, sweepAll bool) {
 	root, err := os.OpenRoot(h.workDir)
 	if err != nil {
@@ -246,19 +216,10 @@ func inspectCloneDest(ctx context.Context, dir string) destState {
 	return destOccupied
 }
 
-// adoptDestination clones remote into dir, an existing directory that
-// already holds content. Plain `git clone` refuses that outright
-// ("destination path ... already exists and is not an empty directory"),
-// which made a whole class of repository unclonable here: activating code
-// intelligence writes <workspace>/.kiro/settings/lsp.json, so the
-// destination for a repo NAMED .kiro exists before anyone asks to clone
-// it, and every attempt failed in a few milliseconds.
-//
-// The sequence is git's own way to populate a directory that already has
-// content, and it keeps the property that made plain clone refuse in the
-// first place: the final checkout REFUSES to overwrite an untracked file,
-// so pre-existing content is either left untouched or the operation fails
-// with git naming the colliding paths. Nothing here deletes or overwrites.
+// adoptDestination clones remote into an existing non-empty directory, which plain `git clone`
+// refuses: `git init`, add origin, fetch, then check out origin/HEAD. Needed because code
+// intelligence writes <workspace>/.kiro/settings/lsp.json into a directory before its repo is
+// cloned.
 func adoptDestination(ctx context.Context, dir, remote string, onProgress func(string)) (string, error) {
 	var combined strings.Builder
 	run := func(args ...string) (string, error) {
@@ -290,10 +251,8 @@ func adoptDestination(ctx context.Context, dir, remote string, onProgress func(s
 		}
 		return report(), err
 	}
-	// origin/HEAD names the branch a plain clone would have checked out.
-	// A remote with no commits cannot answer, and that is not a failure:
-	// the repository is initialised and tracked, there is simply nothing
-	// to check out yet.
+	// A remote with no commits has no origin/HEAD; the repository is initialised and tracked with
+	// nothing to check out.
 	if _, err := run(subRemote, "set-head", remoteOrigin, "--auto"); err != nil {
 		return report(), nil
 	}
@@ -313,15 +272,9 @@ func adoptDestination(ctx context.Context, dir, remote string, onProgress func(s
 	return report(), nil
 }
 
-// handleReclone deletes the local copy of `repo` and re-clones it from its
-// previously-configured origin URL. One-click recovery for divergent
-// branches, detached HEAD, merge conflicts, or any other local-only
-// mess the user doesn't want to fix by hand. Rejects `repo` empty or ".":
-// the workspace root isn't necessarily a git repo and accidentally
-// nuking it would be a bad day.
-//
-// Caveat: this is a destructive operation with an atomicity gap — if
-// the clone fails after os.RemoveAll, the user's repo is gone.
+// handleReclone deletes the local copy of `repo` and re-clones it from its configured origin,
+// one-click recovery from local-only mess. Rejects an empty or "." repo: the workspace root is not
+// necessarily a repo.
 func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -349,22 +302,14 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
 		return
 	}
-	// Defense-in-depth: the origin URL came from git config and could
-	// have been set to a non-standard scheme by a prior clone (shared
-	// workspace, compromised upstream hook, etc.). Mirror handleClone's
-	// scheme allowlist so a re-clone can't silently switch to
-	// `file://`, `ext::`, or another transport family. Do this BEFORE
-	// os.RemoveAll so a rejected reclone leaves the working tree
-	// intact.
+	// The origin URL came from git config and may name another transport, so handleClone's scheme
+	// allowlist is re-applied BEFORE the delete.
 	if !isAllowedRemoteScheme(remote) {
 		webhttp.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
-	// Delete after resolving the URL so a partial delete doesn't strand
-	// the repo in an unreclonable state. Through the pinned parent, same
-	// as handleRemove — see removeRepoDir for why a name is not safe to
-	// unlink directly.
+	// Delete after resolving the URL, through the pinned parent (see removeRepoDir).
 	if rmErr := h.removeRepoDir(dir); rmErr != nil {
 		if errors.Is(rmErr, ErrUnsafeRepoPath) {
 			slog.Warn("git reclone: refused", "repo", body.Repo, "error", rmErr)
@@ -375,9 +320,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
-	// `--` barrier: the origin URL came from git config, but a prior
-	// malicious clone could have stored a `-flag` there; treating it
-	// strictly as a positional argument neutralises that attack.
+	// `--`: a prior malicious clone could have stored a `-flag` origin.
 	cmd := gitExec(r.Context(), h.workDir, "clone", "--", remote, filepath.Base(dir))
 	out, cErr := cmd.CombinedOutput()
 	if cErr != nil {

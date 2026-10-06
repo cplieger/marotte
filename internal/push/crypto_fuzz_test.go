@@ -100,20 +100,8 @@ func FuzzDeriveKeyNonce(f *testing.F) {
 	})
 }
 
-// FuzzECDHToECDSA verifies the ECDH→ECDSA P-256 key conversion preserves the
-// X/Y coordinates of the public key and yields a valid ECDSA private key on
-// the P-256 curve.
-//
-// Bug class: silent key corruption when porting an ECDH key into the ECDSA
-// structure used to sign VAPID JWTs. A coordinate truncation, an off-by-one on
-// the uncompressed-point split, or a wrong curve constant would generate JWTs
-// that fail verification at the push gateway — a failure that surfaces as
-// "notifications stopped working", far from its cause.
-//
-// Restored after the internal/push/crypto roll-up dropped it: the surviving
-// sibling FuzzDeriveKeyNonce came across, this one did not, which left
-// ecdhToECDSA's uncompressed-point guard (len 65, leading 0x04) with no
-// coverage beyond one happy-path call in crypto_derive_test.go.
+// FuzzECDHToECDSA verifies the ECDH→ECDSA P-256 conversion preserves the public key's X/Y and
+// yields a valid ECDSA private key on the curve.
 func FuzzECDHToECDSA(f *testing.F) {
 	priv, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {

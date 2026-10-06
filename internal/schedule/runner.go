@@ -10,16 +10,14 @@ import (
 // rather than a timer per schedule: there is no per-entry lifecycle to leak.
 const TickInterval = time.Minute
 
-// MissGrace is how late a due slot may be and still fire. Anything later was
-// missed while the container was down and is SKIPPED by decision: waking to a
-// batch of overdue runs firing at once is worse than missing one. It must exceed
-// TickInterval, or a slot landing between ticks would never run at all.
+// MissGrace is how late a due slot may be and still fire; a later slot was missed while
+// down and is SKIPPED (a burst of overdue runs is worse). It must exceed TickInterval, or a
+// slot landing between ticks would never run.
 const MissGrace = 3 * time.Minute
 
-// Launcher starts one workflow run on behalf of a schedule; Runtime satisfies it.
-// scheduleID travels with the launch so the host can attribute an unattended run's
-// outcome back to this row. slotAt is an INPUT to the run's bound, not the bound:
-// the host takes the tighter of it and its own ceiling, and zero means no slot.
+// Launcher starts one workflow run on behalf of a schedule. scheduleID lets the host
+// attribute the run's outcome to the row. slotAt is an input to the run's bound; zero means
+// no slot.
 type Launcher interface {
 	LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error)
 }
@@ -67,8 +65,7 @@ func (r *Runner) sweep(ctx context.Context) {
 		// so the branches below can tell a due slot from one missed while down.
 		due, err := NextRunFrom(e.Spec, e.Anchor, time.Time{})
 		if err != nil {
-			// An uncomputable stored spec would otherwise be retried every tick
-			// forever; say so once per tick rather than disabling the user's row.
+			// Say so once per tick rather than disabling the user's row.
 			slog.Warn("schedule has no next run", "id", e.ID, "error", err)
 			continue
 		}
@@ -76,7 +73,6 @@ func (r *Runner) sweep(ctx context.Context) {
 			continue
 		}
 		if now.Sub(due) > r.grace {
-			// Missed while down. Advance past it; the next slot computes from here.
 			slog.Info("schedule slot missed while offline, skipping",
 				"id", e.ID, "due", due, "late_by", now.Sub(due).Round(time.Second))
 			if err := r.store.skipTo(ctx, e.ID, now); err != nil {
@@ -91,9 +87,8 @@ func (r *Runner) sweep(ctx context.Context) {
 // fire launches one run and records the outcome. The anchor advances either
 // way so a schedule whose launch keeps failing does not retry every tick.
 func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
-	// Bound the run by the next slot after the one that just fired, measured from
-	// `due` so a late fire inside the grace window cannot extend the budget into
-	// it. An uncomputable slot degrades to the idle window, never to unbounded.
+	// Bound the run by the next slot after `due` (not now), so a late fire cannot extend the
+	// budget into it. An uncomputable slot degrades to the idle window, never to unbounded.
 	slotAt, dErr := NextRun(e.Spec, due)
 	if dErr != nil {
 		slog.Warn("schedule cannot name its next slot, so its run is bounded by its idle window alone",
@@ -103,8 +98,7 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID, slotAt)
 	outcome := Outcome{Status: StatusStarted}
 	if err != nil {
-		// An overlap is the expected refusal (one live run per recipe), not a fault:
-		// the previous run is still going, so this slot is simply skipped.
+		// An overlap (one live run per recipe) is the expected refusal: this slot is skipped.
 		outcome = Outcome{Status: StatusFailed, Reason: err.Error()}
 		slog.Warn("scheduled run did not start", "id", e.ID, "source", e.Source, "error", err)
 	} else {

@@ -26,9 +26,8 @@ var laneless = map[marotte.EntryKind]bool{
 	marotte.EntryKindTurnClose:        true,
 }
 
-// The step vocabulary the generator draws from: every event of section 4's sealing
-// table, plus the two carry shapes, so a draw can put a partial marker on a lane and
-// then land a card in it.
+// The step vocabulary the generator draws from: every sealing-table event plus the two
+// carry shapes, so a partial marker can sit on a lane when a card lands in it.
 const (
 	stepText = iota
 	stepThinking
@@ -45,18 +44,10 @@ const (
 	stepCount
 )
 
-// Property 1: arrival order equals persisted order equals broadcast order.
-//
-// A random interleaving is driven through the accumulator into a real entry-log
-// sink. Two oracles, neither of them a second copy of the sealing rules: within one
-// VIEW (lane "" plus the lane-less kinds, and one delegate lane plus them) seq order
-// is the order the events that produced those entries arrived in, where a text
-// entry's arrival is its FIRST delta; and the log decoded off disk is byte-order
-// identical to the sequence the operations handed back for broadcast.
-//
-// The second generator of section 13's property 1 interleaves TWO turns through the
-// registry; its store half is TestTwoOpenTurnsInterleave in internal/chat and its
-// registry assertions are phase 4's.
+// Arrival order equals persisted order equals broadcast order, over a random interleaving
+// into a real entry-log sink. Two oracles, neither a copy of the sealing rules: within one
+// VIEW, seq order is arrival order (a text entry arrives with its FIRST delta), and the log
+// read off disk matches the sequence handed back for broadcast.
 func TestArrivalOrderIsPersistedOrder(t *testing.T) {
 	ctx := t.Context()
 	base := t.TempDir()
@@ -136,12 +127,9 @@ func (d *driver) step(at, kind int, lane string) {
 	d.noteOpenEntries(at)
 }
 
-// arrivalOf is when the event that produced e arrived: a text or thinking entry
-// arrived with its first delta, a carry-released entry with the carry, and every
-// other entry with the append that wrote it.
-//
-// Keyed on the ENTRY's lane, never the step's: a seal that closes every lane runs
-// under one step and each lane's released carry arrived at its own moment.
+// arrivalOf is when the event that produced e arrived: a text or thinking entry with its
+// first delta, a carry-released entry with the carry, others with their append. Keyed on
+// the ENTRY's lane: one all-lane seal releases carries that arrived at different moments.
 func (d *driver) arrivalOf(e *marotte.Entry, at int) int {
 	if e.Kind != marotte.EntryKindText && e.Kind != marotte.EntryKindThinking {
 		return at
@@ -219,9 +207,8 @@ func (d *driver) apply(at, kind int, lane string) ([]Sealed, error) {
 	return nil, nil
 }
 
-// checkPersistedMatchesBroadcast is the oracle that costs no second implementation:
-// the log read back off disk is the same sequence, in the same order, that the
-// operations handed the caller to broadcast.
+// checkPersistedMatchesBroadcast checks the log read back off disk against the sequence
+// handed to the caller to broadcast.
 func (d *driver) checkPersistedMatchesBroadcast(persisted []marotte.Entry) {
 	if len(persisted) != len(d.broadcast) {
 		d.rt.Fatalf("the log holds %d entries and %d were handed back for broadcast:\n log %v\n bus %v",
@@ -289,9 +276,8 @@ func shapeOf(entries []marotte.Entry) []string {
 	return out
 }
 
-// A steer is lane-less and lands in the chat's OWN open turn whatever session
-// produced the frame, which is the turnlog half of property 1's third generator; the
-// routing that decides WHICH turn is the registry's, in phase 4.
+// A steer is lane-less and lands in the chat's OWN open turn whatever session produced the
+// frame; which turn is the registry's decision.
 func TestASteerLandsInTheOpenTurnWhateverSessionProducedIt(t *testing.T) {
 	ctx := t.Context()
 	turn, rec := open(t)

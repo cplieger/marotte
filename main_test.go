@@ -15,8 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/forges"
 )
 
-// TestMain runs runMain when the test binary is invoked the way git invokes
-// the helper, so the test drives the real argv dispatch.
+// TestMain runs runMain when invoked the way git invokes the helper, so the test drives the real argv dispatch.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == forges.HelperCommand {
 		os.Exit(runMain())

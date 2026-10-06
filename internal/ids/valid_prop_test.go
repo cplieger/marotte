@@ -14,7 +14,7 @@ func TestValidChatID_RapidPathTraversal(t *testing.T) {
 		suffix := rapid.StringMatching(`[A-Za-z0-9_\-]{0,60}`).Draw(t, "suffix")
 		id := base + sep + suffix
 		if !strings.Contains(id, "/") && !strings.Contains(id, "\\") && !strings.Contains(id, "..") {
-			return // skip if separator got lost
+			return
 		}
 		if ValidChatID(id) {
 			t.Fatalf("ValidChatID(%q) = true, want false (contains path separator)", id)

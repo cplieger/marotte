@@ -1,7 +1,5 @@
-// The composer's staged attachment row. The module had no test file at all
-// before the pill body became clickable, and the click is exactly the behaviour
-// that needed one: the row is bound once behind a latch, so a pill built for the
-// wrong chat or wired to the wrong path is invisible until a user hits it.
+// The composer's staged attachment row, bound once behind a latch, so a pill wired to the
+// wrong chat or path is otherwise invisible until clicked.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const { row, mockDispatch, mockFlush, mockPending } = vi.hoisted(() => ({
@@ -80,9 +78,8 @@ describe("the staged attachment row", () => {
     expect(row.classList.contains("hidden")).toBe(true);
   });
 
-  // The tab id is `editor:<path>` and openTab dedupes on that id alone, so N
-  // DISTINCT paths are N tabs. This is the client half of that claim: each pill
-  // asks for its own path and no other. (tabs.test.ts pins the id rule itself.)
+  // The tab id is `editor:<path>`, so each pill must ask for its own path. (tabs.test.ts
+  // pins the id rule.)
   it("opens each attachment under its own path, so N attachments reach N tabs", () => {
     addAttachment("src/a.ts");
     addAttachment("docs/b.md");
@@ -121,10 +118,8 @@ describe("the staged attachment row", () => {
   });
 });
 
-// The row PERSISTS now, on the chat record, through set_attachments on the
-// draft's own 600ms debounce. Before this it was memory-only, so attaching three
-// files and reloading lost them while the half-written sentence describing them
-// came back — the draft's twin persisted nowhere.
+// The row persists on the chat record through set_attachments on the draft's 600ms
+// debounce.
 describe("persisting the staged row", () => {
   it("saves the whole list under the live chat on every change", () => {
     restoreAttachments("c1");
@@ -155,9 +150,7 @@ describe("persisting the staged row", () => {
     expect(saved()).toEqual([]);
   });
 
-  // There is nothing to save a row under: the chat is unrecoverable between a
-  // stash and the restore that follows it, which is exactly why noteComposerText
-  // no-ops on "" for the draft.
+  // No chat is live between a stash and its restore, as for the draft.
   it("saves nothing while no chat is live", () => {
     addAttachment("src/a.ts");
     expect(saved()).toEqual([]);
@@ -171,10 +164,8 @@ describe("persisting the staged row", () => {
     expect(pills()).toHaveLength(0);
   });
 
-  // The send empties the row, and the clear goes out IMMEDIATELY rather than on
-  // the debounce. Two reasons: a STEER also takes the row and is not the prompt
-  // path, so the server clears nothing for it; and a debounced clear would still
-  // be in the air when the send's own response lands.
+  // The send's clear goes out IMMEDIATELY: a STEER takes the row too and clears nothing
+  // server-side, and a debounced clear would race the send's response.
   it("flushes an empty list the moment a send takes the row", () => {
     restoreAttachments("c1");
     addAttachment("src/a.ts");
@@ -192,9 +183,7 @@ describe("persisting the staged row", () => {
     expect(mockFlush).not.toHaveBeenCalled();
   });
 
-  // The chat switch has the ordering constraint the draft's flush has: after the
-  // stash the id is unrecoverable, and the debounce would fire against no live
-  // chat and persist nothing at all.
+  // After the stash the id is unrecoverable, so a pending save goes out first.
   it("gets a pending save out under the OUTGOING chat on a switch", () => {
     restoreAttachments("c1");
     addAttachment("src/a.ts");
@@ -259,9 +248,8 @@ describe("seeding from the chat record", () => {
   });
 });
 
-// A draft_changed frame converges a chat this device is NOT staging into. The
-// live row is authoritative for the one on screen — adopting a remote list there
-// would delete a pill mid-gesture or restore one just removed.
+// A draft_changed frame converges a chat NOT on screen; for the visible row it would
+// delete a pill mid-gesture.
 describe("adopting a remote change", () => {
   it("updates a parked chat's list", () => {
     restoreAttachments("c1");
@@ -279,9 +267,7 @@ describe("adopting a remote change", () => {
     expect(pills().map((p) => p.getAttribute("title"))).toEqual(["mine.ts"]);
   });
 
-  // Unlike the seed it does NOT lose to a local copy: the frame was produced by a
-  // write the server accepted, so it is newer than whatever this device flushed
-  // before it stopped typing in that chat.
+  // Unlike the seed it beats a local copy: the frame is a write the server accepted.
   it("replaces a parked list rather than deferring to it", () => {
     restoreAttachments("c1");
     addAttachmentTo("c2", "stale.ts");
@@ -310,9 +296,7 @@ describe("adopting a remote change", () => {
   });
 });
 
-// A close or a delete forgets the chat LOCALLY. It must not persist the drop: a
-// close keeps the record, so writing an empty list would delete the very
-// attachments reopening the chat is supposed to seed back.
+// A close keeps the record, so persisting an empty list would delete what reopening seeds.
 describe("dropping a chat", () => {
   it("persists nothing", () => {
     restoreAttachments("c1");

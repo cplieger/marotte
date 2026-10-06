@@ -1,44 +1,11 @@
-// Package sanitize defuses text marotte did not write before it is persisted,
-// echoed to a client, or written to a log.
+// Package sanitize defuses text marotte did not write before it is persisted, echoed to a
+// client, or written to a log: ANSI escape sequences and the invisible Unicode codepoints
+// (TAG characters, zero-width joiners, bidi overrides) that carry prompt injections.
 //
-// The upstream is an agent's stdout and the tool output it relays, which is to
-// say a channel an attacker can reach through a file the agent reads or a page
-// it fetches. Two families of bytes on that channel are not text: ANSI escape
-// sequences, which move a cursor and repaint a terminal, and the invisible
-// Unicode codepoints — TAG characters, zero-width joiners, bidi overrides —
-// that carry prompt injections a human reviewer cannot see.
-//
-// It exists because this is BEHAVIOUR, and it used to sit in internal/marotte
-// beside the wire and domain TYPES. Eight packages call it (auth, chat,
-// command, server, translate, agent, steering, procout) with no wire shape in
-// sight, so it never belonged in the one package the code generator walks for
-// the cross-language type contract.
-//
-// Sibling of internal/ansitext, which parses the SAME escape sequences for the
-// opposite purpose: ansitext.Parse keeps them, as offset-addressed style spans
-// a transcript can render. Reach for that one when the styling matters and this
-// one when it does not.
-//
-// # Which treatment a surface gets
-//
-// There are three, and the surface decides. Output is for MULTI-LINE content a
-// human reads as a transcript — tool output, a shell capture, an export — where
-// newlines and indentation are the meaning, so a hidden rune is DELETED and the
-// ANSI that would repaint a terminal goes with it. Output is total over escape
-// introducers; StripANSI alone preserves incomplete sequences.
-//
-// A SINGLE-LINE surface takes runesafe's SanitizeSingleLineBounded instead, not
-// this package: a banner sentence, an identity row, a permission card's title
-// (auth.identityText at 256 bytes, translate.displayText at 512). Two reasons it
-// is the other preset rather than Output. The preset REPLACES each unsafe rune
-// with a space, so on a surface a human uses to make a decision the deception
-// becomes visible whitespace instead of vanishing along with the evidence of it;
-// and a newline is itself a defect there rather than something to preserve.
-// The bound belongs with the caller because it is a property of the surface.
-//
-// Everything else is UNTOUCHED, deliberately: assistant prose and thinking
-// traces are transcripts rendered as markdown, and stripping them would mangle
-// legitimate content to defend a surface nobody approves anything on.
+// Output is for MULTI-LINE transcript content (tool output, a shell capture, an export):
+// hidden runes are deleted. A single-line surface takes runesafe's
+// SanitizeSingleLineBounded instead, which replaces them with a visible space.
+// internal/ansitext parses the same sequences to KEEP them as style spans.
 package sanitize
 
 import (
@@ -48,15 +15,9 @@ import (
 	"github.com/cplieger/runesafe/v2"
 )
 
-// ansiRe matches the ANSI escape sequences produced by kiro-cli and its
-// subprocesses. Covered forms: CSI (`ESC [ ... letter`), OSC
-// (`ESC ] ... BEL` or `ESC ] ... ESC \`), charset-select
-// (`ESC ( x` / `ESC ) x`), and single-character controls
-// (`ESC 7`, `ESC 8`, `ESC c`, `ESC N`, `ESC O`, `ESC P`, `ESC X`,
-// `ESC ^`, `ESC _`, `ESC =`, `ESC >`).
-// 8-bit C1 controls (raw bytes 0x9b..0x9f) are not matched because Go's
-// regexp engine operates on runes over UTF-8 and those raw bytes are
-// invalid UTF-8; kiro-cli always uses the 7-bit ESC-prefixed forms.
+// ansiRe matches the ANSI sequences kiro-cli and its subprocesses produce: CSI, OSC,
+// charset-select and single-character controls. 8-bit C1 controls (0x9b..0x9f) are invalid
+// UTF-8 to Go's regexp and are not matched; kiro-cli uses the 7-bit ESC forms.
 var ansiRe = regexp.MustCompile(
 	`\x1b\[[0-9;?]*[a-zA-Z]` + // CSI
 		`|\x1b\][\s\S]*?(?:\x07|\x1b\\)` + // OSC
@@ -75,12 +36,9 @@ func StripANSI(s string) string {
 	}
 }
 
-// Unicode strips hidden Unicode characters that could be used
-// for prompt injection via tool output. Covers TAG characters
-// (U+E0000-E007F), zero-width spaces/joiners, format controls, and
-// other invisible codepoints that Q Developer CLI's ExecuteCmd also
-// strips. Apply alongside StripANSI on all tool output before
-// persisting to chat files.
+// Unicode strips hidden codepoints used for prompt injection via tool output (TAG
+// characters, zero-width spaces/joiners, format controls), as Q Developer CLI's
+// ExecuteCmd does.
 func Unicode(s string) string {
 	return strings.Map(func(r rune) rune {
 		if isHidden(r) {
@@ -90,12 +48,8 @@ func Unicode(s string) string {
 	}, s)
 }
 
-// isHidden reports whether r is an invisible Unicode codepoint
-// used for prompt injection: TAG characters, zero-width spaces/joiners,
-// bidi controls, format controls, and soft hyphens. The bidi set delegates
-// to runesafe.IsBidiControl (the exact unicode.Bidi_Control set), which
-// also covers U+061C ARABIC LETTER MARK — a gap in the previous hand-rolled
-// ranges, which had drifted from the full Bidi_Control set.
+// isHidden reports whether r is an invisible codepoint used for prompt injection. The bidi
+// set is runesafe.IsBidiControl (the exact unicode.Bidi_Control set).
 func isHidden(r rune) bool {
 	if r >= 0xE0000 && r <= 0xE007F {
 		return true // TAG characters
@@ -113,21 +67,10 @@ func isHidden(r rune) bool {
 	return false
 }
 
-// Output applies ANSI stripping and Unicode sanitization to a fixed point.
-// Repeating is necessary because removing a hidden rune can complete an escape
-// sequence for the next pass. Any unmatched U+001B is then replaced with
-// U+FFFD, matching internal/ansitext's escape-free contract. This keeps a
-// caller that bounded its input first from emitting an introducer whose
-// terminator the bound removed, and makes Output idempotent.
-//
-// Termination: Unicode normalizes any invalid UTF-8 byte to a
-// single U+FFFD rune (via strings.Map), so after the first pass the
-// string is valid UTF-8 and every subsequent pass only removes runes.
-// The rune count is therefore non-increasing and the fixed point is
-// reached in O(len(s)) passes. (Byte length is NOT monotone — an
-// invalid byte expands to a 3-byte U+FFFD on the first pass — so the
-// guarantee is stated in runes, not bytes.) The output is always valid
-// UTF-8, safe to persist to JSON chat files or echo to clients.
+// Output applies ANSI stripping and Unicode sanitization to a fixed point (removing a hidden
+// rune can complete an escape sequence), then replaces any unmatched U+001B with U+FFFD,
+// matching internal/ansitext's escape-free contract. Idempotent; the result is valid UTF-8.
+// It terminates: after the first pass every pass only removes runes.
 func Output(s string) string {
 	for {
 		out := Unicode(StripANSI(s))

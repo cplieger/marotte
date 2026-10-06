@@ -1,29 +1,24 @@
-// The /docs metadata filter. A FILTER, not a search: everything it matches on is
-// in memory, so there is no request and no debounce worth waiting for; the one
-// coverage fact it carries is the inventory's own cap, which the reply states.
-// What it can REACH is every string a row renders (the census below types each
-// one back into the box) and never a document's BODY, which is the file
-// browser's recursive grep one view away.
-//
-// A separate file from docs.test.ts on purpose: `initDocsView` is guarded by a
-// module `inited` flag, so a second block in that file would open the page after
-// the first had already claimed the flag and would then be asserting against a
-// filter that was never built. A fresh module graph is the honest fixture.
+// The /docs metadata filter: in memory, no request; reaches every string a row renders, never a document body. Its own
+// file because `initDocsView` is guarded by a module `inited` flag, so each file needs a fresh module graph.
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { PageFind } from "./find-registry.js";
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
-// `openFileGitDiff` is navigate.js's, reached through this page's spec-group door;
-// Browser Mode links for real, so a name no case calls still has to be here.
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
+  apiGetTypedOrError: vi.fn(),
+  // Reached through the agent row's Run control; linked, never called.
+  apiGetOrError: vi.fn(),
+}));
+// Browser Mode links for real, so a name no case calls must still be present.
 vi.mock("./editor-openers.js", () => ({
   openFile: vi.fn(),
   openFileDiff: undefined,
   openFileGitDiff: undefined,
 }));
 vi.mock("./tabs.js", () => ({
-  // navigate.js's `openSpec` (the spec tab's door) imports these five, and Browser
-  // Mode links for real, so one missing name fails this whole file's import.
+  // navigate.js's `openSpec` imports these five; a missing name fails this file's import.
   activateTab: undefined,
   openTab: undefined,
   parentChatRef: undefined,
@@ -31,13 +26,10 @@ vi.mock("./tabs.js", () => ({
   tabIdFor: undefined,
   openGitView: undefined,
   setDocsTab: vi.fn(),
-  // No onShow argument any more — the tab factory reaches `showDocsTab` through its
-  // own lazy import. This suite drives the page directly, so the toggle only has to
-  // resolve.
+  // The tab factory reaches `showDocsTab` lazily; the toggle only has to resolve.
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
-// `onBus` as well as `onSSE`: the Workflows tab hands its panel to recipes.ts,
-// which subscribes to the run bus, and one of the cases below switches to it.
+// `onBus` too: the Workflows panel (recipes.ts) subscribes to the run bus.
 vi.mock("./bus.js", () => ({
   onSSE: vi.fn(() => () => undefined),
   onBus: vi.fn(() => () => undefined),
@@ -50,9 +42,7 @@ vi.mock("./git-status-store.js", () => ({
 }));
 vi.mock("./actions/hooks.js", () => ({ setHookEnabled: { dispatch: vi.fn() } }));
 vi.mock("./recipes.js", () => ({
-  // The Workflows panel owns its own rows, so the page hands it the filter and
-  // the panel reports back through the listener. Both halves are stubbed here so
-  // the assertions below can watch the handoff.
+  // The Workflows panel owns its rows: both halves of the handoff are stubbed so assertions can watch it.
   renderRecipesPanel: vi.fn((c: HTMLElement, filter?: string) => {
     c.replaceChildren();
     recipeFilter = filter ?? "";
@@ -62,9 +52,7 @@ vi.mock("./recipes.js", () => ({
   }),
 }));
 
-/** The filter the Workflows panel was last rendered with. */
 let recipeFilter = "";
-/** The panel's way back to the page's note. */
 let reportCounts: ((c: { total: number; shown: number }) => void) | null = null;
 
 type DocRecord = Record<string, unknown>;
@@ -78,13 +66,18 @@ let refresh: () => void;
 let forceTab: (t: string) => void;
 let find: PageFind;
 
-/** The page's two GETs off the one `apiGetTyped` mock: the inventory through the
- *  caller's own decoder, the hook list empty. */
+/** The page's three GETs off one mock: the inventory through the caller's decoder, hooks and steering issues empty. */
 function serveDocsPage(
   inventory: unknown = { docs: [], truncated: false },
 ): (path: string, decode: (v: unknown) => unknown) => Promise<unknown> {
   return (path, decode) =>
-    Promise.resolve(path === "/api/workspace/kiro-docs" ? decode(inventory) : { hooks: [] });
+    Promise.resolve(
+      path === "/api/workspace/kiro-docs"
+        ? decode(inventory)
+        : path === "/api/steering/issues"
+          ? { issues: {} }
+          : { hooks: [] },
+    );
 }
 
 beforeAll(async () => {
@@ -109,8 +102,7 @@ beforeAll(async () => {
   vi.mocked(apiGetTyped).mockImplementation(serveDocsPage() as typeof apiGetTyped);
 
   const mod = await import("./docs.js");
-  // The page's own doors, not `tabs.ts`'s `toggleDocsView`: that one toggles the TAB,
-  // which is a round trip and registers no find.
+  // The page's own doors: `toggleDocsView` toggles the tab and registers no find.
   mod.showDocsTab();
   mod.forceDocsTab("steering");
   mod.refreshDocsView();
@@ -119,23 +111,19 @@ beforeAll(async () => {
   render = mod._renderActiveForTest;
   refresh = mod.refreshDocsView;
   forceTab = mod.forceDocsTab as unknown as (t: string) => void;
-  // The page hands its find to the leaf registry rather than exporting a focuser,
-  // so this is how the box is reached — the same door Ctrl-F and the toolbar
-  // magnifier use.
+  // Reached through the leaf registry, the door Ctrl-F and the magnifier use.
   const { pageFind } = await import("./find-registry.js");
   const registered = pageFind("docs");
   if (registered === undefined) {
     throw new Error("the docs page registered no find");
   }
   find = registered;
-  // A POPUP: nothing is built until it is opened, so the field does not exist yet.
+  // A popup: nothing is built until it opens.
   find.open();
   filterInput = document.getElementById("docs-filter-input") as HTMLInputElement;
 });
 
-// A case that fails mid-way leaves its query armed and its tab selected, and the
-// next case would then read a filtered panel or the wrong one; one failure should
-// name one case.
+// A failed case leaves its query armed and its tab selected; reset so one failure names one case.
 afterEach(() => {
   type("");
   forceTab("steering");
@@ -150,8 +138,7 @@ function names(name = "steering"): string[] {
   return [...panel(name).querySelectorAll(".entry-title")].map((e) => e.textContent ?? "");
 }
 
-/** Type and apply. Enter rather than the debounce: the query is synchronous (the
- *  inventory is already here), so the shell renders in this same tick. */
+/** Enter rather than the debounce: the query is synchronous. */
 function type(value: string): void {
   filterInput.value = value;
   filterInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
@@ -169,8 +156,6 @@ describe("the box itself", () => {
     const region = document.getElementById("docs-filter");
     expect(region?.getAttribute("role")).toBe("search");
     expect(region?.getAttribute("aria-label")).toBe("Filter documents");
-    // The shared skin plus the primitive's hook: one control, one position, on
-    // every page that has a search box.
     expect(region?.className).toContain("page-find");
     expect(region?.className).toContain("search-pop");
     expect(region?.className).toContain("uip-popup");
@@ -181,15 +166,12 @@ describe("the box itself", () => {
     expect(filterInput.getAttribute("autocapitalize")).toBe("off");
     expect(filterInput.getAttribute("spellcheck")).toBe("false");
     expect(filterInput.getAttribute("enterkeyhint")).toBe("search");
-    // NOT type=search: the platform's own clear affordance belongs on a permanent
-    // box, and this one carries its own ×. Two clear controls a thumb-width apart
-    // doing different things is worse than one.
+    // Not type=search: the platform's clear affordance would sit beside this box's own ×.
     expect(filterInput.type).toBe("text");
   });
 
   it("has NO match-case toggle, because every filter in the app folds both sides", () => {
-    // The query AND the row it is matched against, so a toggle would be wired to
-    // nothing.
+    // The haystack is already folded, so a match-case toggle would be wired to nothing.
     expect(document.querySelector('#docs-filter [aria-label="Match case"]')).toBeNull();
   });
 
@@ -198,8 +180,7 @@ describe("the box itself", () => {
   });
 
   it("carries the FUNNEL, because it only narrows rows already here", () => {
-    // The magnifier is for a box that reaches past the page — History's, which
-    // reads every chat file on disk. This one cannot see a document's body.
+    // The magnifier is for a box that reaches past the page; this one cannot see bodies.
     expect(document.querySelector("#docs-filter .page-find-icon polygon")).not.toBeNull();
     expect(document.querySelector("#docs-filter .page-find-icon circle")).toBeNull();
   });
@@ -261,9 +242,7 @@ describe("what it matches", () => {
   });
 
   it("cannot reach a document's BODY, which is the bound worth stating", () => {
-    // The inventory carries front-matter and nothing else; searching bodies is the
-    // file browser's recursive grep. A filter that appeared to search text it never
-    // reads would be the silent miss chat-search.ts exists to prevent.
+    // Bodies are the file browser's grep; a filter appearing to search them would silently miss.
     setDocs([steering({ name: "alpha", description: "short summary" })]);
     render();
     type("some sentence deep inside the file");
@@ -285,8 +264,7 @@ describe("what it says", () => {
   });
 
   it("says NO MATCHES rather than the category's empty text", () => {
-    // "No steering docs in .kiro/steering/." is a lie when the docs are one
-    // keystroke away. git-changes-tab.ts draws the same distinction.
+    // The empty text would be a lie under a filter. git-changes-tab.ts draws the same distinction.
     setDocs([steering({ name: "alpha" })]);
     render();
     type("zzzz");
@@ -298,8 +276,7 @@ describe("what it says", () => {
   });
 
   it("says where a match went when this tab has none", () => {
-    // The box sits in a page-level toolbar over six tabs, so "no matches" on the
-    // Steering tab reads as "nowhere" while the agent named zebra is one tab over.
+    // The box spans every tab, so "no matches" must name the tab that has them.
     setDocs([
       steering({ name: "alpha" }),
       { category: "agent", name: "zebra", path: "workspace/.kiro/agents/zebra.md" },
@@ -327,8 +304,7 @@ describe("what it says", () => {
   });
 
   it("counts a synthesized global hook among the matches elsewhere", () => {
-    // The Hooks tab's rows are not a pure projection of the inventory, so the
-    // elsewhere scan has to read the tab's own row set rather than the category.
+    // The Hooks tab's rows are not a pure projection, so the scan reads the tab's own row set.
     setHooks([
       {
         id: "g1",
@@ -356,11 +332,7 @@ describe("what it says", () => {
 });
 
 describe("Workflows, the tab that used to be excluded", () => {
-  // The box was HIDDEN there and Ctrl-F declined, on the reasoning that the tab is
-  // RPC-sourced and escapes to recipes.ts before any docs logic runs. True about
-  // where the rows come from, and not the same claim as "nothing to filter" — a
-  // recipe has a name, a description, a source and declared inputs. The filter
-  // reaches the panel now instead of hiding from it.
+  // The filter reaches the Workflows panel rather than hiding from it: a recipe has a name, description, source and inputs.
   it("hands its filter through to the panel that owns those rows", () => {
     forceTab("workflows");
     type("goal");
@@ -380,7 +352,7 @@ describe("Workflows, the tab that used to be excluded", () => {
     render();
   });
 
-  it("takes the panel's own counts for the note, so it reads the same on six tabs", () => {
+  it("writes the Workflows panel's own counts into the note", () => {
     forceTab("workflows");
     type("goal");
     reportCounts?.({ total: 9, shown: 2 });
@@ -393,8 +365,7 @@ describe("Workflows, the tab that used to be excluded", () => {
   });
 
   it("lets a count that lands after the reader left the tab stamp nothing", () => {
-    // The panel's refetch answers long after the first paint, by which time the
-    // reader may be on Steering reading its own note.
+    // The panel's refetch can land after the reader moved to another tab.
     setDocs([steering({ name: "alpha" }), steering({ name: "beta", path: "b.md" })]);
     forceTab("workflows");
     type("a");
@@ -411,8 +382,7 @@ describe("Workflows, the tab that used to be excluded", () => {
   });
 
   it("says where a match went when the Workflows tab has none", () => {
-    // The elsewhere scan is the page's, so the RPC-sourced tab gets the same
-    // sentence over the five inventory tabs.
+    // The elsewhere scan is the page's, so the RPC-sourced tab gets the same sentence.
     setDocs([{ category: "agent", name: "zebra", path: "workspace/.kiro/agents/zebra.md" }]);
     forceTab("workflows");
     type("zebra");
@@ -426,10 +396,7 @@ describe("Workflows, the tab that used to be excluded", () => {
 
 describe("dismissal", () => {
   it("closes on Escape, and the CLOSE is what lifts the filter", async () => {
-    // The rule a hidden box needs and a permanent one did not: a popup that closed
-    // holding `alp` would leave the page showing one of two rows with nothing on
-    // screen saying why, and the way back would be a box the reader has no reason
-    // to think is still armed.
+    // A closed popup clears its query, or the page would show a filtered list with nothing saying why.
     setDocs([steering({ name: "alpha" }), steering({ name: "beta", path: "b.md" })]);
     render();
     find.open();
@@ -438,9 +405,7 @@ describe("dismissal", () => {
     filterInput.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
-    // The popup's leave lifecycle hides the panel on a transitionend (or its
-    // 400ms fallback), and focus only leaves the field once it does — a real
-    // browser does not move focus on the same tick the key was handled.
+    // The popup hides on transitionend (or its 400ms fallback), and focus leaves the field only then.
     await vi.waitFor(() => {
       expect(find.focused()).toBe(false);
     });
@@ -460,23 +425,18 @@ describe("dismissal", () => {
 });
 
 describe("a cut inventory", () => {
-  // The server caps the scan per category and in total and says so on the reply.
-  // A filter over a cut list is filtering less than the page implies, so the note
-  // carries the fact — beside the rows, with or without a filter, and in the
-  // empty answer, where "no matches" would otherwise mean "nowhere".
+  // The server caps the scan and says so; the note carries that fact beside the rows and in the empty answer.
   function note(): string {
     return document.getElementById("docs-filter-note")?.textContent ?? "";
   }
 
-  /** Re-arm the inventory GET and refetch through the page's own load path, so the
-   *  flag reaches the note the way a live reply's does. */
+  /** Re-arm and refetch through the page's own load path. */
   async function serve(docs: DocRecord[], truncated: boolean): Promise<void> {
     const { apiGetTyped } = await import("./api-client.js");
     vi.mocked(apiGetTyped).mockImplementation(
       serveDocsPage({ docs, truncated }) as typeof apiGetTyped,
     );
-    // Emptied first, so the rows the wait sees are the reply's and not the
-    // previous case's.
+    // Emptied first, so the rows waited on are the reply's.
     setDocs([]);
     render();
     find.open();
@@ -497,8 +457,7 @@ describe("a cut inventory", () => {
   });
 
   it("says the search was partial when nothing matched anywhere", async () => {
-    // The count is the whole inventory the query was checked against, every tab,
-    // not the rows of the tab on screen.
+    // The count is the whole inventory checked, every tab.
     await serve(
       [
         steering({ name: "alpha" }),
@@ -513,7 +472,7 @@ describe("a cut inventory", () => {
   });
 
   it("still names the tab holding a match, cut or not", async () => {
-    // A match somewhere outranks the partial read: the reader has a row to go to.
+    // A match somewhere outranks the partial-read note.
     await serve(
       [
         steering({ name: "alpha" }),
@@ -548,9 +507,8 @@ describe("a cut inventory", () => {
 });
 
 describe("the census: every string a row renders is matchable", () => {
-  // One list feeds the render side and the haystack, and this walks every text
-  // node the real page renders back into the real box, so a badge or chip added
-  // without a haystack field fails here instead of going quietly unreachable.
+  // One list feeds the render and the haystack; this census types every rendered text node back, so a new badge
+  // without a haystack field fails here.
   function renderedStrings(row: HTMLElement): string[] {
     const out: string[] = [];
     const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
@@ -564,13 +522,8 @@ describe("the census: every string a row renders is matchable", () => {
   }
 
   it("finds every rendered string of every row on every inventory tab", async () => {
-    // The letter goes on the one row whose every other string is free of the
-    // letter `m`, so the census reaches it through the letter alone rather than
-    // through an `.md` in the path.
-    //
-    // The title line paints two badges at most, so the fixture spreads the badge
-    // literals over rows that each carry no more than two: a disabled hook is its
-    // own row rather than a third badge on the warned one.
+    // The letter goes on a row with no other `m`, so the census reaches it through the letter alone. At most two badges
+    // per row, since the title line paints two.
     const { statusFor } = await import("./git-status-store.js");
     vi.mocked(statusFor).mockImplementation(((_repo: string, rel: string) =>
       rel === "hooks/guard.json" ? "M" : "") as typeof statusFor);
@@ -674,8 +627,7 @@ describe("the census: every string a row renders is matchable", () => {
         type("");
       }
     }
-    // The premise: the fixture renders strings only a badge or a chip carries, so
-    // the loop above is a census and not a walk over names.
+    // Premise: the fixture renders strings only a badge or chip carries.
     for (const literal of ["M", "override", "2 tools", "fsWrite|executeBash", "every tool"]) {
       expect(seen).toContain(literal);
     }

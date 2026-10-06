@@ -39,15 +39,12 @@ type kiroRuntime struct {
 	// rescan re-derives the active version from disk without downloading, or nil when there
 	// is no manager. It backs the loopback repair hook.
 	rescan func(context.Context) (bool, error)
-	// installed is closed once a version is ACTIVE, nil when no install can ever complete.
-	// It reports SUCCESS rather than "the installer stopped trying", because its consumers
-	// need a kiro-cli: a utility bridge cannot start before it closes. A channel rather
-	// than the manager's POLL, which nothing can wake on.
+	// installed is closed once a version is ACTIVE (success, not "gave up"), nil when no install
+	// can complete: a utility bridge cannot start before it. A channel because nothing can wake on
+	// the manager's poll.
 	installed <-chan struct{}
-	// stop cancels the background install AND waits, so a caller that reshapes the tools
-	// tree afterwards cannot race the installer — a cancelled attempt still writes its
-	// state record and creates directories on the way out, which fails a t.TempDir cleanup
-	// with "directory not empty".
+	// stop cancels the background install AND waits, so a caller reshaping the tools tree
+	// afterwards cannot race a cancelled attempt's final writes.
 	stop func()
 }
 
@@ -76,13 +73,9 @@ func unavailableKiroRuntime() kiroRuntime {
 	}
 }
 
-// startKiroCLI builds the install manager and starts the install in the background,
-// bind-first: only READINESS waits, so a first-boot download answers /api/health with a
-// reason instead of refusing connections.
-//
-// Three shapes come out: no pins at all, pins the manager cannot use (unready, so the fault
-// is reported rather than hidden), and the managed install. No operator input selects among
-// them, and inside the container the pins are always exported.
+// startKiroCLI builds the install manager and starts the install in the background, bind-first:
+// only readiness waits, so a first-boot download is a /api/health reason. Three shapes: no pins,
+// unusable pins (unready), and the managed install.
 func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 	if cfg.KiroCLIVersion == "" || cfg.ToolsDir == "" {
 		slog.Warn("no kiro-cli pins in the environment: resolving kiro-cli by bare name and installing nothing",
@@ -101,9 +94,8 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 	installed := make(chan struct{})
 	go func() {
 		defer close(done)
-		// Not ACTED on — EnsureWithRetry logged it and the server stays up either way — but
-		// READ, because it is the one signal separating "a version is active" from "the
-		// installer gave up", and the boot work waiting on `installed` needs the former.
+		// Not acted on, but read: the one signal separating "a version is active" from "the
+		// installer gave up".
 		if err := mgr.EnsureWithRetry(ensureCtx); err == nil {
 			close(installed)
 		}
@@ -133,48 +125,36 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 // cancellation. Generous, because expiring it means giving up on a guarantee.
 const kiroStopGrace = 5 * time.Second
 
-// kiroInstallConfig is marotte's whole deployment of the kiro-cli release: the pins, the
-// tools tree, and the local policy. The release PROFILE is kirocli.Release()'s, shared with
-// every other consumer of the same upstream. A function rather than an inline literal so the
-// namespace test builds a manager from the EXACT configuration production runs — the
-// collision it guards is a property of these values, not of a copy.
+// kiroInstallConfig is marotte's whole deployment of the kiro-cli release (pins, tools tree, local
+// policy) over kirocli.Release()'s profile. A function so the namespace test builds a manager from
+// the exact production configuration.
 func kiroInstallConfig(cfg *Config) *pinstall.Config {
 	return &pinstall.Config{
 		Release: kirocli.Release(),
 		Version: cfg.KiroCLIVersion,
-		// Both pins travel whatever this container runs on; the library validates the digest
-		// for the resolved GOARCH and ignores the other.
 		Digests: map[string]string{
 			"amd64": cfg.KiroCLISHA256,
 			"arm64": cfg.KiroCLISHA256ARM64,
 		},
 		Root:    cfg.ToolsDir,
 		LinkDir: kiroLinkDir,
-		// Require names the chat sidecar because `kiro-cli acp` IS the sidecar: kiro-cli is
-		// a multi-call binary and `acp` re-execs a sibling found by a plain PATH search, so
-		// every chat bridge invokes it. `--version` is answered by the MAIN binary, so
-		// without this a sidecar-less directory passed the boot probe, published
-		// `.complete`, reported READY, and then failed at every chat spawn. -term stays
-		// Optional: no subcommand marotte uses re-execs it.
+		// Require names the chat sidecar because `kiro-cli acp` re-execs it by a plain PATH search,
+		// while `--version` is answered by the main binary: without this a sidecar-less directory
+		// reported READY and failed every chat spawn.
 		Require:  []string{kirocli.Name + "-chat"},
 		Optional: []string{kirocli.Name + "-term"},
 		Assert:   kiroSettings(),
 		Purge:    kiroLegacyPurge(),
-		// Untrusted stays unset: it records that the install root was found writable by
-		// others, and marotte runs no hardening pass that could make that observation, so
-		// claiming it would be a guard with no producer reporting every boot clean.
-		// TrustedUIDs is a different kind of statement and IS marotte's to make — a fact
-		// about who the volume's ACL names. Empty by default, so custody fully enforces.
+		// Untrusted stays unset: marotte makes no observation of the install root being writable by
+		// others. TrustedUIDs is a fact about the volume's ACL, empty by default.
 		TrustedUIDs: cfg.TrustedInstallUIDs,
 	}
 }
 
-// kiroLegacyPurge describes the layout MAROTTE's shell installer left on the tools volume,
-// which is caller data: the promoted dispatchers and the orphan staging trees, nothing else.
-// The absent journal, backup and tombstone entries are not an omission — marotte never wrote
-// them, so do not copy the sibling app's larger list back. Naming three targets rather than
-// a `kiro-cli*` prefix is what makes the sweep safe in a directory the toolbelt engine
-// co-owns, where a prefix sweep took another owner's live symlink.
+// kiroLegacyPurge describes the layout marotte's shell installer left on the tools volume: the
+// promoted dispatchers and the orphan staging trees. Three named targets rather than a `kiro-cli*`
+// prefix, because the toolbelt engine co-owns the directory and a prefix sweep took its live
+// symlink.
 func kiroLegacyPurge() *pinstall.Purge {
 	return &pinstall.Purge{
 		Names:       kirocli.ShellEraDispatchers(),
@@ -183,17 +163,11 @@ func kiroLegacyPurge() *pinstall.Purge {
 	}
 }
 
-// kiroSettings is marotte's kiro-cli settings set, re-asserted against the active binary on
-// every boot rather than by entrypoint.sh, whose gate is false on every first boot.
-//
-// A key belongs here ONLY if it has a kiro-cli-SIDE role: KAS's ACP path reads no kiro-cli
-// setting at all, so a seed reaches the TUI, the knowledge index and marotte's own
-// suppression logic, never a chat. app.disableAutoupdates is deliberately absent —
-// kirocli.Release() declares it Mandatory and the library merges it in, so the integrity
-// gate cannot be dropped from here. Every assertion is best-effort; a failure warns.
+// kiroSettings is marotte's kiro-cli settings set, re-asserted on every boot, best-effort. A key
+// belongs here only with a kiro-cli-SIDE role: KAS's ACP path reads no kiro-cli setting.
+// app.disableAutoupdates is absent because kirocli.Release() declares it Mandatory.
 func kiroSettings() []pinstall.Assertion {
 	return []pinstall.Assertion{
-		// Features marotte renders natively.
 		kirocli.Setting("chat.enableKnowledge", true),
 		kirocli.Setting("chat.enableSubagent", true),
 		kirocli.Setting("chat.enablePromptHints", true),

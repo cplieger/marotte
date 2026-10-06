@@ -76,8 +76,7 @@ func TestCompressJSON_SmallJSONStaysPlain(t *testing.T) {
 }
 
 func TestCompressJSON_NonJSONStaysPlain(t *testing.T) {
-	// application/x-ndjson is the trap a substring match on "json" falls into:
-	// the git-clone progress stream carries it.
+	// application/x-ndjson is the substring-match trap: the git-clone progress stream uses it.
 	for _, ct := range []string{"text/html; charset=utf-8", "application/x-ndjson", "application/zip"} {
 		want := bigJSON()
 		rec := serveCompressed(t, jsonHandler(ct, want), "/api/anything", "gzip")
@@ -109,9 +108,7 @@ func TestCompressJSON_AlreadyEncodedIsNotDoubleCompressed(t *testing.T) {
 }
 
 func TestCompressJSON_EventsPathIsUntouched(t *testing.T) {
-	// The SSE stream's whole contract is that a write reaches the client now.
-	// The wrapper must not even be installed on it: proven by the ResponseWriter
-	// the handler receives being the recorder itself.
+	// The SSE stream must not even be wrapped: the handler receives the recorder itself.
 	var seen http.ResponseWriter
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		seen = w
@@ -129,20 +126,16 @@ func TestCompressJSON_EventsPathIsUntouched(t *testing.T) {
 }
 
 func TestCompressJSON_FlushedJSONReachesTheClientUnbuffered(t *testing.T) {
-	// A JSON-typed handler that flushes mid-body is streaming, and its earlier
-	// writes must be on the wire before the later ones are produced. The path
-	// skip cannot cover an endpoint nobody has added yet; this is the backstop.
+	// A JSON handler that flushes mid-body is streaming: the backstop for a path the skip list
+	// does not name.
 	const first = `{"progress":"cloning"}`
-	// What the recorder held the instant the handler flushed. Read inside the
-	// handler because that is the only place the claim can be checked: after
-	// ServeHTTP returns, a buffered response and a streamed one look identical.
+	// Read inside the handler: after ServeHTTP returns, buffered and streamed look identical.
 	atFlush := "<never flushed>"
 	rec := httptest.NewRecorder()
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, first)
-		// A direct http.Flusher assertion, the spelling download_zip.go uses:
-		// the wrapper has to satisfy it, not only ResponseController.
+		// A direct http.Flusher assertion (download_zip.go's spelling) must hold too.
 		f, ok := w.(http.Flusher)
 		if !ok {
 			t.Error("the handler's ResponseWriter is not an http.Flusher")
@@ -216,8 +209,7 @@ func TestAcceptsGzip(t *testing.T) {
 		{"deflate", false},
 		{"*", true},
 		{"*;q=0", false},
-		// A q=0 is a refusal, and an explicit refusal of gzip beats a wildcard
-		// offer — a client that says "anything but gzip" means it.
+		// An explicit q=0 refusal of gzip beats a wildcard offer.
 		{"gzip;q=0", false},
 		{"gzip;q=0.0, *", false},
 		{"*, gzip;q=0", false},

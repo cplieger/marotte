@@ -1,30 +1,15 @@
-// Presence guard for the attention favicon variants (static/favicon-*.svg): a
-// MISSING variant gets an href that 404s, so the tab icon goes blank with nothing
-// logged. The names follow @cplieger/web-terminal-ui's `iconVariantHref`: the
-// `favicon` token gains `-<variant>`, extension preserved; three variants for four
-// cues (`crashed` and `failed` both render as `alert`). The assets are the icon
-// generator's output (base icon plus one dot). A GLOB rather than static imports,
-// so a sandbox that copies static-src only (Stryker) reads a missing key as absent
-// instead of failing the module.
+// The attention favicon variants (static/favicon-*.svg): a missing variant silently breaks the link swap.
 
 import { describe, it, expect } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
-/** The shipped page and every favicon beside it, inlined as text. */
 const staticAssets = import.meta.glob<string>(["../static/*.svg", "../static/index.html"], {
   query: "?raw",
   import: "default",
   eager: true,
 });
 
-/** One entry per cue, pinning both ends of the generator's chain: `token` + `oklch`
- *  are what it is HANDED (the tab-dot tokens' oklch parameters) and `fill` is what
- *  it WRITES (the sRGB hex an SVG fill can carry). A drifted asset fails the fill;
- *  a theme edit fails the oklch, the reminder to regenerate. The conversion is
- *  deliberately not reimplemented here. `state` and `shape` read the cue's tab-dot
- *  rule out of 12-tabs.css: `alert` is a diamond because `failed` is one. `alert`
- *  keeps its hue and moves in L because #dc2626 is invisible on a hovered sidebar
- *  row (the --c-dot-* block in 01-tokens.css). */
+/** Each field pins a link in the icon generator's chain, which names the tab-dot tokens. */
 const CUES = {
   input: {
     token: "--c-dot-input",
@@ -51,10 +36,7 @@ const CUES = {
 
 const VARIANTS = ["input", "done", "alert"] as const;
 
-/** The generator's geometry constants, in the 32-unit space it declares them in:
- *  a dot of radius DOT_R with PAD of clear space above and right of it. Every
- *  output scales from this, so the ratios below hold whatever an app's viewBox is
- *  (marotte's is 48). */
+/** The generator's 32-unit geometry; every output scales from it. */
 const DOT_R = 5.5;
 const PAD = 3;
 const UNIT = 32;
@@ -91,16 +73,13 @@ describe("attention favicon variants", () => {
     for (const variant of VARIANTS) {
       const svg = await readStatic(`favicon-${variant}.svg`);
       if (svg === null) {
-        continue; // reported by the presence case above
+        continue;
       }
-      // A variant is the app's own icon pixel-for-pixel plus a status badge. Any
-      // other difference means it was hand-edited and has drifted from the base.
+      // A variant is the base icon pixel-for-pixel plus a badge; any other difference is a hand edit.
       expect(svg.startsWith(head), `favicon-${variant}.svg diverges from favicon.svg`).toBe(true);
       expect(svg.endsWith(`</svg>${tail}`)).toBe(true);
       const inserted = svg.slice(head.length, svg.length - `</svg>${tail}`.length);
-      // Two shapes, one element each: a circle, or the diamond's four-vertex
-      // path. Both are matched here so a cue that silently lost its shape fails
-      // in the shape case below rather than passing a loose structural regex.
+      // Circle or diamond path, one element each.
       expect(inserted).toMatch(
         CUES[variant].shape === "diamond"
           ? /^<path d="M[-\d. LZ]+" fill="#[0-9a-f]{6}"\/>$/
@@ -114,26 +93,16 @@ describe("attention favicon variants", () => {
     if (base === null) {
       return;
     }
-    // The generator declares its geometry in a 32-unit space and scales it onto
-    // the base's viewBox. marotte's icon is 48, so an unscaled dot would sit
-    // mid-artwork at two thirds the intended size — visible only by looking. Every
-    // variant is checked, not just one: they come from one code path, so a variant
-    // whose dot moved was hand-edited, and that is exactly what nothing else here
-    // would notice.
+    // Scaled onto the base's viewBox (48 for marotte); an unscaled dot sits mid-artwork.
     const box = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(base);
     expect(box).not.toBeNull();
     const side = Number(box?.[1]);
     for (const variant of VARIANTS) {
       const svg = await readStatic(`favicon-${variant}.svg`);
       if (svg === null) {
-        continue; // reported by the presence case above
+        continue;
       }
-      // Top-right quadrant with PAD of clear space beyond it, proportional to the
-      // frame — the exact placement DOT_CX / DOT_CY / DOT_R describe at 32 units.
-      // EVERY shape holds that one footprint, which is why a cue can change
-      // silhouette without moving in the artwork: the diamond's DIAGONAL is what
-      // matches the circle's diameter, the same fitting the tab dot uses for its
-      // own diamond (an 8px square in a 9px slot).
+      // Top-right with PAD clear beyond it; every shape holds one footprint.
       const wantCx = ((UNIT - PAD - DOT_R) / UNIT) * side;
       const wantCy = ((PAD + DOT_R) / UNIT) * side;
       const wantR = (DOT_R / UNIT) * side;
@@ -169,9 +138,7 @@ describe("attention favicon variants", () => {
     if (base === null) {
       return;
     }
-    // Without this the icons carried any six-digit hex the structural cases would
-    // accept, so a red "done" dot and a green "alert" dot passed — the two states a
-    // glance at the tab is most expected to tell apart.
+    // Pins the fill, or a red "done" and green "alert" pass.
     for (const variant of VARIANTS) {
       const svg = await readStatic(`favicon-${variant}.svg`);
       if (svg === null) {
@@ -182,19 +149,12 @@ describe("attention favicon variants", () => {
         CUES[variant].fill,
       );
     }
-    // Belt: three cues, three distinct colours. A future theme that collapsed two
-    // of them into one swatch would satisfy every per-variant assertion above and
-    // still leave two states indistinguishable in the tab strip.
+    // Three cues, three colours.
     expect(new Set(VARIANTS.map((v) => CUES[v].fill)).size).toBe(VARIANTS.length);
   });
 
   it("gives each cue the silhouette its own tab dot has", async () => {
-    // The icon and the dot are two renderings of ONE signal, so a cue's shape is
-    // read out of the state's CSS rather than restated here. `failed` spends a
-    // shape because it and `done` are both settled solid marks with only hue
-    // between them, which is a WCAG 1.4.1 failure; the icon carried a circle for it
-    // anyway until 2026-08, so the one pair where confusing the two matters most
-    // was re-merged on the surface a user glances at without looking.
+    // The shape is read from the state's CSS: `failed` and `done` differ only in hue otherwise (WCAG 1.4.1).
     const tabs = loadCSS("12-tabs.css");
     for (const variant of VARIANTS) {
       const { state, shape } = CUES[variant];
@@ -208,16 +168,7 @@ describe("attention favicon variants", () => {
   });
 
   it("does not claim the ring that its dot has and its icon cannot carry", async () => {
-    // `input`'s tab dot is a disc inside a 2px ring at 30% alpha. At the 16px
-    // rendering the whole badge is 5.5px across, so a proportional ring is 0.85px
-    // at 30% over a saturated violet — invisible. It is DROPPED rather than drawn
-    // thicker to be seen, because a ring that is not the dot's ring would make the
-    // icon claim a fidelity it does not have. The cost is stated: on the icon
-    // `input` and `done` separate by hue alone.
-    //
-    // This asserts the drop is deliberate. If a ring is ever added, it belongs in
-    // the generator with the geometry re-derived, and this case is where the
-    // decision gets revisited rather than quietly contradicted.
+    // The ring is dropped at 16px: 0.85px at 30% alpha is invisible.
     const svg = await readStatic("favicon-input.svg");
     if (svg === null) {
       return;
@@ -233,9 +184,7 @@ describe("attention favicon variants", () => {
     const css = loadCSS("01-tokens.css");
     for (const variant of VARIANTS) {
       const { token, oklch } = CUES[variant];
-      // The FIRST declaration, which is the default theme's :root — that is the
-      // block the generator's marotte entry transcribed. The light-theme overrides
-      // further down are deliberately out of scope: one icon serves both themes.
+      // The default theme's :root, which the generator transcribed; one icon serves both themes.
       const declared = new RegExp(`${token}:\\s*([^;]+);`).exec(css);
       expect(declared?.[1]?.trim(), `${token} moved: re-run gen-attention-icons.py`).toBe(oklch);
     }
@@ -246,9 +195,7 @@ describe("attention favicon variants", () => {
     if (html === null) {
       return;
     }
-    // The variant set is derived from this markup: one `link[rel~="icon"]` means
-    // one base. apple-touch-icon is deliberately not matched by `rel~="icon"` —
-    // the OS caches that one at install time, so a swap cannot reach it.
+    // apple-touch-icon is excluded by `rel~="icon"`: the OS caches it at install.
     const icons = [...html.matchAll(/<link\s+rel="icon"[^>]*href="([^"]+)"/g)].map((m) => m[1]);
     expect(icons).toEqual(["/favicon.svg"]);
   });

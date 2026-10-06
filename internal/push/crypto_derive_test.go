@@ -109,16 +109,8 @@ func TestDeriveKeyNonce_sensitiveToEveryField(t *testing.T) {
 	}
 }
 
-// TestDeriveKeyNonce_transpositionDerivesADifferentKeySilently is the reason
-// keyMaterial is a struct rather than five positional []byte parameters.
-//
-// It asserts the FAILURE MODE, not a guard: swapping two same-typed inputs does
-// not error, it derives a different key. Nothing downstream can detect that —
-// the payload encrypts fine and the subscriber's browser silently discards it,
-// with no log on either side. So the field names are the only thing standing
-// between a transposition and undeliverable push notifications, and this test
-// exists so a future change back to positional arguments has to delete an
-// explicit statement of what that would cost.
+// TestDeriveKeyNonce_transpositionDerivesADifferentKeySilently asserts the FAILURE MODE keyMaterial
+// guards: swapping two inputs derives a different key with no error.
 func TestDeriveKeyNonce_transpositionDerivesADifferentKeySilently(t *testing.T) {
 	t.Parallel()
 

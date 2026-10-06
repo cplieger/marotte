@@ -1,13 +1,12 @@
-// THE PAINT INVARIANT'S EXTRAS HALF. Not `fundamentals/turn-footer.test.ts`'s: neither
-// extra is a summary field, and each one's control is mounted by THIS module or by
-// `messages-turn-actions.ts` into a footer `buildTurnFooter` had already returned.
+// The footer's extras: neither is a summary field, and each control is mounted by this module or
+// `messages-turn-actions.ts` into a footer `buildTurnFooter` already returned.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
-// The page's own nesting, from messages-turn-number.test.ts's harness minus pagination.
+// The page's nesting, as messages-turn-number.test.ts's harness minus pagination.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";
@@ -33,7 +32,7 @@ for (const [id, tag] of [
   document.body.appendChild(e);
 }
 
-// The rail's index and pagination are network reads; neither is what these cases test.
+// The rail's index and pagination are network reads these cases do not test.
 vi.mock("./api-client.js", { spy: true });
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
@@ -46,10 +45,8 @@ messages.mountChatView();
 let bundle: HTMLStyleElement;
 
 beforeAll(() => {
-  // The WHOLE assembled cascade: `.turn-actions-more { display: contents }` and its
-  // `::details-content` override are what put the buttons inline. No `data-pointer`
-  // write: `:root` in 01-tokens.css already declares the FINE values, and the coarse
-  // fallback is `@media (width <= 48rem)`, which a 1280px viewport never matches.
+  // The whole cascade: `.turn-actions-more { display: contents }` and its `::details-content` override put the buttons
+  // inline. `:root` declares the fine values, and the coarse fallback never matches at 1280px.
   bundle = mountAppCSS();
 });
 
@@ -57,11 +54,10 @@ afterAll(() => {
   bundle.remove();
 });
 
-/** A reader-opened turn at session ordinal `n`, settled, whose reply is `text`. One `ts`
- *  for every entry here: these two cases are about which CONTROL an extra mounts, so the
- *  `turn_close` carries the outcome and nothing else and the fact slot paints nothing.
- *  An EMPTY `text` is a turn that produced no prose, which is what leaves `settledProse`
- *  false while the turn is still drawn by its own `turn_open.source`. */
+/**
+ * Settled, its `turn_close` carrying the outcome only. An empty `text` leaves `settledProse` false while the turn is
+ * still drawn by `turn_open.source`.
+ */
 function promptTurn(n: number, text: string): Entry[] {
   const id = `t${String(n)}`;
   const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry =>
@@ -108,8 +104,7 @@ async function paint(turnEntries: readonly (readonly Entry[])[]): Promise<HTMLEl
     turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
     order.push(first.turn);
   }
-  // A held `chat` version is what marks the window fresh, or the activation refetches
-  // and the mocked loader answers nothing.
+  // A held `chat` version marks the window fresh, or the activation refetches into the mocked loader.
   observeStamp({ kind: "chat", ref: id, version: "1" });
   store.setSessions([
     {
@@ -136,8 +131,7 @@ async function paint(turnEntries: readonly (readonly Entry[])[]): Promise<HTMLEl
   ]);
   store.setActive(id);
   await until(() => cards().length === expected, `${String(expected)} cards for ${id}`);
-  // The footer fades in from `opacity: 0` (`@starting-style`), so a control read before
-  // that settles is the pre-transition value, not the rest value.
+  // The footer fades in from `opacity: 0`, so a control read before that settles shows the pre-transition value.
   await until(
     () =>
       [...document.querySelectorAll(".turn-footer")].every(
@@ -152,13 +146,7 @@ function footerOf(card: HTMLElement): HTMLElement | null {
   return card.querySelector<HTMLElement>(":scope > .turn-footer");
 }
 
-/** Whether a CONTROL is genuinely on screen. The field probes' text check is the wrong
- *  observable for a button whose label is `display: none` at this width, so the
- *  equivalent is a painted box plus an accessible name: not `hidden`, visible by the
- *  platform's own answer, a non-zero box, and something to announce.
- *
- *  Opacity IS read, which needs `paint` to have settled the footer's entry
- *  transition first: without it a fully transparent control passes. */
+/** On screen means a painted box plus an accessible name; opacity is read only after the footer's entry transition. */
 function controlShows(el: HTMLElement | null): boolean {
   if (el === null || el.hidden || !el.checkVisibility({ opacityProperty: true })) {
     return false;
@@ -168,8 +156,7 @@ function controlShows(el: HTMLElement | null): boolean {
   return box.width > 0 && box.height > 0 && name.trim() !== "";
 }
 
-/** The two channels the footer MODULE owns, so a case can state that the extra it is
- *  about earned the footer through its control and not through a fact. */
+/** The footer module's own two channels, so a case can say the extra earned the footer through its control. */
 function footerPaintsText(footer: HTMLElement): boolean {
   const fact = footer.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact");
   const word = footer.querySelector<HTMLElement>(
@@ -185,7 +172,7 @@ function footerPaintsText(footer: HTMLElement): boolean {
 
 describe("a footer earned by an extra mounts that extra's control", () => {
   it("mounts a visible Rewind for a turn earned by `rewindable` alone", async () => {
-    // Turn 1 did nothing, so its only reason is that turn 2 gives it a trigger.
+    // Turn 1 did nothing; its only reason is the trigger turn 2 gives it.
     const [first, second] = await paint([promptTurn(1, ""), promptTurn(2, "reply")]);
     expect(first).toBeDefined();
     expect(second).toBeDefined();
@@ -199,7 +186,7 @@ describe("a footer earned by an extra mounts that extra's control", () => {
   });
 
   it("mounts visible turn actions for a turn earned by `settledProse` alone", async () => {
-    // Turn 2 is LAST, so no rewind target, and its prose carries no ledger behind it.
+    // Turn 2 is last, so no rewind target, and its prose has no ledger.
     const [, second] = await paint([promptTurn(1, ""), promptTurn(2, "reply")]);
     expect(second).toBeDefined();
     const footer = footerOf(second as HTMLElement);
@@ -213,8 +200,7 @@ describe("a footer earned by an extra mounts that extra's control", () => {
       ":scope > .turn-actions-buttons",
     );
     expect(controlShows(actions), "so the actions row is what paints").toBe(true);
-    // `:not(.turn-action-more)` excludes the phone layout's `…` trigger, which carries
-    // the same class and is `display: none` at this width BY DESIGN.
+    // `:not(.turn-action-more)` excludes the phone layout's `…` trigger, hidden at this width by design.
     const buttons = [
       ...(actions?.querySelectorAll<HTMLElement>(".turn-action-btn:not(.turn-action-more)") ?? []),
     ];

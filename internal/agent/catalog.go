@@ -8,16 +8,11 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// Catalog is the workspace's mode and model catalog: what KAS says this
-// workspace can run, held once for the whole workspace rather than per chat. A
-// chat owns only its CHOICE (CurrentModeID, Model, Effort), not the vocabulary.
-//
-// The stored modes are the ones KAS reported, so the shadowing between a
-// workspace agent and a bundled mode of the same id arrives already resolved.
-// A client must not re-derive it.
+// Catalog is the workspace's mode and model catalog as KAS reported it, held once rather than
+// per chat; a chat owns only its choice. Mode shadowing arrives already resolved; a client
+// must not re-derive it.
 type Catalog struct {
-	// versions holds the `catalog` counter, bumped under mu when either list
-	// changes; nil defaults to a private registry on first use.
+	// versions holds the `catalog` counter, bumped under mu on any change; nil defaults to a private registry.
 	versions *subject.Versions
 	modes    []marotte.SessionMode
 	models   []marotte.SessionModel
@@ -32,10 +27,8 @@ func (c *Catalog) registry() *subject.Versions {
 	return c.versions
 }
 
-// SetModes replaces the mode vocabulary, reporting whether it changed. An EMPTY
-// list is ignored: session/load routinely omits the catalog while KAS resolves
-// it, and modes have no repair channel (config_option_update carries models
-// only), so an emptied mode list would stay empty for the whole session.
+// SetModes replaces the mode vocabulary, reporting whether it changed. An empty list is
+// ignored: session/load routinely omits it, and modes have no repair channel.
 func (c *Catalog) SetModes(modes []marotte.SessionMode) bool {
 	if len(modes) == 0 {
 		return false
@@ -50,8 +43,7 @@ func (c *Catalog) SetModes(modes []marotte.SessionMode) bool {
 	return true
 }
 
-// SetModels replaces the model catalog, reporting whether it changed. Empty is
-// ignored for SetModes's reason.
+// SetModels replaces the model catalog, reporting whether it changed; empty is ignored as in SetModes.
 func (c *Catalog) SetModels(models []marotte.SessionModel) bool {
 	if len(models) == 0 {
 		return false
@@ -66,8 +58,7 @@ func (c *Catalog) SetModels(models []marotte.SessionModel) bool {
 	return true
 }
 
-// ModesModelsStamped returns both lists with the `catalog` stamp, counter first
-// and lists second under one lock, for the REST envelope and the resolver.
+// ModesModelsStamped returns both lists with the `catalog` stamp (counter read first) under one lock.
 func (c *Catalog) ModesModelsStamped() (modes []marotte.SessionMode, models []marotte.SessionModel, stamp *marotte.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -75,9 +66,7 @@ func (c *Catalog) ModesModelsStamped() (modes []marotte.SessionMode, models []ma
 	return slices.Clone(c.modes), slices.Clone(c.models), marotte.NewSubjectStamp(string(subject.KindCatalog), "", version)
 }
 
-// DefaultEffortFor returns the model's own default reasoning tier, or "" when
-// the catalog does not know that model. Here rather than at the caller so a
-// lookup of one field does not clone the whole catalog.
+// DefaultEffortFor returns the model's default reasoning tier, or "" for an unknown model, without cloning the catalog.
 func (c *Catalog) DefaultEffortFor(model string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -87,4 +76,28 @@ func (c *Catalog) DefaultEffortFor(model string) string {
 		}
 	}
 	return ""
+}
+
+// ThinkingToggleable reports whether the catalog knows the model and lets thinking be turned off.
+func (c *Catalog) ThinkingToggleable(model string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.models {
+		if c.models[i].ID == model {
+			return c.models[i].ThinkingToggleable
+		}
+	}
+	return false
+}
+
+// ThinkingDefaultOff reports whether the catalog knows the model and defaults its thinking off.
+func (c *Catalog) ThinkingDefaultOff(model string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.models {
+		if c.models[i].ID == model {
+			return c.models[i].ThinkingDefaultOff
+		}
+	}
+	return false
 }

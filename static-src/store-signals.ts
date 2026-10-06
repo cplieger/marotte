@@ -1,7 +1,5 @@
-// ---------------------------------------------------------------------------
-// Per-entity streaming signal maps — generic registry for reactive per-ID
-// signals that bypass the global reconcile loop.
-// ---------------------------------------------------------------------------
+// Per-entity streaming signal maps — generic registry for reactive per-ID signals that bypass the
+// global reconcile loop.
 
 import type { ToolCall } from "./types.js";
 import { SignalMap, type Signal } from "@cplieger/reactive";
@@ -9,55 +7,40 @@ import { join } from "@cplieger/keyenc";
 
 // SignalMap (the dynamic per-id signal registry) is provided by @cplieger/reactive.
 
-// --- Signal registry instances ---
-
-/** One per-entry streaming write: the open entry's accumulated text plus the growth
- *  this write carries, so a consumer can append `delta` instead of re-deriving
- *  the tail from an ever-longer `full`.
- *
- *  INVARIANT: the pair is meaningful only under @cplieger/reactive's
- *  synchronous flush contract — a write re-runs every subscribed effect before
- *  the setter returns, so a consumer observes one value per delta with none
- *  skipped. A batching layer between writer and effect would coalesce writes
- *  into a value whose `delta` no longer bridges the consumer's text to `full`,
- *  corrupting streamed prose silently. That dependency is why consumers keep a
- *  watermark (`accepted + delta.length === full.length`) and resync from `full`
- *  on any mismatch. */
+/** One per-entry streaming write: the open entry's accumulated text plus the growth this write
+ *  carries, so a consumer can append `delta` instead of re-deriving the tail from an ever-longer
+ *  `full`. INVARIANT: the pair is meaningful only under @cplieger/reactive's synchronous flush
+ *  contract — a write re-runs every subscribed effect before the setter returns, so a consumer
+ *  observes one value per delta with none skipped. */
 export interface EntrySignalValue {
   readonly full: string;
   readonly delta: string;
 }
 
-/** The STREAMING signal, one per OPEN entry, keyed `(turn, entryID)`: `openEntry`
- *  mints it, `applyDelta` writes it, `sealEntry` retires it. The entry's kind is on
- *  the entry, so text and thinking share one map — a subscriber addresses the entry
- *  it mounted and needs no second question about what is in it. */
+/** The STREAMING signal, one per OPEN entry, keyed `(turn, entryID)`: `openEntry` mints it,
+ *  `applyDelta` writes it, `sealEntry` retires it. The entry's kind is on the entry, so text and
+ *  thinking share one map — a subscriber addresses the entry it mounted and needs no second
+ *  question about what is in it. */
 export const entryTextSigs = new SignalMap<EntrySignalValue>();
 
-/** The COARSE signal, one per `(turn, lane)`, a version bumped on every open, delta,
- *  seal and laned append in that lane. It is what a surface that is not the entry's
- *  own bubble subscribes to — the subagent tail, a delegate's detached page — in place
- *  of the whole chat's transcript version. */
+/** The COARSE signal, one per `(turn, lane)`, a version bumped on every open, delta, seal and
+ *  laned append in that lane. It is what a surface that is not the entry's own bubble subscribes
+ *  to — the subagent tail, a delegate's detached page — in place of the whole chat's transcript
+ *  version. */
 export const laneSigs = new SignalMap<number>();
 
-/** Per-(chat-id, tool-call-id) signal.
- *
- *  The chat is part of the key because a tool call id is BACKEND-authored and
- *  the wire carries no uniqueness guarantee for it, while a `tool_progress` frame
- *  arrives for whatever chat sent it — a background chat's data lands
- *  unconditionally and only the repaint is gated. Keyed on the call id alone, a
- *  collision wrote a background chat's card state into the visible chat's card,
- *  for as long as that card stayed mounted. */
+/** Per-(chat-id, tool-call-id) signal. The chat is part of the key because a tool call id is
+ *  BACKEND-authored and the wire carries no uniqueness guarantee for it, while a `tool_progress`
+ *  frame arrives for whatever chat sent it — a background chat's data lands unconditionally and
+ *  only the repaint is gated. */
 export const toolCallSigs = new SignalMap<ToolCall>();
 
-/** Key for `toolCallSigs`. Through keyenc rather than a template literal because
- *  a chat id is opaque hex while a tool call id is arbitrary text, so a
- *  separator the id may contain must not be able to shift the boundary. */
+/** Key for `toolCallSigs`. Through keyenc rather than a template literal because a chat id is
+ *  opaque hex while a tool call id is arbitrary text, so a separator the id may contain must not
+ *  be able to shift the boundary. */
 export function toolCallSigKey(chatID: string, toolID: string): string {
   return join(chatID, toolID);
 }
-
-// --- Public accessors ---
 
 export function ensureToolCallSig(
   chatID: string,
@@ -67,28 +50,27 @@ export function ensureToolCallSig(
   return toolCallSigs.ensure(toolCallSigKey(chatID, toolID), initial);
 }
 
-/** The current value of a tool call's signal, untracked, or undefined when no
- *  signal exists. For derivations that run inside someone ELSE's effect (the
- *  delegate footer sums its members on the invocation's ticks) — reading
- *  `.value` there would subscribe that effect to every member. */
+/** The current value of a tool call's signal, untracked, or undefined when no signal exists. For
+ *  derivations that run inside someone ELSE's effect (the delegate footer sums its members on
+ *  the invocation's ticks) — reading `.value` there would subscribe that effect to every member. */
 export function peekToolCallSig(chatID: string, toolID: string): ToolCall | undefined {
   return toolCallSigs.get(toolCallSigKey(chatID, toolID))?.peek();
 }
 
-/** Key for the streaming signal. Both components are upstream text (an entry id is
- *  KAS's own record id), so the separator goes through keyenc. */
+/** Key for the streaming signal. Both components are upstream text (an entry id is KAS's own
+ *  record id), so the separator goes through keyenc. */
 export function entryKey(turnID: string, entryID: string): string {
   return join(turnID, entryID);
 }
 
-/** Key for the coarse signal. The empty lane is the log's own agent, which is a
- *  VALUE rather than an absence, so it keys like any other. */
+/** Key for the coarse signal. The empty lane is the log's own agent, which is a VALUE rather
+ *  than an absence, so it keys like any other. */
 export function laneKey(turnID: string, lane: string): string {
   return join(turnID, lane);
 }
 
-/** Keys minted per turn across both maps, so a turn's disposal can clear its
- *  signals without enumerating them (SignalMap exposes no key walk). */
+/** Keys minted per turn across both maps, so a turn's disposal can clear its signals without
+ *  enumerating them (SignalMap exposes no key walk). */
 const sigKeysByTurn = new Map<string, { entries: Set<string>; lanes: Set<string> }>();
 
 function keysFor(turnID: string): { entries: Set<string>; lanes: Set<string> } {
@@ -100,8 +82,8 @@ function keysFor(turnID: string): { entries: Set<string>; lanes: Set<string> } {
   return keys;
 }
 
-/** Mint or fetch an open entry's streaming signal. `initial` is the text the entry
- *  arrived with, which is already on screen, so the pair carries no growth. */
+/** Mint or fetch an open entry's streaming signal. `initial` is the text the entry arrived with,
+ *  which is already on screen, so the pair carries no growth. */
 export function ensureEntryTextSig(
   turnID: string,
   entryID: string,
@@ -121,8 +103,8 @@ export function entryTextSig(
 }
 
 /** Write one delta into an open entry's signal. Reports whether a cell EXISTS for the entry,
- *  which is a weaker fact than a subscriber: `openEntry` mints one per live stream and a
- *  mounted surface mints its own, so false means only that neither has happened yet. */
+ *  which is a weaker fact than a subscriber: `openEntry` mints one per live stream and a mounted
+ *  surface mints its own, so false means only that neither has happened yet. */
 export function writeEntryText(
   turnID: string,
   entryID: string,
@@ -151,8 +133,8 @@ export function laneSig(turnID: string, lane: string): Signal<number> {
   return laneSigs.ensure(key, 0);
 }
 
-/** Bump a lane's coarse signal. Every open, delta, seal and laned append in the
- *  lane goes through here, so a lane subscriber needs no entry-id lookup. */
+/** Bump a lane's coarse signal. Every open, delta, seal and laned append in the lane goes
+ *  through here, so a lane subscriber needs no entry-id lookup. */
 export function bumpLane(turnID: string, lane: string): void {
   const key = laneKey(turnID, lane);
   keysFor(turnID).lanes.add(key);
@@ -160,8 +142,8 @@ export function bumpLane(turnID: string, lane: string): void {
   sig.value = sig.peek() + 1;
 }
 
-/** Drop every signal a turn minted, both maps. Without it a signal lives until the
- *  last chat closes, one entry per streamed entry, for the whole page's life. */
+/** Drop every signal a turn minted, both maps. Without it a signal lives until the last chat
+ *  closes, one entry per streamed entry, for the whole page's life. */
 export function clearTurnSigs(turnID: string): void {
   const keys = sigKeysByTurn.get(turnID);
   if (keys === undefined) {
@@ -176,8 +158,8 @@ export function clearTurnSigs(turnID: string): void {
   sigKeysByTurn.delete(turnID);
 }
 
-/** Drop every streaming and lane signal. Called on full teardown (last chat closed);
- *  per-turn disposal goes through `clearTurnSigs`. */
+/** Drop every streaming and lane signal. Called on full teardown (last chat closed); per-turn
+ *  disposal goes through `clearTurnSigs`. */
 export function clearAllEntrySigs(): void {
   entryTextSigs.clearAll();
   laneSigs.clearAll();

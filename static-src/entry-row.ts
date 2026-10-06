@@ -1,16 +1,10 @@
-// The list row both page lists build, and the container it sits in. ONE builder
-// for History and the configuration browser, so a row's height, inset, truncation
-// and hit target are decided once; what varies between the pages is which SLOTS a
-// row fills, and that is what the spec is. The rules it enforces: one row height
-// per list (CSS's, from the tier the list sets), a row with one destination puts
-// the box inside the control, at most two badges on the title line, a relative
-// time whose absolute twin is the tooltip.
+// The list row both page lists build (History, the configuration browser), and its container: height, inset,
+// truncation and hit target are decided once; pages vary only in which slots they fill.
 
 import { el } from "@cplieger/reactive";
 import { relativeTime, absoluteTime } from "./relative-time.js";
 
-/** The subtitle region. Three shapes, because a list carries either one
- *  ellipsised line, a two-line description, or a pair of single-line facts. */
+/** The subtitle: one ellipsised line, a two-line description, or a pair of single-line facts. */
 export type EntrySub =
   | { readonly kind: "line"; readonly text: string }
   | { readonly kind: "clamp"; readonly text: string }
@@ -22,39 +16,28 @@ interface EntrySubLine {
   readonly mono?: boolean;
 }
 
-/** A timestamp, or a count the time slot borrows. `{ms}` gets the relative
- *  vocabulary plus its absolute tooltip; `{text}` is rendered verbatim and gets
- *  NO tooltip, because a hit count has no absolute form. */
+/** A timestamp (relative text plus absolute tooltip) or verbatim text with no tooltip (a count has no absolute form). */
 type EntryTime = { readonly ms: number } | { readonly text: string };
 
 export interface EntryRowSpec {
-  /** The row's identity, written as `data-key`. ONE spelling for every page on
-   *  this builder, so a delegated listener's `closest("[data-key]")` is the same
-   *  read everywhere; `data` below carries a page's own extra attributes. */
+  /** The row's identity as `data-key`, one spelling so a delegated `closest("[data-key]")` reads the same everywhere. */
   readonly key: string;
   readonly title: string;
   readonly lead?: HTMLElement | undefined;
-  /** A chip that belongs to the NAME rather than to the row's facts (a git
-   *  status letter): seated in the name group against the title's last glyph,
-   *  outside the badge cap. */
+  /** A chip belonging to the name (a git letter), seated against the title's last glyph, outside the badge cap. */
   readonly mark?: HTMLElement | undefined;
   readonly badges?: readonly HTMLElement[] | undefined;
   readonly time?: EntryTime | undefined;
-  /** Absent still renders an EMPTY subtitle line: the body centres in the row,
-   *  so a row without one would lift its title off the column its neighbours
-   *  share. */
+  /** Absent still renders an empty subtitle line, so the title stays on the column. */
   readonly sub?: EntrySub | undefined;
   readonly actions?: readonly HTMLElement[] | undefined;
-  /** Present when the row is a DOOR: the body becomes the open control and its
-   *  accessible name is `Open <name>`. Absent leaves an inert body with no role,
-   *  no tabindex and no listener. */
+  /** Present for a door: the body becomes the open control named `Open <name>`. Absent: inert, no role or listener. */
   readonly open?: { readonly name: string; readonly onOpen: () => void } | undefined;
   /** Extra attributes, by full attribute name (`data-hook-id`). */
   readonly data?: Readonly<Record<string, string>> | undefined;
 }
 
-/** At most two, and a third is DROPPED rather than wrapped: the title line is
- *  one line, and a third badge is what turns it into two. */
+/** A third badge is dropped, not wrapped: the title line is one line. */
 const MAX_BADGES = 2;
 
 function subNode(sub: EntrySub): HTMLElement {
@@ -93,11 +76,8 @@ function timeNode(time: EntryTime): HTMLElement {
 }
 
 /**
- * One row. Every descendant of the body is a `span` or a `time`, never a `div`:
- * the body is a `<button>` when the row is a door and a button takes phrasing
- * content only. The CSS blockifies them (they are flex items), so the ellipsis
- * and the clamp behave as they would on a div. The name group (title plus mark)
- * is the title line's grower; a title that grew put the mark beside the badges.
+ * One row. The body's descendants are only `span`/`time`: a door's body is a `<button>`, which takes phrasing
+ * content only (the CSS blockifies them).
  */
 export function entryRow(spec: EntryRowSpec): HTMLElement {
   const line = el(
@@ -147,26 +127,22 @@ export function entryRow(spec: EntryRowSpec): HTMLElement {
   );
 }
 
-/** The card the rows sit in. `role="list"` with `role="listitem"` rows, which is
- *  what a `div`-based list owes a screen reader; the seams are the container's
- *  own fill showing through its `--hairline` gap. */
+/** The rows' card: `role="list"` with `role="listitem"` rows; seams are the container's fill through its `--hairline` gap. */
 export function entryList(): HTMLElement {
   return el("div", { className: "list-container", role: "list" });
 }
 
 /**
- * The region a row may grow BELOW itself, mounted as the row's next sibling so
- * the row never moves. A list may own nothing but list items, so the region is
- * one: without the role, axe reports the list owning the form's own controls.
+ * A region a row grows below itself as its next sibling, so the row never moves. It takes a list-item role, since a
+ * list may own only list items.
  */
 export function entryDetail(...children: HTMLElement[]): HTMLElement {
   return el("div", { className: "entry-detail", role: "listitem" }, ...children);
 }
 
 /**
- * N placeholder rows at the list's own tier, each holding a title bar and a
- * subtitle bar, so the swap to real rows moves nothing. `aria-hidden`, because a
- * placeholder names nothing.
+ * N placeholder rows at the list's tier, so the swap to real rows moves nothing.
+ * `aria-hidden`: a placeholder names nothing.
  */
 export function entrySkeleton(n: number): HTMLElement[] {
   const rows: HTMLElement[] = [];

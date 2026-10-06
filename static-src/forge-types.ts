@@ -1,13 +1,3 @@
-// ---------------------------------------------------------------------------
-// Forge-related types and metadata.
-//
-// The frontend works with a unified RepoEntry model that combines
-// local clones (from /api/git/repos) and remote repos (from each
-// configured forge's /api/forges/{id}/repos endpoint). Entries are
-// keyed by ID = "<host>:<owner>/<name>" so the same repo seen
-// locally and remotely collapses into one row.
-// ---------------------------------------------------------------------------
-
 import type { ForgeKind, PartialResult } from "./wire/types.gen.js";
 
 export type { ForgeKind };
@@ -48,8 +38,7 @@ export const DEFAULT_HOST: Record<ForgeKind, string> = {
   gitea: "",
 };
 
-/** Centralized metadata for each forge kind. Single source of truth for
- *  display names and icon glyphs. */
+/** Display name and icon glyph per forge kind. */
 export const FORGE_META: Record<
   ForgeKind,
   {
@@ -69,11 +58,6 @@ export const FORGE_META: Record<
     title: "Gitea / Forgejo",
   },
 };
-
-// (RepoEntry interface was removed — was exported but no consumers.
-//  If a unified local+remote registry is needed in the future, the
-//  shape can be reconstructed from /api/git/repos + /api/forges/.../repos
-//  responses or imported from wire/types.gen.ts.)
 
 /** URL template for the account-management page on each forge kind. */
 export const FORGE_URLS: Record<ForgeKind, (host: string) => string> = {

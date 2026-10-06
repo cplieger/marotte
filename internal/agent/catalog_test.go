@@ -9,10 +9,7 @@ import (
 )
 
 func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
-	// The rule that used to live on the chat record. session/load omits the
-	// catalog routinely (KAS resolves it asynchronously), and modes have no repair
-	// channel — a live config_option_update carries models, never modes — so a
-	// write-the-zeros would leave the picker empty for the rest of the session.
+	// session/load omits the catalog routinely and modes have no repair channel, so empty must not overwrite.
 	seededModes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	seededModels := []marotte.SessionModel{{ID: "m1", Name: "One"}}
 	c := &Catalog{}
@@ -40,8 +37,7 @@ func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
 }
 
 func TestCatalog_ReportsAChangeOnlyWhenSomethingChanged(t *testing.T) {
-	// The caller's contract: the chat store only persists and broadcasts on a
-	// change, so a repeated frame must answer false.
+	// The chat store persists and broadcasts only on change, so a repeated frame answers false.
 	modes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	c := &Catalog{}
 
@@ -57,9 +53,7 @@ func TestCatalog_ReportsAChangeOnlyWhenSomethingChanged(t *testing.T) {
 }
 
 func TestCatalog_ReturnsACopy(t *testing.T) {
-	// The caller is a JSON encoder or a picker; neither may reach the holder's
-	// slice. SessionMode holds only strings, so one level of copy is the whole
-	// value.
+	// A reader must not reach the holder's slice; SessionMode holds only strings.
 	c := &Catalog{}
 	c.SetModes([]marotte.SessionMode{{ID: "spec", Name: "Spec"}})
 
@@ -73,8 +67,7 @@ func TestCatalog_ReturnsACopy(t *testing.T) {
 }
 
 func TestCatalog_SeedingIsNotSharedWithTheCaller(t *testing.T) {
-	// The other direction: the holder must not alias the slice it was handed, or a
-	// bridge reusing its own buffer would rewrite the catalog behind it.
+	// The holder must not alias the slice it was handed.
 	modes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	c := &Catalog{}
 	c.SetModes(modes)
@@ -107,8 +100,7 @@ func TestCatalog_DefaultEffortFor(t *testing.T) {
 }
 
 func TestCatalog_ConcurrentReadersAndWriters(t *testing.T) {
-	// One holder, many bridges: a session/new, a session/load and a live
-	// config_option_update can all publish while /api/config-template reads.
+	// One holder, many bridges publishing while /api/config-template reads.
 	c := &Catalog{}
 	var wg sync.WaitGroup
 	for i := range 8 {

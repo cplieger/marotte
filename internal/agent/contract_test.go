@@ -1,9 +1,5 @@
 package agent
 
-// Contract tests: reusable test suites that verify behavioral expectations
-// of ACPBridge, ChatStore, and MCPConfig interfaces. Run against both fakes
-// and real implementations to catch drift.
-
 import (
 	"testing"
 	"time"
@@ -12,12 +8,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// --- Bridge contract test ---
-
-// BridgeContractTest exercises the behavioral expectations of any
-// ACPBridge implementation: Start → Call → Notify → Respond → Stop
-// lifecycle. Run against fakeBridge to catch drift when the real
-// bridge's semantics evolve.
+// BridgeContractTest exercises the Start → Call → Notify → Respond → Stop lifecycle of any ACPBridge.
 func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 	t.Helper()
 
@@ -87,7 +78,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 		}
 		ch := b.NotifCh()
 		b.Stop()
-		// Channel must be closed after Stop.
+		// Closed after Stop.
 		select {
 		case _, ok := <-ch:
 			if ok {
@@ -118,16 +109,12 @@ func TestFakeBridge_Contract(t *testing.T) {
 	})
 }
 
-// TestFakeBridge_SharedContract runs the shared
-// ACPBridgePreStartContractTest from testsupport against fakeBridge to
-// detect pre-Start drift.
+// TestFakeBridge_SharedContract runs testsupport's ACPBridgePreStartContractTest against fakeBridge.
 func TestFakeBridge_SharedContract(t *testing.T) {
 	testsupport.ACPBridgePreStartContractTest(t, func() testsupport.ACPPreStartBridge {
 		return newFakeBridge()
 	})
 }
-
-// --- ChatStore contract test ---
 
 func TestTestChatStore_Contract(t *testing.T) {
 	testsupport.ChatStoreContractTest(t, func(t *testing.T) testsupport.ChatStoreContract {
@@ -136,15 +123,12 @@ func TestTestChatStore_Contract(t *testing.T) {
 	})
 }
 
-// --- MCPConfig contract test ---
-
 func TestFakeMCPConfig_Contract(t *testing.T) {
 	testsupport.MCPConfigContractTest(t, func(t *testing.T) testsupport.MCPNameSets {
 		t.Helper()
 		return &fakeMCPConfig{
 			enabled:    map[string]struct{}{},
 			configured: map[string]struct{}{},
-			all:        map[string]struct{}{},
 		}
 	})
 }

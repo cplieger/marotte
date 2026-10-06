@@ -8,10 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// mintPending bumps the workspace-wide `pending` counter for one of the three
-// pending stores (permissions, run asks, steers). Called with the store's own mutex
-// held, so the bump and the mutation it certifies are one critical section; a nil
-// registry is replaced by a private one so an unwired store stays honest.
+// mintPending bumps the workspace `pending` counter for one of the three pending stores, called
+// under that store's mutex; a nil registry is replaced by a private one.
 func mintPending(versions **subject.Versions) {
 	if *versions == nil {
 		*versions = &subject.Versions{}
@@ -19,27 +17,16 @@ func mintPending(versions **subject.Versions) {
 	(*versions).BumpCounter(subject.KindPending, "")
 }
 
-// pendingSnapshotStamped is the pending_snapshot payload with its `pending` stamp,
-// for the v3 connect hook: every unresolved permission, run ask and steer across
-// every chat, each as the complete envelope the live path would have published.
-//
-// THE COUNTER IS READ FIRST, then the three stores in sequence under their own
-// locks. There is no single critical section over the three, and none is claimed:
-// a mutation landing between the counter read and a store read puts its item in
-// the set and its bump OUTSIDE the stamp, so the client holds a set at least as
-// new as its version and the next digest answers changed. Reading the counter
-// last would allow a stamp newer than the set and a false unchanged across a
-// connection loss. The live frame such a mutation publishes has an offset above
-// the connection's hello head and is applied after this snapshot, so the client
-// converges on it either way.
+// pendingSnapshotStamped is the pending_snapshot payload with its `pending` stamp: every unresolved
+// permission, run ask and steer as the envelope the live path would publish. The counter is read
+// FIRST, then each store under its own lock, so a racing mutation can only make the set newer
+// than the stamp, never a false unchanged.
 func (rt *Runtime) pendingSnapshotStamped() (marotte.PendingSnapshotPayload, *marotte.SubjectStamp) {
 	return rt.pendingSnapshot(nil)
 }
 
-// pendingSnapshot is pendingSnapshotStamped with a seam between its four reads:
-// afterRead, when non-nil, runs after read n (0 the counter, then the three
-// stores), which is how the interleaving property drives a mutation into every
-// gap of the real procedure rather than a copy of it.
+// pendingSnapshot is pendingSnapshotStamped with afterRead run after read n (0 the counter, then
+// the three stores), so the interleaving property drives mutations into every gap.
 func (rt *Runtime) pendingSnapshot(afterRead func(n int)) (marotte.PendingSnapshotPayload, *marotte.SubjectStamp) {
 	step := func(n int) {
 		if afterRead != nil {

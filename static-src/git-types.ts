@@ -1,24 +1,13 @@
-// ---------------------------------------------------------------------------
-// Shared git wire types — single source of truth for interfaces that
-// appear in the /api/git/* and /api/forges/* JSON responses.
-// ---------------------------------------------------------------------------
+// Shared git wire types for /api/git/* and /api/forges/* responses.
 
 import type { ForgeKind } from "./forge-types.js";
 import type { FieldFill } from "./wire/types.gen.js";
 
-/** A single file entry from git status.
- *
- *  ONE PATH CAN PRODUCE TWO ENTRIES. A file staged and then modified
- *  again in the worktree arrives once per side of the index (server:
- *  internal/git/parse.go appendStatusEntries), so stage, unstage and
- *  discard can each act on one side. Anything counting CHANGED FILES
- *  therefore counts distinct paths — `changedPathCount`, never
- *  `files.length`.
- *
- *  `orig_path` rides only a rename or copy entry, carrying the path the
- *  content came from. Absent on every other entry, and absent on the
- *  worktree half of a staged rename, which describes an ordinary edit at
- *  the new path rather than the move. */
+/**
+ * A single file entry from git status. One path can produce two entries, one per side of the index, so stage,
+ * unstage and discard act per side; count changed files with `changedPathCount`, never `files.length`. `orig_path`
+ * rides only a rename or copy entry (not the worktree half of a staged rename).
+ */
 export interface GitFileEntry {
   path: string;
   status: string;
@@ -46,14 +35,11 @@ export type GitRepoStatusBadge = Pick<
   "repo" | "is_repo" | "branch" | "ahead" | "behind" | "has_dirty"
 >;
 
-/** What one Pull-all pass did to one repository (`POST /api/git/pull-all`).
- *  The server's four verdicts are mutually exclusive and cover every repo it
- *  looked at (`internal/git/handlers_pullall.go`): `pulled`, `blocked` (the
- *  pre-flight refused, `reason` names the hazard), `failed` (git refused,
- *  `detail` carries its words), `skipped` (nothing to do). `reason` and
- *  `detail` are plain strings for the reason `GitPRAction.checks` is: the
- *  server's vocabulary can grow, and a union here would make this module's
- *  own fallbacks read as dead code while the wire still produces them. */
+/**
+ * What one Pull-all pass did to one repository. Four exclusive verdicts (internal/git/handlers_pullall.go):
+ * `pulled`, `blocked` (`reason` names the hazard), `failed` (`detail` carries git's words), `skipped`. Plain strings:
+ * the server's vocabulary can grow, and a union would make the fallbacks read as dead code.
+ */
 export interface GitPullResult {
   repo: string;
   verdict: string;
@@ -61,20 +47,12 @@ export interface GitPullResult {
   detail?: string;
 }
 
-/** Whether this repo was left un-pulled in a way a reader has to act on.
- *
- *  The two verdicts the panel flags. A `pulled` or `skipped` repo needs no mark
- *  — the pass already did the only thing it could — so it is reported by the
- *  summary count alone. */
+/** Whether a repo was left un-pulled in a way a reader must act on. `pulled` and `skipped` get the summary count only. */
 export function isPullHeld(r: GitPullResult): boolean {
   return r.verdict === "blocked" || r.verdict === "failed";
 }
 
-/** The one-line outcome of a Pull-all pass.
- *
- *  Derived from the verdicts, which are the only place the counts exist. Held
- *  repos are counted here and named on their own blocks, so this stays one line
- *  however many there are. */
+/** The one-line outcome of a Pull-all pass. Held repos are counted here and named on their own blocks. */
 export function summarizePullAll(results: readonly GitPullResult[]): string {
   const pulled = results.filter((r) => r.verdict === "pulled").length;
   const held = results.filter(isPullHeld).length;
@@ -85,10 +63,7 @@ export function summarizePullAll(results: readonly GitPullResult[]): string {
   return held === 0 ? first : `${first}, ${String(held)} left alone`;
 }
 
-/** The word a held repo's header badge carries: short enough for a collapsed
- *  row, specific enough to say WHICH hazard without opening the section. An
- *  unrecognised reason falls back to the plain fact, so a server that grows the
- *  vocabulary still renders a mark. */
+/** Short enough for a collapsed row, specific enough to name the hazard. An unknown reason falls back to the plain fact. */
 const PULL_HELD_WORDS: Readonly<Record<string, string>> = {
   in_progress: "mid-merge",
   conflict: "conflict",
@@ -104,13 +79,10 @@ export function pullHeldWord(r: GitPullResult): string {
   return PULL_HELD_WORDS[r.reason ?? ""] ?? "not pulled";
 }
 
-/** What a PR row's controls read. Every member is always present.
- *
- *  The enumerated members are plain strings rather than unions on purpose:
- *  the server's vocabulary can grow, and a union here would make the
- *  unknown-value fallbacks in git-pr-status.ts read as dead code to the
- *  type checker while the wire still produces them. The canonical values
- *  are listed on each field. */
+/**
+ * What a PR row's controls read; every member is always present. Enumerated members are plain strings: the server's
+ * vocabulary can grow, and a union would make git-pr-status.ts's fallbacks read as dead code.
+ */
 export interface GitPRAction {
   /** "yes" | "no" | "unknown". */
   mergeable: string;
@@ -174,16 +146,10 @@ export interface GitRepoGroup {
   prs: GitPR[];
 }
 
-// --- Status label utilities (single source of truth) ---
-
-/** Every status character `git status --porcelain=v1` emits, mirroring
- *  the server's own table (internal/git/parse.go statusLabels) so a
- *  tooltip never disagrees with the label beside it.
- *
- *  'C' and 'T' were both missing, so `describeStatus` handed back the
- *  bare letter for a copy and for a typechange — the two statuses whose
- *  letter is least guessable. 'T' is a regular file replaced by a
- *  symlink or the reverse, which git reports as ` T`/`T `. */
+/**
+ * Every status character `git status --porcelain=v1` emits, mirroring internal/git/parse.go statusLabels so a tooltip
+ * never disagrees with the label beside it.
+ */
 const GIT_STATUS_LABELS: Readonly<Record<string, string>> = {
   M: "Modified",
   T: "Typechange",
@@ -206,40 +172,18 @@ export function describeStatus(s: string): string {
   return GIT_STATUS_LABELS[s.charAt(0)] ?? s;
 }
 
-/** How many of these entries `git stash push` would actually take.
- *
- *  It is NOT `files.length`. The server runs `stash push` with no `-u`
- *  (internal/git/handlers_sync.go), so an untracked file is not stashed, while
- *  the status parse runs `-uall` and therefore DOES report untracked entries
- *  (status `?`). A tree whose only changes are new files is `has_dirty: true`
- *  and yet git answers "No local changes to save" — so the two questions
- *  genuinely have different answers and only this one gates the Stash control.
- *
- *  Here rather than at the call site because the rule is about git's status
- *  vocabulary, which this module owns, not about how the git panel lays out. */
+/**
+ * How many entries `git stash push` would take. Not `files.length`: the server stashes without `-u`
+ * (internal/git/handlers_sync.go) while the status parse runs `-uall`, so untracked entries are not stashable.
+ */
 export function stashableCount(files: readonly GitFileEntry[]): number {
   return files.filter((f) => statusLetter(f.status) !== "?").length;
 }
 
-// --- Path-level counting -------------------------------------------------
-//
-// Entries are per SIDE OF THE INDEX; a person counts FILES. The two differ
-// on exactly one input, a path staged and then edited again, and the count
-// that got it wrong was one that SPANNED both sides: the old repo-level
-// "Discard all (N)" read `files.length` over every entry, so one file
-// edited twice offered to discard "2 uncommitted changes" and sent that
-// path twice.
-//
-// Within ONE side the server already emits at most one entry per path, so
-// these two are a guard on that invariant rather than a live dedup —
-// measured by mutation, replacing either with `.length` at a group-scoped
-// call site changes no output. They are worth the lines anyway: the
-// invariant belongs to another module's parse (internal/git/parse.go), and
-// a count here should not go wrong if that shape ever changes.
+// Entries are per side of the index; a person counts files. Within one side the server emits at most one entry per
+// path, so these guard that invariant from internal/git/parse.go rather than dedup live.
 
-/** The distinct paths of these entries, in first-seen order. Also the
- *  shape a bulk mutation payload wants, so the server's own log line
- *  ("files=2") cannot disagree with the tree. */
+/** The distinct paths, in first-seen order; also the shape a bulk mutation payload wants. */
 export function distinctPaths(files: readonly GitFileEntry[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -257,14 +201,10 @@ export function changedPathCount(files: readonly GitFileEntry[]): number {
   return new Set(files.map((f) => f.path)).size;
 }
 
-/** The paths present on BOTH sides of the index: staged, then changed
- *  again in the worktree.
- *
- *  Such a path renders as two rows, and with the list grouped by staged
- *  state those rows sit in different groups — correct git semantics that
- *  reads as a duplicate to anyone who does not know porcelain's XY pair.
- *  The panel marks both rows from this set rather than leaving the reader
- *  to work it out. */
+/**
+ * Paths on both sides of the index (staged, then changed again). They render as two rows in different groups, so the
+ * panel marks both from this set.
+ */
 export function partiallyStagedPaths(files: readonly GitFileEntry[]): ReadonlySet<string> {
   const staged = new Set<string>();
   const unstaged = new Set<string>();

@@ -1,4 +1,3 @@
-// Table-driven tests for highlight.ts tokenizer across all supported languages.
 import { describe, it, expect } from "vitest";
 import {
   highlightByLang,
@@ -9,11 +8,7 @@ import {
   highlightMarked,
 } from "./highlight.js";
 
-// ---------------------------------------------------------------------------
-// Helper: extract spans from highlightByLang output.
-// The tokenizer emits plain escaped text for "text" tokens and wraps all
-// others in <span class="hl-TYPE">VALUE</span>. We extract the spans.
-// ---------------------------------------------------------------------------
+// Text tokens are plain escaped text; everything else is <span class="hl-TYPE">.
 interface Span {
   type: "keyword" | "string" | "comment" | "number" | "punctuation";
   value: string;
@@ -36,9 +31,6 @@ function extractSpans(html: string): Span[] {
   return spans;
 }
 
-// ---------------------------------------------------------------------------
-// Table-driven: one row per language with representative snippet
-// ---------------------------------------------------------------------------
 describe("tokenize per language", () => {
   const cases: {
     lang: string;
@@ -184,13 +176,9 @@ describe("tokenize per language", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Edge cases
-// ---------------------------------------------------------------------------
 describe("edge cases", () => {
   it("python: backtick is not a string delimiter", () => {
-    // Regression: a stray backtick used to open a "string" that swallowed
-    // everything up to the next backtick, mis-highlighting whole blocks.
+    // A stray backtick must not open a string that swallows text up to the next one.
     const html = highlightByLang("x = 1  # a `word` in a comment\ny = 2", "py");
     const spans = extractSpans(html);
     expect(spans.filter((s) => s.type === "string")).toEqual([]);
@@ -205,8 +193,7 @@ describe("edge cases", () => {
   });
 
   it("arithmetic: 1-2 is two number tokens, not one", () => {
-    // Regression: the number loop consumed +/- unconditionally, merging
-    // `1-2` into a single "number" token.
+    // +/- continue a number only as an exponent sign, so `1-2` is not one token.
     const html = highlightByLang("1-2", "go");
     const spans = extractSpans(html);
     const numbers = spans.filter((s) => s.type === "number").map((s) => s.value);
@@ -281,15 +268,12 @@ describe("edge cases", () => {
 
   it("empty string lang returns escaped text (markdown passthrough)", () => {
     const result = highlightByLang("# heading", "md");
-    // md is treated as passthrough — no spans
+    // md is passthrough: no spans.
     expect(result).not.toContain("<span");
     expect(result).toContain("# heading");
   });
 });
 
-// ---------------------------------------------------------------------------
-// detectLang
-// ---------------------------------------------------------------------------
 describe("detectLang", () => {
   it.each([
     ["main.go", "go"],
@@ -321,9 +305,6 @@ describe("detectLang", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// normalizeLang
-// ---------------------------------------------------------------------------
 describe("normalizeLang", () => {
   it.each([
     ["go", "go"],
@@ -336,10 +317,9 @@ describe("normalizeLang", () => {
     ["ruby", "rb"],
     ["c++", "c"],
     ["cplusplus", "c"],
-    // "docker" is the only language key that is not also its own extension, so
-    // it is the one tag that has to be found in SUPPORTED_LANGUAGES itself.
+    // "docker" is the one language key that is not its own extension, so it is found in SUPPORTED_LANGUAGES itself.
     ["docker", "docker"],
-    // The fenced tag, which resolves through the extension registry instead.
+    // The fenced tag, which resolves through the extension registry.
     ["dockerfile", "docker"],
     ["", ""],
     ["  Go  ", "go"],
@@ -349,9 +329,7 @@ describe("normalizeLang", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Property-based fuzz: no-throw, HTML-safety, content-preservation (tarch-b15-c7-p1)
-// ---------------------------------------------------------------------------
+// Property-based fuzz: no throw, HTML-safe, content preserved.
 import fc from "fast-check";
 
 describe("highlightByLang property-based fuzz", () => {
@@ -418,11 +396,7 @@ describe("highlightByLang property-based fuzz", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Where a token STOPS, which extractSpans cannot see: it drops text tokens, so
-// two adjacent text tokens and one merged token look identical through it. These
-// assert the whole rendered string instead.
-// ---------------------------------------------------------------------------
+// Where a token stops, which extractSpans cannot see (it drops text tokens), so these assert the rendered string.
 describe("token boundaries", () => {
   const cases: { input: string; lang: string; expected: string; desc: string }[] = [
     {
@@ -505,8 +479,7 @@ describe("token boundaries", () => {
 });
 
 describe("keyword tables", () => {
-  // The only capitalised keywords in the tables, and the reason the ident-start
-  // range has to cover A-Z at all.
+  // The only capitalised keywords, and why the ident-start range covers A-Z.
   it("highlights Python's capitalised literals", () => {
     const spans = extractSpans(highlightByLang("None", "py"));
     expect(spans).toEqual([{ type: "keyword", value: "None" }]);
@@ -541,8 +514,7 @@ describe("comment delimiters", () => {
     expect(highlightByLang("x /* oops", "go")).toBe('x <span class="hl-comment">/* oops</span>');
   });
 
-  // The terminator cannot overlap the opener: `/*/` is an unterminated comment,
-  // not an empty one, so the search for `*/` starts past both characters.
+  // `/*/` is an unterminated comment, so the search for `*/` starts past both characters.
   it("does not let a block comment close on its own opener", () => {
     expect(highlightByLang("/*/ x */", "go")).toBe('<span class="hl-comment">/*/ x */</span>');
   });
@@ -561,9 +533,7 @@ describe("string delimiters", () => {
     expect(highlightByLang("`raw` x", "go")).toBe('<span class="hl-string">`raw`</span> x');
   });
 
-  // Go raw strings have no escapes, which is why the backtick scan is separate
-  // from the escape-aware one: a backslash before the closing backtick does not
-  // extend the string.
+  // Go raw strings have no escapes, so a backslash does not extend the string.
   it("does not let a backslash escape a closing backtick", () => {
     expect(highlightByLang("`a\\`b`", "go")).toBe(
       '<span class="hl-string">`a\\`</span>b<span class="hl-string">`</span>',
@@ -576,8 +546,7 @@ describe("number literals", () => {
     expect(highlightByLang(".5", "go")).toBe('<span class="hl-number">.5</span>');
   });
 
-  // The 0x/0o/0b prefix skip belongs to a leading zero only; applying it to any
-  // digit merged an identifier into the number before it.
+  // The radix prefix skip belongs to a leading zero only.
   it("does not apply the radix prefix to a non-zero digit", () => {
     expect(highlightByLang("1x2", "go")).toBe('<span class="hl-number">1</span>x2');
   });
@@ -588,14 +557,12 @@ describe("number literals", () => {
 });
 
 describe("language routing", () => {
-  // Markdown is prose: tokenizing it would highlight ordinary English words that
-  // happen to be keywords.
+  // Markdown is prose: tokenizing it would highlight English words that happen to be keywords.
   it("passes markdown through without highlighting its prose", () => {
     expect(highlightByLang("if you want", "md")).toBe("if you want");
   });
 
-  // highlight() lowercases the extension before the lookup, so a shouted
-  // filename still finds its language.
+  // highlight() lowercases the extension before the lookup.
   it("detects the language from an uppercase extension", () => {
     const spans = extractSpans(highlight("func f()", "MAIN.GO"));
     expect(spans).toEqual([
@@ -605,12 +572,8 @@ describe("language routing", () => {
     ]);
   });
 
-  // The path the editor takes, and the one that was broken: a Dockerfile has no
-  // extension, so `filename.split(".").pop()` yields the whole name, which the
-  // extension registry maps to the language key "docker". detectLang returning
-  // "docker" proves nothing about what gets rendered — for a long time nothing
-  // held that key, the gate in highlightByLang rejected it, and Dockerfiles came
-  // out as plain escaped text.
+  // A Dockerfile has no extension, so the whole name maps to "docker"; detectLang returning it proves nothing, so this
+  // asserts the rendered spans.
   it("highlights a Dockerfile opened by filename", () => {
     const spans = extractSpans(highlight("# install deps\nRUN npm ci", "Dockerfile"));
     expect(spans).toEqual([
@@ -620,19 +583,8 @@ describe("language routing", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The punctuation table, whole.
-//
-// `PUNCT_CODES` is built once when the module is evaluated, and the tests above
-// reach only the four or five characters their snippets happen to contain — so
-// the table's contents are asserted here, one character at a time, against the
-// comment that documents it beside the codes.
-//
-// The module is loaded DYNAMICALLY for the same reason `platform.pwa.test.ts`
-// does it: a module-scope initializer runs at import time, which a static import
-// has already done before the first test is collected, so a test that means to
-// observe the table has to be the thing that builds it.
-// ---------------------------------------------------------------------------
+// The punctuation table, one character at a time against the comment beside the codes. Loaded dynamically because
+// the table is built at module evaluation, which a static import does before the first test.
 
 import { vi } from "vitest";
 
@@ -652,8 +604,7 @@ describe("the punctuation table", () => {
   it("leaves a character outside the table as plain text", async () => {
     vi.resetModules();
     const { highlightByLang: fresh } = await import("./highlight.js");
-    // Neither punctuation nor an identifier start nor a digit nor a quote: the
-    // tokenizer's last branch, which is what "not in the table" has to mean.
+    // None of punctuation, identifier start, digit or quote: the tokenizer's last branch.
     for (const ch of [..."\\\u00a7\u00b0"]) {
       expect(extractSpans(fresh(ch, "go"))).toEqual([]);
       expect(fresh(ch, "go")).toBe(ch);
@@ -661,14 +612,7 @@ describe("the punctuation table", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// resolveLangHint: a fence tag, a bare extension, or a file PATH.
-//
-// The path arm is the one that had never worked. Both diff call sites pass a
-// path, `normalizeLang` compares the whole string, so it matched nothing and
-// every diff in the app rendered unhighlighted while the code and its comments
-// claimed otherwise.
-// ---------------------------------------------------------------------------
+// resolveLangHint: a fence tag, a bare extension, or a file path (what both diff call sites pass).
 
 describe("resolveLangHint", () => {
   const cases: { name: string; tag: string; want: string }[] = [
@@ -690,11 +634,7 @@ describe("resolveLangHint", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// highlightMarked: two independent channels on one line. A token straddling a
-// mark boundary is SPLIT and each piece keeps its syntax class, so the classes
-// compose on one element rather than one displacing the other.
-// ---------------------------------------------------------------------------
+// A token straddling a mark boundary is split and each piece keeps its class, so the classes compose.
 
 describe("highlightMarked", () => {
   it("is exactly highlightByLang when there is nothing to mark", () => {
@@ -703,9 +643,8 @@ describe("highlightMarked", () => {
   });
 
   it("keeps the same syntax classes as the unmarked path", () => {
-    // The fast path and the marked walk must produce the same syntax markup, or
-    // a line's colours would depend on whether it happened to pair with a
-    // counterpart. A split token repeats its class, so runs collapse first.
+    // The fast path and the marked walk must produce the same syntax markup. A split token repeats its class, so runs
+    // collapse first.
     const code = `x := "abcd" // c`;
     const hlClasses = (html: string): string[] =>
       Array.from(html.matchAll(/<span class="([^"]*)"/g), (m) =>
@@ -728,7 +667,7 @@ describe("highlightMarked", () => {
   });
 
   it("splits a token at a mark boundary and keeps its syntax class on both", () => {
-    // Mark only `ab` of the 4-character string token `"abcd"` starts at 1.
+    // Mark only `ab` of the string token `"abcd"`, which starts at 1.
     const html = highlightMarked(`"abcd"`, "go", [{ start: 1, end: 3 }], "m");
     expect(html).toBe(
       '<span class="hl-string">&quot;</span><span class="hl-string m">ab</span>' +

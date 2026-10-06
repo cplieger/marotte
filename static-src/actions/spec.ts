@@ -1,14 +1,5 @@
-// ---------------------------------------------------------------------------
-// The spec-approval action. ONE action, because an approval is one operation:
-// it RECORDS that a human signed off one phase against the exact version they
-// read. Nothing here enforces a phase order and no control is disabled by an
-// approval.
-//
-// The chat id is EMPTY on purpose: a spec is workspace-global rather than a
-// chat's, which is why its invalidation event is workspace-global too. The
-// server's handler validates no chat id, so omitting the field is what the
-// command means rather than a value left unset.
-// ---------------------------------------------------------------------------
+// The spec-approval action RECORDS a human sign-off of one phase against the exact version read;
+// nothing enforces phase order. The chat id is EMPTY on purpose: a spec is workspace-global.
 
 import { ActionError, defineAction, IDEMPOTENCY_COMMAND_FIELD } from "./index.js";
 import { send as transportSend, type SendResult } from "../transport.js";
@@ -23,28 +14,11 @@ export interface ApproveSpecPhaseArgs {
   hash: string;
 }
 
-/** approveSpecPhase records a human sign-off on one phase of one spec.
- *
- *  A custom runner rather than `transportAction` for `chat.steer`'s reason: the
- *  refusal CLASS decides what the page says, and only the envelope's `reason`
- *  carries it — `doc_changed` means the file moved under the reader and the page
- *  re-reads it, where anything else is a plain failure. `SendResult` carries no
- *  `current_hash`, and the page needs none: it refetches, which brings the live
- *  hash and the derived `stale` together rather than patching a badge from an
- *  error body.
- *
- *  `scope` per SPEC rather than per phase: two phases approved in one gesture
- *  are two commands whose replies both re-read the same record, and the store
- *  merges under its own lock either way — serializing them is what keeps the
- *  page's own read-back in the order the reader clicked.
- *
- *  `idempotencyKey: true` mints one key per DISPATCH (threaded through that
- *  dispatch's retries), never a composite of the arguments: a repeat of the same
- *  approval must reach the server rather than replay a cached success from
- *  inside the 5-minute window.
- *
- *  `error: false`: the page's own status row is the surface, so the toast stack
- *  never doubles it. */
+/** approveSpecPhase records a human sign-off on one phase of one spec. A custom runner: only the
+ *  envelope's `reason` says `doc_changed` (the page re-reads) versus a plain failure. `scope` per
+ *  SPEC keeps two phases' read-backs in click order. `idempotencyKey: true` mints one key per
+ *  dispatch, so a repeat reaches the server instead of replaying a cached success. `error: false`:
+ *  the page's status row is the surface. */
 export const approveSpecPhase = defineAction<
   ApproveSpecPhaseArgs,
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- nothing reads a result; the page refetches

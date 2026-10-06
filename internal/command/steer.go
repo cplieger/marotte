@@ -1,9 +1,7 @@
 package command
 
-// Mid-turn steering, via KAS's own buffer. `_session/steer` appends to a
-// per-session steering buffer the graph consumes at the next node boundary as an
-// ordinary human turn; nothing is cancelled. Idle sends are prompts, mid-turn
-// sends are steers.
+// `_session/steer` appends to KAS's per-session steering buffer, read at the next node boundary as
+// an ordinary human turn; nothing is cancelled.
 
 import (
 	"context"
@@ -22,23 +20,18 @@ import (
 
 // maxSteerBytes caps a steer's text — deliberately the same cap as a
 // prompt's, since a steer is a prompt as far as the user is concerned.
-const maxSteerBytes = maxPromptBytes
+const maxSteerBytes = MaxPromptBytes
 
-// notificationPrefix mirrors KAS's NOTIFICATION_PREFIX_RE. KAS decides
-// whether a steer is a user message or a system notification by sniffing
-// the text against this pattern, not by a parameter, and a notification is
-// skipped by the session/load re-injection that carries real steers across
-// a resume — so the reclassification changes whether the message survives
-// a reload.
+// notificationPrefix mirrors KAS's NOTIFICATION_PREFIX_RE. KAS classifies a steer as a system
+// notification by sniffing its text, and a notification is skipped by the session/load
+// re-injection, so a match changes whether the message survives a reload.
 var notificationPrefix = regexp.MustCompile(`^\s*\[notification/(info|success|warning|error)\]`)
 
 var (
 	// errSteerNoTurn is the refusal for a steer with no turn to join.
 	errSteerNoTurn = errors.New("nothing is running to steer, so send this as a prompt instead")
-	// errSteerLooksLikeNotification refuses the sniffing collision above,
-	// rather than escaping (would alter what the user wrote) or passing
-	// through (would file it as a system notification and drop it on
-	// resume).
+	// errSteerLooksLikeNotification refuses that collision: escaping would alter the user's text,
+	// passing through would drop it on resume.
 	errSteerLooksLikeNotification = errors.New(
 		`a message starting with "[notification/...]" is read as a system notice, not as your words. Start it with anything else`,
 	)
@@ -49,14 +42,13 @@ var (
 // prompt.
 const reasonNoTurn = "no_turn"
 
-// reasonFull is the 409 refusal class for a steer the chat's record cannot hold.
-// Not `no_turn`, deliberately: the client converts that one into a prompt, and a
-// prompt would meet the same running turn.
+// reasonFull is the 409 refusal class for a steer or a follow-up the chat has no
+// room for. Not `no_turn`, deliberately: the client converts that one into a
+// prompt, and a prompt would meet the same running turn.
 const reasonFull = "full"
 
-// errSteerFull is the refusal for a steer that would be the chat's 65th unread
-// message, whether parked, queued or waiting.
-var errSteerFull = errors.New("too many messages are waiting for the agent. Wait for it to read some, then send again")
+// errSteerFull is the refusal for a steer past the chat's steer budget.
+var errSteerFull = errors.New("too many unread messages are waiting in this chat. Wait for the agent to read them, then send again")
 
 // steerReply is KAS's answer to one _session/steer.
 type steerReply struct {
@@ -87,11 +79,9 @@ func decodeSteerReply(resp *marotte.RPCResponse) steerReply {
 	return reply
 }
 
-// CmdSteer delivers a message into the running turn. It requires a holder whose
-// turn drains the steering buffer: KAS queues a steer for any live session, so one
-// sent to an idle chat or a `!cmd` shell turn would sit unread with the chip stuck
-// "queued". Every steer command takes the chat's steer lock, so a delete's clear
-// and its resubmit never interleave with a new steer.
+// CmdSteer delivers a message into the running turn. It requires a holder whose turn drains the
+// buffer: a steer to an idle chat or a `!cmd` turn would sit unread. Every steer command takes the
+// chat's steer lock, so a delete's clear and resubmit never interleave with a new steer.
 func CmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -105,15 +95,14 @@ func CmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	switch refuse, sendErr := steerOne(ctx, roles, cmd.ChatID, steerID, text, false); {
+	switch refuse, sendErr := steerOne(ctx, roles, cmd.ChatID, steerID, text, ""); {
 	case refuse == SteerRefuseFull:
 		return nil, StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull)
 	case refuse != "":
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
 	case sendErr != nil:
-		// KAS throws (rather than answering) for an unknown session and an empty
-		// message, both ruled out, so this is a transport or liveness failure. The
-		// row stays where KAS may hold it, and its fate is observed.
+		// Unknown session and empty message are ruled out, so this is a transport or liveness
+		// failure; the row stays where KAS may hold it.
 		return nil, StatusError(http.StatusBadGateway, sendErr)
 	}
 	slog.Info("steer accepted", "chat", cmd.ChatID, "steer_id", steerID)
@@ -121,14 +110,16 @@ func CmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 }
 
 // steerOne is the one place a user steer is routed, new or re-routed; the error is
-// the send carrying key.
-func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text string, delivering bool) (refuse string, err error) {
+// the send carrying key. turn is the prompt turn a delivery is aimed at, empty for
+// a new steer.
+func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string) (refuse string, err error) {
 	source, held := roles.admission.AdmissionHolderSource(chatID)
 	h := SteerHolder{
 		Held:        held && source != marotte.TurnSourceLocalShell,
 		PromptClass: source.PromptClass(),
 		Live:        roles.bridges.BridgeLive(chatID),
-		Delivering:  delivering,
+		Turn:        turn,
+		Delivering:  turn != "",
 	}
 	sends, refuse := roles.queue.RouteSteer(chatID, key, text, h)
 	if refuse != "" {
@@ -160,18 +151,15 @@ func issueSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 				keyErr = err
 			}
 		case !reply.Queued:
-			// The epoch moved while KAS persisted it: the turn end decides the rows.
 			slog.Info("steer dropped", "chat", chatID, "steer_id", s.ID, "reason", reply.Dropped)
 		}
 	}
 	return keyErr
 }
 
-// steerText validates the steer payload and answers its trimmed text and the id
-// KAS will stamp on it. The id is derivable (marotte.SteerIDFor) because KAS
-// prefixes the messageId we send; the two shapes that would make it wrong are
-// refused here: an empty id, and a notification-prefixed text KAS would file
-// under `notify-`.
+// steerText validates the payload and answers its trimmed text and the id KAS will stamp on it
+// (marotte.SteerIDFor). It refuses the two shapes that break that derivation: an empty id, and text
+// KAS would file under `notify-`.
 func steerText(cmd *marotte.ClientCommand) (text, steerID string, err error) {
 	var p marotte.SteerCommand
 	if json.Unmarshal(cmd.Payload, &p) != nil {
@@ -205,12 +193,7 @@ func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	if err != nil {
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
-	handedOff := false
-	defer func() {
-		if !handedOff {
-			unlock()
-		}
-	}()
+	defer unlock()
 	opID := ids.NewMessageID()
 	needsClear, refuse := roles.queue.BeginDiscard(cmd.ChatID, opID)
 	if refuse != "" {
@@ -220,7 +203,7 @@ func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	if needsClear {
 		rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)
 		defer cancel()
-		defer func() { handedOff = endSteerOp(ctx, roles, cmd.ChatID, opID, unlock) }()
+		defer endSteerOp(ctx, roles, cmd.ChatID, opID)
 		names, landed := clearSteerBuffer(rpcCtx, roles, cmd.ChatID)
 		if res := roles.queue.DiscardCleared(cmd.ChatID, opID, landed); res.Reason != "" {
 			return nil, steerRefusal(res.Reason)
@@ -231,11 +214,9 @@ func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	return responseWith(map[string]any{"cleared": cleared}), nil
 }
 
-// clearSteerBuffer issues one _session/steer/clear and waits until every frame KAS
-// wrote before its reply has folded, so the reply's ids and the frames agree.
-// landed false is a clear whose outcome is unknown: no reply, or a read loop that
-// never reached the reply, where an unfolded read would let a delivered row be
-// classified deleted. No bridge means no buffer, which a clear would find empty.
+// clearSteerBuffer issues one _session/steer/clear and waits until every frame KAS wrote before its
+// reply has folded, so the reply's ids and the frames agree. landed false means the outcome is
+// unknown: no reply, or a read loop that never reached it.
 func clearSteerBuffer(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) (cleared []string, landed bool) {
 	sb := roles.bridges.Bridge(chatID)
 	if sb == nil {

@@ -1,5 +1,3 @@
-// Tests for chat.ts actions: setSupervised, switchModel, resolvePendingChange,
-// respondPermission, restoreCheckpoint.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -8,9 +6,7 @@ vi.mock("../toast.js", () =>
 
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
-  // Reached through tabs.ts, which mints one `op_id` per tab mutation at the
-  // DISPATCH site. Nothing here mutates a tab; the name has to exist for
-  // real-ESM linking.
+  // Inert: present only so real-ESM linking succeeds.
   newOpID: vi.fn(() => "op-test"),
 }));
 
@@ -21,9 +17,7 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  // Reached through tabs.ts -> tabs-sync.ts, whose `GET /api/tabs` is the only
-  // read in the projection. No case here lists tabs; the name has to exist for
-  // real-ESM linking.
+  // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: vi.fn(),
 }));
 import { send as transportSend } from "../transport.js";
@@ -88,6 +82,30 @@ describe("chat.set_supervised", () => {
   });
 });
 
+describe("chat.rename", () => {
+  it("sends rename_chat with the name as its whole payload", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { renameChat } = await import("./chat.js");
+    await renameChat.dispatch({ chatID: "c1", name: "Release notes" });
+    const [cmd] = mockSend.mock.calls.at(-1) ?? [];
+    expect(cmd).toEqual(
+      expect.objectContaining({
+        type: "rename_chat",
+        chat_id: "c1",
+        payload: { name: "Release notes" },
+      }),
+    );
+  });
+
+  it("leaves the chat's name to the server's frame", async () => {
+    mockSend.mockResolvedValue({ ok: false, status: 400, error: "too long" });
+    const before = get("c1")?.name;
+    const { renameChat } = await import("./chat.js");
+    await renameChat.dispatch({ chatID: "c1", name: "Other" });
+    expect(get("c1")?.name).toBe(before);
+  });
+});
+
 describe("chat.switch_model", () => {
   it("applies optimistic model change and sends via transport", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
@@ -129,10 +147,8 @@ describe("chat.cancel_turn", () => {
 });
 
 describe("chat.load_sessions", () => {
-  /** The reply as the server sends it. The two per-list verdicts carry no
-   *  omitempty on the Go side, so they are REQUIRED in the generated decoder this
-   *  action now reads through — a reader must not be able to take an absent
-   *  verdict for success. */
+  /** The reply as the server sends it. The per-list verdicts are REQUIRED by the generated decoder
+   *  (no omitempty in Go), so an absent verdict cannot read as success. */
   const empty = { sessions: [], runs: [], sessions_state: "ready", runs_state: "ready" };
 
   it("GETs /api/sessions and dedupes concurrent calls", async () => {
@@ -157,9 +173,7 @@ describe("chat.load_sessions", () => {
   });
 
   it("reports a reply missing a read verdict as a failure, not as an empty list", async () => {
-    // The decoder is what makes the verdicts load-bearing: without it "the read
-    // failed" and "nothing to resume" are the same 200 with an empty array, which
-    // is the conflation the History picker now branches on.
+    // Without the decoder "the read failed" and "nothing to resume" are the same empty 200.
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ sessions: [], runs: [] })));
     const { loadSessions } = await import("./chat.js");
 
@@ -167,11 +181,8 @@ describe("chat.load_sessions", () => {
   });
 });
 
-// --- chat.create ---
-// The command that mints. Three facts are the wire contract of stage 1b and each
-// one is invisible from the outside if it regresses: the envelope carries no chat
-// id, the op id travels in the payload, and the reply's chat is what the caller
-// opens.
+// The minting command's wire contract: no chat id in the envelope, the op id in the payload, and
+// the reply's chat is what the caller opens.
 describe("chat.create", () => {
   const header = {
     id: "c-minted",
@@ -202,10 +213,8 @@ describe("chat.create", () => {
     expect(sent.chat_id).toBeUndefined();
   });
 
-  // The framework generates ONE idempotency key per dispatch and threads it through
-  // every retry attempt, so honouring it is what makes a retry inside the server's
-  // 5-minute cache dedupe. The op id covers the fall-through past that TTL; both
-  // halves have to travel or the create is idempotent over neither window.
+  // The framework's per-dispatch key dedupes a retry inside the server's 5-minute cache; the op id
+  // covers the fall-through past that TTL, so both must travel.
   it("carries the framework's idempotency key alongside the op id", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
     const { createChat } = await import("./chat.js");
@@ -239,8 +248,7 @@ describe("chat.create", () => {
 
     expect(got?.chat.id).toBe("c-minted");
     expect(got?.chat.model).toBe("claude-opus-5");
-    // The reply-widening contract: the subject and the committed version reach
-    // the caller, which is what the adoption path paints and correlates from.
+    // The subject and committed version reach the caller, which the adoption path paints from.
     expect(got?.subject?.id).toBe("tb_1");
     expect(got?.version).toBe(7);
   });
@@ -253,9 +261,7 @@ describe("chat.create", () => {
     expect(got?.subject).toBeUndefined();
   });
 
-  // A 200 the client cannot read a chat out of is a FAILURE, not a null the caller
-  // re-judges: there is nothing to open, and opening a tab for an id nobody has is
-  // the exact window this change removes.
+  // A 200 with no readable chat is a FAILURE: there is nothing to open.
   it("fails when the reply names no chat", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
     const { createChat } = await import("./chat.js");
@@ -268,9 +274,7 @@ describe("chat.create", () => {
     expect(await createChat.dispatch({ opID: "op-1" })).toBeNull();
   });
 
-  // Omitted rather than sent empty: the server defaults the name to "New
-  // conversation" and treats an empty model as unset, and sending "" for either
-  // would make the client's silence look like a choice.
+  // The server defaults an absent name and model; sending "" would read as a choice.
   it("omits an unset name and model rather than sending empty strings", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
     const { createChat } = await import("./chat.js");
@@ -281,10 +285,7 @@ describe("chat.create", () => {
   });
 });
 
-// resume_session no longer takes the new chat's id: the server mints it and
-// returns it. This suite pins both halves, because the action is DORMANT (the
-// history UI resolves a chat id server-side and opens it directly), so nothing
-// else would notice a regression here.
+// The server mints the new chat's id.
 describe("chat.resume_session", () => {
   const header = {
     id: "c-minted",
@@ -328,8 +329,7 @@ describe("chat.resume_session", () => {
     expect(got?.chat.id).toBe("c-minted");
   });
 
-  // A 200 the client cannot read a chat out of is a FAILURE, not a null the caller
-  // has to re-judge: it has adopted a session into a chat it cannot address.
+  // A 200 with no readable chat is a FAILURE: the session was adopted into an unaddressable chat.
   it("fails when the reply names no chat", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
     const { resumeSession } = await import("./chat.js");
@@ -342,9 +342,8 @@ describe("chat.resume_session", () => {
   });
 });
 
-// There is no chat.resolve_pending_change test because there is no such
-// action: a turn's writes are approved through chat.respond_permission below,
-// which is the same reply KAS uses for every other permission.
+// No chat.resolve_pending_change test: a turn's writes are approved through
+// chat.respond_permission, the reply KAS uses for every permission.
 describe("chat.exports", () => {
   it("exposes no pending-change resolver", async () => {
     const mod = await import("./chat.js");
@@ -371,6 +370,30 @@ describe("chat.respond_permission", () => {
         payload: expect.objectContaining({ request_id: 42, option_id: "allow_once" }),
       }),
       expect.anything(),
+    );
+  });
+
+  it("sends a deny note as rejection_reason", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { respondPermission } = await import("./chat.js");
+    await respondPermission.dispatch({
+      chatID: "c1",
+      requestID: 43,
+      optionID: "reject_once",
+      rejectionReason: "wrong directory",
+    });
+    expect(mockSend.mock.calls[0]?.[0]).toMatchObject({
+      payload: { request_id: 43, option_id: "reject_once", rejection_reason: "wrong directory" },
+    });
+  });
+
+  it("omits rejection_reason when no note was written", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { respondPermission } = await import("./chat.js");
+    await respondPermission.dispatch({ chatID: "c1", requestID: 44, optionID: "reject_once" });
+    // The inner payload is matched exactly, so a stray rejection_reason key fails.
+    expect(mockSend.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ payload: { request_id: 44, option_id: "reject_once" } }),
     );
   });
 });

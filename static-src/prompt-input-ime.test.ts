@@ -1,41 +1,22 @@
 // The IME guard on the composer's Enter key.
-//
-// Without it, the Enter that COMMITS a Japanese, Chinese or Korean candidate
-// submits the prompt mid-word. The guard is a port of Crew's three-way
-// predicate, and each leg is tested on its own because each covers an ordering
-// the others miss — in particular `keyCode === 229` with `isComposing` already
-// false, which is the case the port exists for and the reason it was not
-// reinvented from `isComposing` alone.
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import type * as ModPromptInput from "./prompt-input.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
- */
+/** Cache-buster for the re-imports below. */
 let bootSeq = 0;
 
-vi.mock("./platform.js", () => ({ fixIOSViewport: vi.fn() }));
+vi.mock("./platform.js", () => ({ fixIOSViewport: vi.fn(), isIOS: false }));
 vi.mock("./pill-expand.js", () => ({ collapseAll: vi.fn() }));
-// The session carries ONE prior user prompt, which the ArrowUp case at the bottom
-// of this file needs: against an empty session there is nothing to navigate to,
-// so a handler that bailed at the top and one that ran correctly both leave the
-// box empty and the assertion cannot fail.
+// The session carries ONE prior user prompt, which the ArrowUp case at the bottom of this file
+// needs: against an empty session there is nothing to navigate to, so a handler that bailed at the
+// top and one that ran correctly both leave the box empty and the assertion cannot fail.
 const { PRIOR_PROMPT } = vi.hoisted(() => ({ PRIOR_PROMPT: "the prompt before this one" }));
 vi.mock("./store.js", () => ({
+  // No active chat: the busy placeholder reads Steer, which no case here observes.
+  activeSession: { value: undefined, peek: () => undefined },
   getActive: () => ({
-    // ONE prompt-opened turn, in the shape the appender writes it: the
-    // `turn_open` is `entries[0]` and carries the prompt, which is where
-    // `userPrompts()` reads a past prompt from.
+    // ONE prompt-opened turn, in the shape the appender writes it: the `turn_open` is `entries[0]`
+    // and carries the prompt, which is where `userPrompts()` reads a past prompt from.
     turn_order: ["t1"],
     turns: new Map([
       [
@@ -58,23 +39,19 @@ vi.mock("./store.js", () => ({
     ]),
   }),
   getActiveId: () => "c1",
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened this graph and these
+  // names are imported somewhere in it. No case here calls them.
   get: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
 }));
 
-// Sends, counted at the controller's own onSubmit. It used to count the form's
-// `submit` events, because Enter faked one — which is the defect that shape was
-// hiding: `new Event("submit")` is not cancelable, so the handler's
-// preventDefault() was a no-op and the browser performed the native submission
-// too. The send is the subject; the event was only ever a proxy for it.
+// Sends, counted at the controller's own onSubmit. The send is the subject; the event was only ever
+// a proxy for it.
 let submits = 0;
 
-/** Press Enter with an explicit IME state. `keyCode` is set through the init
- *  dict, because a KeyboardEvent derives it from `key` otherwise. */
+/** Press Enter with an explicit IME state. `keyCode` is set through the init dict, because a
+ *  KeyboardEvent derives it from `key` otherwise. */
 function pressEnter(opts: { isComposing?: boolean; keyCode?: number } = {}): KeyboardEvent {
   const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
   const e = new KeyboardEvent("keydown", {
@@ -113,8 +90,8 @@ beforeEach(async () => {
     },
     () => undefined,
   );
-  // A send needs text: every case below asks whether Enter reached the send, so
-  // an empty box would make a blocked Enter and a delivered one indistinguishable.
+  // A send needs text: every case below asks whether Enter reached the send, so an empty box would
+  // make a blocked Enter and a delivered one indistinguishable.
   (document.getElementById("prompt-input") as HTMLTextAreaElement).value = "hello";
 });
 
@@ -174,9 +151,9 @@ describe("leg 2: the native isComposing flag", () => {
 
 describe("leg 3: keyCode 229", () => {
   it("blocks the commit Enter that reports 229 while isComposing is false", () => {
-    // THE reason to port Crew's predicate rather than write `e.isComposing`:
-    // several IMEs report the "processed by the IME" sentinel on the final Enter
-    // with isComposing already false and no composition event outstanding.
+    // THE reason to port Crew's predicate rather than write `e.isComposing`: several IMEs report
+    // the "processed by the IME" sentinel on the final Enter with isComposing already false and no
+    // composition event outstanding.
     const e = pressEnter({ isComposing: false, keyCode: 229 });
     expect(e.defaultPrevented).toBe(false);
     expect(submits).toBe(0);
@@ -228,17 +205,15 @@ describe("what the guard must NOT change", () => {
   });
 
   it("keeps ArrowUp history navigation working during a composition", () => {
-    // The guard sits INSIDE the Enter branch for this reason: an early return at
-    // the top of the handler would break history navigation mid-candidate, which
-    // is not the bug being fixed. The mocked session carries a prior prompt, so
-    // the assertion separates the two: a handler that bailed leaves the box empty.
+    // The guard sits INSIDE the Enter branch for this reason: an early return at the top of the
+    // handler would break history navigation mid-candidate, which is not the bug being fixed.
     const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
     compose("compositionstart");
     const e = new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true });
     input.dispatchEvent(e);
     expect(input.value).toBe(PRIOR_PROMPT);
-    // Consumed: the key moved through history rather than reaching the browser's
-    // own caret handling.
+    // Consumed: the key moved through history rather than reaching the browser's own caret
+    // handling.
     expect(e.defaultPrevented).toBe(true);
   });
 });

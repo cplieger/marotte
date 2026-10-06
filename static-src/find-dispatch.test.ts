@@ -1,9 +1,4 @@
-// Ctrl-F is scoped by the active TAB, and so is the toolbar button that opens
-// it. What this pins is the routing and the three things that make it safe:
-// exactly one destination per press (no extra meaning on the chord), a
-// dispatcher that never consumes the event itself so each find keeps its own
-// second-press fall-through to native find, and a DECLINE that falls through
-// rather than swallowing the key.
+// Ctrl-F and the toolbar button are scoped by the active tab: one destination per press, and native find on a second.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import type { TabKind } from "./tabs.js";
@@ -14,7 +9,6 @@ const chatToggle = vi.fn();
 const filesFind = vi.fn();
 const filesToggle = vi.fn();
 const editorToggle = vi.fn();
-/** What the editor's hotkey handler answers: true = it claimed the press. */
 let editorClaims = true;
 let activeKind: TabKind | null = "chat";
 
@@ -42,9 +36,7 @@ const { handleFindKey, toggleFindForActiveTab, findAffordanceForActiveTab } =
   await import("./find-dispatch.js");
 const { registerFind, _resetFindRegistry } = await import("./find-registry.js");
 
-/** A page find that accepts. The three-function shape is the contract every
- *  destination answers now — the chord opens, the button toggles, and `focused`
- *  is what separates a second press (which belongs to the browser) from a first. */
+/** The contract every destination answers: the chord opens, the button toggles, `focused` marks a second press. */
 function pageFindStub(over: Partial<PageFind> = {}): PageFind & { open: Mock; toggle: Mock } {
   return {
     open: vi.fn(() => true),
@@ -79,13 +71,7 @@ describe("handleFindKey", () => {
   });
 
   it("means find-in-FILE over an editor tab, not find-in-files", () => {
-    // The tab's kind, not its route's: an editor tab routes as `file`, and
-    // keying on that would be a second vocabulary for one question.
-    //
-    // This is the routing item 7 changed. Ctrl-F on a file tab used to open the
-    // recursive FILES search, which activates the browser view — so the chord
-    // every editor binds to "search this document" switched you away from the
-    // document you were editing. It searches the open buffer now.
+    // The tab's kind, not its route's (an editor tab routes as `file`).
     activeKind = "editor";
     handleFindKey(ctrlF());
     expect(filesFind).not.toHaveBeenCalled();
@@ -93,10 +79,7 @@ describe("handleFindKey", () => {
   });
 
   it("falls through to native find when the editor DECLINES the press", () => {
-    // A diff pane, an image, or rendered markdown: no line geometry, so a
-    // counted match could not be reached. The editor declines, the chat handler
-    // declines in turn (the chat view is hidden), and the browser's own find —
-    // which reads those three surfaces perfectly well — gets the key.
+    // No line geometry here, so every handler declines and native find gets the key.
     activeKind = "editor";
     editorClaims = false;
     const e = ctrlF();
@@ -146,9 +129,7 @@ describe("handleFindKey", () => {
   });
 
   it("leaves a SECOND press to the browser, which is the escape hatch", () => {
-    // The a11y justification for overriding the chord at all: a press from inside
-    // the open box is not consumed, so native find still opens. Every other
-    // destination keeps the same hatch.
+    // A press from inside the open box is not consumed, so native find still opens: the a11y justification.
     const find = pageFindStub({ focused: () => true });
     registerFind("docs", find);
     activeKind = "docs";
@@ -174,11 +155,7 @@ describe("handleFindKey", () => {
   });
 
   it("leaves the chord ALONE on a page with no search at all", () => {
-    // Settings and a run view. They used to reach the transcript's handler through
-    // the dispatcher's default branch, which declined because the chat view was
-    // hidden — the right outcome by accident, and the reason a visible magnifier
-    // sat there doing nothing. The table names them now, so nothing is offered and
-    // the chord is the browser's.
+    // Settings and a run view have their own table entry rather than a default branch.
     for (const kind of ["settings", "run"] as TabKind[]) {
       chatFind.mockReset();
       filesFind.mockReset();
@@ -224,11 +201,7 @@ describe("handleFindKey", () => {
 });
 
 describe("toggleFindForActiveTab", () => {
-  // The BUTTON's half of the routing, and the reason it exists: #find-btn used
-  // to call find-in-chat's opener directly, so on a files or editor tab it hit
-  // that module's context guard (the chat view is hidden there), returned, and
-  // did nothing at all. A visible control that does nothing on two of the app's
-  // views is the dead door item 7 names.
+  // The button routes like the chord, so it never hits find-in-chat's guard on a files or editor tab.
   it("toggles the destination that belongs to the active tab", () => {
     const cases: { kind: TabKind; fn: () => void }[] = [
       { kind: "chat", fn: chatToggle },
@@ -246,8 +219,7 @@ describe("toggleFindForActiveTab", () => {
   });
 
   it("reaches the same registered box the hotkey does, so button and chord agree", () => {
-    // The button TOGGLES where the chord OPENS: a second click closes the box,
-    // while a second press hands the chord to the browser.
+    // The button toggles where the chord opens.
     const find = pageFindStub();
     registerFind("docs", find);
     activeKind = "docs";
@@ -267,9 +239,7 @@ describe("toggleFindForActiveTab", () => {
 });
 
 describe("findAffordanceForActiveTab", () => {
-  // What the toolbar's magnifier paints, and whether it is painted at all. A
-  // button that stays visible where nothing can answer it is the same dead door
-  // the routing above was written to remove — it was just the other half of it.
+  // A visible magnifier with no answer is a dead door.
   it("is available on a chat tab and on the files browser", () => {
     for (const kind of ["chat", "files"] as TabKind[]) {
       activeKind = kind;
@@ -288,7 +258,6 @@ describe("findAffordanceForActiveTab", () => {
     activeKind = "editor";
     editorClaims = true;
     expect(findAffordanceForActiveTab().available).toBe(true);
-    // A diff pane, an image or rendered markdown.
     editorClaims = false;
     expect(findAffordanceForActiveTab().available).toBe(false);
   });
@@ -307,9 +276,7 @@ describe("findAffordanceForActiveTab", () => {
   });
 
   it("calls the three built-in finds SEARCHES, because each reaches past the viewport", () => {
-    // The transcript enumerates server-side over the whole conversation, the file
-    // browser greps the tree, and the editor scans a buffer the viewport shows a
-    // fraction of. None of the three is a filter over what is painted.
+    // None of the three filters what is painted: each searches past the screen.
     for (const kind of ["chat", "files", "editor"] as TabKind[]) {
       activeKind = kind;
       expect(findAffordanceForActiveTab().kind, kind).toBe("search");

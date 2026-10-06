@@ -41,93 +41,61 @@ type Config struct {
 	// ToolCatalogURL is the published catalog the engine refreshes
 	// from at boot and on the ToolCatalogRefresh schedule.
 	ToolCatalogURL string
-	// ToolCatalogOverlays are the bundled-tools files the engine
-	// re-applies to every loaded catalog: the tools marotte needs to
-	// function and the ones it recommends, plus the UI copy for them. The
-	// published catalog is a general reference and carries none of it. A
-	// missing file is warned about and dropped, never fatal (see
-	// bundledToolsFiles).
+	// ToolCatalogOverlays are the bundled-tools files the engine re-applies to every loaded
+	// catalog: the tools marotte needs or recommends, plus their UI copy, which the published
+	// catalog lacks. A missing file warns and is dropped (see bundledToolsFiles).
 	ToolCatalogOverlays []string
 	// ToolCatalogRequire lists the tool names a fetched catalog must
 	// resolve before it replaces the current one — the embedded
 	// required-tools.txt, injected by main.
 	ToolCatalogRequire []string
-	// TrustedProxies is the set of reverse-proxy networks whose
-	// X-Forwarded-For header webhttp.ClientIP is allowed to trust when
-	// resolving the real client IP (access log + login/logout audit
-	// logs). Parsed once from TRUSTED_PROXIES at startup. Empty/unset =
-	// trust nothing = log the unspoofable socket peer (the spoof-safe
-	// default for a directly-exposed deployment).
+	// TrustedProxies are the reverse-proxy networks whose X-Forwarded-For webhttp.ClientIP may
+	// trust, from TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
 	TrustedProxies []*net.IPNet
-	// TrustedInstallUIDs names identities whose write access to the kiro-cli
-	// install tree does not invalidate custody, parsed from
-	// TRUSTED_INSTALL_UIDS. Empty is the default and the right setting for
-	// almost every deployment: pinstall then refuses to install into a tree any
-	// other identity can write, which is what stops a planted binary being run
-	// as this container's user. It is deliberately NOT a compiled-in value —
-	// only the deployment knows which account on its volume is already at least
-	// as privileged as this process, and baking one in would make that claim on
-	// behalf of every deployment that pulled the image.
+	// TrustedInstallUIDs names identities whose write access to the kiro-cli install tree does not
+	// invalidate pinstall's custody, from TRUSTED_INSTALL_UIDS. Empty (the default) refuses any
+	// tree another identity can write. Never compiled in: only the deployment knows which account
+	// is already as privileged as this process.
 	TrustedInstallUIDs []int
-	// HostPolicy is the exact-match Host allowlist parsed once from
-	// ALLOWED_HOSTS at startup (webhttp.HostPolicy) — the anti-DNS-rebinding
-	// gate the security middleware applies before the CSRF check. Unset or
-	// blank = an inactive policy = any Host accepted (backward compatible;
-	// the server warns at listen time).
+	// HostPolicy is the exact-match Host allowlist from ALLOWED_HOSTS, the anti-DNS-rebinding gate
+	// applied before the CSRF check. Unset = inactive, any Host accepted (the server warns at
+	// listen time).
 	HostPolicy *webhttp.HostPolicy
-	// BridgeEnvAllow re-permits names the bridge's credential screen would
-	// otherwise drop on its way down to kiro-cli, parsed from
-	// bridge.EnvAllowVar. Nil is the shipped configuration and the right one:
-	// nothing in the image puts a credential in this environment, so the
-	// override exists for the operator who has a legitimate variable whose name
-	// merely reads like one.
+	// BridgeEnvAllow re-permits names the bridge's credential screen would drop, from
+	// bridge.EnvAllowVar. Nil is the shipped and right configuration.
 	BridgeEnvAllow map[string]struct{}
-	// BrowseRoots is the file browser's allow-list: the granted
-	// directories the /api/file* surface can see. Always WorkDir +
-	// ConfigDir + marotte.DefaultUploadDir, plus any extra grants from
-	// MAROTTE_BROWSE_ROOTS (colon-separated absolute paths, e.g.
-	// "/tmp:/data"). Everything outside the grants is denied by default.
+	// BrowseRoots is the file browser's allow-list: WorkDir, ConfigDir, marotte.DefaultUploadDir,
+	// plus MAROTTE_BROWSE_ROOTS grants (colon-separated absolute paths). Everything else is denied.
 	BrowseRoots []string
-	// ACPArgs are operator-supplied kiro-cli launch flags from
-	// MAROTTE_KIRO_ACP_ARGS, already filtered by bridge.ParseACPArgs (which
-	// refuses --agent-engine and the two inert trust flags). Appended to every
-	// CHAT bridge's argv, never to the utility bridge's. An escape hatch for a
-	// flag upstream adds, not a capability switch: marotte already pins v3 and
-	// sends model via session/new `_meta.kiro.modelId` or session/set_config_option (`configId: model`).
+	// ACPArgs are operator kiro-cli launch flags from MAROTTE_KIRO_ACP_ARGS, filtered by
+	// bridge.ParseACPArgs and appended to every CHAT bridge's argv, never the utility bridge's. An
+	// escape hatch for a flag upstream adds, not a capability switch.
 	ACPArgs []string
-	// ToolCatalogRefresh is the engine refresh cadence under toolbelt's
-	// canonical policy (default 24h; zero = schedule disabled, keeping
-	// the manual UI/API refresh).
+	// ToolCatalogRefresh is the engine refresh cadence (toolbelt's 24h default); AuthConfig is
+	// auth.DefaultConfig. Neither has an env override.
 	ToolCatalogRefresh time.Duration
 	AuthConfig         auth.Config
+	// KiroAPIKeySet records whether bridge.KiroAPIKeyVar is present. The value
+	// is never read into Config.
+	KiroAPIKeySet bool
 }
 
 // ConfigFromEnv reads configuration from environment variables with
 // sensible defaults.
 func ConfigFromEnv() Config {
-	ac := auth.DefaultConfig
-	ac.LoginURLTimeout = envx.Duration("MAROTTE_AUTH_LOGIN_URL_TIMEOUT", ac.LoginURLTimeout)
-	ac.LoginTimeout = envx.Duration("MAROTTE_AUTH_LOGIN_TIMEOUT", ac.LoginTimeout)
-	ac.LogoutTimeout = envx.Duration("MAROTTE_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
-	ac.WhoamiTimeout = envx.Duration("MAROTTE_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
-
 	configDir := cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config")
 	workDir := cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace")
 	return Config{
-		WorkDir:   workDir,
-		ConfigDir: configDir,
-		// The pins the entrypoint exports. Unset outside the container.
-		KiroCLIVersion:     envx.String("KIRO_CLI_VERSION"),
-		KiroCLISHA256:      envx.String("KIRO_CLI_SHA256"),
-		KiroCLISHA256ARM64: envx.String("KIRO_CLI_SHA256_ARM64"),
-		VapidSub:           cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
-		ToolsDir:           cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools")),
-		ToolCatalogPath:    cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
-		ToolCatalogURL:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
-		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
-			toolbelt.RefreshEnv(envx.String("MAROTTE_TOOL_CATALOG_REFRESH")),
-			"MAROTTE_TOOL_CATALOG_REFRESH",
-		),
+		WorkDir:             workDir,
+		ConfigDir:           configDir,
+		KiroCLIVersion:      envx.String("KIRO_CLI_VERSION"),
+		KiroCLISHA256:       envx.String("KIRO_CLI_SHA256"),
+		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
+		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
+		ToolsDir:            cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools")),
+		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
+		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
+		ToolCatalogRefresh:  toolbelt.DefaultCatalogRefresh,
 		ToolCatalogOverlays: bundledToolsFiles(os.Getenv("MAROTTE_BUNDLED_TOOLS")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
 		TrustedInstallUIDs:  parseTrustedInstallUIDs(os.Getenv("TRUSTED_INSTALL_UIDS")),
@@ -135,8 +103,23 @@ func ConfigFromEnv() Config {
 		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("MAROTTE_BROWSE_ROOTS")),
 		ACPArgs:             bridge.ParseACPArgs(os.Getenv("MAROTTE_KIRO_ACP_ARGS")),
 		BridgeEnvAllow:      bridge.ParseEnvAllowlist(os.Getenv(bridge.EnvAllowVar)),
-		AuthConfig:          ac,
+		AuthConfig:          auth.DefaultConfig,
+		KiroAPIKeySet:       os.Getenv(bridge.KiroAPIKeyVar) != "",
 	}
+}
+
+// logBridgeEnvPosture warns once at boot when an allowlisted API key reaches
+// kiro-cli. Not allowlisted needs no line: the per-spawn drop warning names it.
+func logBridgeEnvPosture(cfg *Config) {
+	if !cfg.KiroAPIKeySet {
+		return
+	}
+	if _, allowed := cfg.BridgeEnvAllow[bridge.KiroAPIKeyVar]; !allowed {
+		return
+	}
+	slog.Warn(bridge.KiroAPIKeyVar + " reaches kiro-cli because " + bridge.EnvAllowVar +
+		" allows it: kiro-cli authenticates with it ahead of the kiro-cli login, " +
+		"so the agent runs as the key's identity, not the signed-in account marotte shows")
 }
 
 // defaultBundledTools is the image path of marotte's bundled-tools file
@@ -144,20 +127,9 @@ func ConfigFromEnv() Config {
 // can point the default at an absent path; never reassigned in production.
 var defaultBundledTools = "/opt/marotte/bundled-tools.json"
 
-// bundledToolsFiles resolves the bundled-tools list.
-//
-// A missing file WARNS either way now, where a missing default used to be
-// dropped silently. That silence was correct while the file held display
-// copy: running without it cost a few descriptions. It is not correct any
-// more. The published catalog is a general reference carrying none of this
-// product's tools, so this file is the only place gopls, typescript,
-// typescript-language-server and pyright exist — and DefaultSeed names all
-// four. Without it, every seeded template fails at enable time and nothing
-// in the log connects that to an absent file.
-//
-// It stays non-fatal, because a bare `go run` outside the container is a
-// legitimate way to work on everything else in the app, and invariant 6
-// says the boot path must not police what it can report instead.
+// bundledToolsFiles resolves the bundled-tools list. A missing file warns: it is the only place
+// gopls, typescript, typescript-language-server and pyright exist, so every DefaultSeed template
+// would fail at enable time. Non-fatal, so a bare `go run` still works.
 func bundledToolsFiles(explicit string) []string {
 	path := filepath.Clean(cmp.Or(explicit, defaultBundledTools))
 	if _, err := os.Stat(path); err != nil { // #nosec G703 -- operator-supplied env var, cleaned above; an existence probe that reads no content
@@ -170,19 +142,10 @@ func bundledToolsFiles(explicit string) []string {
 	return []string{path}
 }
 
-// browseRoots assembles the file browser's allow-list: the three
-// standard mounts plus any extra MAROTTE_BROWSE_ROOTS grants. Like
-// parseTrustedProxies this is the LENIENT parser: malformed entries
-// are logged and skipped rather than aborting startup — a typo in the
-// deployment config must not take the whole UI down, and the three
-// standard mounts always survive.
-//
-// The uploads directory is a standard mount because the handler denies by
-// default: an upload with no "dir" targets marotte.DefaultUploadDir, and an
-// ungranted target is refused with a 403 rather than redirected to whatever
-// mount does exist. It is one dedicated directory with its own os.Root, the
-// same shape /workspace and /config already have — not "/", which
-// ParseBrowseRoots and openMounts both refuse outright.
+// browseRoots assembles the file browser's allow-list: the three standard mounts plus
+// MAROTTE_BROWSE_ROOTS grants, malformed entries logged and skipped so a typo cannot take the UI
+// down. The uploads directory is a standard mount because an upload with no "dir" targets it, and
+// an ungranted target is a 403.
 func browseRoots(workDir, configDir, raw string) []string {
 	extra, invalid := filebrowse.ParseBrowseRoots(raw)
 	if len(invalid) > 0 {
@@ -194,23 +157,9 @@ func browseRoots(workDir, configDir, raw string) []string {
 	return append(roots, extra...)
 }
 
-// parseTrustedProxies parses a comma-separated list of trusted
-// reverse-proxy networks into the []*net.IPNet form webhttp.ClientIP /
-// webhttp.WithClientIP expect. The per-entry parsing is delegated to the
-// shared webhttp.ParseCIDRs: each entry is a CIDR ("10.0.0.0/8",
-// "2001:db8::/32") or a bare IP ("192.0.2.10"), which is treated as a
-// single-host network (/32 or /128) so an operator can list a proxy's
-// address without remembering the mask; surrounding whitespace is trimmed
-// and empty entries are skipped, so an unset or empty TRUSTED_PROXIES
-// yields nil: trust nothing, i.e. log the unspoofable socket peer — the
-// spoof-safe default for a directly-exposed deployment.
-//
-// This is the LENIENT caller of ParseCIDRs: malformed entries are logged
-// and skipped, and the valid subset is used, rather than aborting startup.
-// It deliberately fails SAFE (fall back to the socket peer for the bad
-// entries) rather than fail OPEN (blindly trust a forwarded header): a
-// typo in the deployment config must never turn a spoofable header into
-// the logged client IP, and must never disable proxy awareness entirely.
+// parseTrustedProxies parses TRUSTED_PROXIES (CIDRs or bare IPs, via webhttp.ParseCIDRs) into the
+// form webhttp.ClientIP expects; unset yields nil. LENIENT and fail-SAFE: a malformed entry is
+// logged and skipped, falling back to the socket peer, never trusting a forwarded header.
 func parseTrustedProxies(raw string) []*net.IPNet {
 	nets, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
 	if len(invalid) > 0 {
@@ -220,35 +169,9 @@ func parseTrustedProxies(raw string) []*net.IPNet {
 	return nets
 }
 
-// parseTrustedInstallUIDs parses the comma-separated TRUSTED_INSTALL_UIDS
-// list of numeric uids whose write access to the kiro-cli install tree does not
-// invalidate pinstall's custody check. Unset or empty yields nil, which leaves
-// the check fully enforcing — the correct default, and the one the image ships.
-//
-// Setting a uid is an ASSERTION, not a preference: pinstall's own field
-// documentation states that each entry claims the identity is already at least
-// as privileged as the installing process. That is true of an administrator who
-// already holds root on the host, and false of the unprivileged account an
-// application runs as — listing the latter hands it a binary this process later
-// executes. Only the deployment can tell those apart, which is why the value
-// lives in the environment and never in the image.
-//
-// Malformed entries are dropped with one by-name warning rather than failing the
-// boot, the same warn-and-drop shape parseTrustedProxies and parseAllowedHosts
-// use. The count is reported and the values are NOT: a mis-wired compose could
-// put a secret on any key, and a warning is a durable, queryable log record.
-// pinstall.ParseIdentities returns a count rather than the refused text for that
-// exact reason, so the promise is now the library's to keep as well as this
-// function's.
-//
-// The name carries the WT_ prefix rather than MAROTTE_ because it is not
-// marotte's question — web-terminal-kiro installs kiro-cli through the same
-// library and reads the same variable, so one name lets one document answer it
-// for both. The knob is pinstall's in substance, and so is the PARSING: the rule
-// this used to implement locally follows from Config.TrustedUIDs' contract, so it
-// now lives beside that field as pinstall.ParseIdentities and both consumers call
-// it. What stays here is what is genuinely marotte's — the variable it reads and
-// the words its operator sees.
+// parseTrustedInstallUIDs parses TRUSTED_INSTALL_UIDS through pinstall.ParseIdentities; unset
+// yields nil, fully enforcing. Each entry ASSERTS the uid is already as privileged as this process.
+// Malformed entries drop with one warning that reports a count, never the values.
 func parseTrustedInstallUIDs(raw string) []int {
 	uids, rejected := pinstall.ParseIdentities(raw)
 	if rejected > 0 {
@@ -259,27 +182,10 @@ func parseTrustedInstallUIDs(raw string) []int {
 	return uids
 }
 
-// parseAllowedHosts parses the comma-separated ALLOWED_HOSTS list of exact
-// hostnames / IPs marotte answers for into a webhttp.HostPolicy — the shared
-// exact-match Host allowlist that closes the DNS-rebinding hole the CSRF
-// check alone leaves open (a rebinding attack makes Origin and Host AGREE,
-// so http.CrossOriginProtection admits it; only an exact-Host check breaks
-// that chain, CWE-346 — and marotte's HTTP surface is otherwise
-// unauthenticated, with a PTY at /api/shell/ws). The library owns the
-// mechanism (webhttp.CanonicalHost canonicalization, X-Forwarded-Host
-// ignored, the loopback peer+Host carve-out that keeps the image's own
-// healthcheck working under any allowlist); this parser owns the app policy:
-// the carve-out is enabled, the 403 names ALLOWED_HOSTS, and — like
-// parseTrustedProxies above — it is the LENIENT caller: malformed entries
-// (a pasted URL, a lone ":8080") are logged and dropped per ParseHostList's
-// drop-and-report contract, never aborting startup.
-//
-// An unset or all-blank var yields an INACTIVE policy — "any Host accepted",
-// the backward-compatible default; the server warns at listen time. Any
-// non-blank entry engages the gate, so an all-invalid list yields an active
-// EMPTY policy: deny-all except the loopback carve-out, failing closed
-// rather than silently unprotected — warned here by name, since every
-// browser request would otherwise 403 with no hint why.
+// parseAllowedHosts parses ALLOWED_HOSTS into a webhttp.HostPolicy, the exact-Host gate that closes
+// the DNS-rebinding hole CSRF alone leaves open (CWE-346). The loopback carve-out is enabled and
+// the 403 names ALLOWED_HOSTS; malformed entries are dropped. Unset or blank is an INACTIVE policy;
+// an all-invalid list is an active EMPTY one that fails closed, warned by name.
 func parseAllowedHosts(raw string) *webhttp.HostPolicy {
 	policy, invalid := webhttp.ParseHostList(strings.Split(raw, ","),
 		webhttp.WithLoopbackExempt(true),

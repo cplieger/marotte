@@ -12,14 +12,11 @@ import (
 	"github.com/cplieger/marotte/internal/procout"
 )
 
-// identityTTL is how long a cached identity is served before a read kicks a
-// refresh behind the answer. Sign-in and sign-out publish directly, so the timer
-// only has to catch a change marotte did not make: expiring credentials, or
-// `kiro-cli logout` run in a terminal.
+// identityTTL is how long a cached identity is served before a read refreshes it behind the answer. Sign-in and
+// sign-out publish directly, so this catches outside changes: expiring credentials, `kiro-cli logout` in a terminal.
 const identityTTL = time.Minute
 
-// Reasons the `unavailable` arm carries: a closed set of server-authored strings,
-// because the client renders one in a banner. unavailableIdentity enforces it.
+// Reasons for the unavailable arm: server-authored constants, since the client renders them in a banner.
 const (
 	reasonNotRead    = "identity not read yet"
 	reasonTimedOut   = "kiro-cli timed out"
@@ -28,53 +25,41 @@ const (
 	reasonUnreadable = "kiro-cli output was not recognisable"
 )
 
-// signedOutIdentity is the answer for a working kiro-cli that reports nobody
-// signed in.
+// signedOutIdentity is the answer for a working kiro-cli reporting nobody signed in.
 func signedOutIdentity() WhoamiResponse {
 	return WhoamiResponse{State: WhoamiSignedOut}
 }
 
-// unavailableIdentity is the answer for a kiro-cli that could not be asked, or
-// whose answer could not be read. The reason goes through identityText here, not
-// at the callers, so a future reason carrying upstream text cannot skip it.
+// unavailableIdentity is the answer when kiro-cli could not be asked or read. The reason goes through identityText
+// here so no caller can skip it.
 func unavailableIdentity(reason string) WhoamiResponse {
 	return WhoamiResponse{State: WhoamiUnavailable, Reason: identityText(reason)}
 }
 
-// identityCache is the identity /api/whoami answers from.
-//
-// Stale-while-revalidate, and it NEVER blocks a reader: the read behind it is a
-// kiro-cli fork with a multi-second tail, while the endpoint fires on every page
-// load and SSE reconnect. The held value survives invalidation on purpose, so a
-// revalidating poll still answers with the last known identity rather than an
-// `unavailable` it would have to render.
+// identityCache is the identity /api/whoami answers from: stale-while-revalidate, never blocking a reader on the
+// multi-second kiro-cli fork. The held value survives invalidation, so a revalidating poll still gets the last
+// known identity.
 type identityCache struct {
-	// read performs one identity read; a field so a test can drive the staleness
-	// and coalescing rules without a subprocess.
+	// read performs one identity read; a field so tests can drive staleness and coalescing.
 	read func(context.Context) WhoamiResponse
 	at   time.Time
 	resp WhoamiResponse
-	// budget is the wall clock one read gets. Must stay after the strings, or
-	// govet fieldalignment fires.
+	// budget is the wall clock one read gets. After the strings, for fieldalignment.
 	budget time.Duration
-	// gen counts published identities. rebuild captures it before forking and
-	// drops its answer if it moved, so a read begun before a logout cannot
-	// republish the pre-logout identity.
+	// gen counts published identities; rebuild drops its answer if gen moved, so a read begun before a logout cannot
+	// republish the old identity.
 	gen  uint64
 	mu   sync.Mutex
 	busy bool
 }
 
-// newIdentityCache returns a cache seeded with the `unavailable` arm: before the
-// first read the server does not know, which is not "nobody is signed in".
-// budget is the wall clock one read gets, captured here because a reader can be a
-// timer with no request behind it.
+// newIdentityCache returns a cache seeded with the unavailable arm (unknown is not signed out). budget is captured
+// here because a reader may be a timer with no request.
 func newIdentityCache(read func(context.Context) WhoamiResponse, budget time.Duration) *identityCache {
 	return &identityCache{read: read, budget: budget, resp: unavailableIdentity(reasonNotRead)}
 }
 
-// snapshot returns the current identity immediately, kicking a background
-// refresh when the entry is stale or has never been read.
+// snapshot returns the current identity immediately, refreshing in the background when stale or never read.
 func (c *identityCache) snapshot() WhoamiResponse {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -85,10 +70,8 @@ func (c *identityCache) snapshot() WhoamiResponse {
 	return c.resp
 }
 
-// publish records an identity marotte itself decided and marks the entry fresh.
-// The generation bump makes it WIN against a read already in flight: without it,
-// a fork started just before a logout republishes `signed_in` over this
-// `signed_out`.
+// publish records an identity marotte decided and marks it fresh. The generation bump beats an in-flight read, or
+// a fork started before a logout republishes signed_in.
 func (c *identityCache) publish(resp *WhoamiResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -97,19 +80,15 @@ func (c *identityCache) publish(resp *WhoamiResponse) {
 	c.gen++
 }
 
-// invalidate marks the entry stale without discarding it, so the next read
-// revalidates while still answering with the last known identity. No generation
-// bump: it asks for a fresh read rather than asserting an answer, so an in-flight
-// read is what it wants to land. This is what lets the login window converge
-// instead of serving `signed_out` for a full TTL after the flow succeeds.
+// invalidate marks the entry stale but keeps it, so the next read revalidates while answering the last identity.
+// No generation bump: an in-flight read should land. This lets the login window converge within one poll.
 func (c *identityCache) invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.at = time.Time{}
 }
 
-// refresh reads the identity in the calling goroutine and publishes it,
-// coalescing into a refresh already in flight rather than forking again.
+// refresh reads and publishes the identity in the calling goroutine, joining a refresh already in flight.
 func (c *identityCache) refresh() {
 	c.mu.Lock()
 	if c.busy {
@@ -121,14 +100,9 @@ func (c *identityCache) refresh() {
 	c.rebuild()
 }
 
-// rebuild performs one read and publishes it, clearing busy. Entered only with
-// busy already claimed.
-//
-// The context is deliberately detached from any request: a refresh kicked by a
-// page load must outlive it, and the budget plus boundChild's group kill is what
-// guarantees the goroutine exits. The generation check discards a read that
-// describes the world before a publish that landed mid-fork; busy is cleared
-// either way, or the cache would never refresh again.
+// rebuild performs one read and publishes it, clearing busy; entered with busy claimed. Its context is detached so
+// a page-load refresh outlives the request; the budget and boundChild's group kill bound it. A read predating a
+// publish is discarded, and busy is cleared either way.
 func (c *identityCache) rebuild() {
 	c.mu.Lock()
 	gen := c.gen
@@ -150,9 +124,8 @@ func (c *identityCache) rebuild() {
 	c.at = time.Now()
 }
 
-// Run keeps the cached identity warm until ctx is done: one read now, so the
-// first page load after a restart sees a real identity rather than the seed, then
-// one per identityTTL. Synchronous, so the caller owns the goroutine.
+// Run keeps the cached identity warm until ctx is done: one read now so the first load after a restart sees a real
+// identity, then one per identityTTL. Synchronous; the caller owns the goroutine.
 func (h *Handler) Run(ctx context.Context) {
 	h.identity.refresh()
 	t := time.NewTicker(identityTTL)
@@ -167,17 +140,11 @@ func (h *Handler) Run(ctx context.Context) {
 	}
 }
 
-// readIdentity runs `kiro-cli whoami --format json` and maps the outcome onto one
-// of the three arms. Never returns an error: every failure IS an arm.
-//
-// The PAYLOAD decides the arm whenever it parses, because the exit status cannot:
-// kiro-cli exits 1 with `{"account":null}` on stdout when nobody is signed in
-// (measured on 2.21.2 and 2.21.4), so an exit-status-first read answered
-// `unavailable` for the state every fresh container is in and never reached the
-// signed_out arm at all. The error classifies only a read that produced nothing
-// readable — a timeout, a missing binary, garbage.
+// readIdentity runs `kiro-cli whoami --format json` and maps the outcome onto one of the three arms; every failure
+// is an arm. A parsed payload decides: kiro-cli exits 1 with `{"account":null}` when signed out (2.21.2, 2.21.4).
+// The error classifies only reads with nothing readable.
 func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
-	// h.cliPath resolves the install manager's active version, never user input.
+	// h.cliPath is the install manager's active version, never user input.
 	cmd := exec.CommandContext(ctx, h.cliPath(), "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
 	boundChild(cmd)
 	stderr := procout.NewBuffer(stderrCap)
@@ -195,18 +162,14 @@ func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
 			"error", err, "stdout_bytes", len(out))
 		return unavailableIdentity(reasonUnreadable)
 	}
-	// Only the arms above this line are withheld from the registrar: an identity
-	// marotte could not READ must not read as an account change, or a kiro-cli
-	// that timed out would retire every live bridge. A signed-out answer IS an
-	// answer, so it is observed.
+	// Unread identities are withheld from the registrar, or a whoami timeout would retire every live bridge. Signed out
+	// is an answer, so it is observed.
 	h.registrar.Observe(identityFingerprint(&info))
 	return info
 }
 
-// cliMissing reports whether err is an ENOENT naming the CLI itself. A bare
-// fs.ErrNotExist test is too wide: os/exec opens os.DevNull for a nil Cmd.Stdin,
-// so a container whose /dev/null is gone fails Start with fs.ErrNotExist for a
-// binary that is present and executing.
+// cliMissing reports whether err is an ENOENT naming the CLI itself. os/exec opens os.DevNull for a nil Stdin, so a
+// missing /dev/null fails Start with fs.ErrNotExist while the binary is present.
 func cliMissing(err error, cliPath string) bool {
 	var pe *fs.PathError
 	if !errors.As(err, &pe) {
@@ -228,13 +191,12 @@ func (h *Handler) identityReadFailure(
 		slog.Warn("whoami: kiro-cli timed out", attrs...)
 		return unavailableIdentity(reasonTimedOut)
 	case errors.Is(err, exec.ErrNotFound), cliMissing(err, h.cliPath()):
-		// Warn, not Error: a fresh volume has no kiro-cli until the install
-		// manager finishes, and the timer asks once a minute.
+		// Warn: a fresh volume has no kiro-cli until the install manager finishes, and the timer asks every minute.
 		slog.Warn("whoami: kiro-cli binary not found",
 			"cli_path", h.cliPath(), "error", err)
 		return unavailableIdentity(reasonCLIMissing)
 	default:
-		// Full details server-side; the client gets the arm, never raw CLI output.
+		// Details stay server-side; the client gets the arm, never raw CLI output.
 		attrs := make([]any, 0, 6)
 		attrs = append(attrs, "error", err, "stdout_bytes", outBytes)
 		attrs = append(attrs, stderrAttr(stderr)...)

@@ -5,10 +5,8 @@ import (
 	"unicode/utf8"
 )
 
-// FuzzByteRingWrite exercises the circular buffer with multiple writes
-// and verifies invariants: the stored byte count never exceeds capacity,
-// Bytes never panics, and String is valid UTF-8 when all input is valid
-// UTF-8.
+// FuzzByteRingWrite pins that the byte count never exceeds capacity, Bytes never panics, and
+// String is valid UTF-8 for valid input.
 func FuzzByteRingWrite(f *testing.F) {
 	f.Add([]byte("hello"), []byte(" world"), 8)
 	f.Add([]byte("abc"), []byte("defghij"), 4)
@@ -30,7 +28,6 @@ func FuzzByteRingWrite(f *testing.F) {
 
 		s := r.String()
 
-		// String must be valid UTF-8 when all input was valid UTF-8.
 		if utf8.Valid(a) && utf8.Valid(b) && !utf8.ValidString(s) {
 			t.Error("String() returned invalid UTF-8 for valid UTF-8 input")
 		}

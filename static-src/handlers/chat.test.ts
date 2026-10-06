@@ -1,13 +1,5 @@
-// ---------------------------------------------------------------------------
-// Tests for handlers/chat.ts SSE event routing.
-//
-// These drive the REAL store (store.ts is an in-process collaborator we own,
-// not an external dependency to mock) and assert the resulting store state —
-// the observable behavior a domain expert would recognize ("the chat appears /
-// disappears"), not which store function was called. tabs.ts is kept as a
-// mock because closing a tab is a command to a separate DOM subsystem whose
-// own state is out of this handler's contract.
-// ---------------------------------------------------------------------------
+// Drives the REAL store and asserts its state ("the chat appears / disappears"); tabs.ts stays a
+// mock, since closing a tab is outside this handler's contract.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { setSessions, getSessions, get, setActive } from "../store.js";
@@ -17,12 +9,7 @@ import type { Session, ChatHeader } from "../types.js";
 const mockCloseTab = vi.fn();
 const mockHasTab = vi.fn(() => false);
 vi.mock("../tabs.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  // navigate.js's `openSpec` (the spec tab's door) imports these five, and Browser
-  // Mode links for real, so one missing name fails this whole file's import.
+  // Undefined: present only so real-ESM linking succeeds (navigate.js's `openSpec` imports these).
   openTab: undefined,
   parentChatRef: undefined,
   setTabParent: undefined,
@@ -50,15 +37,16 @@ vi.mock("../bus.js", () => createBusMock());
 // resolve to no-ops instead of pulling in real DOM-touching modules.
 vi.mock("../banner-stack.js", () => ({ clearBannersForChat: vi.fn() }));
 
-// composer-state owns WHICH chat a remote composer change may touch (the live
-// chat's local copy wins — composer-state.test.ts pins that rule against the real
-// textarea). What this file owns is the ROUTING: which frames reach it, and with
-// what.
+// composer-state owns WHICH chat a remote change may touch (composer-state.test.ts); this file
+// owns the ROUTING.
 const mockAdoptComposer = vi.fn();
 const mockDropComposer = vi.fn();
 vi.mock("../composer-state.js", () => ({
   dropComposerState: mockDropComposer,
   adoptRemoteComposerState: mockAdoptComposer,
+  // Present-but-inert so real-ESM linking succeeds: another module in this graph
+  // imports the name.
+  restoreFailedSend: vi.fn(),
 }));
 
 // Import after mocks so chat.ts registers its handlers against the bus mock.
@@ -137,13 +125,8 @@ describe("chat_updated", () => {
   });
 });
 
-// The republish-on-acknowledgement path is GONE with the ghost mark it served.
-// The arrangement used to omit a chat the server had not acknowledged, and that
-// acknowledgement changed no tab, so nothing emitted and only an explicit
-// `publishArrangement()` could put the chat into tab_order. Chat ids are minted
-// server-side now, so a chat is real before its tab opens and the ordinary openTab
-// emit covers it. What survives on this frame is the URL rewrite, asserted against
-// the real router rather than a spy — the observable fact is the address bar.
+// Chat ids are minted server-side, so the ordinary openTab emit covers a new chat; what remains is
+// the URL rewrite, asserted against the real router (the address bar is the observable fact).
 describe("chat_created and the id-less chat URL", () => {
   it("rewrites the route to the created chat when it is this device's active one", () => {
     setSessions([makeSession("c1")]);
@@ -185,10 +168,8 @@ describe("chat_deleted", () => {
     expect(get("c1")).toBeUndefined();
   });
 
-  // The dock's queue is keyed by chat id and outlives the session row. Without an
-  // explicit drop the queue survived the delete and a chat recreated under the
-  // same id inherited a card for a request the server has forgotten — which the
-  // tab dot reported as `input`, the state that outranks every other one.
+  // The dock's queue is keyed by chat id and outlives the session row: without a drop, a chat
+  // recreated under the same id inherits a stale ask (the tab dot's top state).
   it("drops the chat's unanswered asks with it", async () => {
     const { pushDecision, hasPendingDecision, _resetForTest } = await import("../decision-dock.js");
     _resetForTest();
@@ -207,12 +188,8 @@ describe("chat_deleted", () => {
     expect(hasPendingDecision("c1")).toBe(false);
   });
 
-  // The tab close moved SERVER-side, and its absence here is load-bearing rather
-  // than an omission. A deleted chat's tabs are closed by the membership
-  // coordinator under the same lock that removed the record, and the removal frame
-  // is what takes them off every strip — so a `close_tab` from here would be a
-  // second close for a tab the server has already dropped, and on the deleting
-  // device it would race its own delete.
+  // Load-bearing absence: the membership coordinator closes a deleted chat's tabs under the delete's
+  // lock, so a `close_tab` here would double-close and race the deleting device.
   it("dispatches no tab close, even when a tab is open for the deleted chat", () => {
     setSessions([makeSession("c2")]);
     mockHasTab.mockReturnValue(true);

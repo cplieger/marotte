@@ -1,8 +1,7 @@
 package agent
 
-// Pre-session catalog: GET /api/config-template serves the mode + model catalog
-// from kiro-cli's session-less _kiro/config/template, over the UTILITY bridge,
-// whose own session/new populates the model registry the method reads.
+// GET /api/config-template serves the mode and model catalog from kiro-cli's session-less
+// _kiro/config/template, over the utility bridge.
 
 import (
 	"context"
@@ -16,16 +15,11 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// configTemplateTimeout bounds the template round-trip: the first call may lazily
-// spin up the utility bridge, so this matches hookCallTimeout rather than a bare
-// read timeout. The CLIENT's bound (CATALOG_REQUEST_TIMEOUT_MS in
-// static-src/model-catalog.ts, 50s) is deliberately LONGER, or this budget can
-// never be spent — the library's 30s default aborted every cold start. Move the
-// two together.
+// configTemplateTimeout bounds the template round-trip, which may start the utility bridge.
+// The client's CATALOG_REQUEST_TIMEOUT_MS (static-src/model-catalog.ts) must stay longer: move them together.
 const configTemplateTimeout = 45 * time.Second
 
-// kasConfigTemplate is the _kiro/config/template result shape. ConfigOptions
-// carries the model catalog under the entry with id "model".
+// kasConfigTemplate is the _kiro/config/template result; the model catalog is the "model" entry.
 type kasConfigTemplate struct {
 	Modes struct {
 		CurrentModeID  string        `json:"currentModeId"`
@@ -56,15 +50,8 @@ type kasConfigChoice struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Options     []kasConfigChoice `json:"options"` // grouped selects nest
-	Meta        struct {
-		Kiro struct {
-			// DefaultEffortLevel is the model's own default tier; the tier list is
-			// the `effortLevel` option's own options[] — see marotte.SessionModel.
-			DefaultEffortLevel string  `json:"defaultEffortLevel"`
-			RateMultiplier     float64 `json:"rateMultiplier"`
-			HasEffort          bool    `json:"hasEffort"`
-		} `json:"kiro"`
-	} `json:"_meta"`
+	// Meta is the shared model-choice block; tiers are the `effortLevel` option's options[] (marotte.SessionModel).
+	Meta marotte.ModelChoiceMeta `json:"_meta"`
 }
 
 type configTemplateAssembly struct {
@@ -72,22 +59,14 @@ type configTemplateAssembly struct {
 	modelOptionPresent bool
 }
 
-// handleConfigTemplate: GET /api/config-template → the pre-session mode +
-// model catalog, and the verdict saying which outcome produced it. Every path
-// answers 200 with non-null lists (the client keeps its static fallbacks and
-// the authoritative per-session catalog arrives with the first bridge); what
-// separates them is marotte.ConfigTemplateResponse.Catalog.
-//
-// A LIVE session's report wins over the template's, per list: KAS has already
-// resolved which workspace agent shadows which bundled mode, while the template
-// is built session-less with no workspace paths and so carries no workspace
-// entries at all.
+// handleConfigTemplate serves GET /api/config-template: always 200 with non-null lists, and
+// ConfigTemplateResponse.Catalog says which outcome produced them. A live session's lists
+// win: only KAS has resolved workspace agents.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
-	// Neither failure returns early: a template outage must still serve the live
-	// catalog below, so each one only decides which body the overrides land on.
+	// No early return: a template outage still serves the live catalog.
 	var out *configTemplateAssembly
 	raw, err := u.session.configTemplateRaw(cctx)
 	switch {
@@ -110,18 +89,15 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	if len(models) > 0 {
 		out.response.Models = models
 	}
-	// One read for both lists and the version they were read under, so the stamp cannot
-	// certify a catalog a second reader has already replaced.
+	// One read for both lists and their version.
 	stamp.Epoch = rt.Epoch()
 	out.response.Subject = stamp
 	webhttp.WriteJSON(w, withCatalogVerdict(out))
 }
 
-// withCatalogVerdict is the only conversion from an assembled catalog to its
-// wire response. A live model list is ready even when template-only defaults and
-// effort levels are absent; CatalogReason still diagnoses the failed template
-// read. When the list is empty, the model option's presence distinguishes a KAS
-// answer whose entries were filtered from an omitted catalog.
+// withCatalogVerdict is the only conversion from an assembled catalog to its response. A live
+// model list is ready without template defaults; when the list is empty, the model option's
+// presence separates filtered entries from an omitted catalog.
 func withCatalogVerdict(out *configTemplateAssembly) marotte.ConfigTemplateResponse {
 	response := out.response
 	switch {
@@ -135,9 +111,7 @@ func withCatalogVerdict(out *configTemplateAssembly) marotte.ConfigTemplateRespo
 	return response
 }
 
-// unavailableTemplate is the body for a read that produced no catalog. ONE builder
-// for both failure branches, which used to leave EffortLevels nil and so emitted
-// `null` where the success path emits `[]` — one response type with two shapes.
+// unavailableTemplate is the one body for a read that produced no catalog, arrays non-null.
 func unavailableTemplate(reason marotte.CatalogReason) *configTemplateAssembly {
 	return &configTemplateAssembly{response: marotte.ConfigTemplateResponse{
 		CatalogReason: reason,
@@ -147,10 +121,8 @@ func unavailableTemplate(reason marotte.CatalogReason) *configTemplateAssembly {
 	}}
 }
 
-// templateToResponse flattens the KAS template into the client-facing catalog:
-// modes with their source tag (bundled | global — the template carries no
-// workspace entries), and the model catalog with the same [Deprecated]/[Legacy]
-// filtering the per-session paths apply.
+// templateToResponse flattens the template into the client catalog: modes with their source tag
+// and models with the per-session [Deprecated]/[Legacy] filtering.
 func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 	modes := make([]marotte.SessionMode, 0, len(tpl.Modes.AvailableModes))
 	for i := range tpl.Modes.AvailableModes {
@@ -185,9 +157,7 @@ func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 	return out
 }
 
-// flattenTemplateEfforts converts the effortLevel option's choices into the
-// domain tier list. Kept separate from the translate-side flattener because the
-// two wire structs differ (a KAS session frame vs this template result).
+// flattenTemplateEfforts converts the effortLevel choices into the tier list (a different wire struct from translate's).
 func flattenTemplateEfforts(choices []kasConfigChoice) []marotte.SessionEffortLevel {
 	out := make([]marotte.SessionEffortLevel, 0, len(choices))
 	for i := range choices {
@@ -224,6 +194,8 @@ func flattenTemplateModels(choices []kasConfigChoice) []marotte.SessionModel {
 			RateMultiplier:     c.Meta.Kiro.RateMultiplier,
 			HasEffort:          c.Meta.Kiro.HasEffort,
 			DefaultEffortLevel: c.Meta.Kiro.DefaultEffortLevel,
+			ThinkingToggleable: c.Meta.Kiro.ThinkingToggleable,
+			ThinkingDefaultOff: c.Meta.ThinkingDefaultOff(),
 		})
 	}
 	return out

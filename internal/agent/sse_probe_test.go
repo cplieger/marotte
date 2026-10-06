@@ -9,8 +9,7 @@ import (
 	"github.com/cplieger/sse/ssetest"
 )
 
-// dataFrames parses a recorded stream into its data-bearing frames, the hello
-// included and the bare retry line excluded, which is what the cut counts.
+// dataFrames parses a recording into its data-bearing frames, hello included and the bare retry line excluded.
 func dataFrames(t *testing.T, body string) []ssetest.Frame {
 	t.Helper()
 	frames, err := ssetest.ReadFrames(strings.NewReader(body), 0)
@@ -40,8 +39,7 @@ func TestSSEProbe_CountsConnectsByWireAndServedClients(t *testing.T) {
 	}
 }
 
-// The armed cut lands between two frames: frame n is on the wire, the write that
-// would carry frame n+1 fails, and Serve returns before the peer's deadline.
+// The cut lands between frames n and n+1, and Serve returns before the peer's deadline.
 func TestCloseNextSSEAfter_CutsTheNextConnectionAfterNFrames(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.CloseNextSSEAfter(2) // the hello and the connected envelope
@@ -82,10 +80,8 @@ func hookFrames(t *testing.T, body string) int {
 	return n
 }
 
-// A keepalive on an armed connection spends none of the budget: armed with exactly
-// the hook's frame count, the connection keeps beating until its deadline instead
-// of being cut on the first beat. Serial: it writes the package var the hub reads
-// at construction.
+// A keepalive spends no budget: armed with the hook's frame count, the connection keeps beating until its
+// deadline. Serial: it writes the package var the hub reads at construction.
 func TestCloseNextSSEAfter_KeepaliveSpendsNoBudget(t *testing.T) {
 	prev := keepaliveInterval
 	keepaliveInterval = 10 * time.Millisecond

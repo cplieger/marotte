@@ -25,13 +25,8 @@ func mustStore(t *testing.T) *Store {
 	return s
 }
 
-// fakeLauncher records launches and can be made to fail.
-//
-// Guarded by a mutex because the loop tests in runner_loop_test.go drive Run in
-// its own goroutine, so the recording happens off the test goroutine that reads
-// it. The race detector reported that pair the moment those tests landed —
-// synctest.Wait proves the writer is blocked but is not a synchronization edge
-// the detector can see, so the fake has to carry its own.
+// fakeLauncher records launches and can be made to fail. It carries its own mutex because
+// the loop tests record off the test goroutine (synctest.Wait is no race-detector edge).
 type fakeLauncher struct {
 	mu      sync.Mutex
 	sources []string
@@ -127,18 +122,8 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	}
 }
 
-// TestSweep_BoundsTheRunByItsOwnInterval pins the run bound to the schedule's
-// INTERVAL rather than to a constant.
-//
-// The whole argument for this bound is that nobody has to pick a number: a
-// scheduled run may take until its next slot and no longer. So the assertion is
-// against NextRun's own answer for the fixture's daily 02:00 spec — exactly 24h
-// after the slot that fired — and a hardcoded duration here would let the
-// production side drift to any value that happened to match one fixture.
-//
-// Measured from DUE, not from now: the fire is 30s late inside the grace window,
-// and a bound measured from now would push the run 30s past the slot it is meant
-// not to collide with.
+// TestSweep_BoundsTheRunByItsOwnInterval pins the run bound to NextRun's own answer for the
+// spec, measured from DUE (the fire is 30s late inside the grace window), not from now.
 func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(30*time.Second))
@@ -177,7 +162,6 @@ func TestSweep_SkipsASlotMissedWhileOffline(t *testing.T) {
 	if !got.LastRunAt.IsZero() {
 		t.Errorf("a skip must not record a run: LastRunAt = %v", got.LastRunAt)
 	}
-	// And the schedule resumes on the NEXT slot rather than firing immediately.
 	next, err := NextRun(got.Spec, got.Anchor)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
@@ -246,14 +230,8 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	}
 }
 
-// TestSweep_FiresASlotExactlyAtTheGraceEdge states the near side of the miss
-// classification.
-//
-// MissGrace is how late a slot may be and STILL fire, so a slot landing exactly
-// on it fires. The distinction is not cosmetic: the other branch does not defer
-// the run, it advances the anchor past the slot, so a schedule at the edge would
-// silently lose that occurrence rather than run it a moment late — and the edge
-// is where a container that restarted inside the grace window lands.
+// TestSweep_FiresASlotExactlyAtTheGraceEdge pins that a slot exactly MissGrace late still
+// fires; the other branch advances the anchor and loses the occurrence.
 func TestSweep_FiresASlotExactlyAtTheGraceEdge(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(MissGrace))
@@ -270,7 +248,6 @@ func TestSweep_FiresASlotExactlyAtTheGraceEdge(t *testing.T) {
 		t.Errorf("LastStatus = %q, want %q", got.LastStatus, StatusStarted)
 	}
 
-	// One tick past the edge is the other side of the same line.
 	_, late, lateRunner := newFixture(t, due.Add(MissGrace+time.Second))
 	lateRunner.sweep(t.Context())
 	if n := late.launched(); n != 0 {
@@ -278,15 +255,8 @@ func TestSweep_FiresASlotExactlyAtTheGraceEdge(t *testing.T) {
 	}
 }
 
-// TestSweep_ReportsNoStoreFailureOnTheOrdinaryPaths pins the log the operator
-// reads when a sweep goes RIGHT.
-//
-// Both store writes in the sweep are best-effort and logged at Error, and neither
-// changes what the sweep returns, so the log line is the only evidence either
-// way. An Error on a write that succeeded is worse than noise here: these two
-// lines are what says a schedule's anchor did not move, which is the state that
-// makes a schedule fire twice or never again, so a reader who learns to ignore
-// them has lost the only signal that failure has.
+// TestSweep_ReportsNoStoreFailureOnTheOrdinaryPaths pins that a successful sweep logs no
+// store Error: those lines are the only signal that an anchor did not move.
 func TestSweep_ReportsNoStoreFailureOnTheOrdinaryPaths(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 
@@ -316,14 +286,9 @@ func TestSweep_ReportsNoStoreFailureOnTheOrdinaryPaths(t *testing.T) {
 	})
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler for the
-// duration of the test and restores it on cleanup. The handler is global, so
-// this package's tests never run in parallel.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureLogs swaps the slog default to a buffer-backed debug handler and restores it,
+// along with the log package's writer and flags, which slog.SetDefault also redirects.
+// The handler is global, so this package's tests never run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -435,10 +400,8 @@ func writeFile(dir, body string) error {
 	return os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600)
 }
 
-// TestRecordOutcome_DoesNotMoveTheAnchor is the whole reason this is separate
-// from recordFire. An unattended denial lands minutes after the run started, and
-// moving the anchor then would push the next run out by however long the failure
-// took — a schedule that quietly drifts later every time it fails.
+// TestRecordOutcome_DoesNotMoveTheAnchor pins that a late outcome leaves the anchor, or the
+// schedule drifts later every time it fails.
 func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 	st := mustStore(t)
 	ctx := t.Context()

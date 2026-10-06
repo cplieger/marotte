@@ -1,16 +1,11 @@
-// mathml.ts — the LaTeX-subset to MathML converter.
-//
-// Two things are asserted everywhere and both are the point of the module:
-// the tree is in the MathML NAMESPACE (an XHTML `math` element has the same
-// tagName and renders as text), and anything outside the subset degrades to
-// null so the caller keeps the raw string it already has.
+// The tree must be in the MathML namespace (an XHTML `math` element renders as text), and anything outside the
+// subset returns null so the caller keeps its raw string.
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import { latexToMathML, MATHML_NS } from "./mathml.js";
 
-/** A compact `tag(child,child)` rendering of the tree, so a case can state the
- *  shape it expects without a nest of expect() calls. */
+/** A compact `tag(child,child)` rendering, so a case states its expected shape in one string. */
 function shape(el: Element): string {
   const kids = [...el.children];
   const name = el.tagName.toLowerCase();
@@ -28,7 +23,6 @@ function convert(src: string, display = false): Element {
 
 describe("latexToMathML: the supported subset", () => {
   const cases: { name: string; src: string; display?: boolean; want: string }[] = [
-    // The atoms.
     { name: "a number is mn", src: "42", want: "math(mn[42])" },
     { name: "a decimal stays one number", src: "3.14", want: "math(mn[3.14])" },
     { name: "a letter is mi", src: "x", want: "math(mi[x])" },
@@ -38,7 +32,6 @@ describe("latexToMathML: the supported subset", () => {
       src: "a + 1",
       want: "math(mrow(mi[a],mo[+],mn[1]))",
     },
-    // Superscripts and subscripts, braced and bare.
     { name: "bare superscript", src: "x^2", want: "math(msup(mi[x],mn[2]))" },
     { name: "braced superscript", src: "x^{2n}", want: "math(msup(mi[x],mrow(mn[2],mi[n])))" },
     { name: "bare subscript", src: "a_i", want: "math(msub(mi[a],mi[i]))" },
@@ -52,10 +45,8 @@ describe("latexToMathML: the supported subset", () => {
       src: "x^2_i",
       want: "math(msubsup(mi[x],mi[i],mn[2]))",
     },
-    // Fractions.
     { name: "frac with braces", src: "\\frac{a}{b}", want: "math(mfrac(mi[a],mi[b]))" },
-    // TeX's one-token argument rule: `\frac12` is `\frac{1}{2}`, not
-    // `\frac{12}{?}`. The tokenizer groups digit runs, so parseArg splits.
+    // TeX's one-token argument rule: `\frac12` is `\frac{1}{2}`. The tokenizer groups digit runs, so parseArg splits.
     { name: "frac without braces", src: "\\frac12", want: "math(mfrac(mn[1],mn[2]))" },
     {
       name: "a bare superscript takes one digit",
@@ -68,10 +59,9 @@ describe("latexToMathML: the supported subset", () => {
       src: "\\frac{\\frac{a}{b}}{c}",
       want: "math(mfrac(mfrac(mi[a],mi[b]),mi[c]))",
     },
-    // Roots.
     { name: "sqrt", src: "\\sqrt{x}", want: "math(msqrt(mi[x]))" },
     { name: "nth root", src: "\\sqrt[3]{x}", want: "math(mroot(mi[x],mn[3]))" },
-    // Sums: stacked in display, beside in inline. Same source, two shapes.
+    // Stacked in display, beside in inline: same source, two shapes.
     {
       name: "sum limits stack in display mode",
       src: "\\sum_{i=1}^{n}",
@@ -96,7 +86,6 @@ describe("latexToMathML: the supported subset", () => {
       display: true,
       want: "math(msubsup(mo[\u222b],mi[a],mi[b]))",
     },
-    // Greek letters and named symbols.
     { name: "lowercase greek", src: "\\alpha", want: "math(mi[\u03b1])" },
     { name: "uppercase greek", src: "\\Omega", want: "math(mi[\u03a9])" },
     { name: "infinity is an identifier", src: "\\infty", want: "math(mi[\u221e])" },
@@ -106,7 +95,6 @@ describe("latexToMathML: the supported subset", () => {
       src: "\\pi r^2",
       want: "math(mrow(mi[\u03c0],msup(mi[r],mn[2])))",
     },
-    // Functions and text.
     {
       name: "a function name is an upright multi-char mi",
       src: "\\log n",
@@ -114,7 +102,6 @@ describe("latexToMathML: the supported subset", () => {
     },
     { name: "text is mtext", src: "\\text{if}", want: "math(mtext[if])" },
     { name: "mathrm is an upright mi", src: "\\mathrm{d}", want: "math(mi[d])" },
-    // Fences and spacing.
     {
       name: "left/right fences",
       src: "\\left( x \\right)",
@@ -151,9 +138,7 @@ describe("latexToMathML: the supported subset", () => {
 });
 
 describe("latexToMathML: degradation to the raw string", () => {
-  // Null is the signal the caller keeps the LaTeX it already rendered as text.
-  // Each of these is a real construct an agent writes, so each is a case a
-  // reader will actually see degrade.
+  // Null means the caller keeps the LaTeX it rendered as text; each is a construct agents really write.
   const rejected: { name: string; src: string }[] = [
     { name: "a matrix environment", src: "\\begin{pmatrix} a & b \\end{pmatrix}" },
     { name: "an alignment separator", src: "a & b" },
@@ -189,15 +174,12 @@ describe("latexToMathML: degradation to the raw string", () => {
   });
 
   it("degrades the WHOLE expression, never half of it", () => {
-    // The supported prefix must not survive on its own: a formula that renders
-    // its first half and silently drops the rest is worse than a raw string.
+    // A supported prefix must not survive alone: half a formula is worse than a raw string.
     expect(latexToMathML("\\frac{a}{b} + \\begin{cases} x \\end{cases}", false)).toBeNull();
   });
 });
 
-// A converter is a parser, so it gets a property test with a real invariant
-// rather than a crash-only sweep: it either returns a namespaced <math> or it
-// returns null, and it never throws on arbitrary input.
+// A real invariant: a namespaced <math> or null, never a throw.
 describe("latexToMathML fuzz", () => {
   const latexish = fc.stringMatching(/^[a-zA-Z0-9\\{}^_+\-*/=().,[\]|&#% ]*$/);
 
@@ -237,9 +219,7 @@ describe("latexToMathML fuzz", () => {
   });
 
   it("converts a rendered expression back to text that carries every atom", () => {
-    // Structural invariant rather than a shape assertion: whatever tree comes
-    // out, its text must contain each number the source named. A converter that
-    // dropped an argument would pass a "did not throw" check and fail this.
+    // Each number in the source must appear in the output's text, so a dropped argument fails.
     expect.assertions(1);
     const result = fc.check(
       fc.property(

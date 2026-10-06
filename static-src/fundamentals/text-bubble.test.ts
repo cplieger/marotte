@@ -1,26 +1,13 @@
-// ---------------------------------------------------------------------------
-// Tests for fundamentals/text-bubble.ts — the assistant prose container, and
-// specifically its wiring to the reveal cursor.
-//
-// `reveal.test.ts` covers the controller's arithmetic against an injected clock.
-// What is left to prove is the WIRING, which the controller's own tests cannot
-// see: that a live bubble defers growth and a replay bubble does not, that text
-// present at mount paints immediately either way, and that the caret's lifetime
-// follows the reveal rather than the turn.
-//
-// These use the real requestAnimationFrame, because the reveal's whole subject
-// is frames and a fake one would prove the wiring against a clock production
-// never uses. Each wait is a bounded poll, never a fixed sleep.
-// ---------------------------------------------------------------------------
+// The bubble's wiring to the reveal cursor (`reveal.test.ts` owns the arithmetic): a live bubble
+// defers growth, a replay does not, text at mount paints at once, and the caret follows the reveal.
+// Real requestAnimationFrame with bounded polls, since the subject is frames.
 
 import { describe, expect, it } from "vitest";
 import { buildAssistantBubble } from "./text-bubble.js";
 import { framesBudgetMs, testTimeoutFor } from "../__test-helpers__/frame-budget.js";
 
-/** These reveal 400 characters, and `reveal.ts` clamps a frame's advance to
- *  MAX_DT_SECS (0.1s) however long that frame took — so a throttled frame moves
- *  0.1s of reveal, not a second's worth, and the whole string needs ~10 of them.
- *  Sized at twice that. */
+/** `reveal.ts` clamps a frame's advance to MAX_DT_SECS (0.1s), so 400 characters need ~10
+ *  throttled frames; sized at twice that. */
 const REVEAL_BUDGET_MS = framesBudgetMs(20);
 
 /** Resolve once `cond` holds, or throw after `budget` ms. */
@@ -38,12 +25,8 @@ async function until(cond: () => boolean, budget = REVEAL_BUDGET_MS): Promise<vo
 
 describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, () => {
   it("paints the text it was mounted with, live or replay", () => {
-    // A mid-turn connect and a repaint both arrive holding text. Deferring it
-    // would blank a transcript the reader is already looking at.
-    //
-    // The live case is one character short until the next write or the finalize:
-    // the incremental parser holds its last codepoint provisionally, which is a
-    // pre-existing contract of every streaming path and not the reveal's doing.
+    // Deferring text present at mount would blank a transcript already on screen. The live case is a
+    // character short: the incremental parser holds its last codepoint provisionally.
     for (const live of [true, false]) {
       const b = buildAssistantBubble("already on screen", live);
       expect(b.root.textContent).toContain("already on scree");
@@ -151,18 +134,8 @@ describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, 
   });
 });
 
-// ---------------------------------------------------------------------------
-// The caret's two exits, which are not the same exit.
-//
-// `messages-blocks.ts` has two reasons to stop a bubble and they want different
-// endings. The tail MOVING to another block means the model is already producing
-// something else, so that bubble settles at once (finishNow) — otherwise its
-// caret would run alongside the new tail's for the reveal's lag, and "exactly one
-// streaming caret" is a pinned invariant. The TURN ending is the opposite case:
-// the residue is the last text the model really produced, so it keeps flowing
-// (end). These tests pin the primitive's half of that contract; the dispatcher's
-// half is in messages-blocks.test.ts.
-// ---------------------------------------------------------------------------
+// Two exits. The tail MOVING settles at once (finishNow), keeping "exactly one streaming caret";
+// the TURN ending keeps flowing (end). The dispatcher's half is in messages-blocks.test.ts.
 
 describe("the caret's two exits", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, () => {
   it("end() keeps the caret while a backlog remains", async () => {

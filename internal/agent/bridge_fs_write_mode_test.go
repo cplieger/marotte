@@ -8,8 +8,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// agentRewrite writes out.txt at perm, rewrites it through
-// fs/write_text_file, and returns the mode the rewritten file carries.
+// agentRewrite writes out.txt at perm, rewrites it through fs/write_text_file and returns the resulting mode.
 func agentRewrite(t *testing.T, perm os.FileMode) os.FileMode {
 	t.Helper()
 	work := t.TempDir()

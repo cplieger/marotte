@@ -1,11 +1,11 @@
-// Package agent coordinates the server's per-chat runtime: SSE fan-out, ACP
-// bridge lifecycle, POST /api/command dispatch, the service surfaces that ride
-// the shared utility bridge, checkpoint HTTP, agent terminals, the browser PTY
-// shell shim, and the MCP runtime registry.
+// Package agent coordinates the server's per-chat runtime: SSE fan-out, ACP bridge lifecycle, POST
+// /api/command dispatch, the utility-bridge services, agent terminals, the browser shell shim, and the MCP
+// runtime registry.
 package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/liveness"
@@ -32,14 +33,11 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// keepaliveInterval is the cadence of the named keepalive sse.WithKeepalive writes
-// per connection; the client's watchdog is three of them. A var only so a test can
-// drive the hub at milliseconds; never reassigned in production, so the presence
-// table's window (liveness.AliveWindow) stays two of them.
+// keepaliveInterval is the per-connection keepalive cadence; the client watchdog is three of them and
+// liveness.AliveWindow two. A var only for tests.
 var keepaliveInterval = liveness.Keepalive
 
-// keepaliveEventName is pinned by every running bundle's SSE_HEARTBEAT_EVENT
-// listener: renaming it silences their silence watchdog.
+// keepaliveEventName is pinned by every bundle's SSE_HEARTBEAT_EVENT listener; renaming it silences their watchdog.
 const keepaliveEventName = "heartbeat"
 
 // specChangedWindow is the spec_changed coalescing window: marks inside it
@@ -48,42 +46,44 @@ const specChangedWindow = 500 * time.Millisecond
 
 const (
 	replayBufSize = 1024
-	// replayTTL bounds the ring in time where the count alone bounded it before: a
-	// frame older than this is not replayed, and a client away longer gets a fresh
-	// hello plus a digest, which is cheaper than a stale kilo-frame replay.
+	// replayTTL bounds the ring in time: an older frame is not replayed, and a longer absence gets a fresh hello plus a digest.
 	replayTTL = 10 * time.Minute
-	// replyMaxEvents caps one resume's replay. Past it the hello says gap_budget
-	// and the client reconciles through the digest; on a busy peer the ring
-	// rarely covers a real absence anyway.
+	// replyMaxEvents caps one resume's replay; past it the hello says gap_budget and the client reconciles via the digest.
 	replyMaxEvents = 256
 
-	// outputBufferLimit is the byte budget for subprocess output ring buffers.
-	// 64 KB covers a 200x50 terminal screen with generous ANSI escapes.
+	// outputBufferLimit is the subprocess output ring budget: 64 KB covers a 200x50 screen with ANSI.
 	outputBufferLimit = buffer.DefaultOutputCap
 )
 
-// lifetime groups Runtime fields related to process lifecycle,
-// shutdown coordination, and workspace paths.
+// lifetime groups process lifecycle, shutdown and workspace paths.
 type lifetime struct {
-	// shutdownCtx is the runtime's own cancellable child of the lifetime context
-	// New requires, so Shutdown can tear the runtime down without ending the app.
+	// shutdownCtx is the runtime's own child of New's lifetime context, so Shutdown ends the runtime without ending the app.
 	shutdownCtx    context.Context
 	done           chan struct{}
 	shutdownCancel context.CancelFunc
-	// workRoot is the kernel-confined handle on workDir, so an ancestor swapped
-	// for a symlink after the check redirects nothing outside the tree (see
-	// confineInWorkDir). Deliberately NOT closed: only process exit ends its
-	// lifetime. nil when workDir could not be opened, and the fs handlers then
-	// REFUSE rather than falling back to ambient os calls.
+	// workRoot is the kernel-confined handle on workDir (confineInWorkDir), never closed. nil when workDir could
+	// not be opened; the fs handlers then refuse.
 	workRoot  *os.Root
 	workDir   string
 	configDir string
 	inflight  sync.WaitGroup
-	// loops covers the background goroutines that exit on done. A SEPARATE group
-	// from inflight, so a shutdown that times out names a wedged handler or loop.
-	loops    sync.WaitGroup
-	mu       sync.Mutex
-	draining atomic.Bool
+	// loops covers background goroutines exiting on done, separate from inflight so a timed-out shutdown names which wedged.
+	loops sync.WaitGroup
+	mu    sync.Mutex
+	// drainGate orders goUnlessDraining's Add before Shutdown's draining flip, so every admitted Add precedes inflight.Wait.
+	drainGate sync.RWMutex
+	draining  atomic.Bool
+}
+
+// goUnlessDraining runs fn on inflight unless Shutdown has begun, reporting whether it did.
+func (lt *lifetime) goUnlessDraining(fn func()) bool {
+	lt.drainGate.RLock()
+	defer lt.drainGate.RUnlock()
+	if lt.draining.Load() {
+		return false
+	}
+	lt.inflight.Go(fn)
+	return true
 }
 
 // derivedContext returns a cancellable child of the process lifetime, for
@@ -92,13 +92,8 @@ func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(lt.shutdownCtx)
 }
 
-// TurnContext returns the context a turn runs under, plus the teardown its handler
-// must defer.
-//
-// The turn is DETACHED from reqCtx's cancellation while keeping its values: the
-// prompt POST's context dies when the handler returns, and a turn that died with
-// it failed before persisting the assistant buffer. Cancellation is re-attached
-// to the shutdown context via AfterFunc, which the returned cancel unregisters.
+// TurnContext returns a turn's context and the teardown to defer. Detached from reqCtx's cancellation (the
+// POST context dies on return) but keeping its values; shutdown re-attaches via AfterFunc.
 func (lt *lifetime) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
 	stop := context.AfterFunc(lt.shutdownCtx, cancel)
@@ -118,71 +113,66 @@ func (lt *lifetime) InflightDone() {
 	lt.inflight.Done()
 }
 
+// Draining reports that Shutdown has begun.
+func (lt *lifetime) Draining() bool {
+	return lt.draining.Load()
+}
+
 // bridges groups Runtime fields related to ACP bridge management.
 type bridges struct {
 	factory ACPBridgeFactory
 	mgr     *bridgeManager
 }
 
-// bus groups Runtime fields related to SSE transport, replay and pending
-// permissions. The transport is cplieger/sse's; marotte layers chat-topic
-// filtering and pending-state replay on top.
+// bus groups SSE transport, replay and pending permissions: cplieger/sse plus chat-topic filtering and pending replay.
 type bus struct {
 	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
-	// presence receives the hub's connect/disconnect feed and the client
-	// acknowledgements (alive_route.go). nil drops both; WithPresence fills it.
+	// presence receives the hub's connect feed and client acks (alive_route.go); nil drops both.
 	presence presenceTable `wiring:"optional"`
-	// steers is the record of the user's mid-turn steers and KAS's buffer, which
-	// the connect replay serves from. Beside pendingPerms rather than folded into
-	// it: the two answer for different wire objects.
+	// steers is the record of mid-turn steers and KAS's buffer the connect replay serves; separate wire objects from pendingPerms.
 	steers *steerRecords
-	// chatStatus holds each chat's last self-declared status, the one status_snapshot
-	// input that lives on no message and in no replay (chat_status.go).
+	// chatStatus holds each chat's last self-declared status (chat_status.go).
 	chatStatus *chatStatusCache
-	// stageStatusDesc records a declared description on the chat's open turn, which is
-	// what the agent_finished push body reads.
+	// stageStatusDesc records a declared description on the open turn, for the agent_finished push.
 	stageStatusDesc func(marotte.ChatID, string)
-	// retractPush drops a held push about a subject whose ask was just settled
-	// (BridgeCoordinator.RetractPush); the bus has no push reference of its own.
+	// retractPush drops a held push whose ask was settled (BridgeCoordinator.RetractPush).
 	retractPush func(marotte.PushSubject)
-	// legacyConnects and v3Connects count connects by wire generation: a legacy
-	// connect (no SSE-Wire header) is the v2 bundle still running somewhere, and
-	// the counter is what says when the overlap can go. Observability only.
+	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
+	// old bundle still running. Observability only.
 	legacyConnects atomic.Uint64
 	v3Connects     atomic.Uint64
-	// closeAfter, when positive, cuts the NEXT connection after that many data
-	// frames (sse_probe.go). Test-only; armed by nothing in production.
+	// closeAfter cuts the next connection after that many frames (sse_probe.go). Test-only.
 	closeAfter atomic.Int64
 }
 
 // Runtime is the central coordinator.
 type Runtime struct {
+	// steerQueue is the steer record as the steer commands and their jobs drive it.
+	steerQueue steerQueue
+
+	push      pushService
+	chatStore chatRecords
+	mcpConfig mcpNameSets
 	lifecycle *lifetime
 	bridge    *bridges
 	bus       *bus
 	coord     *BridgeCoordinator
-	// versions is the digest registry: the workspace stores mint into it under
-	// their own locks, the chat store mints `chat`/`chats` into the same instance
-	// (composition hands both the one WithVersions gave), and the resolver and the
-	// REST envelopes read it.
+	// versions is the digest registry: workspace stores and the chat store mint into it, the resolver and REST envelopes read it.
 	versions *subject.Versions
 	// digestSlots bounds concurrent digest resolutions (digestConcurrency).
 	digestSlots digestSemaphore
-	// digestHook runs inside a held slot; nil in production, a test's probe of
-	// the bound.
+	// digestHook runs inside a held slot; nil in production.
 	digestHook func()
 
-	push      pushService
-	chatStore chatRecords
-	// catalog is the workspace's ONE mode + model vocabulary, served once rather
-	// than stamped onto every chat record and header. See Catalog.
-	catalog     *Catalog
-	mcpConfig   mcpNameSets
-	mcpRegistry *mcpRegistry
-	shellMgr    *ShellManager
-	// authReadiness carries the command layer's own account of a failed sign-in,
-	// which is what readiness reports now the relay owns token vending.
+	// catalog is the workspace's one mode and model vocabulary (Catalog).
+	catalog *Catalog
+	// slash is the workspace slash menu, steeringIssues KAS's steering issues; both re-sent by KAS every session.
+	slash          *slashCatalog
+	steeringIssues *steeringIssues
+	mcpRegistry    *mcpRegistry
+	shellMgr       *ShellManager
+	// authReadiness carries the command layer's account of a failed sign-in, which readiness reports.
 	authReadiness      *command.AuthReadiness
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[marotte.ACPUpdateKind]sessionUpdateHandler
@@ -190,59 +180,52 @@ type Runtime struct {
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
-	// config owns the KAS configuration surface, all of it over the utility
-	// bridge. See config_plane.go.
+	// config owns the KAS configuration surface over the utility bridge.
 	config *Settings
-	// runs owns the workflow-run surface (run_plane.go); Runtime reaches it like
-	// any collaborator.
+	// runs owns the workflow-run surface.
 	runs      *Runs
 	runRoutes *runRoutes
 	inbound   *inbound
-	// specs coalesces spec-directory marks into spec_changed broadcasts; the
-	// bridge producers reach it through inbound and the phaseCheckpoint handler
-	// through here.
+	// specs coalesces spec-directory marks into spec_changed broadcasts.
 	specs         *spec.Notifier
 	replay        *replay
 	utility       *utilityLease
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
-	// sweepGate closes when this process has become the one SERVING its config
-	// dir, which the destructive session sweep waits for. Nil = no gate.
+	// sweepGate closes once this process serves its config dir, which the session sweep waits for. Nil: no gate.
 	sweepGate  <-chan struct{}
 	lines      *buffer.LineTracker
 	agentTerms *agentTerminals
 	hookStatus *hookStatusCache
 
-	// secrets holds the credential blobs KAS asks marotte to persist on its behalf
-	// (bridge_v3_secret.go). ONE store for every bridge, because KAS's key
-	// namespace is global. Nil → the handlers report "absent" rather than failing
-	// an MCP connect.
+	// secrets holds the credentials KAS asks marotte to persist (bridge_v3_secret.go), one store since KAS's key
+	// namespace is global. Nil reports "absent".
 	secrets *secretstore.Store
 
-	// tabs is the open-tab set and membership the coordinator over it and the chat
-	// store; both nil when no store is wired, which the coordinator answers as
-	// unavailable. The runtime holds the coordinator only to hand it to retention.
+	// tabs is the open-tab set and the membership coordinator; nil without a store (unavailable). Held only for retention.
 	tabs       *tabs.Store
 	membership *command.Membership
 
-	// specApprovals is the spec-phase approval record; nil when no store is wired,
-	// which the approve command answers as unavailable.
+	// specApprovals is the spec-phase approval record; nil means unavailable.
 	specApprovals *specapproval.Store
 
-	// steerLedger records the mid-turn steers this server sent, which is the only
-	// thing that tells the user's own words from a workflow reporting into the same
-	// KAS buffer.
+	// steerLedger records the steers this server sent: the only way to tell the user's words from a workflow's in the same KAS buffer.
 	steerLedger *command.SteerLedger
-	// steerQueue is the steer record as the steer commands and their jobs drive it.
-	steerQueue steerQueue
 
 	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
 	ciGate func() bool
-	ciPath string
-	// acpArgs are the filtered operator kiro-cli launch flags (WithACPArgs). Chat
-	// bridges only, and last among the pointer-bearing fields for fieldalignment.
+	// locksHook runs when the governance lock map moves, after the runtime's own
+	// follow-ups; nil when the composition root wires none.
+	locksHook func(context.Context)
+	ciPath    string
+	// powersBackend is WithPowers' value, read once into powers.
+	powersBackend powersBackend
+	powers        *powersSurface
+	// acpArgs are the filtered operator launch flags (WithACPArgs), chat bridges only; last pointer-bearing field for fieldalignment.
 	acpArgs []string
-	ciBusy  atomic.Bool
+	// sessionExportMu serializes session exports: KAS writes each to a fixed file name per process.
+	sessionExportMu sync.Mutex
+	ciBusy          atomic.Bool
 }
 
 // Option configures optional Runtime parameters.
@@ -254,43 +237,40 @@ func WithConfigDir(dir string) Option {
 	return func(h *Runtime) { h.lifecycle.configDir = dir }
 }
 
-// WithACPArgs sets the operator-supplied kiro-cli launch flags appended to every
-// CHAT bridge's argv. Pass them already filtered (bridge.ParseACPArgs); never
-// reaches the utility bridge.
+// WithACPArgs sets the operator kiro-cli flags appended to every chat bridge's argv, pre-filtered by bridge.ParseACPArgs.
 func WithACPArgs(args []string) Option {
 	return func(h *Runtime) { h.acpArgs = args }
 }
 
-// WithSchedules wires the workflow-schedule store. Absent, the schedule routes
-// are not registered at all and nothing fires.
+// WithGovernanceLocksHook wires a callback for when the governance lock map moves, for locks living outside
+// the runtime; it reads the locks itself (Settings.GovernanceLocks).
+func WithGovernanceLocksHook(fn func(context.Context)) Option {
+	return func(h *Runtime) { h.locksHook = fn }
+}
+
+// WithSchedules wires the schedule store; absent, the schedule routes are not registered.
 func WithSchedules(st *schedule.Store) Option {
 	return func(h *Runtime) { h.runs.schedules = st }
 }
 
-// WithRunLeases wires the DURABLE run-lease store. Unlike WithSchedules, absent
-// does not mean off: the runtime falls back to an in-memory registry, because a
-// lease carries the run's wall clock and its unattended mark. What this adds is
-// survival across a restart.
+// WithRunLeases wires the durable run-lease store. Absent falls back to memory (a lease carries the run's clock);
+// this adds restart survival.
 func WithRunLeases(st *runlease.Store) Option {
 	return func(h *Runtime) { h.runs.leases = st }
 }
 
-// WithTabs wires the open-tab set, which is what makes the tab commands, the
-// tabs_changed event and retention's open-tab predicate live. Absent, every tab
-// command answers unavailable and a create writes its chat record with no tab.
+// WithTabs wires the open-tab set, enabling the tab commands, tabs_changed and retention's predicate.
+// Absent, tab commands answer unavailable.
 func WithTabs(st *tabs.Store) Option {
 	return func(h *Runtime) { h.tabs = st }
 }
 
-// WithSpecApprovals wires the spec-phase approval record, which is what makes
-// approve_spec_phase live. Absent, that command answers unavailable and the spec
-// GET carries no approvals.
+// WithSpecApprovals wires the spec-phase approval record; absent, approve_spec_phase is unavailable.
 func WithSpecApprovals(st *specapproval.Store) Option {
 	return func(h *Runtime) { h.specApprovals = st }
 }
 
-// WithVersions wires the shared subject registry. Absent, the runtime mints into a
-// private one, which keeps every stamp honest but reaches no chat-store mint.
+// WithVersions wires the shared subject registry; absent, the runtime mints into a private one.
 func WithVersions(v *subject.Versions) Option {
 	return func(h *Runtime) { h.versions = v }
 }
@@ -300,33 +280,23 @@ func WithPush(p pushService) Option {
 	return func(h *Runtime) { h.push = p }
 }
 
-// WithPresence wires the push presence table the hub's connect/disconnect feed and
-// the alive route write into. Absent, both feeds are dropped and every push is
-// sent, which is the fail-open direction.
+// WithPresence wires the push presence table; absent, every push is sent (fail-open).
 func WithPresence(p presenceTable) Option {
 	return func(h *Runtime) { h.bus.presence = p }
 }
 
-// WithMCPConfig wires the MCP configuration store. The registry reads the three
-// name sets to classify a status notification's origin and to drop the frames of
-// a server the user switched off.
+// WithMCPConfig wires the MCP config store, whose name sets attribute statuses and gate live control.
 func WithMCPConfig(c mcpNameSets) Option {
 	return func(h *Runtime) { h.mcpConfig = c }
 }
 
-// WithAuthReadiness wires command-layer authentication outcomes to readiness.
-// Unset → readiness reports nothing about sign-in.
+// WithAuthReadiness wires command-layer sign-in outcomes to readiness.
 func WithAuthReadiness(readiness *command.AuthReadiness) Option {
 	return func(h *Runtime) { h.authReadiness = readiness }
 }
 
-// WithSessionReaper wires the KAS session reaper and the referenced-session
-// thunk. The reaper removes on-disk kiro-cli/KAS session state, promptly on chat
-// delete and via a periodic orphan sweep. Unset → session reaping is a no-op.
-//
-// refs returns (set, complete). A false `complete` means the keep-list could not
-// be fully determined, and the sweep is SKIPPED rather than run against a partial
-// one — see sweepSessionsOnce.
+// WithSessionReaper wires the KAS session reaper and the referenced-session thunk. refs returns (set,
+// complete); an incomplete set skips the sweep (sweepSessionsOnce).
 func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[string]struct{}, bool)) Option {
 	return func(h *Runtime) {
 		h.sessionReaper = r
@@ -334,36 +304,23 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 	}
 }
 
-// WithSessionSweepGate holds the orphan-session sweep until gate closes, which the
-// composition root closes once the listener has SUCCESSFULLY bound — the cheapest
-// ownership evidence at boot, since the reaper's root comes from $KIRO_HOME rather
-// than the config dir. The PERIODIC sweep only; reap-on-delete is unaffected.
+// WithSessionSweepGate holds the periodic orphan-session sweep until gate closes, once the listener bound:
+// the cheapest ownership evidence, since the reaper's root is $KIRO_HOME.
 func WithSessionSweepGate(gate <-chan struct{}) Option {
 	return func(h *Runtime) { h.sweepGate = gate }
 }
 
-// New constructs a Runtime. Bridges spawn with a fixed kiro-cli acp arg set and
-// let the relay own authentication; tool-call authorization is Cedar's, not a CLI
-// trust flag.
-//
-// ctx is the runtime's LIFETIME and is REQUIRED: there is deliberately no nil
-// check and no WithLifetime option — a nil ctx panics in context.WithCancel below,
-// which is the refusal. New does NOT take ownership of its cancellation; Shutdown
-// cancels the runtime's own child. chatStore is REQUIRED on the same terms,
-// refused at construction rather than crashing on the first ACP frame.
+// New constructs a Runtime; tool authorization is Cedar's. ctx is the required lifetime (nil panics in
+// context.WithCancel); Shutdown cancels the runtime's own child. chatStore is required too.
 func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore chatRecords, opts ...Option) *Runtime {
-	// The bus exists before its hub so the presence hook can close over it; the
-	// options fill bus.presence before anything can connect.
+	// The bus exists before its hub so the presence hook can close over it.
 	sseP := &bus{
 		pendingPerms: newPendingPermsTracker(),
 		steers:       newSteerRecords(),
 		chatStatus:   newChatStatusCache(),
 	}
-	// MustNew rather than New: every option is a constant, so an incoherent set is
-	// a build defect no runtime input can produce, and the first test that builds
-	// a runtime is the gate. The write timeout is stated rather than left at the
-	// library's default so the listener's TCP_USER_TIMEOUT and the presence window
-	// provably read the same number.
+	// MustNew: every option is constant, so a bad set is a build defect the first test catches. The write timeout
+	// is explicit so the listener's TCP_USER_TIMEOUT and the presence window agree.
 	sseP.fanout = sse.MustNew(
 		sse.WithReplay(replayBufSize),
 		sse.WithReplayTTL(replayTTL),
@@ -379,8 +336,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		done:    make(chan struct{}),
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
-	// Best-effort, and fail-CLOSED at the handlers rather than at construction: an
-	// unopenable workDir is a deployment fault repaired from inside the container.
+	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.
 	if root, err := os.OpenRoot(workDir); err != nil {
 		slog.Error("workspace root: open failed; agent filesystem requests will be refused",
 			"work_dir", workDir, "error", err)
@@ -388,8 +344,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		lc.workRoot = root
 	}
 
-	// Locals first, so the run surface can name the two collaborators it depends on
-	// rather than reaching them through a *Runtime. The rest are assigned below.
+	// Locals first, so the run surface names its two collaborators rather than a *Runtime.
 	bridgeP := &bridges{
 		factory: factory,
 		mgr:     newBridgeManager(factory),
@@ -407,36 +362,43 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 
 	h := &Runtime{
-		lifecycle:    lc,
-		bridge:       bridgeP,
-		bus:          sseP,
-		runs:         runs,
-		config:       configP,
-		chatStore:    chatStore,
-		catalog:      &Catalog{},
-		versions:     &subject.Versions{},
-		digestSlots:  newDigestSemaphore(digestConcurrency),
-		hookStatus:   newHookStatusCache(kiroSettingsPath()),
-		chatHandlers: make(map[string]chatHandler),
-		noopMethods:  make(map[string]struct{}),
+		lifecycle:      lc,
+		bridge:         bridgeP,
+		bus:            sseP,
+		runs:           runs,
+		config:         configP,
+		chatStore:      chatStore,
+		catalog:        &Catalog{},
+		slash:          &slashCatalog{},
+		steeringIssues: &steeringIssues{},
+		versions:       &subject.Versions{},
+		digestSlots:    newDigestSemaphore(digestConcurrency),
+		hookStatus:     newHookStatusCache(kiroSettingsPath()),
+		chatHandlers:   make(map[string]chatHandler),
+		noopMethods:    make(map[string]struct{}),
 	}
 	// Options may write the run surface's two stores, so they run after it exists.
 	for _, o := range opts {
 		o(h)
 	}
-	// The workspace stores mint into the registry WithVersions chose, so the wiring
-	// runs after the options and before anything can mint.
+	// After the options and before anything can mint.
 	sseP.pendingPerms.versions = h.versions
 	sseP.steers.versions = h.versions
 	sseP.chatStatus.versions = h.versions
 	runs.asks.versions = h.versions
 	h.catalog.versions = h.versions
-	// CONSTRUCTION, then WIRING, in that order and not interleaved: every role below
-	// is bound to its owner BY VALUE, so a field still nil at the literal stays nil
-	// forever. TestNew_EveryTranslateRoleIsWired pins it.
+	// Construction, then wiring, never interleaved: roles bind by value, so a nil at the literal stays nil.
+	// TestNew_EveryTranslateRoleIsWired pins it.
 	h.utility = &utilityLease{build: h.buildUtility}
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
+	h.powers = &powersSurface{
+		backend: h.powersBackend, utility: h.utility.get,
+		bridges: bridgeP.mgr, broadcast: sseP.Broadcast,
+		locks: configP.GovernanceLocks, adminKnown: configP.AdminPolicyKnown,
+		refreshAdmin: configP.refreshAdminPolicy,
+		detach:       lc.TurnContext, wake: make(chan struct{}, 1),
+	}
 	h.replay = &replay{
 		chats: chatStore, lifetime: lc, workDir: workDir,
 		projections: map[marotte.ChatID]*loadProjection{},
@@ -447,13 +409,11 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		bridgeP.mgr.hostsLiveRun = runs.hostsLiveRun
 	}
 	h.coord = newBridgeCoordinator(h)
+	h.coord.autoCompact = newAutoCompactor(h.coord)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.RetractPush
-	// Built here rather than in the struct literal because two of its collaborators
-	// (coord, and the ignore matcher installed below) do not exist yet at that point.
-	// Workspace-global rather than per session: the orchestrator and its
-	// subagents write one spec from several sessions, and a per-session window
-	// would emit once per writer. Broadcast ignores its ctx (sse.go).
+	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
+	// orchestrator and its subagents write one spec from several sessions.
 	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {
 		sseP.Broadcast(context.Background(), marotte.NewEvent(marotte.EventSpecChanged, "", marotte.SpecChangedPayload{Dir: dir}))
 	})
@@ -465,20 +425,21 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast, h.coord.turns.currentTurn)
 	runs.terminals = h.agentTerms
-	// Assigned here rather than in the struct literal because it is a method value
-	// on the fully-built Runtime; see load_projection.go.
+	// A method value on the built Runtime (load_projection.go).
 	h.replay.onProjection = h.replay.swapProjectedTranscript
 	h.replay.underLifecycle = func(ctx context.Context, chatID marotte.ChatID, fn func() error) error {
 		return h.coord.turns.withLifecycle(ctx, chatID, func(*chatLifecycle) error { return fn() })
 	}
-	// The LEASE's own accessor, not a Runtime method value, so neither collaborator
-	// holds a reference to the Runtime.
+	// The lease's own accessor, so neither collaborator references the Runtime.
 	runs.utility = h.utility.get
 	runs.coord = h.coord
 	configP.utility = h.utility.get
 	configP.broadcast = sseP.Broadcast
+	configP.onLocksChanged = h.onGovernanceLocksChanged
+	configP.onAdminResolved = h.powers.requestSync
+	runs.locks = configP.GovernanceLocks
 
-	// Before both consumers: the steer command writes it and the translator reads it.
+	// Before both consumers.
 	h.steerLedger = command.NewSteerLedger()
 	h.steerQueue = steerQueue{recs: sseP.steers, coord: h.coord, locks: newChatLocks()}
 	h.wireSteerRecords()
@@ -486,10 +447,10 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	runs.translate = h.translator
 	h.dispatcher = command.New()
 	h.registerCommandHandlers()
+	runs.runEnded = h.membership.WakeRetention
 	h.initDispatch()
 	if lc.configDir != "" {
-		// Best-effort: a nil store means bridges do NOT declare
-		// `_meta.kiro.secretStorage`, so KAS never asks and MCP OAuth re-registers.
+		// Best-effort: without a store, bridges do not declare `_meta.kiro.secretStorage` and MCP OAuth re-registers.
 		secrets, err := secretstore.New(lc.configDir)
 		if err != nil {
 			slog.Error("secretstore: open failed; MCP credentials will not persist", "error", err)
@@ -500,23 +461,19 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	requireCollaborators(h)
 	lc.loops.Go(h.cullIdleUtilityBridge)
 	lc.loops.Go(h.sweepSessionsLoop)
+	lc.loops.Go(func() { h.powers.syncLoop(lc.shutdownCtx, lc.done) })
 	return h
 }
 
-// UtilityPrompt delegates to the utility text-gen agent, lazily constructing the
-// runtime on first call. effort is the per-task reasoning level; "" keeps the
-// session's current one, and a model with no effort config ignores it.
+// UtilityPrompt delegates to the utility text-gen agent, built lazily. effort "" keeps the session's level.
 func (rt *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error) {
 	return rt.utility.get().textgen.UtilityPrompt(ctx, prompt, effort)
 }
 
-// MCPRegistry returns the in-memory registry of connected MCP servers as a
-// RouteRegistrar, since route mounting is all the composition root needs.
+// MCPRegistry returns the MCP runtime registry as a RouteRegistrar.
 func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 
-// MCPSnapshot returns a stable-ordered snapshot of the runtime registry so callers
-// outside agent can read it without taking agent internals as a dependency. Only
-// CONNECTED servers are included: a failed or OAuth-pending one has no live tools.
+// MCPSnapshot returns a stable-ordered snapshot of connected MCP servers only.
 func (rt *Runtime) MCPSnapshot() []marotte.MCPSnapshotServer {
 	snap := rt.mcpRegistry.Snapshot()
 	out := make([]marotte.MCPSnapshotServer, 0, len(snap))
@@ -529,23 +486,19 @@ func (rt *Runtime) MCPSnapshot() []marotte.MCPSnapshotServer {
 	return out
 }
 
-// SetMCPOnChange wires a callback fired whenever the runtime MCP registry changes.
-// Used by main.go to re-run steering.Generate() so environment.md tracks the live
-// integration set.
+// SetMCPOnChange wires a callback fired on every MCP registry change (main.go regenerates environment.md).
 func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.SetOnChange(fn) }
 
-// SetPreBridgeSpawn wires a callback fired right before any kiro-cli bridge
-// starts, used to refresh `environment.md` before kiro-cli reads it during session
-// creation. It runs synchronously on the spawn path, so it must be fast; the
-// per-request context lets it short-circuit on client disconnection.
-//
-// The hook lives on the coordinator — its one reader — because a copy held here
-// would be captured by newBridgeCoordinator before the composition root sets it,
-// and a nil captured at construction is permanent.
+// SetPreBridgeSpawn wires a callback run synchronously before any bridge starts (refreshing `environment.md`),
+// so it must be fast. It lives on the coordinator, which would otherwise capture a nil at construction.
 func (rt *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { rt.coord.preBridgeSpawn = fn }
 
-// SetIdentityCheck wires the auth registrar's TTL-gated probe onto every chat
-// bridge open. It must be called before the server starts serving commands.
+// SetChatSteering installs the chat-only steering renderer, on the coordinator for SetPreBridgeSpawn's reason.
+func (rt *Runtime) SetChatSteering(fn func(context.Context) []marotte.ClientSteeringDoc) {
+	rt.coord.chatSteering = fn
+}
+
+// SetIdentityCheck wires the auth registrar's TTL-gated probe onto every chat bridge open; call before serving commands.
 func (rt *Runtime) SetIdentityCheck(check func(context.Context)) {
 	if check == nil {
 		panic("agent: identity check is nil")
@@ -553,96 +506,102 @@ func (rt *Runtime) SetIdentityCheck(check func(context.Context)) {
 	rt.coord.ensureIdentity = check
 }
 
-// RetireBridges applies an observed identity change to chat and utility
-// sessions without interrupting workflow runs.
+// RetireBridges applies an observed identity change to chat and utility sessions without interrupting runs.
 func (rt *Runtime) RetireBridges(reason string) { rt.coord.RetireBridges(reason) }
 
-// RegisterRoutes wires /api/events (SSE), /api/command (POST), and
-// /api/shell/ws (WebSocket PTY).
+// RegisterRoutes wires /api/events (SSE), /api/command (POST) and /api/shell/ws (WebSocket PTY).
 func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
-	// Both refuse once Shutdown has flipped draining, and only these two; see
-	// refuseWhenDraining.
+	// Only these two refuse once Shutdown flips draining (refuseWhenDraining).
 	mux.Handle("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE)))
 	mux.Handle("/api/command", rt.refuseWhenDraining(rt.dispatcher))
-	// The digest sits behind the same drain gate as the stream it revalidates, and
-	// under a RouteTimeout (legal: it is a bounded request, not a streaming one) so a
-	// resolution parked on a lock cannot hold its slot for the peer's lifetime.
+	// Behind the same drain gate, under a RouteTimeout so a resolution parked on a lock frees its slot.
 	mux.Handle("POST /api/sync", rt.refuseWhenDraining(
 		webhttp.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
 	))
-	// The keepalive acknowledgement is not drain-gated: a receipt landing while the
-	// stream it acknowledges is being torn down changes nothing worth refusing.
+	// Not drain-gated: a late receipt changes nothing.
 	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)
 	mux.HandleFunc("/api/shell/ws", rt.shellMgr.handleWS)
 	mux.HandleFunc("POST /api/shell/restart", rt.shellMgr.handleRestart)
 	mux.HandleFunc("/api/file-changes", rt.handleFileChanges)
 	rt.config.registerKnowledgeRoutes(mux)
+	rt.config.registerMemoryRoutes(mux)
 	rt.config.registerHooksRoutes(mux)
 	rt.config.registerGovernanceRoutes(mux)
+	rt.powers.register(mux)
 	rt.runRoutes.register(mux)
-	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).
+	// The pre-session catalog (kiro-cli 2.14 _kiro/config/template).
 	mux.HandleFunc("GET /api/config-template", rt.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", rt.handleSessionList)
+	mux.HandleFunc("GET /api/chats/{id}/kiro-session", rt.handleKiroSessionExport)
+	mux.HandleFunc("GET /api/slash-commands", rt.handleSlashCommands)
+	mux.HandleFunc("GET /api/steering/issues", rt.handleSteeringIssues)
 }
 
-// Shutdown drains in-flight prompts and closes all bridges, bounded by ctx.
-//
-// Bridges are Stopped BEFORE the inflight wait: a stuck prompt Call returns only
-// through its own bridge's teardown, so waiting first deadlocks. ctx is the only
-// bound on those waits — webhttp.Run's pre-drain hook is synchronous, so an
-// unbounded wait spends the grace the HTTP drain needed — and the error names the
-// FIRST wait to exceed the budget.
+// Shutdown drains in-flight prompts and closes every bridge, bounded by ctx. Bridges stop before the
+// inflight wait, since a stuck Call returns only through its bridge's teardown. ctx is the only bound:
+// webhttp.Run's pre-drain hook is synchronous. The error names the first wait to exceed it.
 func (rt *Runtime) Shutdown(ctx context.Context) error {
 	slog.Info("agent runtime draining")
+	rt.lifecycle.drainGate.Lock()
 	rt.lifecycle.draining.Store(true)
+	rt.lifecycle.drainGate.Unlock()
 
-	// 0. Stop background tickers first so they cannot race bridge teardown with a
-	//    late cull Stop() or session sweep under the mutex we are about to acquire.
+	// 0. Stop the tickers first, so no late cull or sweep races bridge teardown.
 	select {
 	case <-rt.lifecycle.done:
-		// already closed (re-entrant shutdown in tests)
+		// Already closed (re-entrant shutdown in tests).
 	default:
 		close(rt.lifecycle.done)
 	}
 
-	// 1. Stop every bridge so in-flight Calls unblock.
+	// 1. Stop every bridge so in-flight Calls unblock, the cause claimed first; concurrently, since each Stop waits
+	// out kiro-cli's SIGTERM teardown.
 	bridges := rt.bridge.mgr.drain()
-	for _, sb := range bridges {
-		sb.bridge.Stop()
+	for chatID := range bridges {
+		rt.coord.claimShutdownCause(chatID)
 	}
+	var stops sync.WaitGroup
+	for _, sb := range bridges {
+		stops.Go(sb.bridge.Stop)
+	}
+	teardownErr := awaitBounded(ctx, "bridge teardown", stops.Wait)
 
-	// 1a. Cancelled AFTER the drain: drain() empties the map before any Stop, so the
-	// death closer is skipped for every bridge this teardown kills, and a bridge
-	// dying on its own cannot reach that closer holding a dead context.
+	// 1a. Cancelled after the drain: drain() empties the map first, so no bridge reaches the death closer with a dead context.
 	rt.lifecycle.shutdownCancel()
 
-	// 1c. Cancel the push service's request context so pending browser-push round
-	// trips unblock rather than draining their 10s client Timeout one by one.
+	// 1c. Unblock pending browser pushes rather than draining their 10s timeouts.
 	if rt.push != nil {
 		rt.push.Close()
 	}
 
-	// Each wait below is bounded by ctx; an expired one is ABANDONED, not cancelled.
+	// Each wait below is bounded by ctx; an expired one is abandoned, not cancelled.
 
 	// 2. Wait for in-flight prompt handlers to clean up.
-	teardownErr := awaitBounded(ctx, "in-flight handlers", rt.lifecycle.inflight.Wait)
+	if handlersErr := awaitBounded(ctx, "in-flight handlers", rt.lifecycle.inflight.Wait); teardownErr == nil {
+		teardownErr = handlersErr
+	}
+
+	// 2a. The unread steers the skipped death closer would have recorded, durably. The gone flag refuses a late fold.
+	for chatID := range bridges {
+		rt.holdUnreadSteers(ctx, chatID)
+	}
 
 	// 2b. Join the background loops; step 0 signalled them.
 	if teardownErr == nil {
 		teardownErr = awaitBounded(ctx, "background loops", rt.lifecycle.loops.Wait)
 	}
 
-	// 3. Stop utility bridge.
-	rt.stopUtilityBridge()
+	// 3. The utility bridge, after the handler wait so no lease holder is mid-Call.
+	if utilityErr := awaitBounded(ctx, "utility bridge teardown", rt.stopUtilityBridge); teardownErr == nil {
+		teardownErr = utilityErr
+	}
 
-	// 4b. Kill all agent terminal subprocesses. Their exit waiters decrement
-	// inflight, so this carries its own bound for the case step 2 did not return.
+	// 4b. Kill agent terminals; their exit waiters decrement inflight, so this has its own bound.
 	if teardownErr == nil {
 		teardownErr = awaitBounded(ctx, "agent terminals", rt.agentTerms.drainAll)
 	}
 
-	// 5. Tear down shell + SSE clients. These run whatever the budget did:
-	// kill signals first and only then waits on ctx.
+	// 5. Shell and SSE teardown run whatever the budget did: signals first, then waits.
 	rt.shellMgr.kill(ctx)
 	if err := rt.bus.fanout.Shutdown(ctx); err != nil {
 		slog.Warn("sse hub shutdown", "error", err)
@@ -654,59 +613,103 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// awaitBounded runs wait to completion or until ctx expires, naming what was
-// still running in the error for the latter.
-//
-// The goroutine is what makes the bound possible: sync.WaitGroup.Wait and a
-// range over exit channels both block unconditionally, so the only way to arm a
-// context against either is to move it off the caller's stack.
+// holdUnreadSteers hands off one drained chat's steers. The lifecycle is re-fenced first; a resend already
+// opened gets its boundary note; the forward exit is awaited within ctx. Every other live row gets one
+// dropped/restart entry (textless when KAS may hold it), and record-only rows join the Held row.
+func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) {
+	rt.coord.turns.refence(chatID)
+	if exit := rt.coord.turns.forwardExit(chatID); exit != nil {
+		select {
+		case <-exit:
+		case <-ctx.Done():
+		}
+	}
+	lockCtx, cancel := context.WithTimeout(context.Background(), command.ResendBridgeWait)
+	unlock, err := rt.steerQueue.LockSteerOps(lockCtx, chatID)
+	cancel()
+	if err != nil {
+		slog.Warn("shutdown: a steer operation still held the chat; taking its steers anyway", "chat_id", chatID)
+	} else {
+		defer unlock()
+	}
+	durableCtx := durable.Context(ctx)
+	rows := rt.bus.steers.ShutdownTake(chatID)
+	if len(rows) == 0 {
+		return
+	}
+	resent := rt.resentKeys(durableCtx, chatID)
+	var held []shutdownRow
+	for _, r := range rows {
+		steer := &marotte.EntrySteer{
+			Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
+		}
+		switch {
+		case r.Agent:
+			steer.Origin = marotte.SteerOriginAgent
+		case resent[r.Key]:
+			steer.Text, steer.Reason = r.Text, marotte.SteerReasonBoundary
+		case !r.KASHeld:
+			steer.Text = r.Text
+			held = append(held, r)
+		}
+		rt.coord.recordSteer(durableCtx, chatID, r.Key, steer)
+	}
+	rt.coord.HoldUnread(durableCtx, chatID, held)
+}
+
+// resentKeys answers the steer keys a turn_open in the log carries; an unreadable log answers none.
+func (rt *Runtime) resentKeys(ctx context.Context, chatID marotte.ChatID) map[string]bool {
+	entries, err := rt.coord.chatStore.All(ctx, chatID)
+	if err != nil {
+		slog.Warn("shutdown: the chat's log could not be read; its steers are held", "chat_id", chatID, "error", err)
+		return nil
+	}
+	keys := make(map[string]bool)
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindTurnOpen {
+			continue
+		}
+		var open marotte.EntryTurnOpen
+		if json.Unmarshal(entries[i].Payload, &open) != nil || open.Prompt == nil {
+			continue
+		}
+		for _, k := range open.Prompt.Resends {
+			keys[k] = true
+		}
+	}
+	return keys
+}
+
+// awaitBounded runs wait until it completes or ctx expires, naming what still ran. The goroutine makes a
+// WaitGroup or channel range cancellable.
 func awaitBounded(ctx context.Context, what string, wait func()) error {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		wait()
 	}()
-	// AwaitDone rather than a two-case select: a wait that finished in the same
-	// instant the budget ran out finished, and a bare select reports it as hung
-	// a fraction of the time.
+	// AwaitDone: a bare select would sometimes report a just-finished wait as hung.
 	if webhttp.AwaitDone(ctx, done) {
 		return nil
 	}
 	return fmt.Errorf("%s still running: %w", what, ctx.Err())
 }
 
-// bridgeIdleTimeout bounds how long the tab-less utility session may sit
-// idle before it is stopped. It does NOT apply to chat bridges — those are
-// owned by their tab (see cullIdleUtilityBridge).
+// bridgeIdleTimeout bounds the utility session's idle time; chat bridges belong to their tabs.
 const bridgeIdleTimeout = 30 * time.Minute
 
-// --- Broadcast ---
-
-// Broadcast sends a ServerEvent to every connected SSE client.
-//
-// The one forward to the bus that survives: it is the APP-FACING door.
-// Every caller INSIDE this package uses h.bus.Broadcast directly. Used by
-// the chat store and by the runtime itself for turn_closed / permission_needed
-// / error.
+// Broadcast sends a ServerEvent to every SSE client: the app-facing door; in-package code uses h.bus.Broadcast.
 func (rt *Runtime) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	rt.bus.emit(evt)
 }
 
-// Epoch is the hub's current epoch, the value every REST envelope's subject stamp
-// carries so the client's version map can refuse a response issued under a
-// previous one.
+// Epoch is the hub's current epoch, stamped on every REST envelope so a client refuses a previous epoch's response.
 func (rt *Runtime) Epoch() string {
 	return rt.bus.fanout.Position().Epoch
 }
 
-// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
-// routes that must stop accepting work before the HTTP drain begins: commands and
-// the event stream.
-//
-// A ROUTE wrapper rather than a member of the global chain, which also covers
-// /api/health, /api/version and static assets — none of which should start failing
-// while the process winds down. Needed at all because webhttp's own drain gate flips
-// LATER, at srv.Shutdown, and the window between the two is the reconnect race.
+// refuseWhenDraining answers 503 once Shutdown flips draining, for commands and the event stream only. A route
+// wrapper, so health, version and static stay up; webhttp's own gate flips later, at srv.Shutdown.
 func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rt.lifecycle.draining.Load() {
@@ -722,10 +725,8 @@ func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 // its initial boot pass.
 const sweepSessionsInterval = 1 * time.Hour
 
-// sweepSessionsLoop runs an initial orphan-session sweep once this process owns
-// its config dir, then repeats every sweepSessionsInterval until shutdown. It
-// reaps on-disk KAS session state left behind by archived-chat purges, crashes,
-// or a pre-v3 install.
+// sweepSessionsLoop sweeps orphan KAS session state once this process owns its config dir, then every
+// sweepSessionsInterval until shutdown.
 func (rt *Runtime) sweepSessionsLoop() {
 	if rt.sessionReaper == nil || rt.sessionRefs == nil {
 		return
@@ -746,11 +747,8 @@ func (rt *Runtime) sweepSessionsLoop() {
 	}
 }
 
-// awaitSweepGate blocks until this process may reap, reporting false when
-// shutdown came first. A nil gate proceeds at once (WithSessionSweepGate).
-//
-// Waiting rather than skipping: the gate closes milliseconds after Build returns,
-// so a skip would trade a destructive boot for never reclaiming anything.
+// awaitSweepGate blocks until this process may reap, false when shutdown came first; nil proceeds. Waiting,
+// not skipping: the gate closes milliseconds after Build.
 func (rt *Runtime) awaitSweepGate() bool {
 	if rt.sweepGate == nil {
 		return true
@@ -763,13 +761,9 @@ func (rt *Runtime) awaitSweepGate() bool {
 	}
 }
 
-// sweepSessionsOnce runs one orphan-session sweep. The keep-list is every session in
-// every chat's CHAIN union every LIVE session, and both halves are needed: age is not
-// evidence that a session is disposable.
-//
-// The live half exempts a bridge holding a session no chat references, or the sweep
-// deletes on-disk KAS state from under a live subprocess once it ages past the
-// 10-minute create-race guard. An INCOMPLETE keep-list skips the sweep entirely.
+// sweepSessionsOnce runs one orphan-session sweep. The keep-list is every chat's chain plus every live
+// session (age is no evidence), or a live subprocess loses its state past the 10-minute guard. An
+// incomplete keep-list skips the sweep.
 func (rt *Runtime) sweepSessionsOnce() {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
@@ -787,9 +781,7 @@ func (rt *Runtime) sweepSessionsOnce() {
 	rt.sessionReaper.Sweep(refs)
 }
 
-// liveSessionIDs returns the ACP session id of every bridge marotte currently
-// holds: each chat bridge plus the utility session. These are exempt from
-// the sweep at any age.
+// liveSessionIDs returns every held bridge's ACP session id, chat bridges and the utility session.
 func (rt *Runtime) liveSessionIDs() []string {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
@@ -803,11 +795,7 @@ func (rt *Runtime) liveSessionIDs() []string {
 	return ids
 }
 
-// utilityLiveSessionID asks the utility session for its live ACP session id,
-// or "" when no runtime has been built or it is stopped.
-//
-// peek, not get: building one to answer would create the session it is
-// inspecting.
+// utilityLiveSessionID returns the utility session's id, or "". peek: get would create the session it inspects.
 func (rt *Runtime) utilityLiveSessionID() string {
 	u := rt.utility.peek()
 	if u == nil {
@@ -816,31 +804,19 @@ func (rt *Runtime) utilityLiveSessionID() string {
 	return u.session.liveID()
 }
 
-// stopUtilityBridge stops the utility session if one was built.
-//
-// take, so the slot is cleared and stopped as one step and nothing else can
-// be holding the runtime by the time Stop is called.
+// stopUtilityBridge stops the utility session if built; take clears and stops it in one step.
 func (rt *Runtime) stopUtilityBridge() {
 	if u := rt.utility.take(); u != nil {
 		u.session.Stop()
 	}
 }
 
-// RestartUtilitySession drops the utility session so the next use rebuilds
-// it.
-//
-// Its caller is a security-profile change: the presets ride the session
-// door, so a session already running still carries the previous profile.
-// Recycling is the only way to re-send them, since KAS exposes no method to
-// change a live session's policy.
+// RestartUtilitySession drops the utility session so the next use rebuilds it: presets ride the session
+// door, and KAS cannot change a live session's policy.
 func (rt *Runtime) RestartUtilitySession() { rt.stopUtilityBridge() }
 
-// cullIdleUtilityBridge stops the utility session once it has been idle for
-// longer than bridgeIdleTimeout. Runs every 60 seconds.
-//
-// CHAT bridges are deliberately NOT swept: a chat open in a tab owns its
-// process for as long as the tab is open. The utility session is the one
-// bridge with no tab to own it.
+// cullIdleUtilityBridge stops the utility session once idle past bridgeIdleTimeout, every 60 seconds.
+// Chat bridges are owned by their tabs.
 func (rt *Runtime) cullIdleUtilityBridge() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -854,9 +830,7 @@ func (rt *Runtime) cullIdleUtilityBridge() {
 	}
 }
 
-// cullIdleUtilityBridgeOnce runs one utility-session sweep. peek rather than
-// get, because a sweep that BUILT a utility bridge to check whether one was
-// idle would be creating work forever.
+// cullIdleUtilityBridgeOnce runs one sweep; peek, since building a bridge to check idleness creates work.
 func (rt *Runtime) cullIdleUtilityBridgeOnce() {
 	u := rt.utility.peek()
 	if u != nil && u.session.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {

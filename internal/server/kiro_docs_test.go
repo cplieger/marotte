@@ -13,8 +13,7 @@ import (
 	"testing/fstest"
 )
 
-// writeFile creates dir/rel with its parents, for the real-filesystem cases
-// (the cache signature is mtime-based, so fstest.MapFS cannot exercise it).
+// writeFile creates dir/rel with its parents, for the real-filesystem cases.
 func writeFile(t *testing.T, dir, rel, body string) {
 	t.Helper()
 	full := filepath.Join(dir, rel)
@@ -45,8 +44,7 @@ func findDoc(docs []KiroDoc, name string) (KiroDoc, bool) {
 	return KiroDoc{}, false
 }
 
-// TestScanKiroDocs_FoldedDescriptionSurvives is the endpoint half of the parser
-// regression: the row a user reads is the one that used to say ">".
+// TestScanKiroDocs_FoldedDescriptionSurvives pins that a folded description is not ">".
 func TestScanKiroDocs_FoldedDescriptionSurvives(t *testing.T) {
 	fsys := fstest.MapFS{
 		"agents/twin.md": {Data: []byte("---\nname: twin\ndescription: >\n  Even-cycle twin of the\n  other reviewer.\nmodel: claude-opus-5\ntools: [read, write]\n---\n")},
@@ -101,11 +99,8 @@ func TestScanKiroDocs_Steering(t *testing.T) {
 	}
 }
 
-// A skill that declares NO inclusion must report none. steering.Parse defaults
-// the field to "always" because that is right for a steering document, and
-// forwarding it here badged every skill in the browser as always-loaded — a
-// claim about token cost that was never in the file. KAS's
-// SkillFrontMatterSchema declares no inclusion key at all.
+// TestScanKiroDocs_SkillWithoutInclusionReportsNone pins that a skill declaring no inclusion
+// reports none, not steering's "always" default.
 func TestScanKiroDocs_SkillWithoutInclusionReportsNone(t *testing.T) {
 	fsys := fstest.MapFS{
 		"skills/plain/SKILL.md": {Data: []byte("---\nname: plain\ndescription: No mode declared\n---\n")},
@@ -120,14 +115,8 @@ func TestScanKiroDocs_SkillWithoutInclusionReportsNone(t *testing.T) {
 	}
 }
 
-// The other half, and why the fix is not simply dropping the field: the schema is
-// `.passthrough()` and createSteeringCommandSource reads `config?.inclusion`
-// across skills and steering alike, so a skill declaring manual really does
-// become a slash command and that is worth showing.
-// (TestScanKiroDocs_SkillsAreManifestsOnly below covers the declared case.)
-
-// TestScanKiroDocs_SkillsAreManifestsOnly pins the design's scoping rule:
-// reference material under a skill directory is not a row.
+// TestScanKiroDocs_SkillsAreManifestsOnly pins that reference material under a skill is not
+// a row, and that a declared inclusion is reported.
 func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 	fsys := fstest.MapFS{
 		"skills/triage/SKILL.md":               {Data: []byte("---\nname: triage\ndescription: Adversarial\ninclusion: manual\nsteering_override: true\n---\n")},
@@ -187,9 +176,7 @@ func TestScanKiroDocs_AgentsDedupePreferMd(t *testing.T) {
 	}
 }
 
-// TestScanKiroDocs_SpecsGroupAndOrder pins both halves of the specs decision:
-// the label comes from the H1 (specs carry no front-matter), and a feature is a
-// group with arbitrary children rather than a hardcoded trio.
+// TestScanKiroDocs_SpecsGroupAndOrder pins the H1 label and feature grouping.
 func TestScanKiroDocs_SpecsGroupAndOrder(t *testing.T) {
 	fsys := fstest.MapFS{
 		"specs/alpha/design.md":       {Data: []byte("# Design — Alpha\n")},
@@ -230,6 +217,24 @@ func pathBase(p string) string {
 	return p
 }
 
+// KAS reads prompts/*.md at the top level only, so a nested file is not a
+// prompt and must not get a row a user would try to run.
+func TestScanDocsPrompts_TopLevelOnly(t *testing.T) {
+	fsys := fstest.MapFS{
+		"prompts/review.md":    {Data: []byte("# Review the diff\n\nReview: $ARGUMENTS\n")},
+		"prompts/sub/inner.md": {Data: []byte("# Inner\n")},
+		"prompts/notes.txt":    {Data: []byte("not a prompt")},
+	}
+	prompts := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs, catPrompt)
+	if len(prompts) != 1 {
+		t.Fatalf("scanKiroDocsFS prompts = %+v, want only review", prompts)
+	}
+	got := prompts[0]
+	if got.Name != "review" || got.Path != "ws/.kiro/prompts/review.md" || got.Description != "Review the diff" {
+		t.Errorf("prompt row = %+v, want name review, path ws/.kiro/prompts/review.md, description from the H1", got)
+	}
+}
+
 func TestScanKiroDocs_HooksExpandEnvelope(t *testing.T) {
 	fsys := fstest.MapFS{
 		"hooks/two.json": {Data: []byte(`{"version":"v1","hooks":[
@@ -254,9 +259,7 @@ func TestScanKiroDocs_HooksExpandEnvelope(t *testing.T) {
 	}
 }
 
-// TestScanKiroDocs_HookFieldsAreSanitized pins that the scan goes through
-// steering.ParseHooks rather than decoding JSON itself. Hook files are workspace
-// content, and these values render inside a span.
+// TestScanKiroDocs_HookFieldsAreSanitized pins that the scan goes through steering.ParseHooks.
 func TestScanKiroDocs_HookFieldsAreSanitized(t *testing.T) {
 	fsys := fstest.MapFS{
 		"hooks/evil.json": {Data: []byte(`{"version":"v1","hooks":[
@@ -275,13 +278,8 @@ func TestScanKiroDocs_HookFieldsAreSanitized(t *testing.T) {
 	}
 }
 
-// TestScanKiroDocs_NamelessHookFallsBackToTheFileName pins hookRows' name
-// fallback, which was measurably unasserted: replacing
-// cmp.Or(h.Name, strings.TrimSuffix(file, ".json")) with a bare h.Name left the
-// whole internal/server suite green, while the two sibling fallbacks (a skill
-// directory without a manifest, a .json-only agent) each had a test. A row whose
-// Name is empty renders as a blank entry in the browser's Hooks tab, so the
-// derived name is what makes an unnamed hook openable at all.
+// TestScanKiroDocs_NamelessHookFallsBackToTheFileName pins hookRows' name fallback: an
+// empty Name renders as a blank, unopenable entry.
 func TestScanKiroDocs_NamelessHookFallsBackToTheFileName(t *testing.T) {
 	fsys := fstest.MapFS{
 		"hooks/lint-on-save.json": {Data: []byte(`{"version":"v1","hooks":[
@@ -297,9 +295,7 @@ func TestScanKiroDocs_NamelessHookFallsBackToTheFileName(t *testing.T) {
 	}
 }
 
-// TestScanKiroDocs_UnclaimedMarkdownGetsNoRow pins the scope boundary: a file no
-// category claims is simply absent, which is what makes the "is the total 216 or
-// 217" question stop mattering.
+// TestScanKiroDocs_UnclaimedMarkdownGetsNoRow pins the scope boundary.
 func TestScanKiroDocs_UnclaimedMarkdownGetsNoRow(t *testing.T) {
 	fsys := fstest.MapFS{
 		"README.md":           {Data: []byte("# Kiro readme\n")},
@@ -315,9 +311,8 @@ func TestScanKiroDocs_UnclaimedMarkdownGetsNoRow(t *testing.T) {
 	}
 }
 
-// The cap cuts the LIST and says so: a tree holding more than the cap reports
-// truncated, and a tree holding exactly the cap does not, because nothing was
-// left out. A length comparison alone cannot tell the two apart.
+// TestScanKiroDocs_PerCategoryCap pins that over the cap reports truncated and exactly the
+// cap does not.
 func TestScanKiroDocs_PerCategoryCap(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -344,9 +339,8 @@ func TestScanKiroDocs_PerCategoryCap(t *testing.T) {
 	}
 }
 
-// The cap binds on the entry-listed categories too. They stop at their own
-// counter rather than trimming a finished slice, so an off-by-one there ships
-// the extra row instead of discarding it; and the cut is reported.
+// TestScanKiroDocs_PerCategoryCapAppliesToSkillsAndAgents pins the cap on the entry-listed
+// categories, which stop at their own counter.
 func TestScanKiroDocs_PerCategoryCapAppliesToSkillsAndAgents(t *testing.T) {
 	fsys := fstest.MapFS{}
 	for i := range maxDocsPerCategory + 25 {
@@ -387,10 +381,7 @@ func TestScanKiroDocs_PerCategoryCapCutsInsideAHookFile(t *testing.T) {
 	}
 }
 
-// The spec walk is depth-bounded, and both sides of the bound matter: a feature
-// nested to the limit still contributes its documents, and anything below the
-// limit is not walked at all. A bound that admitted more would walk a workspace's
-// whole source tree if somebody dropped a `specs/` directory at its root.
+// TestScanKiroDocs_SpecWalkDepthBound pins both sides of the spec walk's depth bound.
 func TestScanKiroDocs_SpecWalkDepthBound(t *testing.T) {
 	deepest := strings.Repeat("d/", maxSpecWalkDepth)
 	fsys := fstest.MapFS{
@@ -410,10 +401,8 @@ func TestScanKiroDocs_SpecWalkDepthBound(t *testing.T) {
 	}
 }
 
-// A walk that finished cleanly says nothing. The warning exists for a tree that
-// could not be read, so one on every render would bury it.
-//
-// Not parallel: it swaps the process-wide slog default.
+// TestScanKiroDocs_CleanWalkIsSilent pins that a clean walk logs no warning. Not parallel:
+// it swaps the slog default.
 func TestScanKiroDocs_CleanWalkIsSilent(t *testing.T) {
 	logs := captureLogs(t)
 	fsys := fstest.MapFS{
@@ -492,9 +481,7 @@ func TestHandleKiroDocs_EmptyIsArrayNotNull(t *testing.T) {
 	}
 }
 
-// TestCollectKiroDocs_CachesOnSignature pins the memoization: an unchanged tree
-// must not be rescanned, because front-matter parsing is ~200 file opens and the
-// page refetches on every settings_updated broadcast.
+// TestCollectKiroDocs_CachesOnSignature pins that an unchanged tree is not rescanned.
 func TestCollectKiroDocs_CachesOnSignature(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".kiro/steering/a.md", "---\ndescription: A\n---\n")
@@ -509,25 +496,20 @@ func TestCollectKiroDocs_CachesOnSignature(t *testing.T) {
 		t.Fatal("signature not recorded after the first scan")
 	}
 
-	// Same tree: the cached slice comes back and the signature is unchanged.
 	second := srv.collectKiroDocs(t.Context()).Docs
 	if len(second) != 1 || srv.kiroDocs.sig != sigAfterFirst {
 		t.Errorf("second scan changed the cache: rows=%d sig-changed=%v", len(second), srv.kiroDocs.sig != sigAfterFirst)
 	}
 
-	// A new file moves the directory mtime, so the signature must change and
-	// the row must appear.
+	// A new file changes the signature, so the row must appear.
 	writeFile(t, dir, ".kiro/steering/b.md", "---\ndescription: B\n---\n")
 	third := srv.collectKiroDocs(t.Context()).Docs
 	if len(third) != 2 {
 		t.Errorf("after adding a doc got %d rows, want 2 (the signature must invalidate)", len(third))
 	}
 
-	// An in-place body edit is the documented limit of the key: it moves neither
-	// a directory mtime nor an entry name, so the cached rows are what comes
-	// back. Asserted rather than left implicit, because it is the only proof
-	// that the cached SLICE is served at all — a cache that silently rescanned
-	// every call would return the same row count and the same signature.
+	// An in-place body edit is the key's documented limit: the cached rows come back, which is
+	// the proof the cached slice is served at all.
 	writeFile(t, dir, ".kiro/steering/a.md", "---\ndescription: EDITED\n---\n")
 	fourth := srv.collectKiroDocs(t.Context()).Docs
 	edited, ok := findDoc(fourth, "a")

@@ -109,17 +109,13 @@ func (s Sensitive) Blocks(resolved string) bool {
 	return false
 }
 
-// protectedDir reports whether deleting `resolved` would wipe a directory
-// listed (or enclosing a path listed) in the deny list. This is the
-// "directory container" check Blocks deliberately omits: Blocks alone lets
-// `<root>/chats` (no trailing slash) through while `<root>/chats/foo.json`
-// is blocked. Callers pass an already-canonicalised path.
+// protectedDir reports whether deleting `resolved` would wipe a directory listed in, or enclosing a
+// path listed in, the deny list: the container check Blocks omits (Blocks passes `<root>/chats`
+// itself). Callers pass a canonicalised path.
 func (s Sensitive) protectedDir(resolved string) bool {
 	res := strings.TrimRight(resolved, "/") + "/"
 	for _, sp := range s.entries() {
 		if sp.IsDir {
-			// Sensitive directory entry: block the dir itself and
-			// every ancestor directory that would encompass it.
 			if strings.HasPrefix(sp.Path, res) || strings.HasPrefix(res, sp.Path) {
 				return true
 			}

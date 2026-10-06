@@ -1,43 +1,19 @@
-// ---------------------------------------------------------------------------
-// A COMPLETE `tabs.js` mock, for the many test files that mock the tab store to
-// keep it out of their subject's way.
-//
-// Why this exists rather than each file listing the three or four names it cares
-// about: Browser Mode links ESM for real rather than reading properties off a
-// namespace object, so every name ANY module in a test's import graph reaches has
-// to exist on the mock, including names that file never calls. A partial factory
-// therefore works until the graph widens, and then breaks in a way that does not
-// name what went wrong. The tab projection widened it for a dozen files at once,
-// and the symptom was a browser page that closed with "rpc is closed" rather than
-// a missing-export error, because a sibling mock's `importOriginal()` threw while
-// resolving the broken link and took the page down with it.
-//
-// So: this is the whole surface, inert, in one place. A file spreads it and
-// overrides only what it needs to observe:
-//
+// A COMPLETE, inert `tabs.js` mock. Browser Mode links ESM for real, so every name any module in
+// the graph reaches must exist; a partial factory breaks without naming what is missing. Spread it:
 //   vi.mock("./tabs.js", async () => ({
 //     ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
 //     activateTab: mockActivateTab,
 //   }));
-//
-// When `tabs.ts` gains an export, this file is the one place that has to learn
-// about it, and `tabs-mock.test.ts` fails until it does.
-// ---------------------------------------------------------------------------
+// `tabs-mock.test.ts` fails until a new `tabs.ts` export is added here.
 
 import { vi } from "vitest";
 
-/** Every value `tabs.ts` exports, inert.
- *
- *  The readers return the empty answer for their type rather than a plausible
- *  one: a mock that claims a tab is open is a mock that makes a test pass for a
- *  reason the production code did not supply. The async mutators resolve rather
- *  than reject, because a caller awaiting one is exercising its own continuation,
- *  not the store's failure path. */
+/** Every value `tabs.ts` exports, inert. Readers return the empty answer for their type (a mock
+ *  claiming an open tab passes a test for a reason production did not supply); async mutators
+ *  resolve, since a caller awaiting one exercises its own continuation. */
 export function tabsMock(): Record<string, unknown> {
   return {
-    // Mutators. Async since the projection made an open a server round trip.
-    // openTab answers its OUTCOME type's success value, because a mock that
-    // reports "failed" would send callers down their failure branches.
+    // `openTab` answers its success outcome, so callers stay off their failure branches.
     openTab: vi.fn(async () => "opened"),
     closeTab: vi.fn(async () => {}),
     setTabPinned: vi.fn(async () => {}),
@@ -54,9 +30,6 @@ export function tabsMock(): Record<string, unknown> {
     toggleHistoryView: vi.fn(async () => {}),
     toggleDocsView: vi.fn(async () => {}),
 
-    // Synchronous local writes. The three sub-tab setters stay synchronous on
-    // purpose: a singleton's sub-tab is not part of the shared subject, so they
-    // are the correction channel rather than a mutation.
     adoptSubject: vi.fn(),
     activateTab: vi.fn(),
     activateRestoredTab: vi.fn(),
@@ -72,14 +45,11 @@ export function tabsMock(): Record<string, unknown> {
     setHistoryTab: vi.fn(),
     setFilesRoute: vi.fn(),
 
-    // Readers, each answering "nothing".
     hasTab: vi.fn(() => false),
     tabIdFor: vi.fn(() => ""),
     filesTabIdFor: vi.fn(() => ""),
     tabSetVersion: vi.fn(() => 0),
     tabIdForRoute: vi.fn(() => ""),
-    // The empty answer for its type, per this file's own rule: a reader must not
-    // claim a tab is open.
     filesTabForRoute: vi.fn(() => ({ id: "", ref: "" })),
     getActiveTabId: vi.fn(() => ""),
     getActiveTabRoute: vi.fn(() => null),
@@ -87,25 +57,20 @@ export function tabsMock(): Record<string, unknown> {
     activeChatRef: vi.fn(() => ""),
     parentChatRef: vi.fn(() => ""),
     openChatRefs: vi.fn(() => []),
-    // The empty answer here is a statement of DEMAND, not just "nothing to see":
-    // `subagent-view.ts` drops its mounted page when no open subagent tab names a
-    // member of the group that page projects. So a test that mounts a subagent page
-    // must override this with the tabs its scenario implies, or the page it mounted is
-    // released under it.
+    // A statement of DEMAND: `subagent-view.ts` drops a mounted page no open subagent tab names, so a
+    // test mounting one must override this or the page is released under it.
     openSubagentRefs: vi.fn(() => []),
     openRunRefs: vi.fn(() => []),
     openSpecRefs: vi.fn(() => []),
     openTabSubjects: vi.fn(() => []),
     cueCandidates: vi.fn(() => []),
 
-    // Registration slots. `subscribeTabCues` hands back its unsubscribe so a
-    // caller's cleanup does not throw on undefined.
+    // Hands back an unsubscribe so a caller's cleanup does not throw on undefined.
     subscribeTabCues: vi.fn(() => () => {}),
     setOnTabClosed: vi.fn(),
     setOnEmpty: vi.fn(),
-    // Left UNREGISTERED, which is the never-suppress answer: an unwired probe is
-    // exactly the behaviour before it existed, so a test that has not stated a
-    // chat's settle state cannot have a cue silently blanked under it.
+    registerTabNotice: vi.fn(),
+    // Unregistered is the never-suppress answer, so no test has a cue silently blanked.
     setChatSettledProbe: vi.fn(),
 
     _resetForTest: vi.fn(),

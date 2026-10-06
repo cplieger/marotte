@@ -13,9 +13,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// fakeStore is a minimal StoreAccess for purge tests. Only Dir and
-// Lock carry behavior the purge subsystem under test depends on; the
-// rest are inert stubs that record the calls a test wants to assert on.
+// fakeStore is a minimal StoreAccess for purge tests; only Dir and Lock carry behavior, the rest
+// record calls.
 type fakeStore struct {
 	dir   string
 	mu    sync.Mutex
@@ -68,9 +67,8 @@ func (f *fakeStore) Remove(chatID marotte.ChatID) (string, error) {
 	return strconv.Itoa(f.removals), nil
 }
 
-// purgeRecorder collects chat IDs passed to an onPurge
-// callback. Safe for concurrent use (Purge runs callbacks from worker
-// goroutines).
+// purgeRecorder collects chat IDs passed to an onPurge callback; safe for concurrent use because
+// Purge calls it from worker goroutines.
 type purgeRecorder struct {
 	mu     sync.Mutex
 	ids    []marotte.ChatID
@@ -117,17 +115,12 @@ func newPurgeTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, st
 	t.Helper()
 	dir := t.TempDir()
 	store := newFakeStore(dir)
-	// Chats no longer move, so the purge scans the MAIN chat directory. The
-	// third return is that directory; tests seed into it directly.
 	return New(store, opts...), store, dir
 }
 
-// writeAgedChat writes a chat directory whose header's MTIME is `age` in the past
-// and returns the header's path. age=0 means "now".
-//
-// The fake store reports no readable projection for it unless a test sets one, so
-// purgeReferenceTime falls through to the mtime — which is what makes these age
-// assertions readable. The UpdatedAt path has its own test.
+// writeAgedChat writes a chat directory whose header MTIME is `age` in the past and returns the
+// header's path. With no projection set on the fake, purgeReferenceTime falls through to that
+// mtime.
 func writeAgedChat(t *testing.T, dir, id string, age time.Duration) string {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, id), 0o700); err != nil {

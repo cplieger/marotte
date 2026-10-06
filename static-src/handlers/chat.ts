@@ -1,7 +1,4 @@
-// ---------------------------------------------------------------------------
 // SSE handlers for chat lifecycle: create, update, delete.
-// Typed through onSSE — no `unknown` unwrap boilerplate.
-// ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
 import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.js";
@@ -24,10 +21,8 @@ onSSE("chat_created", (_chatID, header) => {
     return;
   }
   upsertHeader(header);
-  // Convergence fix: `applyInitialRoute` canonicalizes an active chat to
-  // /chat/{id}, so what remains is a chat becoming active while the route
-  // is still "/" — including one created on another device. Never hijack
-  // a reader who has navigated elsewhere meanwhile.
+  // `applyInitialRoute` canonicalizes an active chat, so this covers a chat becoming active while
+  // the route is still "/" (e.g. created on another device). Never hijack a reader who navigated away.
   const route = parseRoute(location.pathname, location.hash);
   if (header.id === getActiveId() && route.kind === "chat" && route.id === "") {
     replaceRoute({ kind: "chat", id: header.id });
@@ -41,11 +36,8 @@ onSSE("chat_updated", (_chatID, header) => {
   upsertHeader(header);
 });
 
-// draft_changed: the composer state one chat now holds, after a set_draft
-// or set_attachments write on any device — lets an idle device converge on
-// a draft it is not typing. The local map is authoritative for the chat on
-// screen, so this updates the map for every other chat and is ignored for
-// the live one (adoptRemoteComposerState).
+// Lets an idle device converge on a draft written elsewhere. The local map is authoritative for
+// the chat on screen, so the live chat is ignored (adoptRemoteComposerState).
 onSSE("draft_changed", (chatID, p) => {
   if (chatID === "" || p === undefined) {
     return;
@@ -66,12 +58,8 @@ onSSE("chat_deleted", (_chatID, p) => {
   if (p === undefined || typeof p.id !== "string" || p.id === "") {
     return;
   }
-  // No tab close here, deliberately: a deleted chat's tabs are closed by
-  // the membership coordinator under the same lock that removed the
-  // record, so a close from here would race the deleting device's own.
-  //
-  // The per-chat cleanups below still run — each is keyed by chat id
-  // and outlives the tab, and each is idempotent.
+  // No tab close: the membership coordinator closes a deleted chat's tabs under the delete's lock.
+  // The per-chat cleanups below are keyed by chat id, outlive the tab, and are idempotent.
   dropDecisions(p.id);
   forgetDeferredCue(p.id);
   dropComposerState(p.id);

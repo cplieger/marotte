@@ -1,28 +1,17 @@
-// Knowledge-base actions: add / remove / re-index workspace knowledge contexts.
-//
-// The knowledge list is server-canonical (it lives in kiro-cli's global store,
-// not marotte's chat store) and is refetched after every mutation, so these
-// actions carry no optimistic state — `add` and `reindex` are async/background
-// anyway (the server returns a "indexing in background" message). See
-// knowledge.ts.
-// ---------------------------------------------------------------------------
+// Knowledge-base actions. The list is server-canonical (kiro-cli's global store) and refetched
+// after every mutation, so no optimistic state.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 
-/** Base path for the knowledge API — single source of truth. */
 const KNOWLEDGE_API = "/api/knowledge";
-
-// --- knowledge.add ---
 
 interface AddArgs {
   path: string;
   name?: string;
 }
 
-/** POST /api/knowledge {path, name?} — start a background index of a directory.
- *  `error: false` because a validation message belongs beside the field it is
- *  about: `knowledge.ts`'s add form reads the failure off the dispatch's typed
- *  outcome and writes it into its own `<output>`. */
+/** Start a background index of a directory. `error: false`: the add form writes the failure
+ *  beside its field from the dispatch's typed outcome. */
 export const addKnowledge = apiAction<AddArgs, { message?: string }>({
   name: "knowledge.add",
   idempotencyKey: true,
@@ -35,8 +24,6 @@ export const addKnowledge = apiAction<AddArgs, { message?: string }>({
   }),
   error: false,
 });
-
-// --- knowledge.remove ---
 
 interface RemoveArgs {
   name: string;
@@ -55,17 +42,12 @@ export const removeKnowledge = apiAction<RemoveArgs, void>({
   error: "Could not remove knowledge base",
 });
 
-// --- knowledge.reindex ---
-
 interface ReindexArgs {
   name: string;
 }
 
-// No auto-retry: the server issues an ASYNC `update` to kiro-cli, so a timed-out
-// POST may already be indexing and a retry would start a second pass over the
-// same directory. The name resolves to its indexed PATH server-side (kiro-cli's
-// `update` subcommand matches on the source path, not the name), so a base the
-// server cannot resolve answers 404 rather than silently indexing nothing.
+// No auto-retry: the server issues an ASYNC kiro-cli `update`, so a timed-out POST may already be
+// indexing. `update` matches on the source path, so the name resolves server-side (404 if not).
 export const reindexKnowledge = apiAction<ReindexArgs, { message?: string }>({
   name: "knowledge.reindex",
   dedupe: (args) => `knowledge.reindex:${args.name}`,
@@ -74,4 +56,27 @@ export const reindexKnowledge = apiAction<ReindexArgs, { message?: string }>({
     path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/reindex`,
   }),
   error: "Could not re-index knowledge base",
+});
+
+interface CancelArgs {
+  name: string;
+}
+
+// No auto-retry: a timed-out POST may already have stopped the index; a retry would 404.
+export const cancelKnowledgeIndexing = apiAction<CancelArgs, { message?: string }>({
+  name: "knowledge.cancel",
+  dedupe: (args) => `knowledge.cancel:${args.name}`,
+  request: ({ name }) => ({
+    method: "POST",
+    path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/cancel`,
+  }),
+  error: "Couldn't stop indexing",
+});
+
+// No auto-retry, for removeKnowledge's reason.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
+export const clearKnowledge = apiAction<void, void>({
+  name: "knowledge.clear",
+  request: () => ({ method: "DELETE", path: KNOWLEDGE_API }),
+  error: "Couldn't clear knowledge bases",
 });

@@ -1,12 +1,7 @@
 package agent
 
-// The agent ignore list: which ignore FILES KAS enforces for a bridge, resolved
-// per spawn and pushed to every live bridge when the setting changes.
-//
-// marotte runs no matcher of its own here. KAS's ignore evaluators sit at the top
-// of its filesystem policy check and return deny BEFORE any rule is consulted, so
-// no allow rule at any scope can override them; the list is the whole of marotte's
-// side, and the one door for it is a connection-scope notification.
+// KAS's ignore evaluators deny before any allow rule is consulted, so marotte runs no
+// matcher: it only sends the list, over a connection-scope notification.
 
 import (
 	"context"
@@ -18,18 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// ignorePushTimeout bounds one bridge's ignore-list notification. A Notify is a
-// stdin write rather than a round trip, so this is a wedged-pipe ceiling and not
-// a work budget; bridge.Notify carries no deadline of its own.
+// ignorePushTimeout is a wedged-pipe ceiling for one Notify; bridge.Notify carries no deadline.
 const ignorePushTimeout = 10 * time.Second
 
-// readAgentIgnoreFiles resolves the list marotte sends KAS and reports whether the
-// settings document could be READ at all. The two callers need that apart: a fresh
-// bridge has no prior value, so it takes the floor; a live bridge already has one,
-// so it must be left alone.
-//
-// An ABSENT key is a successful read of a document that says nothing, which is the
-// default (an empty user list) and therefore the floor.
+// readAgentIgnoreFiles resolves the list sent to KAS and reports whether the settings
+// document could be read. An absent key is a successful read meaning the floor.
 func readAgentIgnoreFiles(ctx context.Context, configDir string) (files []string, ok bool) {
 	list, _, err := settings.FieldStrict[[]string](ctx, configDir, settings.KeyAgentIgnoreFiles)
 	if err != nil {
@@ -40,31 +28,16 @@ func readAgentIgnoreFiles(ctx context.Context, configDir string) (files []string
 	return settings.AgentIgnoreList(list), true
 }
 
-// spawnIgnoreFiles resolves StartOpts.IgnoreFiles for a bridge starting fresh.
-//
-// One resolver for every spawn site, so no bridge can disagree about what the
-// agent may read — the shape securityPresets already holds for the policy
-// presets. On an unreadable document it answers the FLOOR rather than nothing: a
-// fresh connection has no prior value for KAS to keep, so sending nothing would
-// leave `.kiroignore` unenforced for that session's whole life.
+// spawnIgnoreFiles resolves StartOpts.IgnoreFiles for every spawn site. An unreadable
+// document yields the FLOOR: sending nothing would leave `.kiroignore` unenforced for the session.
 func spawnIgnoreFiles(ctx context.Context, configDir string) []string {
 	files, _ := readAgentIgnoreFiles(ctx, configDir)
 	return files
 }
 
-// PushAgentIgnoreFiles fans the ignore list out to every live bridge, for a
-// settings write that touched it. The value is CONNECTION-scope in KAS and hot —
-// it is pushed into each live session's policy engine with no session restart — so
-// this is what makes an edit reach the chats already open.
-//
-// Per-bridge failures are logged and not fatal, one shared timeout, the shape
-// mcpRegistry.reconnectServer already holds for a live fan-out. Notify rather than
-// Call: KAS answers this notification with nothing.
-//
-// On an unreadable settings document it sends NOTHING and reports the document in
-// the panel. Every live bridge already holds a list KAS is enforcing, and the two
-// alternatives are both worse than silence: a list assembled from a document that
-// could not be read is a guess, and an empty list CLEARS enforcement outright.
+// PushAgentIgnoreFiles fans the ignore list out to every live bridge after a settings
+// write; KAS applies it hot. Per-bridge failures are logged. On an unreadable document it
+// sends NOTHING and reports it: an empty list would CLEAR enforcement in KAS.
 func (rt *Runtime) PushAgentIgnoreFiles(ctx context.Context) {
 	bridges := rt.bridge.mgr.all()
 	if len(bridges) == 0 {

@@ -1,6 +1,4 @@
-// ---------------------------------------------------------------------------
 // MCP state: wire types, secret sentinel, in-memory state, server fetch.
-// ---------------------------------------------------------------------------
 
 import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
@@ -16,6 +14,7 @@ import {
   asObject,
   decodeArray,
   optBool,
+  optNum,
   optStr,
   reqBool,
   reqNum,
@@ -53,7 +52,7 @@ const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   return out;
 };
 
-const decodeResourceInfo: Decoder<MCPResourceInfo> = (v) => {
+export const decodeResourceInfo: Decoder<MCPResourceInfo> = (v) => {
   const o = asObject(v, "$.mcp.resource");
   const out: MCPResourceInfo = {
     name: reqStr(o, "name", "$.mcp.resource"),
@@ -70,19 +69,45 @@ const decodeResourceInfo: Decoder<MCPResourceInfo> = (v) => {
   return out;
 };
 
+export const decodeResourceTemplateInfo: Decoder<MCPResourceTemplateInfo> = (v) => {
+  const o = asObject(v, "$.mcp.resource_template");
+  const out: MCPResourceTemplateInfo = {
+    name: reqStr(o, "name", "$.mcp.resource_template"),
+    uri_template: reqStr(o, "uri_template", "$.mcp.resource_template"),
+  };
+  const d = optStr(o, "description", "$.mcp.resource_template");
+  if (d !== undefined) {
+    out.description = d;
+  }
+  const m = optStr(o, "mime_type", "$.mcp.resource_template");
+  if (m !== undefined) {
+    out.mime_type = m;
+  }
+  return out;
+};
+
 const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const s = asObject(v, "$.mcp_status.server");
   const out: WireRuntimeStatus = {
     name: reqStr(s, "name", "$.mcp_status.server"),
     state: reqStr(s, "state", "$.mcp_status.server"),
   };
-  // Optional on the decode side even though the server always sends it: a
-  // decoder that REQUIRED it would reject the whole status response, blanking
-  // every row, if a server ever omitted it. adaptOrigin's fallback is the
-  // conservative answer for a missing value.
+  // Optional on decode though always sent: requiring it would reject the whole status response if one server omitted it.
   const origin = optStr(s, "origin", "$.mcp_status.server");
   if (origin !== undefined) {
     out.origin = origin;
+  }
+  const root = optStr(s, "origin_root", "$.mcp_status.server");
+  if (root !== undefined) {
+    out.origin_root = root;
+  }
+  const power = optStr(s, "origin_power", "$.mcp_status.server");
+  if (power !== undefined) {
+    out.origin_power = power;
+  }
+  // Strict `=== true`: omitted in the common case, and absent means it shadows nothing.
+  if (s["shadows"] === true) {
+    out.shadows = true;
   }
   const oauthUrl = optStr(s, "oauth_url", "$.mcp_status.server");
   if (oauthUrl !== undefined) {
@@ -92,10 +117,7 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   if (err !== undefined) {
     out.error = err;
   }
-  // Read as a strict `=== true` rather than through a validator: the server
-  // omits it in the common case (`omitempty`), and a missing flag means "not
-  // yet relayed", which is the safe default — it offers the paste box rather
-  // than hiding it for a callback that was never delivered.
+  // Strict `=== true`: omitted in the common case, and absent means "not yet relayed", which keeps the paste box offered.
   if (s["relayed"] === true) {
     out.relayed = true;
   }
@@ -110,6 +132,13 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
       s["resources"],
       decodeResourceInfo,
       "$.mcp_status.server.resources",
+    );
+  }
+  if (Array.isArray(s["resource_templates"])) {
+    out.resource_templates = decodeArray(
+      s["resource_templates"],
+      decodeResourceTemplateInfo,
+      "$.mcp_status.server.resource_templates",
     );
   }
   return out;
@@ -150,13 +179,25 @@ const decodeServer: Decoder<Server> = (v) => {
   if (oauthClientId !== undefined) {
     out.oauth_client_id = oauthClientId;
   }
-  const oauthClientSecret = optStr(o, "oauth_client_secret", p);
-  if (oauthClientSecret !== undefined) {
-    out.oauth_client_secret = oauthClientSecret;
+  const oauthMetadataURL = optStr(o, "oauth_client_metadata_url", p);
+  if (oauthMetadataURL !== undefined) {
+    out.oauth_client_metadata_url = oauthMetadataURL;
+  }
+  const oauthRedirectURI = optStr(o, "oauth_redirect_uri", p);
+  if (oauthRedirectURI !== undefined) {
+    out.oauth_redirect_uri = oauthRedirectURI;
   }
   const prewarm = optBool(o, "prewarm", p);
   if (prewarm !== undefined) {
     out.prewarm = prewarm;
+  }
+  const waitForReady = optBool(o, "wait_for_ready", p);
+  if (waitForReady !== undefined) {
+    out.wait_for_ready = waitForReady;
+  }
+  const timeoutMS = optNum(o, "timeout_ms", p);
+  if (timeoutMS !== undefined) {
+    out.timeout_ms = timeoutMS;
   }
   if (Array.isArray(o["args"])) {
     out.args = (o["args"] as unknown[]).map((x) => String(x));
@@ -170,40 +211,17 @@ const decodeServer: Decoder<Server> = (v) => {
   if (Array.isArray(o["disabled_tools"])) {
     out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
   }
-  if (Array.isArray(o["auto_approve"])) {
-    out.auto_approve = (o["auto_approve"] as unknown[]).map((x) => String(x));
-  }
   return out;
 };
 
-const decodeMCPServersResponseLocal: Decoder<{
-  servers: Server[];
-  honoursAutoApprove: boolean;
-}> = (v) => {
+const decodeMCPServersResponseLocal: Decoder<{ servers: Server[] }> = (v) => {
   const o = asObject(v, "$.mcp_servers");
-  return {
-    servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers"),
-    // REQUIRED, and the throw it costs is deliberate: the server sends the field
-    // unconditionally, and supplying a default here would be the absent-means-a-value
-    // that requiredness exists to forbid. The throw's blast radius is the whole
-    // response (apiGetTyped collapses it to null, so the list blanks too), which is
-    // only acceptable because the absent case is unreachable in this deployment —
-    // index.html and /api/mcp are served by ONE binary, so a bundle newer than the
-    // server cannot be loaded, and a tab held open across a deploy runs the OLD
-    // bundle, which does not read this field at all.
-    honoursAutoApprove: reqBool(o, "honours_auto_approve", "$.mcp_servers"),
-  };
+  return { servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers") };
 };
 
-// --- Wire types (match internal/mcp + internal/hub/mcp_registry) ---
-
-// Transport mirrors the wiregen-emitted shape (stdio | http | sse). SSE is
-// the legacy HTTP+SSE remote transport, re-adopted for v3 (KAS advertises
-// mcpCapabilities.sse:true and accepts a distinct {type:"sse"} entry on
-// session/new). It is a first-class stored value that shares the url/headers
-// form with http, differing only in the ACP `type` discriminator.
+// SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
-import type { Transport } from "./wire/types.gen.js";
+import type { MCPOrigin, Transport } from "./wire/types.gen.js";
 
 export interface KeyPair {
   name: string;
@@ -219,26 +237,26 @@ export interface Server {
   transport: Transport;
   enabled: boolean;
   prewarm?: boolean;
+  /** KAS's per-server `waitForReady`, from a pasted config; keeps one server waited on when the Settings switch is off. */
+  wait_for_ready?: boolean;
+  /** KAS's per-server connect timeout in milliseconds; absent means KAS's
+   *  own default. Imported from a pasted config; no form control edits it. */
+  timeout_ms?: number;
   command?: string;
   args?: string[];
   env?: KeyPair[];
   url?: string;
   headers?: KeyPair[];
   disabled_tools?: string[];
-  /** Tool names this server may run with NO permission request. Rendered into
-   *  KAS's own config as `autoApprove`, so a listed tool is a standing
-   *  prompt bypass rather than a per-call approval. */
-  auto_approve?: string[];
-  /** Pre-registered OAuth 2.0 client ID for HTTP servers without
-   *  Dynamic Client Registration support (Slack, GitHub, Figma).
-   *  Forwarded to kiro-cli as `oauth.clientId` on session/new
-   *  (kiro-cli 2.3+). Empty falls back to DCR. */
+  /**
+   * Pre-registered OAuth client id for servers without Dynamic Client Registration, rendered as `oauth.clientId`.
+   * Empty falls back to DCR.
+   */
   oauth_client_id?: string;
-  /** Pre-registered OAuth 2.0 client secret for confidential HTTP MCP
-   *  servers that authenticate at the token endpoint (kiro-cli 2.12+).
-   *  Forwarded as `oauth.clientSecret`. Secret: returned as "***" when
-   *  set; send "***" unchanged to preserve, any other value to replace. */
-  oauth_client_secret?: string;
+  /** KAS `oauth.clientMetadataUrl`: an https client-ID metadata document. */
+  oauth_client_metadata_url?: string;
+  /** KAS `oauth.redirectUri`: the pinned loopback callback ("localhost:7778"). */
+  oauth_redirect_uri?: string;
   created_at: number;
   updated_at: number;
 }
@@ -267,102 +285,117 @@ export interface MCPResourceInfo {
   mime_type?: string;
 }
 
-/** What a connected server exposes: its tool names, prompts and resources
- *  (empty when none / not connected). Keyed by server name in the discovery
- *  signal map. All three arrive together on /api/mcp/status.
- *
- *  `tools` used to be a PERSISTED config field (`known_tools` on the server
- *  record). It moved here when KAS's config file became the source of truth:
- *  the tool names are what the agent found at connect time, not something the
- *  user configured, and writing them back into the config file made every
- *  status notification a disk write. */
+/** A parameterised resource a server advertises; `uri_template` is RFC 6570. */
+export interface MCPResourceTemplateInfo {
+  name: string;
+  uri_template: string;
+  description?: string;
+  mime_type?: string;
+}
+
+/**
+ * What a connected server exposes (tools, prompts, resources, resource templates), keyed by server name and arriving
+ * together on /api/mcp/status. Tools are a discovery result, not persisted config.
+ */
 export interface ServerDiscovery {
   tools: string[];
   prompts: MCPPromptInfo[];
   resources: MCPResourceInfo[];
+  resource_templates: MCPResourceTemplateInfo[];
 }
 
 export type RuntimeState = "connected" | "needs_auth" | "idle" | "failed" | "disabled";
 
-/** Where a server came from (`internal/marotte.Origin`).
- *
- *  `user` is a server this page's config list owns — its row carries every edit
- *  affordance. `power` came from an installed Power, `unknown` from a config
- *  marotte cannot read; both are read-only, and the difference is only what the
- *  row TELLS the reader. */
-export type Origin = "user" | "power" | "unknown";
+/**
+ * `origin` picks the row a live status belongs to, never editability. `shadows`: marotte's config holds the name, so
+ * marotte's row is not the one KAS runs.
+ */
+interface Provenance {
+  origin: MCPOrigin;
+  originRoot?: string;
+  originPower?: string;
+  shadows?: boolean;
+}
 
-export type RuntimeStatus =
-  | { name: string; origin: Origin; state: "connected" }
-  /** `relayed` says this attempt's stranded callback was already delivered
-   *  through the loopback relay (`POST /api/mcp/oauth-relay`). It rides the
-   *  status wire rather than living in the row, so a reload or a second device
-   *  does not offer the paste box again for a code that has been spent. */
-  | { name: string; origin: Origin; state: "needs_auth"; oauth_url: string; relayed: boolean }
-  | { name: string; origin: Origin; state: "idle" }
-  | { name: string; origin: Origin; state: "failed"; error: string }
-  | { name: string; origin: Origin; state: "disabled" };
+export type RuntimeStatus = Provenance &
+  (
+    | { name: string; state: "connected" }
+    /** `relayed` rides the status wire, so a reload or second device does not offer the paste box for a spent code. */
+    | { name: string; state: "needs_auth"; oauth_url: string; relayed: boolean }
+    | { name: string; state: "idle" }
+    | { name: string; state: "failed"; error: string }
+    | { name: string; state: "disabled" }
+  );
 
-/** A RuntimeStatus variant with the origin stripped — what an SSE frame can
- *  express. Distributive on purpose: a plain `Omit<RuntimeStatus, "origin">`
- *  collapses the union to its common members and loses `oauth_url` / `error`.
- *
- *  Not exported: its only use is setStatusFromEvent's parameter below, and a
- *  caller passes an object literal rather than naming the type. */
-type WithoutOrigin<T> = T extends unknown ? Omit<T, "origin"> : never;
+/** Distributive: a plain `Omit` collapses the union to its common members. */
+type WithoutOrigin<T> = T extends unknown ? Omit<T, keyof Provenance> : never;
 
-// --- Secret sentinel ---
 export const SECRET_MASK = "***";
-
-// --- Wire status type ---
 
 interface WireRuntimeStatus {
   name: string;
   state: string;
   origin?: string;
+  origin_root?: string;
+  origin_power?: string;
+  shadows?: boolean;
   oauth_url?: string;
   relayed?: boolean;
   error?: string;
   tools?: string[];
   prompts?: MCPPromptInfo[];
   resources?: MCPResourceInfo[];
+  resource_templates?: MCPResourceTemplateInfo[];
 }
 
-/** Narrow a wire origin string to the enum, defaulting to `user`.
- *
- *  The default is deliberate and it is the SAFE direction: `user` is the origin
- *  of every row this page's config list already renders, so an unrecognised or
- *  absent value cannot conjure a read-only row for a server the user owns. A
- *  read-only row is only ever produced by the server naming `power` or
- *  `unknown` explicitly. */
-function adaptOrigin(raw: string | undefined): Origin {
-  return raw === "power" || raw === "unknown" ? raw : "user";
+const FOREIGN_ORIGINS: ReadonlySet<string> = new Set<Exclude<MCPOrigin, "user">>([
+  "workspace",
+  "power",
+  "bundled",
+  "unknown",
+]);
+
+/** Defaults to `user`; the server never sends `user` for a name marotte lacks, so the default grants a row nothing. */
+function adaptOrigin(raw: string | undefined): MCPOrigin {
+  return raw !== undefined && FOREIGN_ORIGINS.has(raw) ? (raw as MCPOrigin) : "user";
+}
+
+function adaptProvenance(w: WireRuntimeStatus): Provenance {
+  const p: Provenance = { origin: adaptOrigin(w.origin) };
+  if (w.origin_root !== undefined && w.origin_root !== "") {
+    p.originRoot = w.origin_root;
+  }
+  if (w.origin_power !== undefined && w.origin_power !== "") {
+    p.originPower = w.origin_power;
+  }
+  if (w.shadows === true) {
+    p.shadows = true;
+  }
+  return p;
 }
 
 /** Exported for testing: adapt a wire status to the domain type. */
 export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
-  const origin = adaptOrigin(w.origin);
+  const prov = adaptProvenance(w);
   switch (w.state) {
     case "needs_auth":
       return {
         name: w.name,
-        origin,
+        ...prov,
         state: "needs_auth",
         oauth_url: w.oauth_url ?? "",
         relayed: w.relayed ?? false,
       };
     case "failed":
-      return { name: w.name, origin, state: "failed", error: w.error ?? "" };
+      return { name: w.name, ...prov, state: "failed", error: w.error ?? "" };
     case "connected":
-      return { name: w.name, origin, state: "connected" };
+      return { name: w.name, ...prov, state: "connected" };
     case "disabled":
-      return { name: w.name, origin, state: "disabled" };
+      return { name: w.name, ...prov, state: "disabled" };
     default:
-      return { name: w.name, origin, state: "idle" };
+      return { name: w.name, ...prov, state: "idle" };
   }
 }
-
-// --- Runtime status registry (per-server signal, keyed by server name) ---
 
 const statusMap = new SignalMap<RuntimeStatus>();
 
@@ -370,26 +403,23 @@ function idleStatus(name: string): RuntimeStatus {
   return { name, origin: "user", state: "idle" };
 }
 
-/** Reactive per-server runtime-status signal (created lazily as "idle"). Read
- *  `.value` inside an effect to re-render only when THIS server's status
- *  changes. */
+/** Reactive per-server runtime-status signal, created lazily as "idle". */
 export function statusSignalFor(name: string): ReadonlySignal<RuntimeStatus> {
   return statusMap.ensure(name, idleStatus(name));
 }
 
-// --- Discovery registry (per-server prompts/resources, keyed by name) ---
-
-const EMPTY_DISCOVERY: ServerDiscovery = { tools: [], prompts: [], resources: [] };
+const EMPTY_DISCOVERY: ServerDiscovery = {
+  tools: [],
+  prompts: [],
+  resources: [],
+  resource_templates: [],
+};
 const discoveryMap = new SignalMap<ServerDiscovery>();
 
-/** Reactive per-server discovery signal (tools/prompts/resources; empty
- *  default). Populated from /api/mcp/status, which carries what a connected
- *  server advertises. */
+/** Reactive per-server discovery signal (empty default), from /api/mcp/status. */
 export function discoverySignalFor(name: string): ReadonlySignal<ServerDiscovery> {
   return discoveryMap.ensure(name, EMPTY_DISCOVERY);
 }
-
-// --- Prewarm registry (per-server npx-install state, keyed by server id) ---
 
 export type PrewarmState = "none" | "installing" | "failed";
 
@@ -405,20 +435,13 @@ export function setPrewarm(id: string, state: "installing" | "done" | "failed"):
   prewarmMap.ensure(id, "none").value = state === "done" ? "none" : state;
 }
 
-// --- Server collection (ordered, keyed by id) ---
-
-/** The configured MCP servers. Rendered by bindList in mcp-ui; per-server
- *  field changes fire `signalFor(id)`, add/remove/reorder fire `ids`. */
+/** The configured MCP servers: field changes fire `signalFor(id)`, add/remove/reorder fire `ids`. */
 export const servers: Collection<Server> = createCollection<Server>((s) => s.id);
 
-/** Names /api/mcp/status reported that this page's config list does not hold —
- *  a Power's server, or one from a config marotte cannot read. Sorted.
- *
- *  It exists because the configured list is keyed by a persisted server id and
- *  such a server has none: it is not in `mcp.json` at all. Without a second list
- *  the page shows nothing for it while its tools sit in the agent's tool list,
- *  which is the whole defect. Rows built from it are read-only — there is no
- *  record to edit, enable or delete. */
+/**
+ * Names /api/mcp/status reported that the config list does not hold (a Power's server, or an unreadable config),
+ * sorted. Such a server has no persisted id, so its rows are read-only.
+ */
 export const unconfiguredNames: Signal<string[]> = signal<string[]>([]);
 
 /** Snapshot of the configured servers (non-reactive). */
@@ -426,30 +449,9 @@ export function configuredServers(): Server[] {
   return servers.items();
 }
 
-const autoApproveHonouredState: Signal<boolean> = signal<boolean>(true);
-
-/** Whether the security profile in force lets a server's `auto_approve` list
- *  reach the agent, as `GET /api/mcp` last answered.
- *
- *  A statement about what the SERVER rendered, never derived here from a rung
- *  name: `internal/policyfile` owns the ladder, `internal/mcp` answers with the
- *  resolved decision, and that decision is the same value that decided what went
- *  into KAS's own config file — so the chips and the file cannot disagree.
- *
- *  It starts TRUE, which is the honest pre-fetch reading rather than a fallback:
- *  the panel renders the chips as SUSPENDED when this is false, so starting false
- *  would paint a suspension notice for the window before the first fetch lands,
- *  on every profile including the ones that honour the list. Nothing is protected
- *  by guessing here — the grant is withheld server-side either way, and this value
- *  only decides what the panel SAYS about it. */
-export const autoApproveHonoured: ReadonlySignal<boolean> = autoApproveHonouredState;
-
-/** Element-wise equality for two sorted name lists. */
 function sameNames(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((n, i) => n === b[i]);
 }
-
-// --- MCP fetch controller (servers + status; no manual render callback) ---
 
 class MCPStateController {
   private readonly serversSlot = new CancellableSlot();
@@ -468,22 +470,27 @@ class MCPStateController {
     statusMap.ensure(name, rs).value = rs;
   }
 
-  /** Set a server's runtime state from an SSE frame, keeping the origin already
-   *  known for it.
-   *
-   *  The SSE payloads carry no origin — only `/api/mcp/status` does — and a
-   *  server's provenance does not change while the process runs. Defaulting to
-   *  `user` here instead would flip a read-only row's chip on its first state
-   *  change and start offering edit affordances for a record that does not
-   *  exist, until the next status refetch put it back. */
+  /**
+   * SSE frames carry no provenance, so the known one is kept; defaulting to `user` would move a foreign server's status
+   * onto marotte's row.
+   */
   setStatusFromEvent(name: string, next: WithoutOrigin<RuntimeStatus>): void {
-    const origin = statusMap.ensure(name, idleStatus(name)).peek().origin;
-    this.setStatus(name, { ...next, origin });
+    const prev = statusMap.ensure(name, idleStatus(name)).peek();
+    const prov: Provenance = { origin: prev.origin };
+    if (prev.originRoot !== undefined) {
+      prov.originRoot = prev.originRoot;
+    }
+    if (prev.originPower !== undefined) {
+      prov.originPower = prev.originPower;
+    }
+    if (prev.shadows !== undefined) {
+      prov.shadows = prev.shadows;
+    }
+    this.setStatus(name, { ...next, ...prov });
   }
 
   deleteStatus(name: string): void {
-    // Reset to idle (fires the signal so subscribed rows re-render) rather
-    // than clear (which would orphan the row's subscription).
+    // Reset to idle rather than clear, which would orphan the row's subscription.
     statusMap.ensure(name, idleStatus(name)).value = idleStatus(name);
   }
 
@@ -499,21 +506,13 @@ class MCPStateController {
   }
 
   private async doRefetchServers(): Promise<void> {
-    // Named `abort`, not `signal`: this module now imports reactive's `signal`
-    // factory, and shadowing it with an AbortSignal reads as the wrong thing.
+    // Named `abort` to avoid shadowing reactive's `signal`.
     const abort = this.serversSlot.start();
     const d = await apiGetTyped("/api/mcp", decodeMCPServersResponseLocal, abort);
     if (abort.aborted) {
       return;
     }
     servers.setAll(d?.servers ?? []);
-    // Assigned only on a real answer. A failed or refused fetch says nothing
-    // about the posture, so the last known one stands rather than being reset to
-    // the optimistic start value — which on a `guarded` instance would drop the
-    // suspension notice for as long as the endpoint stayed unreachable.
-    if (d !== null) {
-      autoApproveHonouredState.value = d.honoursAutoApprove;
-    }
   }
 
   refetchStatus(): void {
@@ -540,22 +539,25 @@ class MCPStateController {
       seen.add(s.name);
       const st = adaptStatus(s);
       this.setStatus(s.name, st);
-      this.setDiscovery(s.name, s.tools ?? [], s.prompts ?? [], s.resources ?? []);
-      // Both conditions, not either: the origin is the server's own judgment and
-      // the authority, but the two fetches are independent, so a name already on
-      // a configured row must never also get a read-only one (two rows for one
-      // server) while /api/mcp is mid-flight.
-      if (st.origin !== "user" && !configured.has(s.name)) {
+      this.setDiscovery(
+        s.name,
+        s.tools ?? [],
+        s.prompts ?? [],
+        s.resources ?? [],
+        s.resource_templates ?? [],
+      );
+      // A foreign server gets its own row unless marotte's config has the name, except when it SHADOWS that name: then
+      // marotte's row is not in use and the running server needs its own.
+      if (st.origin !== "user" && (!configured.has(s.name) || st.shadows === true)) {
         foreign.push(s.name);
       }
     }
     foreign.sort();
-    // Replace only on a real change: this fires on every status refetch, and an
-    // equal-but-new array would rebuild every read-only row for nothing.
+    // Replace only on a real change: an equal new array would rebuild every read-only row.
     if (!sameNames(unconfiguredNames.peek(), foreign)) {
       unconfiguredNames.value = foreign;
     }
-    // Servers with no reported status revert to idle (fires their signal).
+    // Servers with no reported status revert to idle.
     for (const s of servers.items()) {
       if (!seen.has(s.name)) {
         this.deleteStatus(s.name);
@@ -569,25 +571,32 @@ class MCPStateController {
     tools: string[],
     prompts: MCPPromptInfo[],
     resources: MCPResourceInfo[],
+    templates: MCPResourceTemplateInfo[] = [],
   ): void {
-    if (tools.length === 0 && prompts.length === 0 && resources.length === 0) {
-      // Share the frozen empty value so idle servers don't churn the signal.
+    if (
+      tools.length === 0 &&
+      prompts.length === 0 &&
+      resources.length === 0 &&
+      templates.length === 0
+    ) {
+      // The shared frozen empty value, so idle servers do not churn the signal.
       discoveryMap.ensure(name, EMPTY_DISCOVERY).value = EMPTY_DISCOVERY;
       return;
     }
-    discoveryMap.ensure(name, EMPTY_DISCOVERY).value = { tools, prompts, resources };
+    discoveryMap.ensure(name, EMPTY_DISCOVERY).value = {
+      tools,
+      prompts,
+      resources,
+      resource_templates: templates,
+    };
   }
 }
-
-// --- Singleton export ---
 
 const instance = new MCPStateController();
 export const mcpState = instance;
 registerCleanup(() => {
   instance.abort();
 });
-
-// --- Optimistic mutation helpers (over the collection) ---
 
 /** Patch a configured entry in-place. Returns the previous entry for rollback. */
 export function updateConfiguredEntry(id: string, patch: Partial<Server>): Server | undefined {
@@ -624,7 +633,7 @@ export function insertConfiguredEntry(entry: Server, atIndex?: number): void {
   if (atIndex !== undefined && atIndex >= 0 && atIndex <= arr.length) {
     pos = atIndex;
   } else {
-    // Fall back to id ordering if no positional hint.
+    // No positional hint: id ordering.
     pos = arr.findIndex((s) => s.id > entry.id);
     if (pos === -1) {
       pos = arr.length;

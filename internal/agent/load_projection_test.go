@@ -52,8 +52,7 @@ func (r *settleRecorder) sink() func(marotte.ChatID, *loadProjection) {
 	}
 }
 
-// noChats is the replay store a bare replay carries: no log to snapshot a revert id
-// from, and no swap, because these tests record the settle instead.
+// noChats is a bare replay's store: no revert to snapshot and no swap.
 type noChats struct{}
 
 func (noChats) NewestRevert(context.Context, marotte.ChatID) (string, bool) { return "", false }
@@ -62,8 +61,7 @@ func (noChats) Reconcile(context.Context, marotte.ChatID, func(*chat.EntryLog, c
 	panic("a bare replay swaps nothing")
 }
 
-// revertingChats is the replay store whose provenance MOVES between two reads, which
-// is what a rewind landing while a replay is in flight looks like from here.
+// revertingChats moves its provenance between two reads, as a rewind during a replay does.
 type revertingChats struct{ newest string }
 
 func (c *revertingChats) NewestRevert(context.Context, marotte.ChatID) (string, bool) {
@@ -93,10 +91,8 @@ func feedOneTurn(t *testing.T, rp *replay, chatID marotte.ChatID) {
 	}
 }
 
-// The positions these tests drive. feedOneTurn ingests four frames and every one
-// of them precedes the load result on the wire, so a load that answered after them
-// answers at position 4 — and the attachment is whichever generation the forward
-// goroutine took (attachForward's first is 1).
+// feedOneTurn's four frames precede the load result, so the load answers at position 4, on
+// the forward goroutine's first attachment (1).
 const (
 	testFwdGen  uint64 = 1
 	testLoadSeq uint64 = 4
@@ -108,18 +104,11 @@ func atFrame(seq uint64) drainPoint { return drainPoint{gen: testFwdGen, seq: se
 // atLoad is the position the session/load response arrived at.
 func atLoad() drainPoint { return drainPoint{gen: testFwdGen, seq: testLoadSeq} }
 
-// atExit is the bridge-exit seal: an attachment, and no position, because no frame
-// can advance one again.
+// atExit is the bridge-exit seal: an attachment and no position.
 func atExit() drainPoint { return drainPoint{gen: testFwdGen} }
 
-// TestReplayProjection_SettleBarrier is the test that matters here: the settle
-// condition is a RACE GUARD, and each half of it has to be load-bearing.
-//
-// session/load is issued inside bridge.Start, which blocks on the result, while
-// the replay frames arrive on the Forward goroutine. The frames precede the
-// result on the wire, so when Start returns they are all PUSHED — but notifCh is
-// buffered (256), so Forward may not have FOLDED them. Settling on the load's
-// return alone would adopt a partial transcript.
+// TestReplayProjection_SettleBarrier pins both halves of the race guard: replay frames are
+// pushed before Start returns, but notifCh is buffered (256), so Forward may not have folded them.
 func TestReplayProjection_SettleBarrier(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 
@@ -143,8 +132,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
-		// The consumer has folded up to the frame BEFORE the result: undrained
-		// replay, whatever else is or is not queued behind it.
+		// Folded only up to the frame before the result: undrained.
 		rp.SettleReplayProjection(chatID, atFrame(testLoadSeq-1), false)
 		if rec.calls != 0 {
 			t.Errorf("settled %d times one frame short of the load position, want 0", rec.calls)
@@ -178,10 +166,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
-		// A post-result catalog frame carries a HIGHER position, so reaching it
-		// satisfies the condition rather than resetting it — which is what the old
-		// channel-depth observation could not express: that frame kept the channel
-		// non-empty and held the settle back.
+		// A post-result catalog frame has a higher position, which satisfies the condition.
 		rp.SettleReplayProjection(chatID, atFrame(testLoadSeq+3), false)
 		if rec.calls != 1 {
 			t.Errorf("settled %d times past the load position, want 1", rec.calls)
@@ -194,8 +179,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
-		// Forward calls this after EVERY frame, so a second call with the same
-		// condition must not re-swap a transcript.
+		// Forward calls this after every frame; a repeat must not re-swap.
 		for range 4 {
 			rp.SettleReplayProjection(chatID, atFrame(testLoadSeq), false)
 		}
@@ -210,8 +194,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
-		// The bridge-exit call: no further frame can arrive to re-trigger the
-		// check, so the projection must complete rather than leak.
+		// The bridge-exit seal must complete the projection rather than leak it.
 		rp.SettleReplayProjection(chatID, atExit(), true)
 		if rec.calls != 1 {
 			t.Errorf("sealed settle ran %d times, want 1", rec.calls)
@@ -223,8 +206,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
 		feedOneTurn(t, rp, chatID)
 
-		// A bridge that died before session/load returned has no transcript to
-		// adopt; sealing must not manufacture one from a partial replay.
+		// A bridge dying before session/load returned has nothing to adopt.
 		rp.SettleReplayProjection(chatID, atExit(), true)
 		if rec.calls != 0 {
 			t.Errorf("sealed settle ran %d times on a load that never returned, want 0", rec.calls)
@@ -235,13 +217,11 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 		rp, rec := replayWithRecorder()
 		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
 		feedOneTurn(t, rp, chatID)
-		// This chat's load ran on attachment 2, the model-switch reload's forward.
+		// This chat's load ran on attachment 2, the reload's forward.
 		const reload = testFwdGen + 1
 		rp.MarkReplayLoadedAt(chatID, drainPoint{gen: reload, seq: testLoadSeq})
 
-		// The PREVIOUS bridge's forward is still draining its closed channel, and
-		// its positions run far ahead — a whole session's frames against a fresh
-		// load's three. Adopting them would settle this replay on frame one.
+		// The previous bridge's forward is still draining with far-ahead positions; adopting them settles on frame one.
 		rp.SettleReplayProjection(chatID, drainPoint{gen: testFwdGen, seq: 900}, false)
 		if rec.calls != 0 {
 			t.Errorf("a straggling observation from attachment %d settled the replay "+
@@ -251,16 +231,14 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 			t.Fatal("the straggler dropped the projection")
 		}
 
-		// And it must not have been ADOPTED either, which refusing to settle on it
-		// does not prove: the live attachment's own first frame is still one frame
-		// in, so a stored 900 would settle the replay here on a partial transcript.
+		// Nor stored: a stored 900 would settle on the live attachment's first frame.
 		rp.SettleReplayProjection(chatID, drainPoint{gen: reload, seq: 1}, false)
 		if rec.calls != 0 {
 			t.Errorf("settled %d times on the live attachment's FIRST frame, want 0 — "+
 				"the straggler's position was adopted", rec.calls)
 		}
 
-		// Its own attachment reaching the load position still settles it.
+		// Its own attachment reaching the load position settles it.
 		rp.SettleReplayProjection(chatID, drainPoint{gen: reload, seq: testLoadSeq}, false)
 		if rec.calls != 1 {
 			t.Errorf("settled %d times once its own attachment caught up, want 1", rec.calls)
@@ -273,10 +251,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
-		// A second bridge attached, so the frames the load bounded are queued on a
-		// channel nobody will drain further and its sequence restarts at zero. The
-		// low positions the new attachment reports must not satisfy a bound
-		// measured against the old one.
+		// A second attachment restarts at zero; its positions must not satisfy the old bound.
 		rp.SettleReplayProjection(chatID, drainPoint{gen: testFwdGen + 1, seq: 1}, false)
 		if rec.calls != 0 {
 			t.Errorf("settled %d times on a fresh attachment's first frame, want 0", rec.calls)
@@ -284,19 +259,15 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 	})
 }
 
-// TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns: a replay whose frames all
-// drained BEFORE the RPC returned has nothing left to notice it — no frame is coming, and a
-// caller cannot wait for the bridge to die. With the settle running only from Forward (per
-// frame consumed, and once at bridge exit) such a transcript sat fully built in the map while
-// the rewind's replay barrier spent its whole 45s budget and refused the rewind.
+// TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns pins that a replay drained before the RPC
+// returned has no later frame to settle it, so the load's return must.
 func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 	rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
 	feedOneTurn(t, rp, chatID)
 
-	// Forward folded every replayed frame first, which is the ordinary case for a
-	// short transcript: the drain finishes while the RPC is still in flight.
+	// The ordinary short transcript: drained while the RPC is in flight.
 	rp.SettleReplayProjection(chatID, atFrame(testLoadSeq), false)
 	if rec.calls != 0 {
 		t.Fatalf("settled %d times before the load returned, want 0", rec.calls)
@@ -317,10 +288,7 @@ func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) 
 	}
 }
 
-// TestReplayProjection_DiscardOnFailedLoad pins that a failed session/load
-// leaves nothing behind. tryLoadSession falls through to session/new on
-// failure, and a surviving projection would let that fresh session adopt the
-// dead one's partial transcript.
+// TestReplayProjection_DiscardOnFailedLoad pins that a surviving projection would let the fallback session/new adopt a partial transcript.
 func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
@@ -331,7 +299,7 @@ func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 	if rp.hasProjection(chatID) {
 		t.Error("projection survived a discard")
 	}
-	// Even the settle condition holding afterwards must not resurrect it.
+	// Even the condition holding afterwards must not resurrect it.
 	rp.MarkReplayLoadedAt(chatID, atLoad())
 	rp.SettleReplayProjection(chatID, atExit(), true)
 	if rec.calls != 0 {
@@ -339,9 +307,7 @@ func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 	}
 }
 
-// TestReplayProjection_FrameWithNoLoadIsRejected pins the fallback that keeps
-// agent.handleSessionUpdate's drop path meaningful: a replay frame arriving with
-// no load in flight has no transcript to belong to.
+// TestReplayProjection_FrameWithNoLoadIsRejected pins that a replay frame with no load in flight belongs nowhere.
 func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
 	rp, _ := replayWithRecorder()
 	if rp.ingestReplayFrame("nobody", marotte.ACPUpdateAgentChunk,
@@ -350,9 +316,7 @@ func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
 	}
 }
 
-// TestReplayProjection_ReloadSupersedes pins that a second load for the same
-// chat (the model-switch fallback path) starts clean rather than appending to
-// the first load's half-built transcript.
+// TestReplayProjection_ReloadSupersedes pins that a second load starts clean.
 func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
@@ -372,12 +336,8 @@ func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 	}
 }
 
-// TestReplayProjection_OneProjectionPerChat is the arm SwapMerged's revert gate rests
-// on. NewestRevert answers the LAST turn_revert in FILE order rather than the highest
-// from_n, and a rewrite can reorder two reverts relative to file order — so the gate is
-// sound only while a chat holds at most ONE projection and a settle consumes it. Both
-// halves are here because either one alone leaves the gate comparing the log's newest
-// revert against provenance nobody re-read.
+// TestReplayProjection_OneProjectionPerChat pins that SwapMerged's revert gate is sound only while a chat
+// holds at most one projection and a settle consumes it (NewestRevert is file order, which a rewrite can reorder).
 func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 
@@ -388,8 +348,7 @@ func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
 		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
 		feedOneTurn(t, rp, chatID)
 
-		// The case the gate exists for: a rewind lands between the load that failed
-		// and the re-load the model-switch fallback issues.
+		// A rewind lands between the failed load and the fallback re-load.
 		chats.newest = "t-2:revert"
 		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
 
@@ -415,10 +374,7 @@ func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
 			t.Fatalf("the settle ran %d times, want 1", rec.calls)
 		}
 
-		// Every later trigger claims nothing, because the claim TOOK it. Three
-		// triggers reach claimSettled on two goroutines, so a projection left in the
-		// map is swapped a second time: another whole-file rewrite of a log the first
-		// swap already rewrote, gated on a snapshot read before either of them.
+		// Later triggers claim nothing: the claim took it.
 		rp.SettleReplayProjection(chatID, atFrame(testLoadSeq), false)
 		rp.SettleReplayProjection(chatID, atExit(), true)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
@@ -432,11 +388,7 @@ func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
 	})
 }
 
-// replayWithRecorder builds the minimum these tests need, which is now a bare
-// replay rather than a Runtime: the projection lifecycle touches only that type's
-// own three fields, so there is no bridge, no store and no goroutine to stand up.
-// It was a &Runtime{} when the six methods hung off the runtime and reached an
-// embedded projectionState.
+// replayWithRecorder builds a bare replay: the lifecycle touches only that type's fields.
 func replayWithRecorder() (*replay, *settleRecorder) {
 	rec := &settleRecorder{}
 	rp := &replay{chats: noChats{}, projections: map[marotte.ChatID]*loadProjection{}}
@@ -444,8 +396,7 @@ func replayWithRecorder() (*replay, *settleRecorder) {
 	return rp, rec
 }
 
-// hasProjection reports whether a projection is open. Test-only, and defined
-// here rather than in production so it adds no exported surface.
+// hasProjection reports whether a projection is open.
 func (rp *replay) hasProjection(chatID marotte.ChatID) bool {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -453,9 +404,7 @@ func (rp *replay) hasProjection(chatID marotte.ChatID) bool {
 	return ok
 }
 
-// projectionSnapshot answers the chat's open projection's provenance and how many
-// projections the replay holds. Test-only, beside hasProjection, so the snapshot the
-// gate reads is observable without exporting it.
+// projectionSnapshot answers the open projection's provenance and how many the replay holds.
 func (rp *replay) projectionSnapshot(chatID marotte.ChatID) (string, int) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -478,8 +427,7 @@ func replayNotif(t *testing.T, kind marotte.ACPUpdateKind, text, sub string) *ma
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: raw}
 }
 
-// loadedChat seeds a chat carrying an ACP session id, which is what sends its
-// next spawn down the session/load path rather than session/new.
+// loadedChat seeds a chat with an ACP session id, sending its next spawn down session/load.
 func loadedChat(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
@@ -491,12 +439,8 @@ func loadedChat(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	}
 }
 
-// awaitPatience is a test-owned patience bound, not a production budget: nothing here
-// asserts how PROMPTLY the transcript is adopted, only that it is. Do NOT widen it to fix a
-// failure — the settle deletes its projection, so a settle that fires EARLY drops every later
-// frame and the transcript can never arrive, which no bound can outwait. The message below
-// dumps what the record holds: a one-message transcript is the tell for that bug, nothing at
-// all is the tell for a genuinely stuck Forward.
+// awaitPatience is a test patience bound. Never widen it to fix a failure: an early settle drops
+// every later frame. A one-message transcript is that bug; an empty one is a stuck Forward.
 const awaitPatience = 20 * time.Second
 
 func awaitReplayedTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, want string) {
@@ -522,16 +466,10 @@ func awaitReplayedTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, w
 	}
 }
 
-// TestSessionLoad_AdoptsTheReplayedTranscript is the load path end to end. Both halves of
-// the settle condition are wired here rather than asserted separately, because either one
-// missing produces the same user-visible failure — a resumed chat whose history is gone. The
-// projection must be OPEN before Forward attaches, or the frames arrive with nowhere to land,
-// and the load's return must be recorded, or no settle path completes.
+// TestSessionLoad_AdoptsTheReplayedTranscript is the load path end to end: the projection opens
+// before Forward attaches, and the load's return is recorded.
 func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
-	// A fresh bridge per spawn, because the utility bridge the rehydrate sweep
-	// starts would otherwise share this one's notification channel and drain the
-	// replay out from under the chat's own Forward loop. Each one carries the
-	// transcript, and only the one doing a session/load replays it.
+	// A fresh bridge per spawn, so the rehydrate sweep's utility bridge does not drain this replay.
 	cs := newTestChatStore()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge {
 		b := newFakeBridge()
@@ -544,14 +482,10 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 		return b
 	}, cs)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
 
-	// The replay is delivered inside this call, the way KAS delivers it inside
-	// session/load, so by the time the load result is recorded every frame is
-	// already in the channel. Pushing them afterwards instead is what let the
-	// barrier settle on a one-frame transcript.
+	// The replay arrives inside this call, as KAS delivers it inside session/load.
 	sb, err := h.coord.OpenBridge(t.Context(), chatID, "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -561,25 +495,19 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 		t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
 	}
 	if opts := br.lastStartOpts(); opts == nil || opts.SessionID == "" {
-		// Without a named session the fake replays nothing, so every assertion
-		// below would pass or fail for a reason that has nothing to do with the
-		// settle. Fail as invalid rather than reporting on an empty replay.
+		// Without a named session the fake replays nothing, so fail as invalid.
 		t.Fatalf("the chat's bridge was started with StartOpts %+v, want one naming "+
 			"the stored ACP session so the fake replays a transcript", opts)
 	}
 
-	// The bridge exiting is the backstop settle, so completion no longer depends
-	// on which side of the race drained the last frame.
+	// The bridge exit is the backstop settle.
 	br.Stop()
 
 	awaitReplayedTurn(t, cs, chatID, "reply")
 }
 
-// TestForward_ReportsEachFramesOwnPosition pins the number Forward hands the settle, the
-// frame's OWN Seq off the wire. Every other chat-route case can settle by another door, so
-// none notices Forward reporting a constant; this one closes both — the load position is
-// recorded BEFORE any frame is folded so no post-load attempt can complete it, and the
-// bridge is never stopped so no seal is coming.
+// TestForward_ReportsEachFramesOwnPosition pins that Forward reports each frame's own Seq; the
+// load position is recorded first and the bridge never stopped, so no other door settles it.
 func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -596,8 +524,7 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	gen := h.coord.turns.attachForward(chatID)
 	go h.coord.forwardAt(chatID, br, gen)
 
-	// The load answered at the position of the last replayed frame, and nothing has
-	// been folded yet — the ordering a consumer behind its channel produces.
+	// The load answered at the last frame's position, before anything was folded.
 	h.replay.MarkReplayLoadedAt(chatID, drainPoint{gen: gen, seq: uint64(len(frames))})
 	if !h.replay.hasProjection(chatID) {
 		t.Fatal("the replay settled with nothing folded, so this test cannot tell " +
@@ -615,18 +542,14 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	}
 }
 
-// TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame is the backstop neither the
-// frames nor the load's own settle attempt can provide: a bridge that dies with the consumer
-// short of the load's position leaves a projection whose condition can never hold again — no
-// frame will advance it, and the reader's own attempt already ran and found it short. Without
-// the seal at Forward's exit the chat resumes empty and the rebuild leaks for the process.
+// TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame pins the seal at Forward's exit,
+// or the chat resumes empty and the rebuild leaks.
 func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
 
-	// Folded into the projection without ever being CONSUMED off a channel, which
-	// is what leaves the position short: the load names a bound nothing will reach.
+	// Folded without being consumed off a channel, so the position stays short.
 	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp")
 	feedOneTurn(t, h.replay, chatID)
 	h.replay.MarkReplayLoadedAt(chatID, atLoad())
@@ -635,7 +558,7 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	h.coord.Forward(chatID, br)
 
 	awaitReplayedTurn(t, cs, chatID, "reply")
-	// And the rebuild is released rather than left open forever.
+	// The rebuild is released.
 	if h.replay.ingestReplayFrame(chatID, marotte.ACPUpdateAgentChunk,
 		replayUpdate(t, marotte.ACPUpdateAgentChunk, "late", "")) {
 		t.Error("a projection was still open after the bridge exited, so every later " +
@@ -643,12 +566,8 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	}
 }
 
-// TestReplayProjection_ConcurrentLoadsAreIndependent pins that the rebuilds are keyed per
-// chat. Two chats loading at once is ordinary: a restart with several tabs open respawns a
-// bridge per chat as each is touched. If opening the second disturbed the map holding the
-// first, the earlier chat's replay would be discarded mid-flight and it would resume with an
-// empty history and no error, because a dropped projection looks like a chat that never
-// loaded.
+// TestReplayProjection_ConcurrentLoadsAreIndependent pins per-chat keying: a restart with several
+// tabs loads several chats at once.
 func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 	rp, rec := replayWithRecorder()
 	const first marotte.ChatID = "c1"
@@ -658,7 +577,7 @@ func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 	feedOneTurn(t, rp, first)
 	rp.MarkReplayLoadedAt(first, atLoad())
 
-	// The second chat's spawn happens while the first is still in flight.
+	// The second spawn while the first is in flight.
 	rp.OpenReplayProjection(t.Context(), second, "old-acp")
 	if !rp.hasProjection(first) {
 		t.Fatal("opening a second chat's load dropped the first chat's rebuild, so that " +
@@ -678,14 +597,8 @@ func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 	}
 }
 
-// TestReplayProjection_SettleReportsFramesAgainstTurns pins the one diagnostic
-// a settle leaves behind.
-//
-// The pair of counts is the whole point: many frames folding into zero turns is a
-// decoding bug, and nothing else in the process would say so — the transcript
-// simply comes back empty and the user reads that as a lost conversation. So the
-// frame tally has to track the frames actually ingested rather than merely being
-// present, and the turn count reaches the swap beside it.
+// TestReplayProjection_SettleReportsFramesAgainstTurns pins the settle's frame and turn counts:
+// many frames and zero turns is a decoding bug nothing else reports.
 func TestReplayProjection_SettleReportsFramesAgainstTurns(t *testing.T) {
 	logs := captureLogs(t)
 	rp, rec := replayWithRecorder()
@@ -708,9 +621,7 @@ func TestReplayProjection_SettleReportsFramesAgainstTurns(t *testing.T) {
 	}
 }
 
-// projectedTurn builds a settled one-turn projection the swap tests hand to the
-// swap seam directly, bypassing the drain: what they pin is the write and its
-// announcement, not the completion condition.
+// projectedTurn builds a settled one-turn projection for the swap seam, bypassing the drain.
 func projectedTurn(t *testing.T, h *Runtime) *loadProjection {
 	t.Helper()
 	lp := &loadProjection{
@@ -747,10 +658,7 @@ func eventFor(t *testing.T, events []sse.ReplayEvent, want marotte.EventType) (m
 	return marotte.ServerEvent{}, false
 }
 
-// TestSwapProjectedTranscript_AnnouncesTheReplacement: a merge that rewrote the log
-// tells the client to refetch, with the chat stamp the rewrite minted. A header
-// frame cannot say a transcript was REPLACED, and a client whose window is already
-// marked loaded has nothing else to refetch on.
+// TestSwapProjectedTranscript_AnnouncesTheReplacement pins the refetch with the rewrite's chat stamp.
 func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -781,9 +689,7 @@ func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
 	}
 }
 
-// TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged: a second load
-// of the same session rebuilds the same turns, and a merge that changed nothing must
-// neither rewrite the log nor push a refetch to every resumed tab.
+// TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged pins that no rewrite and no refetch.
 func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -802,9 +708,7 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 	}
 }
 
-// TestSwapProjectedTranscript_WritesOnACancelledLifetime is the restart case: the
-// swap runs on the shutdown context's descendant, and a merge refused at shutdown
-// loses the turn KAS still held.
+// TestSwapProjectedTranscript_WritesOnACancelledLifetime is the restart case: refusing at shutdown loses the turn.
 func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -819,24 +723,14 @@ func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
 	}
 }
 
-// TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched pins the PROVENANCE the
-// swap's second gate compares: the store's own newest turn_revert, read when the
-// projection opened and carried through the projection into the Swap.
-//
-// Nothing else observes that value travelling. The projection tests' store double answers
-// no revert for every chat, and the swap tests build their Swap by hand off the log's own
-// NewestRevert, so a projection that snapshotted nothing passes both. It does not pass
-// here: with a revert already in the log, an empty snapshot makes the gate read a record
-// that predates the replay as one that landed under it, so every resume of a rewound chat
-// discards its projection and that chat never merges again for the life of its log,
-// reported as one Warn per resume.
+// TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched pins the provenance carried from
+// open into the Swap: an empty snapshot makes every resume of a rewound chat discard its projection.
 func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
 
-	// A chat a rewind has already touched is the only shape that can tell the store's
-	// answer from the empty one: with no revert in the log the two are the same value.
+	// Only a chat already rewound tells the store's answer from the empty one.
 	opened, err := cs.OpenTurn(t.Context(), chatID, &chat.TurnSpec{
 		Source: marotte.TurnOpenNamePrompt,
 		Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "first"},
@@ -853,8 +747,7 @@ func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) 
 			"pass the gate too and this test would assert nothing", revert, held)
 	}
 
-	// Opened through the production door, so the snapshot is whatever the STORE answered
-	// rather than a value this test supplied.
+	// Through the production door, so the snapshot is the store's.
 	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp")
 	feedOneTurn(t, h.replay, chatID)
 	h.replay.MarkReplayLoadedAt(chatID, atLoad())
@@ -871,11 +764,7 @@ func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) 
 			"which value the projection carried", got, revert)
 	}
 
-	// The swap's own INPUT: MergeEntries is fed the whole file, so the rewrite it ends in
-	// carries the reverted turn's entries through. Fed the surviving view instead, the
-	// same rewrite is a physical compaction — the hidden turn's entries leave the file and
-	// the record that named them resolves against nothing — which is the data loss
-	// decision 2 places out of scope and which no reader can undo.
+	// The swap's input is the whole file, so the rewrite carries the reverted entries through.
 	hidden, reverted := revertedEntriesAfterSwap(t, cs, chatID, opened.Turn)
 	if len(hidden) == 0 {
 		t.Errorf("the rewritten log holds no entry of the reverted turn %q (reverted set "+
@@ -885,10 +774,8 @@ func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) 
 	}
 }
 
-// revertedEntriesAfterSwap reads the chat's whole log past the surviving view — the merge's
-// own read — and answers the entries of turn plus the reverted set the scan rebuilt. It
-// goes through Reconcile because AllWithReverted is the log's, and reports no change so the
-// read cannot move the window it is measuring.
+// revertedEntriesAfterSwap reads the whole log through Reconcile and returns turn's entries plus
+// the reverted set, reporting no change.
 func revertedEntriesAfterSwap(t *testing.T, cs *testChatStore, chatID marotte.ChatID, turn string) ([]marotte.Entry, map[string]struct{}) {
 	t.Helper()
 	var (

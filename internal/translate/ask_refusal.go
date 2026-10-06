@@ -1,8 +1,7 @@
 package translate
 
-// The one convention shared by the three ask handlers: a frame carrying an
-// id that marotte declines to process gets a well-formed fail-closed
-// answer, never a bare return.
+// The three ask handlers' shared convention: an ask marotte declines gets a well-formed
+// fail-closed answer, never a bare return.
 
 import (
 	"context"
@@ -11,20 +10,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// refuseAsk answers a server-to-client ask whose params did not decode.
-//
-// The id was verified before this runs, so the frame is provably a
-// request, and KAS's sendRequest carries no timeout: returning without
-// answering strands the tool batch until process teardown.
-//
-// The answer is the kind's own fail-closed first-class result, never a
-// JSON-RPC error. KAS's turn-approval path fails open (answers approved
-// when the requestPermission call throws), so an RPC error there would
-// apply every unreviewed write in the turn — strictly worse than the drop.
-//
-// Nothing decoded from the frame is logged: a permission title, an
-// elicitation message and a user-input question are all agent-authored
-// untrusted text. The method, the id and the decode error are marotte's own.
+// refuseAsk answers a server-to-client ask whose params did not decode. KAS's sendRequest has
+// no timeout, so not answering strands the tool batch. The answer is the kind's own
+// fail-closed RESULT, never a JSON-RPC error: KAS's turn-approval path fails OPEN on an error,
+// applying every unreviewed write. Nothing decoded from the frame is logged (untrusted text).
 func (t *Translator) refuseAsk(
 	ctx context.Context, chatID marotte.ChatID, method string, requestID int64, result any, cause error,
 ) {

@@ -1,10 +1,5 @@
-// Actions for the tools engine (Settings -> Tools).
-//
-// Every mutation is a fast request: the server enqueues a job on its
-// single-flight queue and answers 202 with the job view; progress
-// streams over the tool_job_changed / tool_job_output SSE events. No
-// long-running requests, no extended timeouts, no retry hazards.
-// ---------------------------------------------------------------------------
+// Tools engine actions (Settings -> Tools). Each mutation enqueues a job and answers 202;
+// progress streams over tool_job_changed / tool_job_output, so no long requests or retry hazards.
 
 import {
   apiAction,
@@ -29,9 +24,7 @@ import type {
 import { MCP_API } from "./mcp.js";
 import { RATE_LIMITED } from "../tool-rate-limit.js";
 
-/** Fields accepted by POST /api/tools (create). Everything except the
- *  name is optional — the server fills source/version/description from
- *  the catalog when the name is known there. */
+/** POST /api/tools fields. Only the name is required; the server fills the rest from the catalog. */
 export interface CreateToolRequest {
   name: string;
   source?: string;
@@ -99,9 +92,8 @@ export const updateTools = apiAction<{ names?: string[] } | undefined, JobRespon
   error: "Could not start update",
 });
 
-/** PATCH result: 202 + job (null when no work was needed); a 409
- *  has_dependents envelope (disabling a tool others require) resolves
- *  as a success payload so the caller can run the force-confirm flow. */
+/** PATCH result: 202 + job (null when no work was needed); a 409 has_dependents envelope resolves
+ *  as a success payload for the force-confirm flow. */
 export interface PatchToolResult {
   job?: { id: string } | null;
   code?: string;
@@ -109,9 +101,8 @@ export interface PatchToolResult {
   error?: string;
 }
 
-/** PATCH fields. `disabled` is the enable/disable toggle: false→true
- *  uninstalls (keeps the template; may 409 with dependents unless
- *  force), true→false installs. A version change enqueues a reinstall. */
+/** PATCH fields. `disabled` false→true uninstalls (may 409 with dependents unless force),
+ *  true→false installs; a version change reinstalls. */
 export const patchTool = apiAction<
   {
     name: string;
@@ -141,10 +132,8 @@ export const patchTool = apiAction<
   error: "Could not update tool",
 });
 
-// Delete needs the 409 has_dependents envelope for the cascade-confirm
-// flow; apiAction's decodeError seam resolves that status as a success
-// payload (info.body carries the parsed envelope) while every other
-// failure keeps the default error mapping.
+// decodeError resolves the 409 has_dependents envelope as a success payload for the cascade
+// confirm; every other failure keeps the default mapping.
 export interface DeleteToolResult {
   job?: { id: string };
   code?: string;
@@ -162,18 +151,15 @@ export const deleteTool = apiAction<{ name: string; force?: boolean }, DeleteToo
     method: "DELETE",
     path: `/api/tools/${encodeURIComponent(name)}${force === true ? "?force=1" : ""}`,
   }),
-  // Mirror the previous runner's `parsed ?? {}` so callers never see
-  // undefined on an empty-body 2xx.
+  // Callers never see undefined on an empty-body 2xx.
   decode: (data) => data ?? {},
   decodeError: (info) =>
     info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
   error: false, // 409 cascade is a normal flow, handled by the caller
 });
 
-// ensureTool: install-by-name for a feature banner (MCP's node
-// runtime). Creates the tool from the catalog; when it already
-// exists in the manifest (400), falls back to a plain (re)install.
-// error: false — the banners render their own inline progress/errors.
+// Install-by-name for a feature banner: create from the catalog, else (re)install. error: false:
+// banners render their own progress and errors.
 async function runEnsure(
   args: { name: string },
   signal: AbortSignal,
@@ -195,9 +181,7 @@ async function runEnsure(
       throw classifyFetchError(e, signal);
     }
   };
-  // Create from the catalog; already-manifested names 400 -> retry as a
-  // plain install; a disabled template 409s -> enable it (PATCH), which
-  // installs.
+  // An already-manifested name 400s -> plain install; a disabled template 409s -> enable (PATCH).
   let res = await send("POST", "/api/tools", { name: args.name });
   if (res.status === 400) {
     res = await send("POST", `/api/tools/${encodeURIComponent(args.name)}/install`, {});
@@ -226,19 +210,15 @@ export const ensureTool = defineAction<{ name: string }, JobResponse>({
   error: false,
 });
 
-/** Whether the engine read the host's package index for this reply: not usable
- *  here, still loading, or read. Three-valued because "no Debian hit" and "the
- *  index could not be consulted" are opposite answers that `apt_available`
- *  merges. */
+/** Whether the engine read the host's package index: three-valued because "no Debian hit" and
+ *  "the index could not be consulted" are opposite answers `apt_available` merges. */
 type AptState = "unavailable" | "indexing" | "available";
 
 function isAptState(v: unknown): v is AptState {
   return v === "unavailable" || v === "indexing" || v === "available";
 }
 
-/** The search reply, plus the two fields an engine states only from the release
- *  that added them. Absent means UNSTATED — never a zero and never a negative —
- *  because the engine this build pins emits neither. */
+/** The search reply plus two fields only newer engines state. Absent means UNSTATED. */
 export interface ToolSearchResponse extends SearchResponse {
   apt_state?: AptState;
   /** How many rows the query matched over the blocks the reply holds, so it is
@@ -246,19 +226,12 @@ export interface ToolSearchResponse extends SearchResponse {
   matched?: number;
 }
 
-/** Both additive fields are read off the raw body and VALIDATED rather than
- *  taken from the generated wire type, which types `apt_state` as a bare
- *  `string` — the renderer switches exhaustively over the three members, so a
- *  fourth value an engine invents has to read as unstated rather than reaching
- *  a switch with no arm for it. `apt_state` is therefore dropped from the
- *  spread's TYPE as well as its value: it is the one field whose wire type is
- *  wider than this one's. */
+/** Reads both additive fields off the raw body and VALIDATES them: the wire type's bare-string
+ *  `apt_state` would let an invented value reach the renderer's exhaustive switch with no arm. */
 function decodeSearch(data: unknown): ToolSearchResponse {
   const o = data as Record<string, unknown>;
   const out: ToolSearchResponse = { ...(data as Omit<SearchResponse, "apt_state">) };
-  // Dropped before either is put back, or a value this decoder REFUSED would
-  // survive the spread and the type would claim an apt state the renderer's
-  // exhaustive switch has no arm for.
+  // Dropped first, or a REFUSED value would survive the spread.
   delete out.apt_state;
   delete out.matched;
   const state = o["apt_state"];
@@ -305,9 +278,7 @@ export const getCatalogInfo = apiAction<void, CatalogInfo>({
   error: false,
 });
 
-/** Enqueue a catalog refresh: fetch the published catalog, verify it,
- *  swap it in. 202 like every other tools mutation; progress streams
- *  over the shared job SSE. */
+/** Enqueue a catalog refresh (fetch, verify, swap); progress streams over the job SSE. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const refreshCatalog = apiAction<void, JobResponse>({
   name: "tools.refresh_catalog",
@@ -316,19 +287,15 @@ export const refreshCatalog = apiAction<void, JobResponse>({
   error: "Could not refresh the tool catalog",
 });
 
-/** Converge the volume on the manifest as it stands on disk — the verb behind
- *  Settings → Tools' Apply, for a tools.json somebody edited by hand.
- *
- *  202 like every other tools mutation, and a null job is the engine's "nothing
- *  to converge" rather than a failure. */
+/** Converge the volume on the on-disk manifest (Settings → Tools' Apply). A null job means
+ *  "nothing to converge", not a failure. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const applyManifest = apiAction<void, JobResponse>({
   name: "tools.apply_manifest",
   scope: "tools",
   request: () => ({ method: "POST", path: "/api/tools/reconcile" }),
-  // A null job produces no SSE frame, no output line and no pill busy state, so
-  // the toast is the only channel left. The framework suppresses a resolver
-  // answering null; its type does not spell that arm, hence the assertion.
+  // A null job has no other channel, so the toast says so. The framework suppresses a null
+  // resolver answer; its type omits that arm, hence the assertion.
   success: ((_a, r) =>
     r.job == null
       ? "Nothing to converge: the manifest and the volume already agree."
@@ -381,9 +348,7 @@ export const seedMcp = apiAction<{ name: string; install?: string }>({
   error: "Could not create MCP entry",
 });
 
-// Probe which well-known binary names exist on PATH. Used by the MCP
-// add modal and Sources sub-tab to decide whether to show an inline
-// "Setting up <feature>..." install banner before the user can proceed.
+// Which well-known binaries exist on PATH, for the inline "Setting up <feature>..." banners.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 export const getToolsStatus = apiAction<void, Record<string, boolean>>({
   name: "tools.status",

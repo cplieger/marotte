@@ -249,7 +249,7 @@ function toggleDiffMode(): void {
 
 function startEditing(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) {
+  if (state === undefined || state.readOnly) {
     return;
   }
   const m = state.mode.value;

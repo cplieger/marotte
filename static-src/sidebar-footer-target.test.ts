@@ -1,28 +1,13 @@
 // THE ACCOUNT ROW IS A TARGET, NOT A LINE OF TEXT.
-//
-// The defect this pins: `.sidebar-email` took `align-self: center` from the footer's
-// `align-items`, so its box was the trimmed cap band plus 0.35em — measured 16.61px
-// in a 55px band — and iOS painted its touch-and-hold highlight as a thin strip
-// floating in the middle of the row.
-//
-// The mark and the address are ONE `<button id="account-btn">` now, so the target is
-// the BUTTON's box. Its HEIGHT is `account-btn-css.test.ts`'s subject, measured
-// against the real logout button at all four pointer tiers; a second opinion here
-// would be two owners of one fact. What stays is the rest of the original defect:
-// the row is one contiguous target reaching its own edges without reaching over its
-// neighbour, and the address inside it is centred and still ellipsises.
-//
-// Real layout in the page's own document, behind no media query — the thin strip is
-// the same defect with a mouse, where it is the hover and focus-visible region.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 let style: HTMLStyleElement;
 
-/** The footer as `static/index.html` authors it: the anchor holding the merged
- *  trigger, the trigger holding the mark, the address and the `.sr-only` subject,
- *  the card as the trigger's SIBLING, then the trailing action cluster. */
+/** The footer as `static/index.html` authors it: the anchor holding the merged trigger, the
+ *  trigger holding the mark, the address and the `.sr-only` subject, the card as the trigger's
+ *  SIBLING, then the trailing action cluster. */
 function mountFooter(email: string): {
   footer: HTMLElement;
   btn: HTMLButtonElement;
@@ -90,9 +75,8 @@ afterAll(() => {
 
 describe("the account row's box", () => {
   it("holds the mark and does not reach over the logout button", () => {
-    // The row may not overlap its neighbour, which is the footer's other control and
-    // a 44px target of its own on a finger. The mark is INSIDE the trigger now, so
-    // the old "leaves the status dot its own target" half went with its button.
+    // The row may not overlap its neighbour, which is the footer's other control and a 44px target
+    // of its own on a finger.
     const { btn, dot, logout } = mountFooter("someone@example.invalid");
     const b = btn.getBoundingClientRect();
     const d = dot.getBoundingClientRect();
@@ -104,10 +88,9 @@ describe("the account row's box", () => {
 
 describe("what the row must not cost the address", () => {
   it("keeps the address vertically centred in the band", () => {
-    // Two centrings compose: the footer centres the button, the button centres the
-    // address. Measured as the ink's own centre against the band's, which is the
-    // property the cap-band trim exists to make exact (label-centring.test.ts owns
-    // the trim itself).
+    // Two centrings compose: the footer centres the button, the button centres the address.
+    // Measured as the ink's own centre against the band's, which is the property the cap-band trim
+    // exists to make exact (label-centring.test.ts owns the trim itself).
     const { footer, addr } = mountFooter("someone@example.invalid");
     const f = footer.getBoundingClientRect();
     const border = parseFloat(getComputedStyle(footer).borderTopWidth);
@@ -133,26 +116,19 @@ describe("what the row must not cost the address", () => {
     expect(getComputedStyle(addr).textOverflow).toBe("ellipsis");
     expect(getComputedStyle(addr).overflowX).toBe("hidden");
     expect(addr.scrollWidth).toBeGreaterThan(addr.clientWidth);
-    // ONE LINE, so the clip is horizontal. Measured against a SHORT address's box
-    // rather than the parent's height: this box is content-height, so a wrap shows up
-    // as it being taller than one line rather than as it exceeding the band.
+    // ONE LINE, so the clip is horizontal. Measured against a SHORT address's box rather than the
+    // parent's height: this box is content-height, so a wrap shows up as it being taller than one
+    // line rather than as it exceeding the band.
     const long = addr.getBoundingClientRect().height;
     const { addr: shortAddr } = mountFooter("a@b.invalid");
     expect(long).toBeCloseTo(shortAddr.getBoundingClientRect().height, 0);
   });
 
   it("keeps the box a BLOCK container, which is what the ellipsis needs", () => {
-    // The regression the assertions above CANNOT see, checked by planting it:
-    // `display: flex` with `align-items: center` fills the band and centres the
-    // ink just as well, and Chromium still reports `text-overflow: ellipsis`,
-    // `overflow-x: hidden` and `scrollWidth > clientWidth` — every one of those
-    // passes. What changes is where the text lives: `text-overflow` applies to a
-    // block container and is not inherited, so a flex or grid container moves the
-    // address into an anonymous item that has neither the property nor the clip,
-    // and the address hard-cuts mid glyph instead of ellipsising.
-    //
-    // Stated as "not a flex or grid container" rather than "is `block`", because
-    // `inline-block` and `flow-root` are block containers too and would be fine.
+    // What the assertions above CANNOT see: `display: flex` with
+    // `align-items: center` fills the band and centres the ink just as well, and Chromium still
+    // reports `text-overflow: ellipsis`, `overflow-x: hidden` and `scrollWidth > clientWidth` —
+    // every one of those passes.
     const { addr } = mountFooter("someone@example.invalid");
     const display = getComputedStyle(addr).display;
     expect(

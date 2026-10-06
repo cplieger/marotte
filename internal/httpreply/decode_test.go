@@ -7,17 +7,8 @@ import (
 	"testing"
 )
 
-// TestDecodeJSON_ReportsWhetherTheHandlerMayProceed pins the return value that
-// every handler branches on, in both directions.
-//
-// DecodeJSON's contract is that true means "v is populated and nothing has been
-// written to w", so the handler may go on to do its work, and false means "an
-// error response is already on the wire", so the handler must return without
-// touching w. Getting that backwards is invisible to the caller: a handler told
-// false for a body that decoded fine returns a 400 for a valid request, and one
-// told true for a body that did not decode reads a zero-valued struct and acts on
-// a request the client never sent — while a second write onto an already-written
-// response would be the only trace either way.
+// TestDecodeJSON_ReportsWhetherTheHandlerMayProceed pins the return value every handler branches
+// on, in both directions: true only when v was populated, false only with a response written.
 func TestDecodeJSON_ReportsWhetherTheHandlerMayProceed(t *testing.T) {
 	type payload struct {
 		Name string `json:"name"`

@@ -1,6 +1,3 @@
-// A row's repository: opening a new pull request from a clone, and a repository
-// that moved.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
 import { prIdentity } from "./push-subject.js";
@@ -118,8 +115,7 @@ describe("opening a new pull request from a clone", () => {
   });
 
   it("drafts a listed repository's description from its clone's directory", async () => {
-    // The section is named by the forge's path; the description is git's, read
-    // from the workspace directory the clone sits in.
+    // The section is named by the forge's path; the description is git's, read from the clone's directory.
     routeAPI();
     serve(
       entry(githubForge, "1", [pr(1, 0)], {
@@ -193,8 +189,7 @@ describe("opening a new pull request from a clone", () => {
     expect(head.readOnly).toBe(true);
   });
 
-  // The Changes tab's Open PR switches to this tab first, and the tab's own refresh
-  // then supersedes the read the opener started.
+  // The Changes tab's Open PR switches to this tab first, and the tab's own refresh supersedes the opener's read.
   it("opens the dialog when a newer refresh supersedes the read it waited on", async () => {
     routeAPI();
     const held = inventory(
@@ -202,7 +197,7 @@ describe("opening a new pull request from a clone", () => {
         clones: [{ dir: "one-clone", forge_id: githubForge.id, repo_id: repos[0]?.repo_id }],
       }),
     );
-    // The opener's read answers first; the newer one answers after it.
+    // The opener's read answers first; the newer one after it.
     let reads = 0;
     let answerNewer: (v: unknown) => void = () => undefined;
     inventoryAnswer.next = () => {
@@ -261,7 +256,6 @@ describe("a repository that moved", () => {
     return r?.querySelector(".git-pr-row-status[role='status']")?.textContent ?? "";
   }
 
-  /** A refusal saying the row's repository moved, its body naming `to` when given. */
   function stale(to?: Record<string, unknown>): unknown {
     const body = {
       error: "repo_ref_stale: the repository moved",
@@ -391,8 +385,8 @@ describe("a repository that moved", () => {
     await vi.advanceTimersByTimeAsync(0);
     buttonOf(row(7), "Use new/one")?.click();
 
-    // The next cycle lists the row under its new id, and a later one finds a new
-    // repository at the old path, which the re-point must not reach.
+    // The next cycle lists the row under its new id; a later one finds a new repository at the old path, which the
+    // re-point must not reach.
     const moved = pr(7, 0, { repo_id: successor.repo_id, repo: "new/one" }, open);
     frame(entry(githubForge, "2", [moved]));
     expect(row(7)).toBeNull();

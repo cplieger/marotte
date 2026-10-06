@@ -35,7 +35,7 @@ const {
   initSearchRevealBuilder,
 } = await import("./chat-search.js");
 
-/** A hit on design 8.9's key: `[turn_id, entry_id, segment_kind, offset]`. `turn` is
+/** A hit, keyed by `[turn_id, entry_id, segment_kind, offset]`. `turn` is
  *  the turn's own `turn_open.n`, which is what the rail and the folded rows read. */
 function hit(over: Partial<Hit> = {}): Hit {
   return {
@@ -56,18 +56,17 @@ function reply(hits: Hit[], over: Partial<SearchResult> = {}): SearchResult {
   return { matches: hits, scanned: 4, matched: hits.length, truncated: false, ...over };
 }
 
-/** Stage what the fetch answers. A body goes through the caller's OWN decoder,
- *  so a fixture drifting from the wire shape fails here rather than passing on a
- *  cast; `null` is the failed fetch. */
+/** Stage what the fetch answers, through the caller's OWN decoder; `null` is the failed fetch. */
 function answer(body: SearchResult | null): void {
   apiGetTyped.mockImplementation((_url, decode) =>
     Promise.resolve(body === null ? null : decode(body)),
   );
 }
 
-/** The three injected surfaces, declared once because they are MODULE state in
- *  chat-search.ts: a case that armed its own would leak it into the next. The
- *  suite's `mockReset` restores each implementation before every test. */
+/**
+ * The three injected surfaces, declared once because they are MODULE state; `mockReset`
+ * restores them before every test.
+ */
 const reveal = vi.fn((_chatID: string, _turnID: string, _entryID?: string) => Promise.resolve());
 const forWalk = vi.fn((_chatID: string, _turnID: string) => Promise.resolve());
 const endWalk = vi.fn((_chatID: string) => undefined);
@@ -121,9 +120,7 @@ describe("runServerSearch: the reveal", () => {
   });
 
   it("builds each revealed turn's body once, before the repaint", async () => {
-    // Two hits inside ONE turn and one in another: the on-demand build runs per
-    // TURN, not per hit — a turn's body only exists once — and every build
-    // lands before the bump so the walker's re-run sees the rows.
+    // The build runs per TURN, and every build lands before the bump the walker re-runs on.
     answer(
       reply([
         hit({ turn_id: "u1" }),
@@ -176,10 +173,7 @@ describe("runServerSearch: the reveal", () => {
   });
 
   it("answers the server's envelope whole, tally included", async () => {
-    // The caller's counter and note read `matched` and `scanned` off the answer it
-    // adopts, so the reply travels as one value rather than a list beside two
-    // accessors that could describe a different answer. A cut is what `matched`
-    // exceeding the list says, and nothing here re-derives it.
+    // The reply travels as one value; a cut is `matched` exceeding the list.
     answer(reply([hit(), hit({ entry_id: "e2" })], { scanned: 24, matched: 347 }));
     expect(await runServerSearch("c1", "retry")).toEqual({
       matches: [hit(), hit({ entry_id: "e2" })],
@@ -190,19 +184,13 @@ describe("runServerSearch: the reveal", () => {
   });
 
   it("answers null when the fetch failed, so a caller can keep what it had", async () => {
-    // The distinction the caller's whole standing answer rests on: an empty
-    // envelope is "this query matched nothing", and the failed request never said
-    // that. One here replaced the reader's navigable set with nothing, marked it
-    // owned for a query the server never answered, and left the note describing
-    // the previous answer beside a zero-length list.
+    // An empty envelope means "matched nothing"; a failed request never said that.
     answer(null);
     expect(await runServerSearch("c1", "retry")).toBeNull();
   });
 
   it("answers an empty envelope for an empty question, because that IS an answer", async () => {
-    // No chat and a blank query are not failures: nothing was asked, so nothing was
-    // read, nothing matched and nothing was cut, and a caller adopting this is
-    // adopting the truth.
+    // No chat or a blank query asked nothing, so the empty answer is the truth.
     const nothing = { matches: [], scanned: 0, matched: 0, truncated: false };
     expect(await runServerSearch("", "retry")).toEqual(nothing);
     expect(await runServerSearch("c1", "   ")).toEqual(nothing);
@@ -223,10 +211,8 @@ describe("runServerSearch: the reveal", () => {
   });
 
   it("releases the walk's grants on reset even when nothing was left to re-fold", async () => {
-    // The grants outlive the loop that took them, so the reveal's END is what ends
-    // them — and it must not depend on another question's answer. `clearSearchOpened`
-    // returns false whenever the set is already empty (`resetFoldState`, a second
-    // reset), which would leave every grant standing with no gesture left to end it.
+    // The reveal's END ends the grants unconditionally: `clearSearchOpened` returns false on an
+    // empty set.
     answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
     clearSearchOpened.mockReturnValue(false);
@@ -236,11 +222,7 @@ describe("runServerSearch: the reveal", () => {
   });
 
   it("undoes the reveal in the chat the SEARCH ran in, whatever is active at close", async () => {
-    // The close path runs after a tab change has already moved the ACTIVE chat, so a
-    // teardown keyed on that re-folded nothing: the searched chat kept 48 granted ordinals at
-    // every hit turn's head AND its search-opened turns stayed open, with no search running.
-    // The function takes no chat argument now, so no caller can name the wrong one; what
-    // this pins is that all THREE effects name the chat the search ran in.
+    // All THREE effects name the chat the search ran in, not the active one.
     answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
     endWalk.mockClear();
@@ -282,18 +264,13 @@ describe("revealHitTurn: the per-hit reveal navigation runs before selecting", (
   });
 
   it("names the hit's own ENTRY, so the build can centre on it rather than the head", async () => {
-    // The entry's ordinal inside its turn is a fact of the residency projection, on the
-    // other side of this injection, so what crosses is the entry's IDENTITY and the
-    // consumer resolves the position. Without it every hit in a 700-entry turn builds
-    // the head and the reader lands on `could not be shown`.
+    // The entry's IDENTITY crosses; without it every hit in a long turn builds the head.
     await revealHitTurn("c1", hit({ turn_id: "u7", entry_id: "e311" }));
     expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "e311");
   });
 
   it("names the entry for an entry-kind hit too, so the kind cannot move the build", async () => {
-    // An `entry` hit locates the entry rather than a span in it, and the build still
-    // centres on that entry: the kind decides what NAVIGATION does with the element,
-    // never which element is built.
+    // The kind decides what navigation does, never which element is built.
     await revealHitTurn("c1", hit({ turn_id: "u7", entry_id: "e4", segment_kind: "entry" }));
     expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "e4");
   });

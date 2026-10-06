@@ -1,8 +1,5 @@
 package agent
 
-// Unit tests for bridge_manager.go: the conditional remove helpers.
-// The concurrent/race coverage lives in bridge_manager_race_test.go.
-
 import (
 	"context"
 	"fmt"
@@ -12,20 +9,17 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// newTestBridgeManager builds a bridgeManager whose factory returns a
-// fresh fakeBridge each call.
+// newTestBridgeManager builds a bridgeManager whose factory returns a fresh fakeBridge.
 func newTestBridgeManager() *bridgeManager {
 	return newBridgeManager(func() ACPBridge { return newFakeBridge() })
 }
 
-// removeIfSame removes the entry only when the stored bridge IS the
-// given one: a mismatch is a no-op, a match removes and reports true.
+// removeIfSame removes only when the stored bridge is the given one.
 func TestBridgeManager_RemoveIfSame(t *testing.T) {
 	bm := newTestBridgeManager()
 	sb1, _ := bm.orInsert("c1")
 	sb2, _ := bm.orInsert("c2")
 
-	// Mismatch must NOT remove and must return false.
 	if removed := bm.removeIfSame("c1", sb2); removed {
 		t.Errorf("removeIfSame(c1, other) = true, want false")
 	}
@@ -33,7 +27,6 @@ func TestBridgeManager_RemoveIfSame(t *testing.T) {
 		t.Errorf("removeIfSame(c1, other) wrongly removed c1")
 	}
 
-	// Match must remove and return true.
 	if removed := bm.removeIfSame("c1", sb1); !removed {
 		t.Errorf("removeIfSame(c1, c1) = false, want true")
 	}
@@ -42,15 +35,13 @@ func TestBridgeManager_RemoveIfSame(t *testing.T) {
 	}
 }
 
-// removeIfBridge removes the entry only when the stored bridge instance
-// matches the given one.
+// removeIfBridge removes only when the stored bridge instance matches.
 func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 	bm := newTestBridgeManager()
 	sb, _ := bm.orInsert("c1")
 	stored := sb.bridge
 	other := newFakeBridge()
 
-	// Mismatched bridge instance must NOT remove.
 	if removed := bm.removeIfBridge("c1", other); removed {
 		t.Errorf("removeIfBridge(c1, other) = true, want false")
 	}
@@ -58,7 +49,6 @@ func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 		t.Errorf("removeIfBridge(c1, other) wrongly removed c1")
 	}
 
-	// Matching bridge instance must remove.
 	if removed := bm.removeIfBridge("c1", stored); !removed {
 		t.Errorf("removeIfBridge(c1, stored) = false, want true")
 	}
@@ -72,7 +62,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 	factory := func() ACPBridge { return newNoopBridge() }
 	bm := newBridgeManager(factory)
 
-	// Pre-populate with some bridges so "exists" path is exercised.
+	// Pre-populated so the "exists" path is exercised.
 	for i := range 100 {
 		sb, existed := bm.orInsert(marotte.ChatID(fmt.Sprintf("chat-%d", i)))
 		if !existed {
@@ -91,7 +81,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 	})
 
 	b.Run("create", func(b *testing.B) {
-		// Use a separate manager so creates don't accumulate unboundedly.
+		// A separate manager so creates do not accumulate.
 		bm2 := newBridgeManager(factory)
 		var mu sync.Mutex
 		var counter int
@@ -141,7 +131,6 @@ func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 		return br
 	}, cs)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {

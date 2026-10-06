@@ -1,9 +1,5 @@
-//
-// The one inert SVG render path. The load-bearing assertion is NOT that a diagram
-// appears — it is that it appears through an ELEMENT the code created and assigned
-// a `src` to, never through markup. Routing SVG through an `innerHTML` path would
-// destroy the property the transcript renderer earns its keep with: no renderer
-// output ever passes through an HTML parser.
+// The one inert SVG render path: a diagram appears through an ELEMENT given a `src`, never through
+// markup, so no renderer output passes through an HTML parser.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fc from "fast-check";
 import { renderSvgBlock } from "./svg-block.js";
@@ -149,15 +145,8 @@ describe("through the markdown renderer", () => {
   });
 });
 
-// The invariant that actually holds, kept as a test so a future edit trips it
-// rather than a reviewer having to notice.
-//
-// It is scoped to the SVG PATH, not to the renderer as a whole. `code-blocks.ts`
-// `finalizeBlock` assigns `codeEl.innerHTML = highlightByLang(...)` for every
-// completed ordinary code block, so "no innerHTML anywhere in the markdown
-// renderers" was false — and a test named after a false claim proves the wrong
-// thing. What is true, and what matters, is that SVG source never reaches a parser
-// sink: conversion runs ahead of code decoration, so an svg fence never gets there.
+// Scoped to the SVG PATH: `code-blocks.ts` `finalizeBlock` uses innerHTML for ordinary escaped code.
+// SVG source never reaches a parser sink because conversion runs before code decoration.
 describe("svg source never reaches an HTML parser sink", () => {
   it("renders a diagram without assigning innerHTML or calling insertAdjacentHTML", async () => {
     const proto = Element.prototype as unknown as Record<string, unknown>;
@@ -219,10 +208,8 @@ describe("a fence that streams in over several deltas", () => {
     vi.useRealTimers();
   });
 
-  // The finding. An open fence collects `.code-wrap`, a language label and Copy from
-  // decorateStreamingCodeTail; replacing only the nested `<pre>` left all of it
-  // standing around the figure, so live streaming and replay produced different DOM
-  // for the same completed message.
+  // An open fence collects `.code-wrap`, a label and Copy (`decorateStreamingCodeTail`); replacing
+  // only the `<pre>` made live and replay DOM differ.
   it("leaves no code-block chrome around the converted diagram", () => {
     const host = stream("```svg\n" + SVG.slice(0, 20), SVG.slice(20) + "\n```\n");
 
@@ -256,11 +243,7 @@ describe("a fence that streams in over several deltas", () => {
   });
 });
 
-// The invariant under arbitrary source, not just the hand-picked hostile cases
-// above. A diagram path that accepts model-authored content is the shape a
-// sanitizer would normally guard, and the whole point of routing through `<img>`
-// is that there is no sanitizer to get wrong — so the property is that NO node
-// from the source ever reaches the document, whatever the source says.
+// Property: no node from arbitrary source ever reaches the document; `<img>` needs no sanitizer.
 describe("property: arbitrary svg source never becomes a node", () => {
   it("emits exactly one <img> and no element the source named", () => {
     expect.assertions(1);

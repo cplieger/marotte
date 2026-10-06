@@ -1,5 +1,5 @@
 {
-  "note": "One recorded-shape session/load replay of a turn whose say carries the `[STEERING steer-x: ...]` acknowledgement KAS never scrubs out of its own log. Split across two chunks on purpose: the marker is what a chunk boundary can cut in half, so a filter that only matched a whole chunk would leave half of it on screen.",
+  "note": "One hand-written session/load replay (built from the KAS replay builder's code, not captured from a live session) of a turn whose say carries the `[STEERING steer-x: ...]` acknowledgement KAS never scrubs out of its own log. Split across two chunks on purpose: the marker is what a chunk boundary can cut in half, so a filter that only matched a whole chunk would leave half of it on screen.",
   "steer_id": "steer-x",
   "frames": [
     {

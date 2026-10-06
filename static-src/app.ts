@@ -1,19 +1,7 @@
-// ---------------------------------------------------------------------------
-// App: orchestrator. Wires modules, registers SSE handlers, and routes.
-//
-// WIRING, and no longer a job of its own. Two jobs left this file: the boot
-// sequence is `boot.ts`, and the whoami read plus its three-state verdict is
-// `identity.ts`. What stays is construction, injection, `applyRoute` — the
-// switch over every route kind, which reaches most of the app's surfaces and so
-// belongs where the surfaces are constructed — and the pre-session catalog
-// fetch, which stays because `picker.ts` takes its Retry as an injected thunk
-// and `model-catalog.ts` takes its reader and sinks as parameters, so the one
-// place that can see the endpoint, the phase sink and the picker is here.
-//
-// Server is the source of truth. Sending a prompt posts a command; the
-// server broadcasts SSE events that drive all rendering. No optimistic
-// local mutations.
-// ---------------------------------------------------------------------------
+// App wiring: construction, injection, `applyRoute` (the switch over every route kind,
+// reaching most surfaces) and the pre-session catalog fetch, the one place that sees the
+// endpoint, the phase sink and the picker. Boot is `boot.ts`, whoami is `identity.ts`.
+// The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
 import { getActiveId, getSessions, isThinking } from "./store.js";
@@ -36,10 +24,12 @@ import { fetchCatalog } from "./session-catalog.js";
 import {
   setOnEmpty,
   activeChatRef,
+  registerTabNotice,
   setChatSettledProbe,
   toggleDocsView,
   toggleHistoryView,
 } from "./tabs.js";
+import { chatNotice } from "./notice-subject.js";
 import { applyRoute } from "./route-apply.js";
 import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
@@ -61,7 +51,7 @@ import { initLinkifyCallbacks } from "./linkify.js";
 import { setPreviewOpener } from "./preview-card.js";
 import { openWebPreview } from "./web-open.js";
 import { initFileBrowser } from "./files.js";
-import { initFilePicker } from "./files-picker.js";
+import { initFilePicker, openFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
@@ -91,16 +81,16 @@ import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { initComposerState } from "./composer-state.js";
+import { initSlashMenu } from "./slash-menu.js";
+import { hasAttachments } from "./attachments.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 
-// Registers the failure toast's bus subscription. Explicit rather than inherited
-// through `handlers/turn.js`, which imports `reportFailure` directly: with the
-// transport now reporting over the bus, that import is the only thing loading this
-// module, so dropping it would silence every transport failure with nothing failing.
+// Explicit: the transport reports over the bus, so this import is the only thing loading
+// the failure toast's subscription.
 import "./failure-notice.js";
 import "./handlers/chat.js";
 import "./handlers/entries.js";
@@ -108,6 +98,7 @@ import "./handlers/turn.js";
 import "./handlers/system.js";
 import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
+import "./handlers/knowledge-indexing.js";
 import "./handlers/run.js";
 import { installRunDotSubscriber } from "./run-dots.js";
 import { installSubagentDotSubscriber } from "./subagent-dots.js";
@@ -116,12 +107,14 @@ import { installDeferredCueSubscriber } from "./agent-finished-cue.js";
 import { installNotifyAskGesture } from "./notify.js";
 import { chatSettled } from "./chat-settled.js";
 import "./handlers/steer.js";
+import "./handlers/system-notice.js";
 import { initPushMessages } from "./handlers/push-message.js";
 import { registerNotificationOpener } from "./notification-open.js";
 import { initLaunchQueue } from "./share-target.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
+import { installLinkGuard, setLinkCopyCallback } from "./link-guard.js";
 import { registerCleanup, subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
 import { initBeatPhase } from "./beat-phase.js";
@@ -130,35 +123,31 @@ import { initIconCrisp } from "./icon-crisp.js";
 // Init
 
 function init(): void {
-  // FIRST, before anything measures or renders: `data-pointer` on <html> decides
-  // every control height, hit target and icon size. prepaint.js has already set
-  // it from storage; this re-applies it (a no-op when unchanged, the only apply
-  // when prepaint.js failed) and nothing after this line moves it. The reveal is
-  // registered with it so a coarse pointer arriving during boot is not missed.
+  // FIRST: `data-pointer` on <html> decides every control height, hit target and icon size.
+  // This re-applies what prepaint.js set (the only apply when it failed); the reveal is
+  // registered here so a coarse pointer arriving during boot is not missed.
   initPointerTier({ onCoarseSeen: revealPointerModeToggle });
   initPointerModeToggle();
 
-  // AFTER the tier, because the fit it measures is against the bar's action
-  // buttons and the tier is what sizes them (44px coarse, 36px fine). Reading the
-  // room before `data-pointer` is set measures the wrong row.
+  // AFTER the tier, which sizes the bar's action buttons this fit measures against.
   initPageTitleFit();
 
   initActions();
 
-  // Pixel-snap the icon boxes so a 1px stroke paints one whole pixel. On EVERY boot,
-  // login screen included, so it is here rather than on a post-auth path; the first
-  // pass is deferred to a frame so the chrome it measures is laid out, and it re-arms
-  // on layout changes itself. `icon-crisp.ts` carries the pixel measurement that shows
-  // why the box phase is the whole fix and a tier resize is not.
+  // Pixel-snap the icon boxes so a 1px stroke paints one pixel, on EVERY boot (login
+  // included). `icon-crisp.ts` carries the measurement.
   initIconCrisp();
 
   // Before anything can paint a dot: the listener has to be up when the first
   // `vk-dot-beat` starts, or that dot keeps the 0ms fallback and beats out of step.
   initBeatPhase();
 
-  // The tab factory's injected half: these three behaviours live in modules that
-  // themselves call `materializeTab`, so registering here is what keeps the factory
-  // out of a cycle. The five singleton kinds reach their loaders lazily.
+  registerTabNotice((subject, name, message, level) => {
+    chatNotice(subject, message, level, name);
+  });
+
+  // The tab factory's injected half: these openers call `materializeTab` themselves, so
+  // registering here keeps the factory out of a cycle.
   registerTabOpeners({
     chat: {
       show: activateChatView,
@@ -168,9 +157,8 @@ function init(): void {
     },
     editor: { show: activateFile, refresh: refreshFile, close: closeEditorFile },
     run: {
-      // `parentless` is the run's own fact, not the tab strip's, so it comes from the
-      // run store's record of which chat launched this run. No `cancel` half: a run
-      // tab is a VIEW, so its × stops nothing.
+      // `parentless` comes from the run store's record of the launching chat. No `cancel`: a
+      // run tab is a VIEW, so its × stops nothing.
       show: (workflowID) => {
         showRun(workflowID);
       },
@@ -201,12 +189,9 @@ function init(): void {
     void createSession();
   });
 
-  // The tab projection's SYNC half, fed here rather than binding itself, so its three
-  // version rules can be exercised against a Set with no transport. Two inputs: every
-  // `tabs_changed` frame, applied in ARRIVAL order (the handler must not fan out — the
-  // version rules are only well-defined against a sequential applier), and a whole
-  // RECONCILE, where the delta stream cannot be trusted and the answer is the whole
-  // set. The everyday wake reaches `listTabs` through the digest's `tabs` subject.
+  // The tab projection's SYNC half, fed here so its version rules are testable without a
+  // transport: every `tabs_changed` frame in ARRIVAL order (the handler must not fan out),
+  // and a whole RECONCILE, where the delta stream cannot be trusted.
   onSSE("tabs_changed", (_chatID, p) => {
     ingestTabsChanged(p);
   });
@@ -214,9 +199,8 @@ function init(): void {
     void listTabs(signal);
   });
 
-  // Before the stream opens: decoders run in the adapter ahead of dispatch(), and an
-  // event whose payload fails validation is dropped rather than handed on partial. The
-  // set is generated from Go structs by cmd/wire-codegen.
+  // Before the stream opens: an event failing validation is dropped, never handed on
+  // partial. The decoders are generated by cmd/wire-codegen.
   registerAllSSEDecoders();
 
   sse.init((evt: ServerEvent) => {
@@ -225,53 +209,44 @@ function init(): void {
 
   installStoreSubscribers();
 
-  // After installStoreSubscribers: both write tab state, and this one paints a run tab
-  // the boot restore may not have opened yet — an unopened tab has no spec to park a
-  // dot state on, so the effect's own sweep picks it up once it exists.
+  // After installStoreSubscribers: both write tab state, and the effect's sweep paints a run
+  // tab the boot restore opens later.
   installRunDotSubscriber();
 
   // The same dot for a SUBAGENT's row. Here for the reason above: an effect running at
   // import would paint against a strip that has not been restored yet.
   installSubagentDotSubscriber();
 
-  // The WORKFLOW mark on a CHAT's row — the second mark in its leading cluster, for
-  // a run that chat launched and that outlives the turn which started it. Here for
-  // the same reason: the tab restore runs inside startBoot() at the end of init(), so
-  // every one of these three first passes sees an empty projection and repaints on the
-  // bump that restore produces.
+  // The WORKFLOW mark on a CHAT's row, for a run that outlives its turn. These three first
+  // passes see an empty projection and repaint on the tab restore's bump.
   installChatRunDotSubscriber();
 
-  // "Is everything this chat started actually over?" — the one predicate both
-  // out-of-page cue paths ask, injected because `chat-settled.ts` reads three stores
-  // whose graphs all reach back into the tab projection. Registered BEFORE
-  // initAttention, so the fold's first pass already has it.
+  // The one predicate both out-of-page cue paths ask, injected because `chat-settled.ts`'s
+  // stores reach back into the tab projection. Before initAttention, for its first pass.
   setChatSettledProbe(chatSettled);
   // The other half: an agent-finished cue withheld while a run the turn launched is
   // still going is released here, when the last outstanding thing for that chat ends.
   installDeferredCueSubscriber();
 
-  // The permission ask's spending half. A cue that wanted to notify and could not
-  // arms it (inside `notifyIfHidden`); this is what lets the reader's next click
-  // raise the browser prompt, which no code path may do without a gesture.
+  // A cue that could not notify arms this; the reader's next click raises the browser
+  // prompt, which needs a gesture.
   registerCleanup(installNotifyAskGesture());
 
   // The out-of-page attention surfaces, folded from the chat tabs' dots. Before any tab
   // is opened, because it captures the served <title> as its base.
   initAttention();
 
-  // There is no per-session model feed. It watched the active chat's
-  // `available_models` and re-populated the picker from it, but that list was the
-  // WORKSPACE catalog copied onto every chat — 29 identical copies, 5.5% of a
-  // 1.25 MiB response — so the signature it deduped on could only change when
-  // the workspace's own catalog did. /api/config-template is that one feed, and
-  // the server prefers a live session's report over the session-less template,
-  // so nothing authoritative is lost.
+  // No per-session model feed: /api/config-template is the one catalog feed, and the server
+  // prefers a live session's report over the template.
 
   setupInput();
   initUI();
   initShellPanel();
   initSidebarResize();
   setCopyCallback((text) => void copyClipboard.dispatch(text, { silent: true }));
+  // Not silent: the toast is the only confirmation a withheld link's click gets.
+  setLinkCopyCallback((url) => void copyClipboard.dispatch(url));
+  installLinkGuard();
   initEditor();
   initFileBrowser();
   initFilePicker();
@@ -279,9 +254,8 @@ function init(): void {
   // One opener for BOTH pill homes. Injected because attachment-pill.ts is a leaf and
   // one of its consumers is a pure `fundamentals/` view.
   initAttachmentPillCallbacks({ open: openAtLine });
-  // The same opener for an inline path link in rendered prose. Injected for the same
-  // reason one rung out: the markdown renderer reaches linkify, and `editor-markdown`
-  // reaches the renderer, so linkify importing the opener closed a ring.
+  // Injected one rung out: markdown reaches linkify and `editor-markdown` reaches markdown,
+  // so linkify importing the opener closed a ring.
   initLinkifyCallbacks({ open: openAtLine });
   setPreviewOpener(openWebPreview);
   initTaskListPill();
@@ -290,14 +264,9 @@ function init(): void {
   $.findBtn.addEventListener("click", () => {
     toggleFindForActiveTab();
   });
-  // …and it collapses where it has no destination. `is-collapsed` rather than `.hidden`,
-  // which is `display: none` and cannot animate out. It also paints WHICH of the two
-  // things this page has — a magnifier where the box reaches past what is on screen, a
-  // funnel where it only narrows loaded rows — from the same glyph producer as the box it
-  // opens, so the button cannot promise a search and open a filter.
-  //
-  // Called from inside an `effect` so the signals the answer reads re-run it themselves;
-  // the bus subscription covers the tab switch, which is not a signal.
+  // …and it collapses where it has no destination (`is-collapsed`: `.hidden` cannot animate
+  // out). Its glyph comes from the box's own producer, so the button cannot promise a
+  // search and open a filter. Run inside an `effect`; the bus covers the tab switch.
   const syncFindAffordance = (): void => {
     const { available, kind } = findAffordanceForActiveTab();
     $.findBtn.classList.toggle("is-collapsed", !available);
@@ -359,9 +328,8 @@ function init(): void {
     showShortcuts: openShortcutsSheet,
   });
 
-  // Find (Ctrl-F / Cmd-F), scoped by the ACTIVE TAB. Capture phase so the browser's
-  // native find is pre-empted before it opens; ONE listener, because a second
-  // capture-phase keydown on the same chord is a third meaning nobody can predict.
+  // Find (Ctrl-F / Cmd-F), scoped by the ACTIVE TAB. Capture phase to pre-empt the native
+  // find; ONE listener, so the chord has one meaning.
   document.addEventListener("keydown", handleFindKey, true);
   document.addEventListener("keydown", focusComposerOnTyping);
   document.addEventListener("keydown", handleFilesTypeAhead);
@@ -391,40 +359,35 @@ function init(): void {
     );
   });
 
-  // Unconditional, independent of the push opt-in: an active SW with a fetch handler is
-  // a PWA install-criteria requirement, so browsers only offer "Install app" once one
-  // controls the page. register() is idempotent.
+  // Unconditional: an active SW with a fetch handler is a PWA install-criteria requirement.
+  // register() is idempotent.
   if ("serviceWorker" in navigator) {
     void navigator.serviceWorker.register("/sw.js").catch((err: unknown) => {
       console.warn("sw: registration failed", err);
     });
   }
-  // A notification click is an OPEN INTENT, so the default origin (`deeplink`) is
-  // correct: it may open a tab that is not open, unlike a history entry. Registered
-  // BEFORE initPushMessages, which installs the message listener — a click arriving
-  // between the two would throw and lose the navigation.
+  // A notification click is an OPEN INTENT (`deeplink`). Before initPushMessages, which
+  // installs the message listener, or a click in between would throw.
   registerNotificationOpener((route) => {
     void applyRoute(route);
   });
   // The other half of the push channel: the worker posts here to route a notification
   // click and to toast a push that arrived while this page was focused.
   initPushMessages(adoptPushTag);
-  // The presence tag is derived from the push subscription's endpoint, which resolves
-  // only once the registration is ready, so the stream opened above presents the tag
-  // a previous boot persisted (or a random one) and reconnects once if this differs.
+  // The presence tag derives from the push subscription's endpoint, ready only later, so
+  // the stream reconnects once if the persisted tag differs.
   adoptPushTag();
-  // A relaunch FOCUSES this window rather than navigating it (manifest
-  // launch_handler), so a shortcut's or a share's URL arrives in the launch queue
-  // and nowhere else. Registered before the boot, because the queue delivers what
-  // it buffered as soon as a consumer exists.
+  // A relaunch FOCUSES this window (manifest launch_handler), so a shortcut's or share's URL
+  // arrives only in the launch queue, which delivers as soon as a consumer exists.
   initLaunchQueue();
 
   void startBoot({ applyRoute });
 }
 
-/** Hand the profile's push subscription to the stream, so the tag it presents is the
- *  one the server derives from that subscription's endpoint. Best-effort: a profile
- *  with no service worker or no subscription keeps the tag it has. */
+/**
+ * Hand the profile's push subscription to the stream so its tag matches the server's
+ * derivation. Best-effort: without one the tag stays.
+ */
 function adoptPushTag(): void {
   if (!("serviceWorker" in navigator)) {
     return;
@@ -439,15 +402,11 @@ function adoptPushTag(): void {
 
 function onLoginSuccess(): void {
   hideLoginModal();
-  // The post-auth fan-out the signed-out boot held back: governance, the version
-  // pair, the git badge and the workspace catalog. Guarded, so a login after an
-  // `unavailable` boot that already ran it is a no-op.
+  // The post-auth fan-out the signed-out boot held back; guarded, so a repeat is a no-op.
   initPostAuth();
   void resolveIdentity().then((v) => {
-    // Only the signed_in arm may write the row. The other two must not blank a
-    // value the login that just succeeded put on screen: a page that signs in and
-    // then meets a whoami timeout would otherwise clear the sidebar's email and
-    // read as a sign-out one frame after signing in.
+    // Only signed_in writes the row: a whoami timeout right after a login must not blank the
+    // sidebar and read as a sign-out.
     if (v.state === "signed_in") {
       renderIdentity(v);
     }
@@ -468,16 +427,17 @@ function onLoginSuccess(): void {
 // Input handling
 
 function setupInput(): void {
-  // The composer is two peers meeting on one element, wired here rather than from each
-  // other: prompt-input owns its BEHAVIOUR and composer-state its per-chat STATE.
-  // composer-state cannot be wired from prompt-input — send-state imports prompt-input and
-  // transport imports send-state, so reaching the draft action from there closes a cycle.
+  // Two peers meeting on one element: prompt-input owns behaviour, composer-state per-chat
+  // state. Wired here because wiring from prompt-input closes an import cycle.
   initComposerState();
+  // Before initPromptInput: its capture listener must see Enter first.
+  initSlashMenu(() => {
+    openFilePicker();
+  });
   initPromptInput(
     (text: string) => {
-      // Keys off the PROJECTION's active subject, never the chat store's pointer: with
-      // closes optimistic the store retains a closed chat's row until the machine confirms,
-      // and the empty-state surface must create rather than send into the chat being closed.
+      // The PROJECTION's active subject, not the store pointer: optimistic closes leave a closed
+      // chat's row until confirmed, and the empty state must create rather than send into it.
       if (activeChatRef() === "") {
         // DETACHED, and the prompt rides INSIDE the create: `createSession(text)` sends
         // once the chat exists, so nothing here needs the id.
@@ -496,12 +456,12 @@ function setupInput(): void {
       }
       void cancelTurn.dispatch({ chatID: getActiveId() });
     },
+    hasAttachments,
   );
 
   const doCreate = guardDuplicateActivation(() => {
-    // DETACHED: the only follow-up is closing the sidebar, which does not depend on the
-    // chat. The guard absorbs a duplicated pointer dispatch of one press; the create's own
-    // op id covers a deliberate repeat.
+    // Detached: closing the sidebar does not depend on the chat. The guard absorbs a duplicate
+    // dispatch; the create's op id covers a deliberate repeat.
     void createSession();
     $.sidebar.classList.remove("open");
   });
@@ -513,11 +473,9 @@ function setupInput(): void {
 
   // The model switcher owns its button click, popover, queue and outside-click dismissal.
   initModelSwitcher();
-  // The empty-chat model picker. Its visibility is derived from store state; only the
-  // selection callback is injected, because it lives in model-switcher.ts, which imports
-  // picker.ts. pickModel, not applyLocalModel: a hero-picker pick must PERSIST like a pill
-  // pick, or the next header echo clobbers it back. The Retry's promise is RETURNED so
-  // picker.ts can announce the answer it settles on.
+  // The empty-chat model picker; only the selection callback is injected. pickModel, so a
+  // hero pick PERSISTS like a pill pick. The Retry's promise is returned for picker.ts to
+  // announce.
   initModelPicker(pickModel, () => fetchCatalog());
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
@@ -533,13 +491,8 @@ function setupInput(): void {
   // Each card is its trigger's SIBLING (see 15-input.css .pill-slot), so it is looked up
   // by id rather than queried inside the button.
   makeExpandable($.contextIndicator, byId("context-card"));
-  // Lazily on open, because usage changes slowly and may be rate-limited;
-  // loadAccountUsage throttles. The agent-runtime line re-probes /api/health on the same
-  // trigger.
-  // `haspopup: "dialog"` rather than pill-expand's own `"true"` default, which a
-  // screen reader reads as "menu": this card is a status/account panel with one
-  // link, not a menu of commands. `chat-options.ts` passes the same value for the
-  // same shape; the primitive's default is an app-wide property and is untouched.
+  // Lazily on open (usage changes slowly and may be rate-limited); the agent-runtime line
+  // re-probes /api/health too. `haspopup: "dialog"`: a status panel with one link, not a menu.
   makeExpandable($.accountBtn, $.statusCard, {
     haspopup: "dialog",
     onExpand: () => {
@@ -555,12 +508,10 @@ onPopState((route: Route) => {
   void applyRoute(route, "history");
 });
 
-/** Redirect a bare keystroke to the composer, so a fresh chat can be typed into without
- *  clicking the box first — the message-app convention.
- *
- *  Deliberately narrow: only a plain printable character with no modifier, and it bails
- *  whenever focus already sits somewhere that wants keys (any
- *  input/textarea/select/contenteditable, the terminal surface, an open dialog). */
+/**
+ * Redirect a bare printable keystroke with no modifier to the composer, unless focus
+ * already sits somewhere that wants keys (a field, the terminal, an open dialog).
+ */
 function focusComposerOnTyping(e: KeyboardEvent): void {
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
     return;

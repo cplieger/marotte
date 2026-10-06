@@ -1,13 +1,15 @@
 package agent
 
-// The runtime side of a run lease. One record answers four questions: is a blocking
-// row marotte's own orphan, when must the run end, does it run unattended, and which
-// schedule row gets the outcome.
+// The runtime side of a run lease: is a blocking row marotte's orphan, when must the run end, is it
+// unattended, and which schedule row gets the outcome.
 
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf16"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -15,43 +17,64 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// launchOrigin is what a launch verb knows about the run it is about to start — the
-// lease's whole input set beyond the recipe name. A value rather than two more
-// parameters: the scheduled fields only make sense together, and a non-empty
-// scheduleID standing in for "this is a schedule's" cannot express the third origin.
+// launchOrigin is what a launch verb knows beyond the recipe name; a struct because the scheduled
+// fields only make sense together.
 type launchOrigin struct {
-	// slotAt is the instant this run's own next slot comes due, an INPUT to the
-	// lease's deadline. Zero for a launch that cannot name one — but launch fills it
-	// in for a manual run from the recipe's own enabled schedules (see manualSlot).
+	// slotAt is this run's next slot, an input to the deadline; launch fills it for a manual run (manualSlot).
 	slotAt     time.Time
 	scheduleID string
-	// chatID is the launching chat for an agent's run (runStartLaunch); empty for
-	// every parentless launch. See runlease.Lease.ChatID.
+	// chatID is the launching chat for an agent's run (runStartLaunch), empty for a parentless launch.
 	chatID string
 	origin runlease.Origin
 }
 
-// manualLaunch is the Workflows tab's Run button and the retry path: attended, with
-// no schedule row to attribute an outcome to. The SLOT is not set here because it
-// is not knowable here — it depends on the resolved recipe, which only launch has.
+// manualLaunch is the Run button and retry: attended, no schedule row. The slot depends on the resolved recipe, so launch sets it.
 func manualLaunch() launchOrigin {
 	return launchOrigin{origin: runlease.OriginManual}
 }
 
-// scheduledLaunch is the scheduler's, carrying the row to attribute outcomes
-// to and the slot the run may not outlive.
+// scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
 func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
 	return launchOrigin{origin: runlease.OriginScheduled, scheduleID: scheduleID, slotAt: slotAt}
 }
 
-// manualSlot is the next slot a MANUAL run of this recipe must yield to, an input to
-// the ONE deadline every run gets, so a manual run yields instead of holding the
-// recipe for as long as it keeps making progress.
-//
-// Matched on the launch SOURCE, the key a schedule row and the Run button share.
-// Floored at NOW through schedule.NextRunFrom, the same call the REST view makes, so
-// the bound agrees with the "next run" the user is reading off the row. Zero when
-// nothing schedules this source: the idle window and the backstop bound the run alone.
+// runLabel is the label sent for a run, set only for a scheduled one so History shows which runs nobody started.
+func (o launchOrigin) runLabel(recipe string) string {
+	if o.origin != runlease.OriginScheduled {
+		return ""
+	}
+	return runLabelFor(recipe + " · scheduled")
+}
+
+// runLabelMaxUnits is KAS's runLabel cap, counted in UTF-16 code units.
+const runLabelMaxUnits = 100
+
+// runLabelFor shapes s to KAS's runLabel rule, which refuses rather than cleans: no control, line-break
+// or double quote, 1 to 100 UTF-16 units trimmed.
+func runLabelFor(s string) string {
+	s = strings.TrimSpace(strings.Map(func(r rune) rune {
+		switch {
+		case r == '"':
+			return '\''
+		case unicode.IsControl(r), unicode.In(r, unicode.Zl, unicode.Zp):
+			return ' '
+		}
+		return r
+	}, s))
+	units := 0
+	for i, r := range s {
+		n := utf16.RuneLen(r)
+		if units+n > runLabelMaxUnits {
+			s = s[:i]
+			break
+		}
+		units += n
+	}
+	return strings.TrimSpace(s)
+}
+
+// manualSlot is the next slot a manual run of this recipe must yield to, matched on the launch source and
+// floored at now via schedule.NextRunFrom (as the REST view). Zero when nothing schedules it.
 func (rs *Runs) manualSlot(source string) time.Time {
 	if rs.schedules == nil || source == "" {
 		return time.Time{}
@@ -66,8 +89,7 @@ func (rs *Runs) manualSlot(source string) time.Time {
 		}
 		next, err := schedule.NextRunFrom(e.Spec, e.Anchor, now)
 		if err != nil {
-			// No slot input rather than a launch failure: the idle window and
-			// the backstop still bound the run.
+			// No slot, not a failure: the window and backstop still bound it.
 			slog.Warn("schedule cannot name its next slot, so a manual run of its recipe "+
 				"is bounded by its idle window alone", "schedule_id", e.ID, "error", err)
 			continue
@@ -79,9 +101,8 @@ func (rs *Runs) manualSlot(source string) time.Time {
 	return earliest
 }
 
-// leaseStore returns the lease registry, creating an in-memory one if the runtime
-// was built without the durable store — which every unit test is, and a lease has
-// to exist because it carries the run's wall clock. WithRunLeases adds durability.
+// leaseStore returns the lease registry, in memory when the runtime has no durable store (every unit
+// test): a lease carries the run's clock. WithRunLeases adds durability.
 func (rs *Runs) leaseStore() *runlease.Store {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -91,13 +112,8 @@ func (rs *Runs) leaseStore() *runlease.Store {
 	return rs.leases
 }
 
-// grantLease records the envelope of a run marotte just put on the wire.
-//
-// Called between `new` and `invoke`: the earliest point the workflow id exists and
-// still before anything can execute, so no permission request slips through
-// unmarked. UNATTENDED is set for a scheduled run only. A persist failure is logged
-// rather than returned — the run is on the wire either way and the lease is kept in
-// memory, so this process still bounds and attributes it.
+// grantLease records a run's envelope between `new` and `invoke`, before anything executes. Unattended
+// only for a scheduled run. A persist failure is logged: the in-memory lease still bounds the run.
 func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin) {
 	if workflowID == "" {
 		return
@@ -118,8 +134,7 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 	}
 }
 
-// releaseLease forgets a run's envelope. Idempotent: the terminal frame and the
-// cancel path both release, and neither knows which arrived first.
+// releaseLease forgets a run's envelope. Idempotent: the terminal frame and cancel both release.
 func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
@@ -134,16 +149,14 @@ func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 	return rs.leaseStore().Get(workflowID)
 }
 
-// rewindCancelWait bounds how long a rewind waits for a cancelled run's lease to go.
-// KAS stops a run at its next node boundary, so the wait covers a step finishing its
-// tool call, not a step's whole turn. A var so a test drives it in milliseconds.
+// rewindCancelWait bounds a rewind's wait for a cancelled run's lease; KAS stops at the next node
+// boundary, so it covers a tool call finishing. A var for tests.
 var rewindCancelWait = 20 * time.Second
 
 // rewindCancelPoll is how often CancelRun re-reads the lease while it waits.
 const rewindCancelPoll = 50 * time.Millisecond
 
-// LiveRuns filters workflowIDs to the runs still holding a lease, each labelled by its
-// recipe, satisfying command.RunCutter. A run whose lease was released has ended.
+// LiveRuns filters workflowIDs to those still leased, labelled by recipe, satisfying command.RunCutter.
 func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
 	var live []command.LiveRunRef
 	for _, id := range workflowIDs {
@@ -154,12 +167,10 @@ func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
 	return live
 }
 
-// CancelRun cancels one run on the reader's behalf and waits for its lease to be
-// released, the terminal transition this process observes (the run's own run_complete,
-// or the reconcile a landed cancel runs). command.ErrRunStillLive when the wait runs
-// out with the lease still held; the cancel landed either way.
+// CancelRun cancels one run for the reader and waits for its lease release. command.ErrRunStillLive
+// when the wait runs out; the cancel landed either way.
 func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
-	if err := rs.Cancel(ctx, workflowID); err != nil {
+	if err := rs.cancelOn(ctx, workflowID, userStop(stopWhyRewound), nil); err != nil {
 		return err
 	}
 	deadline := time.NewTimer(rewindCancelWait)
@@ -180,12 +191,9 @@ func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
 	}
 }
 
-// RunChat answers which chat's agent launched a run, satisfying command.RunOwner so
-// a run tab opened with no parent still nests under its conversation. `ok` reports
-// whether a lease exists at all, which differs from an empty chat id: a parentless
-// run HAS a lease and no chat.
-//
-// Lock order Membership.mu -> Runs.mu -> the lease store's.
+// RunChat answers which chat launched a run (command.RunOwner), so an orphan run tab nests under its
+// conversation. ok reports whether a lease exists: a parentless run has one and no chat. Lock order
+// Membership.mu -> Runs.mu -> the lease store's.
 func (rs *Runs) RunChat(workflowID string) (marotte.ChatID, bool) {
 	l, ok := rs.lease(workflowID)
 	if !ok {

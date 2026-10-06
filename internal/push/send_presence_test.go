@@ -1,8 +1,5 @@
 package push
 
-// Tests for the send filter: which subscriptions a Send reaches once presence is
-// wired, what it logs about them, and the fail-open direction.
-
 import (
 	"context"
 	"log/slog"
@@ -52,7 +49,7 @@ func TestSend_SkipsAPresentProfileAndPushesTheGoneOne(t *testing.T) {
 	s.presence.Observe(connected(TagOf(presentEP)))
 	capLog := capture.Default(t)
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 
 	got := h.snapshot()
 	if len(got) != 1 || !strings.HasSuffix(goneEP, got[0].path) {
@@ -89,7 +86,7 @@ func TestSend_EveryProfilePresentSendsNothing(t *testing.T) {
 	s.presence.Observe(connected(TagOf(presentEP)))
 	s.presence.Observe(connected(TagOf(goneEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.ChatSubject("c1"), "")
 
 	if got := h.snapshot(); len(got) != 0 {
 		t.Errorf("deliveries = %+v, want none", got)
@@ -102,9 +99,8 @@ func TestSend_EveryProfilePresentSendsNothing(t *testing.T) {
 	}
 }
 
-// With the hold switched off, suppression is a drop: the decision is read once per
-// event, and a profile that flips to gone afterwards is not sent the event it
-// missed. The next event is. (The hold, the default, is deferred_test.go's.)
+// With the hold off, suppression is a drop: a profile that flips to gone afterwards is
+// not sent the event it missed; the next event is.
 func TestSend_SuppressionIsADropNotADelay(t *testing.T) {
 	deferredOff(t)
 	h := &recordingHandler{}
@@ -112,7 +108,7 @@ func TestSend_SuppressionIsADropNotADelay(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "first", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "first", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 	if got := h.snapshot(); len(got) != 0 {
 		t.Fatalf("deliveries while present = %+v, want none", got)
 	}
@@ -126,23 +122,21 @@ func TestSend_SuppressionIsADropNotADelay(t *testing.T) {
 	}
 
 	resetDebounce(s)
-	s.Send(t.Context(), "second", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "second", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 	if got := h.snapshot(); len(got) != 1 {
 		t.Errorf("deliveries after the flip and a new event = %+v, want exactly one", got)
 	}
 }
 
-// The PR poller calls Send directly rather than through the coordinator; the
-// filter sits inside Send, so its kind is filtered like every other. The kind is
-// switched on first: it defaults off, and a kind the preference gate drops never
-// reaches the presence filter this test is about.
+// The PR poller calls Send directly; the filter sits inside Send. The kind is switched
+// on first because it defaults off and the preference gate would drop it earlier.
 func TestSend_FiltersThePollersKindToo(t *testing.T) {
 	h := &recordingHandler{}
 	s, _ := filteredService(t, h)
 	s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindPRStatus: true})
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "checks", "green", marotte.PushKindPRStatus, marotte.PushSubject{Key: "pr:x"})
+	s.Send(t.Context(), "checks", "green", marotte.PushKindPRStatus, marotte.PushSubject{Key: "pr:x"}, "")
 
 	got := h.snapshot()
 	if len(got) != 1 || !strings.HasSuffix(goneEP, got[0].path) {
@@ -153,15 +147,14 @@ func TestSend_FiltersThePollersKindToo(t *testing.T) {
 	}
 }
 
-// Without a table every subscription is pushed: a build that predates presence, a
-// legacy tab or a derivation bug costs a notification too many, never one too few.
+// Without a table every subscription is pushed: the fail-open direction.
 func TestSend_WithoutPresenceSendsToEveryone(t *testing.T) {
 	h := &recordingHandler{}
 	s, _ := newServiceOnTestServer(t, h)
 	s.Subscribe(pushSubscriptionWithValidKeys(t, presentEP))
 	s.Subscribe(pushSubscriptionWithValidKeys(t, goneEP))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 
 	if got := h.snapshot(); len(got) != 2 {
 		t.Errorf("deliveries = %+v, want both", got)

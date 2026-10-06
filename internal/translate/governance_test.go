@@ -28,10 +28,9 @@ func govMsg(t *testing.T, sessionID string, extra map[string]any) *marotte.RPCRe
 	return &marotte.RPCResponse{Params: mustJSON(t, params)}
 }
 
-// HandleGovernanceState parses the notification, broadcasts a global (empty
-// chatID) governance_state event with the resolved flags, and caches it
-// runtime-side via SetGovernance.
-func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
+// TestHandleGovernanceState_CachesWithoutBroadcasting pins that the translator broadcasts
+// nothing: a frame without the lock map would race the runtime's composed one.
+func TestHandleGovernanceState_CachesWithoutBroadcasting(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	var cached *marotte.GovernanceStatePayload
 	deps.onSetGovernance = func(g marotte.GovernanceStatePayload) { cp := g; cached = &cp }
@@ -40,39 +39,17 @@ func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 	tr.HandleGovernanceState(t.Context(), marotte.ChatID("c1"),
 		govMsg(t, "sess-parent", map[string]any{"isEnterprise": false}))
 
-	if len(*events) != 1 {
-		t.Fatalf("expected 1 event, got %d: %v", len(*events), eventTypes(*events))
-	}
-	evt := (*events)[0]
-	if evt.Type != marotte.EventGovernanceState {
-		t.Fatalf("type = %q, want governance_state", evt.Type)
-	}
-	// Account-global: broadcast carries no chat id so a Settings-only client
-	// (subscribed to no chat) still receives it.
-	if evt.ChatID != "" {
-		t.Errorf("chat_id = %q, want empty (account-global)", evt.ChatID)
-	}
-	p, ok := evt.Payload.(marotte.GovernanceStatePayload)
-	if !ok {
-		t.Fatalf("payload type = %T, want GovernanceStatePayload", evt.Payload)
-	}
-	if !p.Known {
-		t.Error("Known = false, want true (real notification)")
-	}
-	if !p.Features.MCPEnabled || !p.Features.WebToolsEnabled || !p.Features.AutonomousAgents {
-		t.Errorf("capability flags not carried through: %+v", p.Features)
-	}
-	if p.Features.CodeReferenceTracker || p.Features.PromptLogging || p.Features.UsageAnalytics {
-		t.Errorf("off flags leaked as on: %+v", p.Features)
-	}
-	if p.IsEnterprise {
-		t.Error("IsEnterprise = true, want false")
+	if len(*events) != 0 {
+		t.Fatalf("HandleGovernanceState broadcast %d events (%v), want 0: the cache owns the SSE", len(*events), eventTypes(*events))
 	}
 	if cached == nil {
 		t.Fatal("SetGovernance was not called (state not cached)")
 	}
-	if !cached.Known || !cached.Features.MCPEnabled {
-		t.Errorf("cached payload = %+v, want Known + MCPEnabled", cached)
+	if !cached.Known || !cached.Features.MCPEnabled || !cached.Features.WebToolsEnabled || !cached.Features.AutonomousAgents {
+		t.Errorf("cached payload = %+v, want Known and the on flags carried through", cached)
+	}
+	if cached.Features.CodeReferenceTracker || cached.Features.PromptLogging || cached.Features.UsageAnalytics || cached.IsEnterprise {
+		t.Errorf("off flags leaked as on: %+v", cached)
 	}
 }
 

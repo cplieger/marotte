@@ -7,22 +7,11 @@ import (
 	"time"
 )
 
-// Runner.Run had no test at all: every case drives r.sweep directly, so the loop
-// that decides WHEN a sweep happens — the once-a-minute cadence, and the
-// deliberate absence of a sweep on entry — was carried by a comment alone.
-//
-// A bubble is what makes those assertions worth writing. On a real clock the
-// cadence could only be probed by shortening r.tick and allowing a tolerance,
-// which asserts an injected number and passes for a ticker of almost any period;
-// in synthetic time the PRODUCTION TickInterval is used unchanged and the counts
-// are exact. Run's own goroutine parks in a select on ctx.Done and the ticker, so
-// it reaches a durably blocked state, and a sweep's file I/O is transient (a
-// store rewrite), which is inside the boundary a bubble tolerates. Nothing here
-// holds a process, a socket or a PTY.
+// These tests drive Run in a synctest bubble so the PRODUCTION TickInterval is used and the
+// counts are exact; Run parks in a select, and a sweep's file I/O is transient.
 
-// bubbleFixture builds a store with one 5-minute schedule plus a runner on the
-// bubble's clock. anchorOffset positions the entry's anchor relative to the
-// bubble's start, which is what selects whether a slot is already due at t=0.
+// bubbleFixture builds a store with one 5-minute schedule plus a runner on the bubble's
+// clock. anchorOffset selects whether a slot is already due at t=0.
 func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLauncher, *Runner) {
 	t.Helper()
 	st, err := NewStore(t.TempDir())
@@ -32,8 +21,7 @@ func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLaunc
 	e := Entry{
 		ID:     "s1",
 		Source: "bundled://demo",
-		// The floor interval, so the cadence under test (one tick a minute) is
-		// finer than the schedule's own step and the two cannot be confused.
+		// The floor interval, so the schedule's step cannot be confused with the tick cadence.
 		Spec:    Spec{Freq: FreqMinutely, Interval: minMinuteInterval},
 		Enabled: true,
 		Anchor:  time.Now().Add(anchorOffset),
@@ -46,13 +34,8 @@ func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLaunc
 	return st, l, r
 }
 
-// TestRun_DoesNotSweepOnEntry pins the documented decision that a slot which
-// came due while the container was down is NOT fired at boot.
-//
-// The anchor is placed so the schedule's slot lands exactly on the bubble's start
-// instant and inside MissGrace, which is the one arrangement where an
-// entry-time sweep would fire and a first-tick sweep would too — so the only
-// thing the assertion can be measuring is WHEN the first sweep happened.
+// TestRun_DoesNotSweepOnEntry pins that a slot due during downtime is not fired at boot.
+// The slot sits inside MissGrace at t=0, so only WHEN the first sweep ran is measured.
 func TestRun_DoesNotSweepOnEntry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		_, l, r := bubbleFixture(t, -2*time.Minute)
@@ -66,8 +49,6 @@ func TestRun_DoesNotSweepOnEntry(t *testing.T) {
 			t.Errorf("launches after %v = %v, want none: Run must not sweep on entry",
 				TickInterval/2, srcs)
 		}
-		// The first tick is what may fire it, and the slot is still inside the
-		// grace window at that point.
 		synctest.Sleep(TickInterval)
 		if got := l.launched(); got != 1 {
 			t.Errorf("launches after the first tick = %d, want exactly 1", got)
@@ -76,13 +57,8 @@ func TestRun_DoesNotSweepOnEntry(t *testing.T) {
 	})
 }
 
-// TestRun_FiresOncePerSlotAtTheTickCadence asserts the steady state at exact
-// equality: a 5-minute schedule observed by a 1-minute ticker fires exactly once
-// per slot, four times in twenty minutes, with no double-fire from the four
-// intervening ticks.
-//
-// On a real clock this is the assertion that cannot be written — twenty minutes
-// of wall time, or an injected tick and a tolerance. Measured here in 0.00s.
+// TestRun_FiresOncePerSlotAtTheTickCadence asserts at exact equality that a 5-minute
+// schedule under a 1-minute ticker fires once per slot.
 func TestRun_FiresOncePerSlotAtTheTickCadence(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		st, l, r := bubbleFixture(t, 0)
@@ -97,8 +73,7 @@ func TestRun_FiresOncePerSlotAtTheTickCadence(t *testing.T) {
 			t.Errorf("launches in %d minutes = %d, want %d (one per 5-minute slot, not one per tick)",
 				slots*minMinuteInterval, got, slots)
 		}
-		// The anchor must sit on the last slot rather than on the tick that
-		// observed it, or the schedule drifts by the sweep's own latency.
+		// The anchor sits on the slot, not the observing tick, or the schedule drifts.
 		wantAnchor := start.Add(slots * minMinuteInterval * time.Minute)
 		if got := st.List()[0].Anchor; !got.Equal(wantAnchor) {
 			t.Errorf("anchor = %v, want the last slot %v", got, wantAnchor)
@@ -107,10 +82,8 @@ func TestRun_FiresOncePerSlotAtTheTickCadence(t *testing.T) {
 	})
 }
 
-// TestRun_ReturnsOnCancel checks the exit path. The bubble is the assertion: a
-// Run that ignored cancellation would leave a goroutine blocked on its ticker
-// when the bubble's main goroutine exits, which synctest reports as a deadlock
-// panic rather than a timeout.
+// TestRun_ReturnsOnCancel checks the exit path: a Run ignoring cancellation would leave a
+// goroutine the bubble reports as a deadlock.
 func TestRun_ReturnsOnCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		_, _, r := bubbleFixture(t, 0)

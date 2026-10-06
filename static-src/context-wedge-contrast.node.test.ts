@@ -1,10 +1,5 @@
-// THE COMPACTION BAND, measured rather than asserted about.
-//
-// The band conveys information and carries no text and no shape, so its
-// separation from the track it sits on is the whole of its legibility. Measuring
-// the TOKEN NAME is what keeps this honest: the script resolves it per theme out
-// of `01-tokens.css`, so a retune moves these numbers rather than leaving them
-// behind.
+// The compaction band, measured: it carries no text or shape, so its separation from the track is its legibility.
+// Token names are resolved per theme from `01-tokens.css`, so a retune moves these numbers.
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -37,23 +32,20 @@ function pair(fg: string, bg: string): Measurement[] {
 }
 
 const BAND = "--c-context-wedge";
-/** The ring's own track: the third circle is drawn over it, and the fill over that. */
 const TRACK = "--c-border";
 const PAGE = "--c-bg-primary";
-/** The three hues the fill ramps between. */
 const FILL_HUES = ["--c-green", "--c-yellow", "--c-red"];
 
-/** The floor on OKLab distance between the band and the nearest stroke the fill
- *  can take. Anchored to the ramp's own scale: light's green-to-yellow endpoints
- *  sit 0.1029 apart, so a band closer than that reads as a point ON the ramp
- *  rather than a different kind of mark. 0.09 is that figure with enough headroom
- *  that a mix-rounding change cannot trip it. Cleared at 0.1603 dark, 0.1217 light. */
+/**
+ * OKLab floor between the band and the nearest fill stroke, anchored to the ramp's own scale (light green-to-yellow
+ * is 0.1029 apart). Cleared at 0.1603 dark, 0.1217 light.
+ */
 const MIN_RAMP_SEPARATION = 0.09;
 
-/** Every mix `context-ring.ts` can emit, ENUMERATED rather than sampled: it
- *  quantizes the mix to one decimal, so 1001 steps per segment is the whole
- *  stroke set. Measured in OKLab through the script's own conversion and its own
- *  premultiplied oklch mix, so no colour maths is restated here. */
+/**
+ * Every mix `context-ring.ts` can emit, enumerated (one-decimal quantization makes 1001 steps per segment), measured
+ * through the script's own OKLab conversion and premultiplied oklch mix.
+ */
 const RAMP_SEPARATION_PY = `
 import importlib.util, math, sys
 spec = importlib.util.spec_from_file_location("cc", sys.argv[1])
@@ -81,12 +73,7 @@ interface Separation {
   at: string;
 }
 
-/** The band's distance from the NEAREST stroke the fill can take, per theme.
- *
- *  OKLab rather than the WCAG ratio the pairs above report, because that ratio is
- *  luminance-only and the band separates from the fill on CHROMA (01-tokens.css
- *  states why): the light retune moved its worst pair 53% in OKLab and 13% in
- *  WCAG, so a WCAG floor is blind to most of the mechanism. */
+/** OKLab, not WCAG ratio: the band separates on chroma, which the luminance-only ratio barely sees. */
 function rampSeparation(): Separation[] {
   const out = execFileSync("python3", ["-c", RAMP_SEPARATION_PY, script], { encoding: "utf8" });
   const rows = out
@@ -103,8 +90,7 @@ function rampSeparation(): Separation[] {
   return rows;
 }
 
-// The script lives outside static-src, and Stryker's sandbox copies static-src
-// alone — so its absence is a skip, the same rule the sibling floors use.
+// Stryker's sandbox copies static-src alone and the script lives outside it, so its absence is a skip.
 describe.skipIf(!existsSync(script))("the compaction band, measured", () => {
   it("clears 3:1 against the track it is drawn on, in both themes", () => {
     for (const m of pair(BAND, TRACK)) {
@@ -113,16 +99,14 @@ describe.skipIf(!existsSync(script))("the compaction band, measured", () => {
   });
 
   it("clears 3:1 against the page the pill sits on, in both themes", () => {
-    // The track is a wash off the ink, so the page shows through it; a band that
-    // separated from the track alone could still vanish into the surface.
+    // The track is a wash, so the page shows through; a band clear of the track alone could still vanish into the surface.
     for (const m of pair(BAND, PAGE)) {
       expect(m.ratio, `${m.theme}: band vs page`).toBeGreaterThanOrEqual(3.0);
     }
   });
 
   it("stays quieter than every hue the fill can take", () => {
-    // A comparison rather than a ceiling, because whatever either is retuned to, a
-    // band as loud as the fill reads as already-filled.
+    // A comparison, not a ceiling: a band as loud as the fill reads as already-filled.
     const band = new Map(pair(BAND, TRACK).map((m) => [m.theme, m.ratio]));
     for (const hue of FILL_HUES) {
       for (const m of pair(hue, TRACK)) {
@@ -134,10 +118,8 @@ describe.skipIf(!existsSync(script))("the compaction band, measured", () => {
   });
 
   it("keeps its distance from every stroke the fill can take, not just the three seeds", () => {
-    // The assertion above reads the three SEEDS, and the fill is a continuous
-    // ramp between them, so a mid-mix can sit arbitrarily close to a band that
-    // passes it — which is how the light theme shipped a 0.0664 pair while every
-    // seed measured clear.
+    // The fill is a continuous ramp between the seeds, so a mid-mix can sit close to a band that passes every seed
+    // (the light theme shipped a 0.0664 pair this way).
     for (const m of rampSeparation()) {
       expect(m.dE, `${m.theme}: band vs the nearest fill stroke (${m.at})`).toBeGreaterThanOrEqual(
         MIN_RAMP_SEPARATION,

@@ -8,12 +8,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// noSubscriberLine is reportNoSubscribers' message, anchored whole with its closing
-// quote so a reworded line fails here rather than matching a prefix.
+// noSubscriberLine is reportNoSubscribers' message, matched whole so a rewording fails here.
 const noSubscriberLine = `"msg":"no push subscribers; notifications are being dropped until a browser subscribes"`
 
-// newDropHub wires a runtime whose push service starts with no subscribers, which
-// is the only input the drop path reads.
+// newDropHub wires a runtime whose push service starts with no subscribers.
 func newDropHub(t *testing.T) (*Runtime, *recordingPush) {
 	t.Helper()
 	cs := newTestChatStore()
@@ -21,14 +19,10 @@ func newDropHub(t *testing.T) (*Runtime, *recordingPush) {
 	fp.noSubs.Store(true)
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	return h, fp
 }
 
-// A permission ask reaches NotifyPush once per tool call, so a line per drop would
-// bury the rest of the log: an episode of the no-subscriber condition is worth
-// exactly one line, and without any line a dead push pipeline and a workspace
-// nobody subscribed from are indistinguishable.
+// One line per no-subscriber episode: per drop would bury the log, none would hide a dead pipeline.
 func TestNotifyPush_ReportsANoSubscriberDropOncePerEpisode(t *testing.T) {
 	h, fp := newDropHub(t)
 	logs := captureLogs(t)
@@ -56,8 +50,7 @@ func TestNotifyPush_ReportsANoSubscriberDropOncePerEpisode(t *testing.T) {
 	}
 }
 
-// The latch is per EPISODE, not per process: a subscriber arriving re-arms it, so a
-// later unsubscribe is reported again rather than silently.
+// A subscriber arriving re-arms the latch.
 func TestNotifyPush_NoSubscriberLatchReArmsWhenASubscriberAppears(t *testing.T) {
 	h, fp := newDropHub(t)
 	logs := captureLogs(t)

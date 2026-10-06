@@ -24,19 +24,10 @@ type ConnectedPayload struct {
 	// to detect a gap, and a v3 client gets the same facts from the library's hello.
 	Floor *uint64 `json:"floor,omitempty"`
 	Head  *uint64 `json:"head,omitempty"`
-	// BusyChats is every chat with a turn in flight of its OWN at connect: an open
-	// turn that is not a workflow step, or an admitted prompt whose Turn is not
-	// minted yet — and it is a NEGATIVE statement about every chat it does
-	// not name, the half no other frame carries: a chat whose turn died with the
-	// previous process emits no terminal frame, and nothing else ever tells this
-	// client to stop believing its own `thinking`.
-	//
-	// The reservation term is what makes the negative statement COMPLETE for the
-	// admission window; see busyChatIDs, which walks the lifecycle rather than the open
-	// turns for exactly that reason.
-	//
-	// CAPPED at maxBusyChats, with the overflow reported through BusyStated rather than
-	// as a truncated list: a partial list read as complete would clear a live turn.
+	// BusyChats is every chat with a turn of its OWN in flight at connect (an open non-step turn,
+	// or an admitted prompt not minted yet), and a NEGATIVE statement about every chat it omits:
+	// nothing else tells a client a turn died with the previous process. Capped at maxBusyChats,
+	// with overflow reported through BusyStated, never truncated.
 	BusyChats []ChatID `json:"busy_chats,omitempty"`
 	// LiveRuns is every run marotte's lease registry says is in flight, the same
 	// projection GET /api/runs/live serves. Here because every connect wants it and the
@@ -79,7 +70,10 @@ type MCPToolIdentity struct {
 
 // PermissionNeededPayload is the payload for type="permission_needed".
 type PermissionNeededPayload struct {
-	MCPTool    *MCPToolIdentity `json:"mcp_tool,omitempty"`
+	MCPTool *MCPToolIdentity `json:"mcp_tool,omitempty"`
+	// Watch marks an ask a workflow WATCH raised on the launching session, naming the
+	// run and node it polls for; RunID and NodeID repeat it so the run's asks retire with it.
+	Watch      *PermissionWatch `json:"watch,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 	Title      string           `json:"title,omitempty"`
 	// Kind forwards the ACP toolCall.kind so the client can style distinctive prompts
@@ -95,11 +89,28 @@ type PermissionNeededPayload struct {
 	// command. Empty means the offer stands.
 	AlwaysAllowBlocked AlwaysAllowBlock   `json:"always_allow_blocked,omitempty"`
 	Options            []PermissionOption `json:"options"`
+	// Locations are the workspace-relative paths the tool call touches.
+	Locations []string `json:"locations,omitempty"`
 	// Files is the turn's staged file list, present ONLY on a turn approval. Such an
 	// approval arrives as an ordinary session/request_permission, so it rides this payload
 	// rather than a second event; it expects per-file decisions back.
-	Files     []ApprovalFile `json:"files,omitempty"`
-	RequestID int64          `json:"request_id"`
+	Files []ApprovalFile `json:"files,omitempty"`
+	// ConsentRound counts the asks one tool call has raised, from 1; KAS can ask
+	// again for the same toolCallId.
+	ConsentRound int   `json:"consent_round,omitempty"`
+	RequestID    int64 `json:"request_id"`
+	// AdminRequired marks an ask raised by the administrator's rules, which a
+	// person must answer: the card says so, and unattended runs refuse it.
+	AdminRequired bool `json:"admin_required,omitempty"`
+	// AcceptsRejectionReason marks an ask whose deny can carry a note for the
+	// agent: the ordinary tool approval offering a reject_once option.
+	AcceptsRejectionReason bool `json:"accepts_rejection_reason,omitempty"`
+}
+
+// PermissionWatch names the workflow run and node a watch command belongs to.
+type PermissionWatch struct {
+	WorkflowID string `json:"workflow_id"`
+	NodeID     string `json:"node_id"`
 }
 
 // ApprovalFile is one file a turn wants to write, as offered for review.
@@ -146,8 +157,8 @@ const (
 	SettledByUnattended SettledBy = "unattended"
 	// SettledByMoot means NOBODY answered and nobody had to: the question stopped being
 	// answerable. The other two both ASSERT an answer, so retiring a discarded ask under
-	// one of them would tell the reader their question was decided. Only a run ask can
-	// carry it — a request-shaped ask is claimed by whoever answers its JSON-RPC request.
+	// one of them would tell the reader their question was decided. A run ask carries it,
+	// and so does a request KAS withdrew itself (interaction_resolved, outcome cancelled).
 	SettledByMoot SettledBy = "moot"
 )
 
@@ -194,6 +205,21 @@ func DecisionRunID(payload any) string {
 	}
 }
 
+// DecisionNodeID is DecisionRunID's twin for the step node that raised the decision,
+// "" for a payload that is not one of the three or names no node.
+func DecisionNodeID(payload any) string {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.NodeID
+	case ElicitationNeededPayload:
+		return p.NodeID
+	case UserInputNeededPayload:
+		return p.NodeID
+	default:
+		return ""
+	}
+}
+
 // ErrorCode identifies an SSE error event class.
 type ErrorCode string
 
@@ -210,15 +236,9 @@ const (
 	// ErrCodeModeNotApplied means session/set_mode was refused at spawn. The chat's record
 	// holds the ACTUAL mode, so this event is the only thing that names the request.
 	ErrCodeModeNotApplied ErrorCode = "mode_not_applied"
-	// ErrCodeSupervisedNotApplied means the session refused `autopilot: off` at spawn, so
-	// the chat is running unsupervised and will NOT ask before writing.
-	//
-	// It DIVERGES from mode_not_applied in what the record then holds, and the divergence
-	// is deliberate: the mode path resets the record to the session's actual mode, while
-	// here the record keeps the REQUEST — supervised is the safer intent to remember, and
-	// keeping it is what makes the next spawn re-assert. So this event is the only thing
-	// that names the session's refusal, and without it a chat opened unsupervised behind
-	// a checkbox that said otherwise.
+	// ErrCodeSupervisedNotApplied means the session refused `autopilot: off` at spawn, so the chat
+	// runs unsupervised. Unlike mode_not_applied, the record keeps the REQUEST, so the next spawn
+	// re-asserts; this event is the only thing naming the refusal.
 	ErrCodeSupervisedNotApplied ErrorCode = "supervised_not_applied"
 	// ErrCodeModelNotServed means an explicitly-picked model is absent from the set this
 	// account's session advertises, so it was refused before the wire rather than rejected
@@ -260,6 +280,35 @@ type CodeReferencesPayload struct {
 	References []CodeReference `json:"references"`
 }
 
+// KnowledgeIndexingPhase says which half of an index build a knowledge_indexing
+// frame reports.
+type KnowledgeIndexingPhase string
+
+// KnowledgeIndexingStarted and KnowledgeIndexingCompleted are the two phases.
+const (
+	KnowledgeIndexingStarted   KnowledgeIndexingPhase = "started"
+	KnowledgeIndexingCompleted KnowledgeIndexingPhase = "completed"
+)
+
+// KnowledgeIndexingStatus is how a completed index build ended.
+type KnowledgeIndexingStatus string
+
+// KnowledgeIndexingSuccess and KnowledgeIndexingFailed are KAS's two outcomes.
+const (
+	KnowledgeIndexingSuccess KnowledgeIndexingStatus = "success"
+	KnowledgeIndexingFailed  KnowledgeIndexingStatus = "failed"
+)
+
+// KnowledgeIndexingPayload is the payload for type="knowledge_indexing". FileCount
+// rides the started phase; Status the completed one, with ItemCount on success.
+type KnowledgeIndexingPayload struct {
+	Name      string                  `json:"name"`
+	Phase     KnowledgeIndexingPhase  `json:"phase"`
+	Status    KnowledgeIndexingStatus `json:"status,omitempty"`
+	FileCount int                     `json:"file_count,omitempty"`
+	ItemCount int                     `json:"item_count,omitempty"`
+}
+
 // SafetyStatus is the v3 (KAS) Infrastructure-Safety gate state, which evaluates
 // infrastructure-as-code tool calls against remotely-formalized safety properties. Typed so
 // wiregen emits a TS union.
@@ -277,8 +326,9 @@ const (
 
 // SafetyStatusPayload is the payload for type="safety_status", translated from the v3 (KAS)
 // _kiro/safety/statusChanged notification and rendered as a transient banner. KAS installs
-// the gate only under an AWS governance flag, off by default on Builder-ID accounts, so this
-// normally never fires. Distinct from supervised mode, which is KAS's autopilot gate.
+// the gate when the client declares infrastructureSafety and the infraSafetyMonitor setting or
+// experiment is on; the experiment is ramped for individual accounts too. Distinct from
+// supervised mode, which is KAS's autopilot gate.
 type SafetyStatusPayload struct {
 	Status            SafetyStatus `json:"status"`
 	Detail            string       `json:"detail,omitempty"`
@@ -308,22 +358,26 @@ type SafetyPropertiesPayload struct {
 // Builder-ID login reads permissive with isEnterprise=false and no disabledReason.
 // Infrastructure-Safety is NOT here: it rides a separate isFeatureEnabled channel, so the
 // safety banner is gated by KAS's own emission rather than by any field here.
+// ContentCollection, PromptLogging and AutonomousAgents are REPORTED only: KAS gates
+// nothing on them, so a consumer that needs one enforced must compose it itself.
 type GovernanceFeatures struct {
 	// MCPEnabled reports whether the MCP subsystem is permitted; false means enterprise
-	// governance suppressed MCP entirely.
+	// governance suppressed MCP entirely, and KAS enforces it.
 	MCPEnabled bool `json:"mcp_enabled"`
-	// WebToolsEnabled reports whether built-in web tools are permitted.
+	// WebToolsEnabled reports whether built-in web tools are permitted; KAS removes them
+	// when false.
 	WebToolsEnabled bool `json:"web_tools_enabled"`
-	// UsageAnalytics reports whether usage analytics collection is enabled.
+	// UsageAnalytics reports whether usage analytics collection is enabled; KAS gates its
+	// own agent telemetry on it for an enterprise identity.
 	UsageAnalytics bool `json:"usage_analytics"`
-	// ContentCollection reports whether content collection is enabled.
+	// ContentCollection reports the org's content-collection choice; reported only.
 	ContentCollection bool `json:"content_collection"`
-	// PromptLogging reports whether prompt logging is enabled.
+	// PromptLogging reports the org's prompt-logging choice; reported only.
 	PromptLogging bool `json:"prompt_logging"`
 	// CodeReferenceTracker governs whether KAS emits _kiro/code_references at all, so the
 	// attribution chip is dormant unless this is true.
 	CodeReferenceTracker bool `json:"code_reference_tracker"`
-	// AutonomousAgents reports whether autonomous agent runs are permitted.
+	// AutonomousAgents reports the org's autonomous-agents choice; reported only.
 	AutonomousAgents bool `json:"autonomous_agents"`
 }
 
@@ -333,8 +387,15 @@ type GovernanceFeatures struct {
 // no chat open. Clients MUST gate affordances only when Known is true — the all-false zero
 // value otherwise reads as "everything disabled" when the policy is simply unobserved.
 type GovernanceStatePayload struct {
-	// DisabledReason is a human-readable reason from enterprise governance (e.g. why
-	// MCP is off); empty on a normal account.
+	// Locks is the settings an administrator pins, keyed by the Lock* constants. A
+	// locked control renders read-only with the lock's value, and the server sends that
+	// value whatever the stored setting says. Absent means nothing is locked.
+	Locks map[string]GovernanceLock `json:"locks,omitempty"`
+	// MCPRegistry is present only while the organization restricts MCP to its registry.
+	MCPRegistry *GovernanceMCPRegistry `json:"mcp_registry,omitempty"`
+	// DisabledReason is KAS's token for why governance turned a feature off
+	// (admin_disabled, api_failure, no_endpoint), worded by the client; empty on a
+	// normal account.
 	DisabledReason string `json:"disabled_reason,omitempty"`
 	// Features is the resolved effective feature-flag set.
 	Features GovernanceFeatures `json:"features"`
@@ -343,6 +404,58 @@ type GovernanceStatePayload struct {
 	Known bool `json:"known"`
 	// IsEnterprise reports whether this is an enterprise/managed account.
 	IsEnterprise bool `json:"is_enterprise,omitempty"`
+	// AdminRestricted reports that the machine's administrator file holds at least one
+	// rule, so some tools ask or are refused whatever the security profile allows.
+	AdminRestricted bool `json:"admin_restricted,omitempty"`
+}
+
+// Lock keys. A key names the marotte or kiro-cli setting the lock pins, or, for a
+// capability with no setting of its own, the capability.
+const (
+	LockContentCollection = "content_collection_enabled"
+	LockTelemetry         = "telemetry.enabled"
+	LockWorkflows         = "workflows_enabled"
+	LockInlineAgents      = "inline_agents_enabled"
+	LockWebTools          = "web_tools"
+	LockPowers            = "powers"
+	LockMCP               = "mcp"
+)
+
+// Lock sources: the organization's account profile, or the machine administrator's
+// managed-settings rules.
+const (
+	LockSourceOrganization  = "organization"
+	LockSourceAdministrator = "administrator"
+)
+
+// GovernanceLock is one setting an administrator pins.
+type GovernanceLock struct {
+	// Source is LockSourceOrganization or LockSourceAdministrator.
+	Source string `json:"source"`
+	// Reason is the sentence the locked control shows.
+	Reason string `json:"reason"`
+	// Value is the value the administrator requires.
+	Value bool `json:"value"`
+}
+
+// GovernanceMCPRegistry is the organization's MCP registry, from the registry fields of
+// _kiro/mcp/status. In registry mode KAS runs only the catalog servers a `{"type":
+// "registry"}` entry enables and drops every other configured server.
+type GovernanceMCPRegistry struct {
+	// Servers is the organization's catalog.
+	Servers []GovernanceRegistryServer `json:"servers"`
+	// Filtered names configured servers the registry mode drops.
+	Filtered []string `json:"filtered"`
+	// Unresolved names registry entries the catalog does not carry.
+	Unresolved []string `json:"unresolved"`
+}
+
+// GovernanceRegistryServer is one server in the organization's MCP catalog.
+type GovernanceRegistryServer struct {
+	Name        string `json:"name"`
+	Version     string `json:"version,omitempty"`
+	Description string `json:"description,omitempty"`
+	Enabled     bool   `json:"enabled"`
 }
 
 // OpenExternalURLPayload is the payload for type="open_external_url". Browsers popup-block a
@@ -466,6 +579,9 @@ type SubjectChangedPayload struct{}
 // MCPConfigChangedPayload is the payload for type="mcp_config_changed".
 type MCPConfigChangedPayload struct{}
 
+// MCPPoolChangedPayload is the payload for type="mcp_pool_changed".
+type MCPPoolChangedPayload struct{}
+
 // ForgesChangedPayload is the payload for type="forges_changed".
 // Sent after a forge is connected, disconnected, or re-probed.
 type ForgesChangedPayload struct{}
@@ -473,6 +589,14 @@ type ForgesChangedPayload struct{}
 // HooksChangedPayload is the payload for type="hooks_changed", workspace-global and empty.
 // The client refetches GET /api/hooks on receipt.
 type HooksChangedPayload struct{}
+
+// PowersChangedPayload is the payload for type="powers_changed", workspace-global
+// and empty: the installed Powers moved, so the Powers tab refetches.
+type PowersChangedPayload struct{}
+
+// RecipesChangedPayload is the payload for type="recipes_changed", workspace-global and
+// empty. The client refetches GET /api/recipes on receipt.
+type RecipesChangedPayload struct{}
 
 // ToolJobChangedPayload is the payload for type="tool_job_changed", workspace-global, on
 // every job state transition. The job carries no output tail; output streams via
@@ -537,6 +661,27 @@ const (
 type AgentNoticePayload struct {
 	Severity string `json:"severity"`
 	Text     string `json:"text"`
+}
+
+// NoticeLevel is a system notice's level; the client colours its toast by it.
+type NoticeLevel string
+
+// The three levels KAS sends; any other value is folded to NoticeInfo at the door.
+const (
+	NoticeInfo    NoticeLevel = "info"
+	NoticeWarning NoticeLevel = "warning"
+	NoticeError   NoticeLevel = "error"
+)
+
+// SystemNoticePayload is the payload for type="system_notice". The frame names no
+// session, so the chat id is the bridge that received it: a chat's, a run's
+// (`run:<id>`), or empty for the utility session. Live only, never persisted.
+// ChatName is the chat's name when the notice was raised, so a client whose row is
+// gone or renamed still names it; empty for a run, the utility session, or no record.
+type SystemNoticePayload struct {
+	Level    NoticeLevel `json:"level"`
+	Message  string      `json:"message"`
+	ChatName string      `json:"chat_name,omitempty"`
 }
 
 // TabsChangedPayload is the payload for type="tabs_changed": ONE committed mutation of the

@@ -1,12 +1,7 @@
 package agent
 
-// What a terminal/create records about WHICH session asked.
-//
-// ACP's CreateTerminalRequest is {sessionId, command, args, env, cwd,
-// outputByteLimit, _meta}, and the session is the only field on the frame that can
-// name a workflow STEP: the turn this handler reads is the chat registry's own, and
-// a run's step turn lives in the run log alone. So the create is where the link
-// enters the registry, and the run bounds read it back per step.
+// The session is the only CreateTerminalRequest field that can name a workflow step, so
+// the create is where the link enters the registry for the run bounds.
 
 import (
 	"testing"
@@ -25,10 +20,7 @@ func TestTermCreate_RecordsTheRequestsOwnSession(t *testing.T) {
 		params:      map[string]any{"command": "true", "sessionId": "step-session-1"},
 		wantSession: "step-session-1",
 	}, {
-		// A build that omits the field is answered normally rather than refused: an
-		// absent sessionId is the zero value, not a parse failure, so such a terminal
-		// is BOUNDED (it names no step, so it holds no run's idle window) rather than
-		// immortal.
+		// An absent sessionId is the zero value, not a parse failure: the terminal is created and bounded.
 		name:        "a create omitting it",
 		params:      map[string]any{"command": "true"},
 		wantSession: "",
@@ -63,9 +55,7 @@ func TestTermCreate_RecordsTheRequestsOwnSession(t *testing.T) {
 	}
 }
 
-// The session travels UNPARSED and unbounded: it is an opaque id marotte compares by
-// equality against the ids its own run log recorded, never a path, a name or
-// anything rendered, so a value that matches nothing simply never answers true.
+// The session is an opaque id compared by equality, never parsed or rendered.
 func TestTermCreate_TheRecordedSessionIsVerbatim(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(5002)

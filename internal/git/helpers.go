@@ -1,9 +1,5 @@
 package git
 
-// Request-prelude helpers used by every handler in this package. Keeps
-// each handler to its git-specific logic without repeating the method
-// check + body-decode + error-response dance.
-
 import (
 	"context"
 	"net/http"
@@ -20,43 +16,23 @@ func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return httpreply.RequireMethod(w, r, http.MethodPost)
 }
 
-// decodePostBody does the common POST prelude:
-//   - enforces the JSON body size cap (webhttp.MaxJSONBody)
-//   - decodes into v
-//
-// On decode failure, writes a 400 with the given error message and
-// returns false. Callers that need a method check should call
-// requirePOST first.
+// decodePostBody enforces the JSON body cap (webhttp.MaxJSONBody) and decodes into v; on failure it
+// writes a 400 with msg and returns false. Method checks are requirePOST's.
 func decodePostBody(w http.ResponseWriter, r *http.Request, v any, decodeErrMsg string) bool {
 	return httpreply.DecodeBody(w, r, v, decodeErrMsg)
 }
 
-// decodePostBodyOptional enforces the body-size cap and decodes into v,
-// reporting whether the caller may proceed. An absent or malformed body is
-// ignored (v keeps its zero value, result true) because the body is purely
-// advisory here — push/pull/stash name no required field. An oversize body
-// returns false with a 413 already written: an unread Repo would resolve to the
-// workspace root and silently retarget the git command.
+// decodePostBodyOptional enforces the body cap and decodes into v; an absent or malformed body is
+// ignored (v stays zero) because push/pull/stash name no required field. An oversize body writes a
+// 413 and returns false.
 func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBodyOptional(w, r, v)
 }
 
-// writeCmdResult writes a git-command result: {jsonKeyOutput:
-// clientBlock(out)} on success, {"error": clientBlock(errMsg)} on
-// failure. errMsg is the subprocess combined output when non-empty;
-// otherwise err.Error().
-//
-// On failure the jsonKeyOutput field is intentionally omitted so clients
-// cannot confuse a partial stdout stream with a successful response
-// — presence-of-field is the success signal, not string emptiness.
-//
-// clientBlock runs on BOTH paths. Git progress output routinely
-// echoes the remote URL (https://user:token@host/…), so redacting
-// on success prevents credentials from leaking through a legitimate
-// clone or push whose stderr happened to include the helper-
-// rewritten URL. Matches the forges package semantics. It carries the
-// bound and the defusal too — see the helper for why the order inside it
-// is what it is.
+// writeCmdResult writes a git-command result: {jsonKeyOutput: clientBlock(out)} on success,
+// {"error": clientBlock(errMsg)} on failure, errMsg being the subprocess output when non-empty,
+// else err.Error(). The output field is omitted on failure so partial stdout is not mistaken for
+// success.
 func writeCmdResult(w http.ResponseWriter, out string, err error) {
 	if err != nil {
 		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(cmdFailure(out, err))))
@@ -65,13 +41,9 @@ func writeCmdResult(w http.ResponseWriter, out string, err error) {
 	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: clientBlock(out)})
 }
 
-// cmdFailure names WHY a git subprocess failed, for a caller that composes
-// several failures into one message rather than writing the envelope itself.
-// A git subprocess can fail with nothing on either stream — a rejected
-// subcommand used to be the routine case — and a caller interpolating that
-// empty output produced a message ending at its own colon ("clean:"), which
-// reads as truncated and names no cause. The exit status is a poor message
-// and a present one, so it stands in.
+// cmdFailure names WHY a git subprocess failed, for a caller composing several failures into one
+// message: output when present, else the error, so an empty stream never yields a message ending at
+// a colon.
 func cmdFailure(out string, err error) string {
 	if strings.TrimSpace(out) != "" {
 		return out

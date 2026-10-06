@@ -2,14 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 
 import { entryRow, entryList, entrySkeleton, entryDetail } from "./entry-row.js";
 
-// ---------------------------------------------------------------------------
-// What the builder ENFORCES, as opposed to what it copies through. Each case is
-// a rule a page could otherwise get wrong on its own: the door/inert branch, the
-// accessible name, the badge cap, the three subtitle shapes, the list roles, and
-// the phrasing-content rule a `<button>` body imposes.
-// ---------------------------------------------------------------------------
+// What the builder enforces: door/inert branch, accessible name, badge cap, subtitle shapes, list roles, phrasing content.
 
-/** A door needs an opener; only one case asserts it is called. */
 const noop = (): void => undefined;
 
 const badge = (text: string): HTMLElement => {
@@ -137,8 +131,7 @@ describe("entryRow: the subtitle region", () => {
   });
 
   it("reserves an empty subtitle line when the row has none", () => {
-    // The body centres in the row, so a row with NO line under its title would
-    // sit that title lower than its neighbours'.
+    // A row with no subtitle line would sit its title lower than its neighbours'.
     const row = entryRow({ key: "k", title: "t" });
     const sub = row.querySelector(".entry-sub");
     expect(sub?.textContent).toBe("");
@@ -169,9 +162,7 @@ describe("entryRow: the row's own contract", () => {
     expect(kids[2]?.classList.contains("entry-actions")).toBe(true);
   });
 
-  // A `div` anywhere under the control is invalid HTML the parser hoists OUT of
-  // the button, so the rule is checked once per subtitle shape rather than once:
-  // each shape builds a different element and only its own case can see it.
+  // The parser hoists a `div` out of a button, and each subtitle shape builds a different element, so each is checked.
   it("puts NO div inside the open button of a two-fact row", () => {
     const row = entryRow({
       key: "k",
@@ -214,8 +205,7 @@ describe("entryList / entrySkeleton / entryDetail", () => {
   });
 
   it("builds a detail region the list may own, holding what it was given", () => {
-    // A `role="list"` may own nothing but list items: a bare region under a row
-    // made the list own the form's own controls (axe aria-required-children).
+    // A `role="list"` may own only list items (axe aria-required-children).
     const form = document.createElement("form");
     const detail = entryDetail(form);
     expect(detail.className).toBe("entry-detail");

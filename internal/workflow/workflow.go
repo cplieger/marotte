@@ -1,14 +1,9 @@
-// Package workflow decodes KAS's workflow-run wire shapes.
+// Package workflow decodes KAS's workflow-run wire shapes. It holds no run state:
+// `_kiro/workflow/inspect` returns it whole and the read endpoints pass it through. What
+// remains is which ACP session executed a given step, plus KAS's `-32603` error unwrapping.
 //
-// It holds no run state: a run's state lives at
-// ~/.kiro/sessions/<hash>/workflows/<workflowId>/ and `_kiro/workflow/inspect`
-// returns it whole, which marotte's read endpoints pass through verbatim. What is
-// left here is the one question that passthrough cannot answer — which ACP session
-// executed a given step — plus the error unwrapping KAS's `-32603` shape requires.
-//
-// `inspect` carries no stepSessions array: `state.root` already holds `sessionId`,
-// `agentName`, `iteration`, `branchId` and the rest ON each step node, so the tree
-// IS the join, and `nodePlan` adds only a repeat's ceiling fields.
+// `inspect` has no stepSessions array: `state.root` holds `sessionId`, `agentName`,
+// `iteration` and `branchId` ON each step node, so the tree IS the join.
 package workflow
 
 import (
@@ -20,14 +15,10 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// Node is one node of a run's state tree: a sequence, parallel or repeat node
-// carries children, a step node is a leaf and is the only kind with a session.
-// Every other field stays on the wire, because the read endpoint passes the tree
-// through and a second definition here could only drift.
+// Node is one node of a run's state tree; a step node is a leaf and the only kind with a
+// session. Other fields stay on the wire, passed through by the read endpoint.
 type Node struct {
-	// Iteration is which pass of an enclosing `repeat` this node belongs to. A
-	// POINTER because iteration 0 is the FIRST pass, which a plain int cannot tell
-	// from absent, and that pass is the one every non-looping run has.
+	// Iteration is the pass of an enclosing `repeat`; a pointer because pass 0 is the first.
 	Iteration *int   `json:"iteration"`
 	NodeID    string `json:"nodeId"`
 	Type      string `json:"type"`
@@ -35,9 +26,8 @@ type Node struct {
 	Children  []Node `json:"children"`
 }
 
-// State is the run state `inspect` returns, decoded only as far as step
-// identification needs. Status, pauseReason and timings stay on the wire, for
-// Node's reason.
+// State is the run state `inspect` returns, decoded only as far as step identification
+// needs.
 type State struct {
 	Root       *Node  `json:"root"`
 	WorkflowID string `json:"workflowId"`
@@ -49,21 +39,17 @@ type InspectResult struct {
 	State *State `json:"state"`
 }
 
-// StepSession names one step node, the ACP session that executed it, and its PATH
-// within the run. The path addresses one EXECUTION where the node id addresses a
-// node: a repeat's iterations share a node id, so every caller that has to name a
-// single step keys on the path.
+// StepSession names one step node, its ACP session and its PATH. The path addresses one
+// EXECUTION (a repeat's iterations share a node id), so callers naming a step key on it.
 type StepSession struct {
 	NodeID    string
 	SessionID string
-	// Path is the node path from the root down to this step, in the spelling KAS
-	// puts on the WIRE. See pathSegment for the one segment that disagrees.
+	// Path is the node path from the root to this step in KAS's WIRE spelling (see pathSegment).
 	Path []string
 }
 
-// StepSessions walks a run's state tree depth-first and returns every step that
-// has a session, in the tree's own order — which is declaration order, so a
-// `parallel` node's branches are ordered by declaration rather than by time.
+// StepSessions walks a run's state tree depth-first and returns every step with a session,
+// in declaration order (a `parallel` node's branches are not time-ordered).
 func StepSessions(s *State) []StepSession {
 	var out []StepSession
 	for _, st := range Steps(s) {
@@ -74,12 +60,8 @@ func StepSessions(s *State) []StepSession {
 	return out
 }
 
-// Steps walks a run's state tree depth-first and returns EVERY step node, in the
-// same order, whether or not it has run.
-//
-// The unfiltered door: StepSessions cannot tell "this run has no such step" from
-// "that step has not started", and a caller serving one step's transcript has to
-// answer those two differently.
+// Steps returns EVERY step node in the same order, run or not, so a caller can tell "no
+// such step" from "not started".
 func Steps(s *State) []StepSession {
 	if s == nil || s.Root == nil {
 		return nil
@@ -89,9 +71,8 @@ func Steps(s *State) []StepSession {
 	return out
 }
 
-// walk visits the tree depth-first, carrying the parent (which decides this node's
-// path segment) and the trail above it. Each level allocates its path at EXACT
-// capacity, or a child's append writes into a sibling's backing array.
+// walk visits the tree depth-first. Each level allocates its path at EXACT capacity, or a
+// child's append writes into a sibling's backing array.
 func walk(n, parent *Node, trail []string, out *[]StepSession) {
 	path := make([]string, 0, len(trail)+1)
 	path = append(path, trail...)
@@ -104,14 +85,10 @@ func walk(n, parent *Node, trail []string, out *[]StepSession) {
 	}
 }
 
-// pathSegment is what KAS calls this node in a node PATH, which is not always what
-// it calls it in the state tree.
-//
-// ONE node kind diverges: a repeat's per-iteration container is `<repeatId>#<n>` in
-// the tree and `iter-<n>` on the wire. Derived from the container's own `iteration`
-// rather than the `#` suffix, so nothing depends on how KAS spells a generated id;
-// a child carrying no iteration falls back to its node id, so it stays addressable.
-// Two siblings hold the same translation: translate.runNodePath and run-store.ts.
+// pathSegment is what KAS calls this node in a node PATH. A repeat's iteration container
+// is `<repeatId>#<n>` in the tree and `iter-<n>` on the wire, derived from its
+// `iteration`; with none it falls back to the node id. Siblings holding the same
+// translation: translate.runNodePath and run-store.ts.
 func pathSegment(n, parent *Node) string {
 	if parent != nil && parent.Type == "repeat" && n.Iteration != nil {
 		return "iter-" + strconv.Itoa(*n.Iteration)
@@ -119,20 +96,17 @@ func pathSegment(n, parent *Node) string {
 	return n.NodeID
 }
 
-// unknownMethodMarker is how KAS reports a `_kiro/workflow/*` name it does not
-// register: a -32603 whose `error.data.details` contains the classifier's own text.
-// A registered method never produces that string, which is what makes it usable.
+// unknownMethodMarker is how KAS reports an unregistered `_kiro/workflow/*` name: a -32603
+// whose `error.data.details` holds this text, which no registered method produces.
 const unknownMethodMarker = "has no persistence classification"
 
-// ErrUnknownMethod means the verb does not exist on this KAS build, as opposed to
-// existing and failing: an unimplemented verb is a permanent capability answer,
-// while a failure is transient and worth retrying. Callers ask errors.Is.
+// ErrUnknownMethod means the verb does not exist on this KAS build: a permanent capability
+// answer, unlike a transient failure. Callers ask errors.Is.
 var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli build")
 
-// The two refusals KAS's run-ownership gate throws as plain Errors, so they reach the
-// wire as a -32603 whose `error.data.details` is the sentence and carries no code
-// (acp-server.js acquireRunOwnership and ensureRunOwnership, kiro-cli 2.27.0). Each
-// marker is the part the load and mutate variants share.
+// The two refusals KAS's run-ownership gate throws as plain Errors: a -32603 whose
+// `error.data.details` is the sentence (acp-server.js acquireRunOwnership and
+// ensureRunOwnership, kiro-cli 2.27.0). Each marker is shared by the load and mutate variants.
 const (
 	ownedElsewhereMarker = "appears to be running in another process"
 	justClaimedMarker    = "was just claimed by another process"
@@ -145,14 +119,9 @@ var ErrOwnedElsewhere = errors.New("another process holds this run")
 // ErrJustClaimed means another claim on the run is in flight right now.
 var ErrJustClaimed = errors.New("another claim on this run is in flight")
 
-// Classify types a `_kiro/workflow/*` RPC failure AT THE BOUNDARY: an unregistered
-// verb or an ownership refusal comes back wrapping its sentinel with the original
-// still unwrappable.
-//
-// It reads the boundary error's own `error.data` and never the rendered message
-// chain: RPCError.Error() is the bare `error.message`, which for this shape is the
-// literal "Internal error", so a text search matched only when some intermediate
-// layer had already rendered the details into its own message.
+// Classify types a `_kiro/workflow/*` RPC failure AT THE BOUNDARY, wrapping its sentinel
+// with the original still unwrappable. It reads `error.data`, never the message chain:
+// RPCError.Error() for this shape is the literal "Internal error".
 func Classify(err error) error {
 	if err == nil {
 		return nil

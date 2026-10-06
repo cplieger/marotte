@@ -1,9 +1,6 @@
-// Tests for the run SSE handlers — the routing, not the surfaces. The contract pinned is
-// the invalidation model: a lifecycle event says only "refetch", and which surface refetches
-// depends on the event. Getting that wrong is what an accumulating client does, and it
-// garbles a run — `run_start` re-fires on every resume, and `node_complete` carries neither
-// iteration nor branch, so two passes of one loop cannot be told apart from the events
-// alone. A run's own LOG is the exception and is its own describe below.
+// The run handlers' invalidation model: a lifecycle event says only "refetch", and which surface
+// refetches depends on the event (`run_start` re-fires on resume; `node_complete` carries neither
+// iteration nor branch). A run's own LOG is its own describe below.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
@@ -18,6 +15,7 @@ vi.mock("../run-store.js", () => ({
   invalidateRunControls: vi.fn(),
   invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
+  noteRunLabel: vi.fn(),
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
@@ -25,6 +23,7 @@ vi.mock("../run-store.js", () => ({
   // non-empty answer both says the run was launched from a conversation and names
   // it. `""` is the parentless population.
   runChatID: vi.fn(() => "c1"),
+  runLabelOf: vi.fn(() => ""),
   // A run's own LOG: the five operations the six entry events reach. Present here
   // because Browser Mode links a mock for real, so a factory missing one name fails
   // the whole file's collection rather than one case.
@@ -34,10 +33,8 @@ vi.mock("../run-store.js", () => ({
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
 }));
-// The single owner of what Send means. Mocked because the deferral's own contract
-// is which CHAT the prompt reaches and what it says, not how a prompt becomes a
-// turn; `vi.hoisted` because the factory is lifted above these consts and this
-// file imports the value back to assert on it.
+// submitPrompt is mocked: the deferral's contract is which CHAT the prompt reaches and its text.
+// `vi.hoisted` because the factory is lifted and the value is asserted on.
 const { mockSubmitPrompt } = vi.hoisted(() => ({
   mockSubmitPrompt: vi.fn(async (): Promise<"sent" | "steered" | "failed"> => "sent"),
 }));
@@ -48,10 +45,8 @@ vi.mock("../submit.js", () => ({ submitPrompt: mockSubmitPrompt }));
 vi.mock("../store.js", () => ({ isThinking: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
-// A parked step's question. The DOCK is mocked because its queue, settle-once
-// guard and two hosts are `decision-dock.test.ts`'s subject; what this suite pins
-// is that the handler enqueues one decision carrying the ENVELOPE's chat id, and
-// that its submit reaches the right verb.
+// The dock is mocked (`decision-dock.test.ts`); this pins one decision with the ENVELOPE's chat id
+// and that its submit reaches the right verb.
 vi.mock("../decision-dock.js", () => ({
   pushDecision: vi.fn(),
   collapseSettledRunInput: vi.fn(),
@@ -78,12 +73,14 @@ import {
   invalidateRun,
   invalidateRunControls,
   noteRunChat,
+  noteRunLabel,
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
   openRunEntry,
   openRunTurn,
   runChatID,
+  runLabelOf,
   sealRunEntry,
 } from "../run-store.js";
 import { isThinking } from "../store.js";
@@ -102,6 +99,7 @@ const invalidate = vi.mocked(invalidateRun);
 const invalidateControls = vi.mocked(invalidateRunControls);
 const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
+const noteLabel = vi.mocked(noteRunLabel);
 const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
@@ -115,6 +113,7 @@ const sweepOrphans = vi.mocked(dropTurnDecisions);
 const chatThinking = vi.mocked(isThinking);
 const siblingRunLive = vi.mocked(hasLiveRunForChat);
 const launchingChat = vi.mocked(runChatID);
+const fetchedLabel = vi.mocked(runLabelOf);
 const runTurnOpened = vi.mocked(openRunTurn);
 const runEntryOpened = vi.mocked(openRunEntry);
 const runDelta = vi.mocked(applyRunDelta);
@@ -159,6 +158,8 @@ beforeEach(() => {
   siblingRunLive.mockReturnValue(false);
   launchingChat.mockReset();
   launchingChat.mockReturnValue("c1");
+  fetchedLabel.mockReset();
+  fetchedLabel.mockReturnValue("");
   mockSubmitPrompt.mockClear();
   mockSubmitPrompt.mockResolvedValue("sent");
   answer.mockClear();
@@ -184,10 +185,8 @@ function send(type: RunEvent, payload: Record<string, unknown>, chatID = "c1"): 
   dispatch({ type, chat_id: chatID, payload });
 }
 
-// Every event this module subscribes to really is a key of the typed SSE surface, so a
-// rename on the Go side that regenerates the wire types breaks this file rather than
-// silently unsubscribing the handlers. The six entry events are in the list because a
-// run's LOG arrives on them: a step's content is the run's own entries.
+// Every subscribed event is a key of the typed SSE surface, so a Go-side rename breaks this file
+// rather than silently unsubscribing; the six entry events carry the run's LOG.
 const _keys: readonly (keyof SSEPayloads)[] = [
   "run_started",
   "run_progress",
@@ -213,12 +212,8 @@ describe("run SSE handlers", () => {
     }
   });
 
-  // The verb set turns over at exactly one moment in a run's life: its ending. A
-  // live run's Pause/Cancel becomes a failed run's Retry, or a completed run's
-  // nothing, and no other frame says so — so this is the affordance's second and
-  // last trigger, the first being a tab opening. Fetching it per frame instead
-  // would put a round trip on every node event, which is what the progress patch
-  // exists to avoid.
+  // The verb set changes only when a run ENDS, so that is the affordance's second and last refetch
+  // (the first is a tab opening); per frame would add a round trip to every node event.
   it("refetches the affordance when a run ENDS, and never mid-run", () => {
     send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: "seq/coder" });
     send("run_started", { workflow_id: "wf_1", name: "x" });
@@ -227,6 +222,15 @@ describe("run SSE handlers", () => {
     send("run_finished", { workflow_id: "wf_1", status: "failed", name: "x" });
     expect(invalidateControls).toHaveBeenCalledTimes(1);
     expect(invalidateControls).toHaveBeenLastCalledWith("wf_1");
+  });
+
+  // A notice for the run can arrive before its inspect read settles, so the label
+  // the lifecycle frame carries has to be in the store the moment the frame lands.
+  it("records the lifecycle frame's label for the run on start and finish", () => {
+    send("run_started", { workflow_id: "wf_1", name: "publish" });
+    expect(noteLabel).toHaveBeenLastCalledWith("wf_1", "publish");
+    send("run_finished", { workflow_id: "wf_1", status: "completed", name: "publish v2" });
+    expect(noteLabel).toHaveBeenLastCalledWith("wf_1", "publish v2");
   });
 
   // A progress frame is APPLIED, and the refetch is what happens only when it cannot be:
@@ -297,14 +301,9 @@ describe("run SSE handlers", () => {
     expect(invalidate).toHaveBeenCalledWith("wf_other");
   });
 
-  // The live-runs inventory feeds the eviction sweep's exemption: a chat with a
-  // run in flight must not lose its transcript window. Both live-marking events
-  // carry the chat — run_progress too, because run_started is not replayed to a
-  // client that connects mid-run.
-  //
-  // Both say EXECUTING, and each knows it for its own reason: a start frame fires on
-  // the launch and on every resume, and a node-level progress frame is a step moving
-  // inside a run that is still going.
+  // The live-runs inventory exempts a chat with a run in flight from eviction. Both events carry the
+  // chat (run_started is not replayed mid-run) and both say EXECUTING: a start fires on launch and
+  // every resume, a node-level progress frame is a step moving.
   it("records the run LIVE and EXECUTING with its chat, on start and on progress", () => {
     send("run_started", { workflow_id: "wf_live", name: "publish" });
     expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", true);
@@ -314,10 +313,8 @@ describe("run SSE handlers", () => {
     expect(noteSettled).not.toHaveBeenCalled();
   });
 
-  // The RUN-LEVEL pause folds into run_progress, so a progress frame is proof of
-  // life but not of execution. Reading every progress frame as executing would let a
-  // parked run keep its chat's whole message window resident on the strength of the
-  // very frame that parked it — a needInput park can sit for hours.
+  // A RUN-LEVEL pause folds into run_progress: live but not executing, or a parked run keeps its
+  // chat's window resident for hours.
   it("records a run-level pause as live but NOT executing", () => {
     send("run_progress", { workflow_id: "wf_live", kind: "paused" });
     expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", false);
@@ -340,34 +337,23 @@ describe("run SSE handlers", () => {
   });
 
   it("keeps a PAUSED run live but stops calling it executing", () => {
-    // The server's lease survives a pause the same way — presence means
-    // non-terminal, so the row stays and the dot painter keeps its run. What lapses
-    // is the eviction exemption: a policy stop (`onMaxIterations`) reports through
-    // this frame and writes nothing into the chat afterwards.
+    // Presence means non-terminal, so the row and dot stay; the eviction exemption lapses, since a
+    // policy stop (`onMaxIterations`) writes nothing more.
     send("run_finished", { workflow_id: "wf_pause", status: "paused" });
     expect(noteSettled).not.toHaveBeenCalled();
     expect(noteLive).toHaveBeenCalledWith("wf_pause", "c1", false);
   });
 
-  // The PARK's own read, counted rather than timed. A chat row's workflow mark paints
-  // from `row.executing` while the cell is absent, so an EXECUTING run costs ZERO
-  // responses before its square appears (`chat-run-dots.test.ts` pins that half). A
-  // park has no floor — the flag is the very thing that just went false — so the only
-  // thing that can say `waiting` rather than nothing is this frame's own re-read, and
-  // that is ONE request. The two cases above cover a run that ENDED; this is the arm
-  // that stays live, and moving the read into the terminal branch would leave a parked
-  // run's mark withheld until some other reader happened to fetch it.
+  // A parked run's mark can only say `waiting` through this frame's ONE re-read (an executing run
+  // paints from `row.executing`, `chat-run-dots.test.ts`); this is the arm that stays live.
   it("still issues the one read a PARKED run's mark waits on", () => {
     send("run_finished", { workflow_id: "wf_pause", status: "paused" });
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith("wf_pause");
   });
 
-  // The dock's queue is the third thing a terminal finish has to release. A run's
-  // ask is filed under the LAUNCHING chat's key, and `dropTurnDecisions` exempts a
-  // run-scoped ask on purpose (the run outlives the turn that launched it), so
-  // nothing else can reach it once the run is over — and `input` is the top rung of
-  // the tab dot, which left the launching chat amber for the life of the page.
+  // A run's ask is filed under the LAUNCHING chat and `dropTurnDecisions` exempts run-scoped asks,
+  // so only a terminal finish releases it (else the chat stays `input` amber).
   it("drops the run's unanswered asks on every terminal finish", () => {
     for (const status of ["completed", "failed", "aborted", "cancelled", "exploded"]) {
       dropAsks.mockClear();
@@ -387,14 +373,9 @@ describe("run SSE handlers", () => {
     expect(dropAsks).not.toHaveBeenCalled();
   });
 
-  // The ORPHAN backstop, and the reason `dropRunAsks` above cannot be it: every remover in
-  // the dock is keyed on `runID`, and a step's request-shaped ask arrives with `run_id`
-  // EMPTY whenever the step-session registry has not seen its sub-session — filed under the
-  // launching chat, lighting that chat's dot, invisible to the run sub-tab's dock.
-  // `dropTurnDecisions` is the sweep that CAN name it and had one production caller,
-  // `turn_closed` on the launching chat, which never fires for a step-driven turn. So the
-  // missing piece was a TRIGGER rather than a predicate, which is why every case here is
-  // about WHEN the sweep fires and none about what it removes.
+  // The ORPHAN backstop: a step's ask with an EMPTY `run_id` is filed under the launching chat and
+  // reachable only by `dropTurnDecisions`, whose other trigger never fires for a step-driven turn.
+  // So these cases are about WHEN the sweep fires.
   describe("a run's terminal frame sweeps the launching chat's orphaned asks", () => {
     it("sweeps when the launching chat is idle and no sibling run is live", () => {
       send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
@@ -411,9 +392,7 @@ describe("run SSE handlers", () => {
     });
 
     it("leaves a SIBLING run's orphan alone while that run is still executing", () => {
-      // Two runs launched from one chat share its queue key, and a sibling's
-      // orphaned step ask carries an empty runID too — indistinguishable from this
-      // run's. `noteRunSettled` has already run for THIS run by then, so the
+      // A sibling run's orphan also has an empty runID; `noteRunSettled` already ran for THIS run, so the
       // predicate answers about siblings only.
       siblingRunLive.mockReturnValue(true);
       send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
@@ -435,14 +414,8 @@ describe("run SSE handlers", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The signal: who gets told, and when.
-//
-// The asymmetry is the contract. A start is announced only for a run nobody
-// launched by hand; a completion is announced for every run, because nothing else
-// in the app says a run ended (no push kind, and one shared run-dock element means
-// a background run tab has no surface).
-// ---------------------------------------------------------------------------
+// The asymmetry is the contract: a start is announced only for a run nobody launched by hand; a
+// completion for every run, since nothing else says a run ended.
 describe("run toasts", () => {
   // Each case uses its own workflow ids. The start guard is module state that
   // outlives a test (it is keyed on the run, and a run does not restart because a
@@ -487,6 +460,13 @@ describe("run toasts", () => {
       "nightly finished",
       "by-hand finished",
     ]);
+  });
+
+  it("names a labelled run by the fetched run's label over the frame's name", () => {
+    fetchedLabel.mockImplementation((id) => (id === "wf_labelled" ? "publish-docs" : ""));
+    send("run_started", { workflow_id: "wf_labelled", name: "publish", scheduled: true });
+    send("run_finished", { workflow_id: "wf_labelled", status: "completed", name: "publish" });
+    expect(toasts()).toEqual(["Scheduled run started: publish-docs", "publish-docs finished"]);
   });
 
   // The level follows the OUTCOME, not the event: "finished" is not a verdict.
@@ -550,11 +530,8 @@ describe("run toasts", () => {
   });
 });
 
-// A run's own LOG: the six entry events, scoped to a run. This replaced `run_step`, whose
-// whole shape was a hand-off of ephemeral content because a step's transcript was in no
-// store. A step's entries are the RUN's now, so each event is one call into a run-store
-// operation behind the workflow-id guard — the MIRROR of the chat handler's, so two
-// subscribers over one registration partition every frame between them.
+// A run's own LOG: the six entry events behind the workflow-id guard, the MIRROR of the chat
+// handler's, so two subscribers partition every frame.
 describe("a run's own log", () => {
   const RUN = "wf_log";
   const TURN = "step-turn";
@@ -634,12 +611,9 @@ describe("a run's own log", () => {
   });
 });
 
-// A parked step's question: the one run event that carries a payload rather than an
-// invalidation, because KAS parks the run with one fixed `pauseReason` literal and an empty
-// `pauseDetail`, so refetching `inspect` can say a step wants input and never what it asked.
-// The whole feature is where the card lands, so the chat id is what these cases are about:
-// it comes off the ENVELOPE, the launching chat for an agent-parented run and
-// `run:<workflowId>` for a parentless one.
+// The one run event carrying a payload: KAS parks with a fixed `pauseReason` and an empty
+// `pauseDetail`, so `inspect` never says what was asked. The chat id comes off the ENVELOPE (the
+// launching chat, or `run:<workflowId>` for a parentless run).
 describe("a step's question", () => {
   interface AskDecision {
     kind: string;
@@ -757,12 +731,8 @@ describe("a step's question", () => {
     expect(answer).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // Deferring the question to the agent that launched the run. The prompt has to
-  // reach the LAUNCHING CHAT — the run id addresses the run, not a conversation —
-  // and it carries the two routes rather than the question, because the reader
-  // deferred precisely so as not to read it.
-  // -------------------------------------------------------------------------
+  // Deferring to the launching agent: the prompt reaches the LAUNCHING CHAT and carries the two
+  // routes, not the question the reader chose not to read.
   describe("deferring to the launching agent", () => {
     it("prompts the LAUNCHING chat and names the run, not the question", async () => {
       const d = ask();
@@ -780,10 +750,7 @@ describe("a step's question", () => {
       // The two routes, so the agent can act on it without being told how.
       expect(text).toContain("GET /api/runs/wf_1");
       expect(text).toContain("POST /api/runs/wf_1/answer");
-      // And the body's two field NAMES, quoted as they appear in the JSON, because
-      // they are unguessable: an agent reaching for `answer` instead of `text` spends
-      // a 400 on a hand-off someone is waiting on. Quoted rather than bare, or the
-      // word "text" alone would pass on prose that never names the field.
+      // The body's field NAMES, quoted, because they are unguessable (`text`, not `answer`).
       expect(text).toContain('"ask_id"');
       expect(text).toContain('"text"');
     });

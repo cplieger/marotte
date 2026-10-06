@@ -1,8 +1,5 @@
 package agent
 
-// Tests for the command dispatcher in command.go: create_chat, prompt,
-// delete_chat, unknown-type handling, idempotent replay.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -48,8 +45,7 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	// The turn_open carrying the prompt, the name and the draft clear are all
-	// persisted BEFORE the ack, so these reads race nothing.
+	// The turn_open, name and draft clear persist before the ack.
 	c, ok := cs.Get(t.Context(), "c-test-1")
 	if !ok {
 		t.Fatal("chat not created")
@@ -67,15 +63,11 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	if c.Name != "hello" {
 		t.Errorf("auto-rename failed: name = %q, want 'hello'", c.Name)
 	}
-	// The session metadata is the TURN's, which runs past the ack: the spawn
-	// persists it on the goroutine, so the read polls rather than asserting a
-	// race.
+	// Session metadata is persisted by the turn after the ack, so poll.
 	waitForSessionID(t, cs, "c-test-1")
 }
 
-// waitForSessionID polls until the chat carries an ACP session id, failing
-// closed with a diagnostic: the prompt acks before its turn spawns the bridge,
-// so session metadata lands asynchronously.
+// waitForSessionID polls until the chat carries an ACP session id: the prompt acks before the bridge spawns.
 func waitForSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -158,8 +150,6 @@ func TestUnknownCommandReturns400(t *testing.T) {
 	}
 }
 
-// --- cmdCancel ---
-
 func TestCancel_NoBridgeIsOK(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{Type: "cancel", ChatID: "no-bridge"})
@@ -176,7 +166,6 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Ensure the fake has the session id populated.
 	fb := sb.bridge.(*fakeBridge)
 	fb.sessionID = "sess"
 
@@ -185,8 +174,6 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 		t.Errorf("code = %d", rec.Code)
 	}
 }
-
-// --- cmdPermission ---
 
 func TestPermission_RequiresBridge(t *testing.T) {
 	h, _, _ := newTestHub()
@@ -222,8 +209,7 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The request has to BE pending: the handler claims it before answering, so
-	// a tracked entry is what makes the answer legal.
+	// The request must be pending: the handler claims it before answering.
 	h.bus.pendingPerms.Add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{
 			RequestID: 42,
@@ -238,10 +224,7 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 	}
 }
 
-// TestPermission_SecondAnswerIs409 is the cross-tab double answer, end to end
-// through the dispatcher: the first answer claims request 42, and the second
-// one — the other tab's, sent against a card the server has already resolved —
-// is refused instead of being forwarded and silently dropped by kiro-cli.
+// TestPermission_SecondAnswerIs409 is the cross-tab double answer: the second answer is refused, not silently dropped by kiro-cli.
 func TestPermission_SecondAnswerIs409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -263,19 +246,14 @@ func TestPermission_SecondAnswerIs409(t *testing.T) {
 	if code := answer("r1"); code != http.StatusOK {
 		t.Fatalf("first answer: code = %d, want 200", code)
 	}
-	// A distinct client request id, or the idempotency cache would replay the
-	// first answer's 200 and the test would pass without reaching the handler.
+	// A distinct request id, or the idempotency cache replays the first 200.
 	if code := answer("r2"); code != http.StatusConflict {
 		t.Errorf("second answer: code = %d, want 409", code)
 	}
 }
 
-// --- Adversarial input validation ---
-
 func TestCommand_RejectsInvalidChatID(t *testing.T) {
-	// Chat ids with path separators, traversal segments, or other
-	// unsafe characters must be rejected at the dispatcher before
-	// any per-command handler runs. Mirrors chat.chatIDPattern.
+	// Unsafe chat ids are rejected at the dispatcher before any handler (mirrors chat.chatIDPattern).
 	h, _, _ := newTestHub()
 
 	bad := []string{
@@ -305,8 +283,7 @@ func TestPrompt_RejectsOversizedText(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// 513 KiB — exceeds maxPromptBytes. Cap is smaller than the 1 MiB
-	// JSON body limit so the check fires cleanly with a 413.
+	// 513 KiB exceeds MaxPromptBytes, below the 1 MiB body limit, so the 413 is this check's.
 	big := make([]byte, 513*1024)
 	for i := range big {
 		big[i] = 'a'
@@ -327,9 +304,7 @@ func TestPrompt_RejectsBadMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Control characters, newlines, and overlong strings must all
-	// be rejected so the id can't smuggle through SSE framing or
-	// corrupt the stored JSON.
+	// Control characters, newlines and overlong ids could smuggle through SSE framing.
 	bad := []string{
 		"has\nnewline",
 		"has space",
@@ -351,8 +326,6 @@ func TestPrompt_RejectsBadMessageID(t *testing.T) {
 	}
 }
 
-// --- Helpers for adversarial tests ---
-
 func newCmdReq(t *testing.T, body []byte) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(body))
@@ -363,8 +336,6 @@ func newCmdReq(t *testing.T, body []byte) *http.Request {
 func newCmdRec() *httptest.ResponseRecorder {
 	return httptest.NewRecorder()
 }
-
-// --- Create hook ---
 
 func TestCreateHook_RequiresNameAndEventType(t *testing.T) {
 	h, _, _ := newTestHub()
@@ -395,8 +366,7 @@ func TestCreateHook_WritesFile(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	// The returned path must be workspace-relative (no workDir prefix
-	// leak into client response or Loki logs).
+	// The path is workspace-relative: no workDir prefix leaks to clients or logs.
 	var resp map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
@@ -404,9 +374,7 @@ func TestCreateHook_WritesFile(t *testing.T) {
 	if p, _ := resp["path"].(string); p != filepath.Join(".kiro", "hooks", "test-hook.json") {
 		t.Errorf("path = %q, want .kiro/hooks/test-hook.json (workDir-relative)", p)
 	}
-	// The JSON written to disk is the v1 schema: askAgent maps to an
-	// agent action and patterns to a matcher. mode 0o600 — hooks can
-	// hold runCommand shell.
+	// The v1 schema on disk at 0o600: hooks can hold runCommand shell.
 	data, err := os.ReadFile(filepath.Join(h.lifecycle.workDir, ".kiro", "hooks", "test-hook.json"))
 	if err != nil {
 		t.Fatalf("hook file missing: %v", err)
@@ -415,7 +383,7 @@ func TestCreateHook_WritesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Windows reports 0o666 for every file; only assert on POSIX.
+	// Windows reports 0o666 for every file.
 	if perm := info.Mode().Perm(); perm != 0o600 && perm != 0o666 {
 		t.Errorf("mode = %v, want 0o600", perm)
 	}
@@ -432,15 +400,14 @@ func TestCreateHook_WritesFile(t *testing.T) {
 		t.Fatalf("hooks = %v, want 1 entry", hooks)
 	}
 	hook, _ := hooks[0].(map[string]any)
-	// fileEdited maps to the PascalCase PostFileSave trigger; patterns
-	// become the single-regex matcher.
+	// fileEdited maps to PostFileSave; patterns become the single-regex matcher.
 	if hook["trigger"] != "PostFileSave" {
 		t.Errorf("trigger = %v, want PostFileSave", hook["trigger"])
 	}
 	if hook["matcher"] != "*.go,*.ts" {
 		t.Errorf("matcher = %v, want *.go,*.ts", hook["matcher"])
 	}
-	// askAgent maps to action.type=agent with a prompt (no command).
+	// askAgent maps to action.type=agent with a prompt.
 	action, _ := hook["action"].(map[string]any)
 	if action["type"] != "agent" || action["prompt"] != "review this" {
 		t.Errorf("action = %+v", action)
@@ -450,8 +417,7 @@ func TestCreateHook_WritesFile(t *testing.T) {
 	}
 }
 
-// TestCreateHook_RunCommandBranchWritesCommand pins the runCommand
-// branch distinct from askAgent: v1 action.type=command + action.command.
+// TestCreateHook_RunCommandBranchWritesCommand pins runCommand as action.type=command + action.command.
 func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
 
@@ -477,7 +443,6 @@ func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
 	}
 	hook, _ := hooks[0].(map[string]any)
 	action, _ := hook["action"].(map[string]any)
-	// runCommand maps to action.type=command with a command (no prompt).
 	if action["type"] != "command" || action["command"] != "lint %" {
 		t.Errorf("action = %+v", action)
 	}
@@ -486,9 +451,7 @@ func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
 	}
 }
 
-// TestCreateHook_RejectsTraversal pins the path-traversal guard: any
-// name containing /, \, .., NUL, or non-allowlisted characters must
-// be rejected with 400, and no file may appear outside .kiro/hooks/.
+// TestCreateHook_RejectsTraversal pins the path-traversal guard: 400, and nothing outside .kiro/hooks/.
 func TestCreateHook_RejectsTraversal(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
 
@@ -516,16 +479,13 @@ func TestCreateHook_RejectsTraversal(t *testing.T) {
 			t.Errorf("name=%q code=%d, want 400", name, rec.Code)
 		}
 	}
-	// No files must have escaped the hooks directory.
 	matches, _ := filepath.Glob(filepath.Join(h.lifecycle.workDir, "..", "*.json"))
 	if len(matches) > 0 {
 		t.Errorf("traversal succeeded: %v", matches)
 	}
 }
 
-// TestCreateHook_RejectsOversizeField pins the per-field 8 KiB cap
-// (maxHookField). A runaway prompt would otherwise slow every chat
-// startup when kiro-cli rescans .kiro/hooks.
+// TestCreateHook_RejectsOversizeField pins the 8 KiB per-field cap (maxHookField): kiro-cli rescans hooks at every chat start.
 func TestCreateHook_RejectsOversizeField(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
 	big := strings.Repeat("a", command.MaxHookField+1)
@@ -541,8 +501,6 @@ func TestCreateHook_RejectsOversizeField(t *testing.T) {
 	}
 }
 
-// --- MergeLastExchange ---
-
 func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	h, cs, _ := newTestHubIn(t.TempDir())
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -555,8 +513,7 @@ func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	if _, ok := cs.Get(t.Context(), "c-sh"); !ok {
 		t.Fatal("chat not created by shell interception")
 	}
-	// One turn of three entries: turn_open{local_shell, prompt}, the fenced
-	// output as text, turn_close.
+	// One turn: turn_open{local_shell, prompt}, the fenced output, turn_close.
 	entries := logOf(t, cs, "c-sh")
 	kinds := make([]marotte.EntryKind, 0, len(entries))
 	for i := range entries {
@@ -582,9 +539,7 @@ func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	}
 }
 
-// TestPrompt_ShellInterception_EmptyAfterTrim rejects `!<whitespace>`
-// as errEmptyPrompt so cmdPrompt doesn't spawn sh -c ” (which would
-// succeed with empty output and confuse the transcript).
+// TestPrompt_ShellInterception_EmptyAfterTrim rejects `!<whitespace>` as errEmptyPrompt.
 func TestPrompt_ShellInterception_EmptyAfterTrim(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -596,9 +551,7 @@ func TestPrompt_ShellInterception_EmptyAfterTrim(t *testing.T) {
 	}
 }
 
-// TestPrompt_ShellInterception_ExitCodeAppended captures that a
-// failing command's exit-status string is surfaced below the fenced
-// output so the user sees why their command failed.
+// TestPrompt_ShellInterception_ExitCodeAppended pins the exit status below the fenced output.
 func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	h, cs, _ := newTestHubIn(t.TempDir())
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -612,19 +565,14 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	if len(texts) != 1 {
 		t.Fatalf("text entries = %d, want the one fenced output", len(texts))
 	}
-	// The body carries more than the empty "```\n\n```" wrapper, so err.Error()
-	// is surfaced.
+	// More than the empty fence, so err.Error() was surfaced.
 	if len(texts[0]) < 10 {
 		t.Errorf("shell output too short, error not surfaced: %q", texts[0])
 	}
 }
 
-// --- cmdPrompt busy ---
-
-// A second prompt during a streaming prompt turn answers the PLAIN 409 — no
-// `reason` field — because the holder is prompt-class and its bridge is live,
-// so the client's 409→steer conversion works. The fixture holds the admission
-// the way the prompt goroutine does: the reservation plus the bridge slot.
+// A second prompt during a streaming turn answers the plain 409 (no `reason`), so the client
+// converts it to a steer. The fixture holds the reservation plus the bridge slot.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -656,8 +604,6 @@ func TestPrompt_BusyReturns409(t *testing.T) {
 	}
 }
 
-// --- buildPromptBlocks ---
-
 func TestBuildPromptBlocks(t *testing.T) {
 	tests := []struct {
 		setupFile       func(dir string)
@@ -678,9 +624,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 			wantContains: "hello",
 		},
 		{
-			// v3: a supported document is always inlined as an embedded
-			// `resource` block (no `document` type in the v3 content-block
-			// union; embeddedContext is always advertised true).
+			// v3 inlines a supported document as an embedded `resource` block.
 			name:        "SupportedDocumentInlinedAsResource",
 			text:        "hi",
 			attachments: []marotte.Attachment{{Name: "doc.pdf", Path: "doc.pdf"}},
@@ -692,9 +636,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 			wantMIME: "application/pdf",
 		},
 		{
-			// A format KAS does not accept as an inline resource
-			// (.pptx/.ppt/.rtf/.odt/.ods/.odp) must route through the
-			// path-reference branch with a note — never a dropped block.
+			// A format KAS cannot inline must become a path reference with a note, never a dropped block.
 			name:        "UnsupportedDocEmitsAnnotatedPathRef",
 			text:        "hi",
 			attachments: []marotte.Attachment{{Name: "deck.pptx", Path: "deck.pptx"}},
@@ -752,7 +694,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(t.Context(), tc.text, tc.attachments, 0, h.lifecycle.resolveInsideWorkDir)
+			got := command.BuildPromptBlocks(t.Context(), tc.text, tc.attachments, 0, command.Workspace{Dir: h.lifecycle.workDir}, nil)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}
@@ -762,8 +704,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				t.Errorf("block[%d].type = %v, want %s", tc.wantLen-1, last["type"], tc.wantType)
 			}
 			if tc.wantMIME != "" {
-				// On v3 a document rides an embedded `resource` block, so
-				// mimeType is nested under resource; text blocks have none.
+				// mimeType is nested under resource.
 				mime := last["mimeType"]
 				if res, ok := last["resource"].(map[string]any); ok {
 					mime = res["mimeType"]
@@ -788,11 +729,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 	}
 }
 
-// --- Benchmarks ---
-
-// BenchmarkHandleCommand measures the command dispatch hot path: JSON decode,
-// validation and table lookup. There is no idempotency work in it any more —
-// dedup is the header middleware's, outside this handler.
+// BenchmarkHandleCommand measures dispatch: JSON decode, validation and table lookup.
 func BenchmarkHandleCommand(b *testing.B) {
 	quietLogs(b)
 	payloads := map[string]marotte.ClientCommand{
@@ -817,7 +754,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 			b.ReportAllocs()
 			i := 0
 			for b.Loop() {
-				// Unique request_id per iteration to avoid cache hits.
+				// A unique request_id per iteration.
 				unique := fmt.Appendf(body[:0:0], `{"type":%q,"request_id":"r-%d","chat_id":%q,"payload":%s}`,
 					cmd.Type, i, cmd.ChatID, cmd.Payload)
 				req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(unique)))
@@ -828,14 +765,12 @@ func BenchmarkHandleCommand(b *testing.B) {
 		})
 	}
 
-	// cache_hit: pre-seed the idempotency cache and measure replay path.
 	b.Run("cache_hit", func(b *testing.B) {
 		h, _, _ := newTestHub()
 		cmd := marotte.ClientCommand{
 			Type: marotte.CmdCreateChat, ChatID: "c-cached",
 			Payload: json.RawMessage(`{"name":"cached","model":"gpt-4"}`),
 		}
-		// Seed the cache with a first call.
 		body, _ := json.Marshal(cmd)
 		req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(body)))
 		rec := httptest.NewRecorder()

@@ -1,12 +1,5 @@
 package command
 
-// Reasoning effort is PER-CHAT: a field on the chat record beside model, mode
-// and supervised. It used to be one global `model_effort` setting keyed by the
-// LAST model, so two chats could not disagree and switching models discarded the
-// previous model's level. What is pinned here is that the level lands on the
-// chat, that a bridgeless chat is no longer a 409, and that a refused live
-// switch is not persisted as a level the session never took.
-
 import (
 	"context"
 	"encoding/json"
@@ -94,8 +87,7 @@ func writeConfig(t *testing.T, dir, body string) {
 	}
 }
 
-// effortSeeds reads the per-model memory back off disk, which is where the client
-// used to write it and where the pill now reads it from.
+// effortSeeds reads the per-model memory back off disk, where the pill reads it from.
 func effortSeeds(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, settings.Filename))
@@ -138,9 +130,9 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	}
 }
 
-// TestCmdSetEffort_SeedsOnlyThePickedModel pins the per-model scope of the write: one
-// slot for the whole app would make a pick on any chat retract every other model's
-// remembered level.
+// TestCmdSetEffort_SeedsOnlyThePickedModel pins the per-model scope of the write:
+// one slot for the whole app would make a pick on any chat retract every other
+// model's remembered level.
 func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `{"theme":"dark","last_effort_by_model":{"opus-5":"low","gpt-luna":"high"}}`)
@@ -160,7 +152,6 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	if !maps.Equal(got, want) {
 		t.Errorf("last_effort_by_model = %v, want %v", got, want)
 	}
-	// The sibling key proves the write merged rather than replacing the document.
 	if theme := storedKey(t, dir, settings.KeyTheme); theme != `"dark"` {
 		t.Errorf("theme = %s, want \"dark\"; the seed write replaced the document", theme)
 	}
@@ -229,8 +220,7 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	}
 }
 
-// Two chats disagreeing is the whole point of the move. The old global setting
-// could not express it.
+// Two chats may hold different levels, which one global setting could not express.
 func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
@@ -253,10 +243,8 @@ type noBridgeDeps struct{ *storeDeps }
 
 func (d *noBridgeDeps) Bridge(marotte.ChatID) Bridge { return nil }
 
-// A bridgeless chat used to answer 409, which is why the client had a second
-// path that wrote a GLOBAL setting instead — a different store and a different
-// scope reached by the same click. The persisted level is enough now: spawnBridge
-// applies it at session/new.
+// A bridgeless chat is not a conflict: the persisted level is enough, because
+// spawnBridge applies it at session/new.
 func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
@@ -318,8 +306,6 @@ func TestCmdSetEffort_ARefusedLiveSwitchIsNotPersisted(t *testing.T) {
 }
 
 func TestCmdSetEffort_RejectsAMalformedLevel(t *testing.T) {
-	// Shape only: uppercase, spaces and a leading digit are not tier ids. The
-	// vocabulary itself is per model and KAS's to judge — see the "none" test.
 	for _, level := range []string{"", "LOW", "x high", "9high"} {
 		t.Run(level, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
@@ -340,10 +326,8 @@ func TestCmdSetEffort_RejectsAMalformedLevel(t *testing.T) {
 }
 
 func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
-	// gpt-luna ships a "none" tier the old closed five-member set rejected at
-	// this boundary — the user-visible "thinking: none throws an error". The
-	// catalog is upstream-owned, so an unknown-but-well-formed tier flows and
-	// KAS (fail-fast on the live session) stays the authority.
+	// The tier catalog is upstream-owned: an unknown but well-formed tier (gpt-luna's "none")
+	// flows, and KAS stays the authority.
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	b := &recordingBridge{result: map[string]any{}, sessionID: "s"}

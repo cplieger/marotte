@@ -1,10 +1,5 @@
-// The streaming transfer runner: a clone's liveness is measured from git's
-// own progress stream rather than a wall clock. A fixed budget is wrong in
-// both directions for a network transfer — it kills a large repo that is
-// downloading fine (a 511 MB clone measured 8 minutes) and it waits out the
-// whole budget on a transfer that died in its first second. git reports
-// progress continuously on stderr with --progress, so the honest liveness
-// signal is that stream: keep going while data arrives, kill on stall.
+// A clone's liveness is git's own --progress stream, not a wall clock: a fixed budget kills a large
+// repo downloading fine and waits out a transfer that died in its first second.
 
 package git
 
@@ -23,36 +18,26 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
-// cloneCeiling bounds the WHOLE clone operation, stall detection included:
-// a hostile or broken remote could drip progress forever, and the request
-// deserves an end. Generous on purpose — the stall watchdog is what does
-// the real work, so this only has to be longer than any legitimate clone.
+// cloneCeiling bounds the whole clone, stall detection included, against a remote that drips
+// progress forever; only longer than any legitimate clone.
 const cloneCeiling = 60 * time.Minute
 
 // errCloneCeiling is cloneCeiling's context cause, so a kill at the
 // ceiling names itself instead of reading as a generic deadline.
 var errCloneCeiling = errors.New("the transfer exceeded the 60-minute ceiling")
 
-// cloneStallTimeout is how long a transfer may go without git reporting
-// ANY progress before it is killed. git emits progress many times a second
-// while data moves and during the remote's counting/compressing phases, so
-// a quiet stretch this long means the transfer is dead, not slow. A var so
-// tests can drive the stall path in milliseconds; never reassigned in
-// production.
+// cloneStallTimeout is how long a transfer may report no progress before it is killed; git reports
+// many times a second while working, so this long a silence is death. A var so tests can shorten
+// it.
 var cloneStallTimeout = 90 * time.Second
 
 // errCloneStalled is the stall watchdog's context cause.
 var errCloneStalled = errors.New("transfer stalled")
 
-// runTransfer runs one git command that moves data over the network,
-// reading its stderr as it arrives. Every read feeds the stall watchdog
-// and, when onProgress is non-nil, reports the progress token to it.
-//
-// On an ordinary git failure the returned output carries git's own message
-// (the "fatal:" line), exactly like gitCmd. On a stall or ceiling kill the
-// output is deliberately EMPTY and the error names the reason: the tail of
-// a killed transfer is a progress line ("Receiving objects: 42%"), and
-// composing that into an error envelope reads as nonsense.
+// runTransfer runs one git command that moves data over the network, feeding its stderr to the
+// stall watchdog and onProgress. On an ordinary failure the output carries git's own message; on a
+// stall or ceiling kill it is EMPTY and the error names the reason, since the tail would be a
+// progress line.
 func runTransfer(ctx context.Context, dir string, onProgress func(string), args ...string) (string, error) {
 	if sub, ok := allowedSubcommand(args); !ok {
 		return "", fmt.Errorf("git: subcommand not allowed: %s", sub)
@@ -86,10 +71,8 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 			return "", killErr
 		}
 	}
-	// A read that ended early outranks git's own exit status as the DIAGNOSIS: the
-	// tail is short for a reason the tail itself cannot state, and reporting the
-	// exit code alone sends the reader looking at the remote. It does not outrank a
-	// kill reason above, which is more specific still.
+	// A read that ended early outranks git's exit status as the diagnosis, but not a kill reason
+	// above.
 	if readErr != nil && waitErr != nil {
 		return "", fmt.Errorf("reading git's progress output: %w", readErr)
 	}
@@ -101,11 +84,9 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 	return out, waitErr
 }
 
-// killWholeGroup puts the transfer in its own process group and makes the
-// context kill target the GROUP: git spawns helpers (git-remote-https
-// carries the actual transfer), and a head-only kill leaves the helper
-// holding the stderr pipe open — so the progress read loop would block out
-// the very stall the watchdog just detected.
+// killWholeGroup puts the transfer in its own process group and makes the context kill the GROUP: a
+// head-only kill leaves git-remote-https holding the stderr pipe, blocking the read loop past the
+// stall.
 func killWholeGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -141,23 +122,11 @@ func stallWatchdog(stall time.Duration, activity, done <-chan struct{}, cancel c
 	}
 }
 
-// forwardProgress drains the transfer's stderr, feeding the watchdog on every
-// token and forwarding each to onProgress. Returns the last tokens seen, which on
-// an ordinary failure carry git's own message, and a read error.
-//
-// A bufio.Scanner is deliberately NOT used, and the swap is the same one
-// internal/bridge/bridge_frame.go made for the same reason: bufio.ErrTooLong is
-// terminal for the Scanner that raised it, so one stderr token over the cap ended
-// this loop permanently — the watchdog then saw no activity, killed the group at
-// the stall timeout, and told the user "the transfer stalled: no progress from git
-// for 1m30s" for a remote that had merely printed one long line. It also left the
-// only cut in this package that could land at an ARBITRARY byte offset rather than
-// on a terminator, which is the cut a credential pattern can straddle
-// (redactCredentials states why every cut here must be a line boundary).
-//
-// So an oversize token is drained to its terminator and reported as truncated,
-// the stream resynchronises on a real boundary, and only a blob that never
-// terminates at all exhausts the budget.
+// forwardProgress drains the transfer's stderr, feeding the watchdog on every token and forwarding
+// each to onProgress, and returns the last tokens seen. Not a bufio.Scanner: ErrTooLong is terminal
+// for it, so one long line stalled the transfer, and its cut can land at an arbitrary byte, which a
+// credential pattern can straddle. An oversize token is drained to its terminator and reported
+// truncated.
 func forwardProgress(stderr io.Reader, activity chan<- struct{}, onProgress func(string)) ([]string, error) {
 	tail := &progressTail{onToken: onProgress, activity: activity}
 	pr := &progressReader{r: stderr}
@@ -214,11 +183,8 @@ func (t *progressTail) add(token string, truncated bool) {
 // of bytes; this is generous enough that a legitimately chatty remote always fits.
 const progressTokenCap = 64 * 1024
 
-// progressDrainCap bounds the bytes discarded while draining one oversize token,
-// mirroring bridge_frame.go's ratio and its reasoning: the budget is per TOKEN and
-// in BYTES rather than a count of oversize tokens, because each drain provably
-// ends on a terminator, so a remote emitting many long-but-terminated lines keeps
-// getting a fresh budget. Only a single blob that never terminates exhausts it.
+// progressDrainCap bounds the bytes discarded while draining one oversize token, per token and in
+// bytes (as in bridge_frame.go), so only a blob that never terminates exhausts it.
 const progressDrainCap = 16 * progressTokenCap
 
 // progressTruncated marks a token the cap cut, so a reader can tell it from a
@@ -229,13 +195,8 @@ const progressTruncated = "[truncated]"
 // budget without a terminator, so there is no boundary left to resynchronise on.
 var errProgressDrainExhausted = errors.New("git progress output did not terminate within the drain budget")
 
-// progressReader tokenizes an io.Reader on '\r' OR '\n' — git rewrites a phase's
-// progress line in place with '\r' and ends it with '\n', and both mark a
-// complete token, which is why this cannot be a bufio.Reader.ReadSlice loop
-// (ReadSlice takes ONE delimiter, and waiting for '\n' would swallow a whole
-// phase's worth of in-place rewrites and starve the stall watchdog).
-//
-// Not safe for concurrent use: one goroutine owns it for the transfer's life.
+// progressReader tokenizes on '\r' OR '\n': git rewrites a progress line in place with '\r', so a
+// single-delimiter ReadSlice loop would starve the watchdog. Owned by one goroutine.
 type progressReader struct {
 	r io.Reader
 	// pending holds bytes read but not yet tokenized. Bounded by the cap plus one
@@ -249,20 +210,13 @@ type progressReader struct {
 	eof      bool
 }
 
-// readToken returns the next token with its terminator stripped, whether the cap
-// cut it, and a terminal error (io.EOF at end of stream, a read error, or
-// errProgressDrainExhausted).
-//
-// A token whose cap was crossed returns ("", true, nil) — the accumulated prefix
-// is dropped rather than reported, for bridge_frame.go's reason: it is a cut at an
-// arbitrary offset, so it can split a multi-byte rune AND a credential pattern.
-// The caller marks the loss without claiming the bytes.
+// readToken returns the next token without its terminator, whether the cap cut it, and a terminal
+// error (io.EOF, a read error, errProgressDrainExhausted). A cut token returns ("", true, nil): the
+// prefix is dropped, since an arbitrary-offset cut can split a rune or a credential pattern.
 func (pr *progressReader) readToken() (token string, truncated bool, err error) {
 	for {
-		// The terminator decides first, and the cap is applied to the token it
-		// bounds: checking the cap only against UNTERMINATED bytes lets a token
-		// whose terminator lands in the same read as its last chunk slip past,
-		// however long it is.
+		// The terminator decides first and the cap applies to the token it bounds, or a token whose
+		// terminator arrives with its last chunk slips past.
 		if i := bytes.IndexAny(pr.pending, "\r\n"); i >= 0 {
 			tok := pr.pending[:i]
 			pr.pending = pr.pending[i+1:]
@@ -296,10 +250,8 @@ func (pr *progressReader) finish(tok []byte, term error) (token string, truncate
 	return strings.TrimSpace(string(tok)), false, term
 }
 
-// dropOversizePrefix abandons the token in progress once it crosses the cap with no
-// terminator in hand, counting the bytes against the drain budget. The prefix is
-// dropped rather than reported for bridge_frame.go's reason — it is a cut at an
-// arbitrary offset, so it can split a multi-byte rune AND a credential pattern.
+// dropOversizePrefix abandons the token in progress once it crosses the cap unterminated, charging
+// the drain budget; the prefix is dropped for readToken's reason.
 func (pr *progressReader) dropOversizePrefix() error {
 	if len(pr.pending) <= progressTokenCap {
 		return nil
@@ -344,25 +296,11 @@ func transferKillReason(tctx context.Context) error {
 	return nil
 }
 
-// cappedBuffer keeps the first cap bytes written and reports the rest as
-// written, so a flooding subprocess cannot grow the buffer unboundedly.
-//
-// The retained text ends on a LINE BOUNDARY, and that is a correctness property
-// rather than tidiness. Its contents are composed into the transfer's output and
-// then run through the credential redactor, whose three patterns each match
-// within one line — `scheme://user:pwd@host` needs the '@' to the RIGHT of the
-// '://' it anchors on. A cut at an arbitrary byte offset can land between them,
-// and then the redactor sees a URL with no userinfo and passes the credential
-// through. Truncating where a pattern cannot straddle turns git's own
-// one-line-per-URL habit into an invariant the redactor can rely on, instead of
-// a coincidence. It is also less mechanism than an end-anchored second pattern,
-// which would have to redact the host of every legitimately unterminated URL.
-//
-// A cut is MARKED, so a reader can tell truncated output from complete output —
-// the shape internal/bridge/bridge_process.go already uses for a bounded stderr
-// line. Bytes past the cap are reported as written: this is a subprocess's
-// stdout sink, and a short write would make exec kill the process with an I/O
-// error rather than let it finish.
+// cappedBuffer keeps the first cap bytes written and reports the rest as written, so a flooding
+// subprocess cannot grow it (a short write would make exec kill the process).
+// The retained text ends on a LINE BOUNDARY, a correctness property: the credential redactor's
+// patterns match within one line, and an arbitrary-offset cut between `://` and `@` lets a
+// credential through. A cut is marked.
 type cappedBuffer struct {
 	buf bytes.Buffer
 	cap int
@@ -383,11 +321,8 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 		c.buf.Write(p)
 		return len(p), nil
 	}
-	// Keep only up to the last newline that fits. A chunk with no newline in the
-	// room available contributes NOTHING rather than a partial line: retaining
-	// the head of it is exactly the arbitrary-offset cut this type exists to
-	// avoid, and a caller reading a marked-truncated buffer loses no information
-	// it could have trusted.
+	// Only up to the last newline that fits; a chunk with no newline in the room contributes
+	// nothing rather than a partial line.
 	fits := p[:room]
 	if i := bytes.LastIndexByte(fits, '\n'); i >= 0 {
 		c.buf.Write(fits[:i+1])

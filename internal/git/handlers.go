@@ -60,13 +60,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/pr-fetch", h.handlePRFetch)
 }
 
-// resolveRepoDir resolves a client-supplied repo name against a workDir, rejecting
-// escape via a `..` component or an absolute path. Empty, "." and rejected inputs
-// fall back to workDir, so the workspace root is the default "repo".
-//
-// HasDotDot judges the name AS WRITTEN, before it is joined onto anything, because
-// there is no root to compare against yet. It is component-precise, so a directory
-// whose name merely contains two adjacent dots ("foo..bar") still resolves.
+// resolveRepoDir resolves a client-supplied repo name against workDir, rejecting a `..` component
+// or an absolute path; empty, "." and rejected inputs fall back to workDir. HasDotDot judges the
+// name as written, before any join.
 func resolveRepoDir(workDir, repo string) string {
 	if repo == "" || repo == "." || pathinside.HasDotDot(repo) || filepath.IsAbs(repo) {
 		return workDir
@@ -74,12 +70,8 @@ func resolveRepoDir(workDir, repo string) string {
 	return filepath.Join(workDir, filepath.Clean(repo))
 }
 
-// repoDir resolves repo against h.workDir; see resolveRepoDir.
-//
-// The check is deliberately LEXICAL-ONLY, so symlinks inside workDir are not
-// resolved: a symlinked repo addressed by its symlink name is a feature of this
-// surface, and an os.Root would refuse it. Git does not follow symlinks into
-// .git/, so this is safe for the reads this package performs.
+// repoDir resolves repo against h.workDir (see resolveRepoDir). LEXICAL-ONLY on purpose: a
+// symlinked repo addressed by its link name is a feature here, which an os.Root would refuse.
 func (h *Handler) repoDir(repo string) string {
 	return resolveRepoDir(h.workDir, repo)
 }

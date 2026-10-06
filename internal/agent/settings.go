@@ -6,26 +6,23 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// Settings owns the KAS CONFIGURATION surface: knowledge bases, hooks, the
-// governance state and the Cedar policy queries, plus the HTTP routes over them.
-//
-// Grouped by collaborator: every method here reaches configuration through the
-// UTILITY bridge, while the rest of the runtime talks to a chat's own bridge
-// (mcp_control.go reaches a CHAT bridge instead, so it lives elsewhere). utility
-// arrives as a thunk because the runtime is built under a sync.Once whose hooks
-// call back into agent surfaces, so holding a built runtime here would cycle.
+// Settings owns the KAS configuration surface (knowledge, hooks, governance, Cedar policy queries) and its
+// routes, all over the utility bridge. utility is a thunk: the runtime is built under a sync.Once whose
+// hooks call back into agent surfaces.
 type Settings struct {
-	// governance caches the last governance state KAS reported, so a fresh page
-	// load can be served without a round trip. Written by the translator through
-	// SetGovernance and by the utility session's own warm path.
+	// governance caches KAS's last governance state, written by SetGovernance and the utility warm path.
 	governance *governanceCache
 	// utility is the bridgeless runtime every call here goes through.
 	utility func() *utilityRuntime
-	// lifecycle supplies the workspace dir (a hook's path is resolved inside it)
-	// and the process lifetime (the governance warm outlives its request).
+	// lifecycle supplies the workspace dir and the process lifetime.
 	lifecycle *lifetime
-	// broadcast publishes hooks_changed when a hook file changes underneath us.
+	// broadcast publishes hooks_changed and governance_state.
 	broadcast func(context.Context, marotte.ServerEvent)
+	// onLocksChanged runs when the lock map moves; it reads the locks itself, since two runs can finish in either order.
+	onLocksChanged func(context.Context)
+	// onAdminResolved runs once, when the administrator rules first become known; publishGovernance calls it inline, so it must not block.
+	onAdminResolved func()
+	adminRefresh    adminRefresh
 }
 
 func newSettings(lc *lifetime, broadcast func(context.Context, marotte.ServerEvent)) *Settings {
@@ -36,8 +33,5 @@ func newSettings(lc *lifetime, broadcast func(context.Context, marotte.ServerEve
 	}
 }
 
-// Config exposes the settings surface to the composition root, which hands it
-// to the server as its policyProvider (PolicyList + PolicyExplain).
-//
-// One accessor rather than two Runtime forwards, same as Runs().
+// Config exposes the settings surface to the composition root as the server's policyProvider.
 func (rt *Runtime) Config() *Settings { return rt.config }

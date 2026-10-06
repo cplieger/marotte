@@ -40,7 +40,6 @@ func TestParseAccountUsage(t *testing.T) {
 	})
 
 	t.Run("ManagedByAdmin", func(t *testing.T) {
-		// success:true with no data object (admin-managed plan).
 		u, err := parseAccountUsage(json.RawMessage(`{"success":true,"message":"Your plan is managed by admin"}`))
 		if err != nil {
 			t.Fatalf("parseAccountUsage: %v", err)
@@ -54,7 +53,7 @@ func TestParseAccountUsage(t *testing.T) {
 	})
 
 	t.Run("InvalidProfileArn", func(t *testing.T) {
-		// success:false — the exact error the wire returns without profileArn.
+		// The exact error the wire returns without profileArn.
 		_, err := parseAccountUsage(json.RawMessage(
 			`{"success":false,"message":"Failed to retrieve usage information: Invalid profileArn."}`,
 		))
@@ -86,14 +85,8 @@ func TestParseAccountUsage(t *testing.T) {
 	})
 }
 
-// TestAccountUsage_HandsBackWhatTheBridgeReported closes the gap between the
-// parser's own table and the fetch: TestParseAccountUsage proves the shape is read
-// correctly, and TestAccountUsage_CallHasTimeout proves the call is bounded, but
-// nothing asserted the fetch's two outcomes actually reach the caller.
-//
-// It matters because the footer renders whatever comes back: a nil snapshot with a
-// nil error reads as "no usage to show" rather than as a failure, so the plan and
-// the credit balance quietly vanish from the UI with nothing logged anywhere.
+// TestAccountUsage_HandsBackWhatTheBridgeReported pins that both fetch outcomes reach the
+// caller: a nil snapshot with a nil error would silently empty the footer.
 func TestAccountUsage_HandsBackWhatTheBridgeReported(t *testing.T) {
 	t.Run("a plan reply becomes the snapshot", func(t *testing.T) {
 		h, _, br := newTestHub()

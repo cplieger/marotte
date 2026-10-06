@@ -1,12 +1,4 @@
-// ---------------------------------------------------------------------------
 // Tests for spec-view.ts: the spec tab's page.
-//
-// The render helpers transplanted from the deleted specs board (the tree, the
-// toggle, the optional badge) are asserted against real DOM; the fetch, the tab
-// store and the send primitive are mocked so the lifecycle rules (eligibility,
-// the prompts, the result mapping, the state map's lifetime, the poll cadence,
-// 304 and 404) are deterministic.
-// ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
@@ -17,24 +9,24 @@ import type * as ChatCommandsModule from "./chat-commands.js";
 import type * as OpenersModule from "./editor-openers.js";
 
 const m = vi.hoisted(() => ({
-  /** The next replies `apiGetConditional` hands back, oldest first; the last one
-   *  repeats once the queue is drained. */
+  /** The next replies `apiGetConditional` hands back, oldest first; the last one repeats once
+   *  the queue is drained. */
   replies: [] as { status: number; data: unknown; etag: string }[],
   requests: [] as { path: string; etag: string }[],
   sent: [] as { chat: string; text: string }[],
   sendResult: { current: "sent" as string },
   opened: [] as string[],
   reparented: [] as { id: string; parent: string }[],
-  /** Which spec refs have a tab, which chat each spec tab's parent is, and which
-   *  chats have a tab. Three plain records the cases drive. */
+  /** Which spec refs have a tab, which chat each spec tab's parent is, and which chats have a
+   *  tab. Three plain records the cases drive. */
   specTabs: new Map<string, string>(),
   chatTabs: new Set<string>(),
   thinking: new Map<string, boolean>(),
   names: new Map<string, string>(),
 }));
 
-/** Reactive versions the mocked tracked reads bump, so the page's one effect
- *  re-runs the way the real store would make it. */
+/** Reactive versions the mocked tracked reads bump, so the page's one effect re-runs the way the
+ *  real store would make it. */
 const tabsVersion = signal(0);
 const thinkVersion = signal(0);
 
@@ -117,8 +109,6 @@ const dock = await import("./decision-dock.js");
 const openers = await import("./editor-openers.js");
 const navigate = await import("./navigate.js");
 
-// --- Fixtures ---
-
 const DIR = ".kiro/specs/demo";
 
 function node(id: string, text: string, extra: Partial<SpecTaskNode> = {}): SpecTaskNode {
@@ -179,8 +169,8 @@ async function settle(): Promise<void> {
   }
 }
 
-/** Drain the microtask queue. `settle`'s twin for the one case that runs on the
- *  fake clock, where a `setTimeout` would never resolve. */
+/** Drain the microtask queue. `settle`'s twin for the one case that runs on the fake clock,
+ *  where a `setTimeout` would never resolve. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) {
     await Promise.resolve();
@@ -227,8 +217,6 @@ afterEach(() => {
   view._resetForTest();
   vi.useRealTimers();
 });
-
-// --- The tree (transplanted from specs.test.ts@f776c166^) ---
 
 describe("the task tree", () => {
   it("renders the status glyph and the task text, with a spacer for a leaf", async () => {
@@ -333,8 +321,6 @@ describe("the task tree", () => {
   });
 });
 
-// --- Eligibility (design 4.3) ---
-
 describe("eligibility", () => {
   const tree = [
     node("L1", "Pending one"),
@@ -391,8 +377,6 @@ describe("eligibility", () => {
   });
 });
 
-// --- Prompts (design 4.3, verbatim) ---
-
 describe("prompts", () => {
   const s = { name: "demo", dir: DIR };
 
@@ -448,8 +432,8 @@ describe("prompts", () => {
     expect(all.startsWith("Run all tasks in spec 'demo' (.kiro/specs/demo/tasks.md).")).toBe(true);
     expect(all).toContain("the ones marked optional\n(a `*` after the checkbox) included");
     expect(all).not.toContain("that is not marked optional");
-    // Left standing, "required" would tell the agent to include the optional
-    // tasks and then stop once the required ones were checked.
+    // Left standing, "required" would tell the agent to include the optional tasks and then stop
+    // once the required ones were checked.
     expect(all).toContain("Finish when every task is checked");
     expect(all).not.toContain("every required task is checked");
   });
@@ -472,8 +456,6 @@ describe("prompts", () => {
     expect(run?.getAttribute("data-tooltip")).toContain("too large");
   });
 });
-
-// --- Dispatch and the result mapping ---
 
 describe("dispatch", () => {
   it("sends the task prompt to the tab's parent chat and pulses the row on sent", async () => {
@@ -574,11 +556,9 @@ describe("dispatch", () => {
   });
 });
 
-// --- Phase checkpoints (design 7.2) ---
-
 describe("phase checkpoints", () => {
-  /** The three answers KAS's after-tasks.md checkpoint offers, verbatim off the
-   *  pinned bundle. `user-input.ts` sends an option's title exactly. */
+  /** The three answers KAS's after-tasks.md checkpoint offers, verbatim off the pinned bundle.
+   *  `user-input.ts` sends an option's title exactly. */
   const RUN_REQUIRED = "Run required tasks";
   const RUN_ALL = "Run required and optional tasks";
   const NOT_NOW = "Not now";
@@ -604,14 +584,14 @@ describe("phase checkpoints", () => {
     await openIdle("c1");
     m.thinking.set("c1", true);
     thinkVersion.value++;
-    // The rising edge proves the page is subscribed to this chat's session, so a
-    // silent arm below cannot be told from a page that never saw the answer.
+    // The rising edge proves the page is subscribed to this chat's session, so a silent arm below
+    // cannot be told from a page that never saw the answer.
     expect(view._stateOf(DIR)?.lastThinking).toBe(true);
 
     view.carryCheckpointAnswer("c1", RUN_ALL);
     await settle();
-    // The agent answers the checkpoint by ENDING its turn, so the turn is still
-    // open at the click: a prompt sent now takes the server's 409.
+    // The agent answers the checkpoint by ENDING its turn, so the turn is still open at the click:
+    // a prompt sent now takes the server's 409.
     expect(m.sent).toHaveLength(0);
     expect(view._stateOf(DIR)?.armedRunAll).toBe("all");
 
@@ -673,8 +653,8 @@ describe("phase checkpoints", () => {
     openParented("c1");
     m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
     view.showSpec(DIR);
-    // No settle: the page exists with `spec === null`, which is the window a
-    // checkpoint answered right after the tab opened lands in.
+    // No settle: the page exists with `spec === null`, which is the window a checkpoint answered
+    // right after the tab opened lands in.
     expect(view._stateOf(DIR)?.spec).toBeNull();
     view.carryCheckpointAnswer("c1", RUN_REQUIRED);
     await settle();
@@ -698,8 +678,6 @@ describe("phase checkpoints", () => {
     expect(dock._hostCount()).toBe(0);
   });
 });
-
-// --- Fetch: 304, 404, SSE, the state map ---
 
 describe("fetch and state", () => {
   it("sends If-None-Match on the second fetch and keeps the last reply on a 304", async () => {
@@ -767,9 +745,9 @@ describe("fetch and state", () => {
     await settle();
     m.thinking.set("c1", true);
     thinkVersion.value++;
-    // The RISING edge is what proves the page is subscribed to this chat's session
-    // at all: without it the falling edge below reads as unchanged and the refetch
-    // it triggers cannot be told from one this case never asked for.
+    // The RISING edge is what proves the page is subscribed to this chat's session at all: without
+    // it the falling edge below reads as unchanged and the refetch it triggers cannot be told from
+    // one this case never asked for.
     expect(view._stateOf(DIR)?.lastThinking).toBe(true);
     view.applyResult(DIR, "L1", "sent");
     const before = m.requests.length;
@@ -816,8 +794,8 @@ describe("fetch and state", () => {
     view.applyResult(DIR, "L1", "sent");
     m.thinking.set("c1", false);
     thinkVersion.value++;
-    // The falling edge itself paints, so a mark taken there rather than from the
-    // fetch it triggers reaches the DOM for one frame before being retracted.
+    // The falling edge itself paints, so a mark taken there rather than from the fetch it triggers
+    // reaches the DOM for one frame before being retracted.
     expect(body().querySelector(".spec-node-note")).toBeNull();
     await settle();
 
@@ -827,9 +805,9 @@ describe("fetch and state", () => {
 
   it("collapses one in-flight fetch and one trailing refetch", async () => {
     openParented();
-    // A real initializer rather than `null`: the executor runs synchronously, and
-    // the compiler cannot see that, so a nullable binding narrows to `never` at the
-    // call below and `typecheck:tests` refuses it.
+    // A real initializer rather than `null`: the executor runs synchronously, and the compiler
+    // cannot see that, so a nullable binding narrows to `never` at the call below and
+    // `typecheck:tests` refuses it.
     let release = (): void => undefined;
     const held = new Promise<void>((r) => {
       release = r;
@@ -851,8 +829,6 @@ describe("fetch and state", () => {
     expect(m.requests.length).toBe(2);
   });
 });
-
-// --- Poll cadence ---
 
 describe("poll cadence", () => {
   it("runs at 2.5 s inside the fast window and 15 s outside it", () => {
@@ -880,21 +856,21 @@ describe("poll cadence", () => {
   it("does not fetch on a tick while the view is hidden, and fetches once it is shown", async () => {
     openParented();
     m.replies = [reply(spec([prose("design.md", "design")]))];
-    // BEFORE the first fetch, because the poll is armed at the end of it: with the
-    // fake clock installed afterwards that timer is a REAL one, `advanceTimersByTime`
-    // moves nothing, and both halves of this case pass while asserting nothing.
+    // BEFORE the first fetch, because the poll is armed at the end of it: with the fake clock
+    // installed afterwards that timer is a REAL one, `advanceTimersByTime` moves nothing, and both
+    // halves of this case pass while asserting nothing.
     vi.useFakeTimers();
     view.showSpec(DIR);
-    // Microtasks only: the whole fetch chain is promises, and `settle`'s setTimeout
-    // would never resolve under the fake clock.
+    // Microtasks only: the whole fetch chain is promises, and `settle`'s setTimeout would never
+    // resolve under the fake clock.
     await flush();
     const before = m.requests.length;
     const viewEl = document.getElementById("spec-view");
     if (viewEl === null) {
       throw new Error("no #spec-view");
     }
-    // `offsetParent` is what the page reads, so the inline style is the whole of
-    // hiding it here: no stylesheet is loaded, so a class would paint nothing.
+    // `offsetParent` is what the page reads, so the inline style is the whole of hiding it here: no
+    // stylesheet is loaded, so a class would paint nothing.
     viewEl.style.display = "none";
     vi.advanceTimersByTime(view.POLL_SLOW_MS + 10);
     await flush();
@@ -906,8 +882,6 @@ describe("poll cadence", () => {
     expect(m.requests.length).toBe(before + 1);
   });
 });
-
-// --- Header ---
 
 describe("header", () => {
   it("names the phase from the known roles, counts done over required leaves, and carries the progressbar", async () => {
@@ -945,10 +919,8 @@ describe("header", () => {
   });
 
   it("renders a segment for a document whose name would break an attribute selector", async () => {
-    // A segment's id is a filename off the directory listing, and a `"` in one is
-    // legal on every filesystem this runs on. Unescaped it made both selectors
-    // (this page's dot painter and the shared bar's own) throw a SyntaxError, so
-    // the whole paint went down over one badly named file.
+    // A segment's id is a filename off the directory listing, and a `"` in one is legal on every
+    // filesystem this runs on.
     openParented();
     m.replies = [reply(spec([prose('we"re.md', "other"), prose("design.md", "design")]))];
     view.showSpec(DIR);
@@ -998,8 +970,6 @@ describe("header", () => {
   });
 });
 
-// --- The doors ---
-
 describe("openSpec", () => {
   it("opens a parented spec tab from a chat and a parentless one without", async () => {
     m.chatTabs.add("c1");
@@ -1016,8 +986,6 @@ describe("openSpec", () => {
     expect(m.reparented).toEqual([{ id: `spec:${DIR}`, parent: "chat:c1" }]);
   });
 });
-
-// --- The shared scroller ---
 
 describe("the page's scroll position", () => {
   const OTHER = ".kiro/specs/other";

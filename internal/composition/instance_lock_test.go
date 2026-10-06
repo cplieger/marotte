@@ -6,14 +6,8 @@ import (
 	"testing"
 )
 
-// TestAcquireInstanceLock pins the single-instance guard: a fresh
-// configDir is lockable, a second acquisition on the same dir is
-// refused (the flock is held by the first, still-open fd), and a
-// configDir whose parent does not exist fails at the open step.
-//
-// flock locks obtained through distinct open file descriptions
-// conflict even within one process, so two acquireInstanceLock calls
-// on the same path is a faithful stand-in for two marotte processes.
+// TestAcquireInstanceLock pins the single-instance guard: a fresh configDir locks, a second
+// acquisition on it is refused while the first fd is open.
 func TestAcquireInstanceLock(t *testing.T) {
 	t.Run("fresh dir acquires", func(t *testing.T) {
 		dir := t.TempDir()

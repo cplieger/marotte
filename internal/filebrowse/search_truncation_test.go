@@ -14,14 +14,8 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// This file pins ONE rule in both directions: a part of the tree the search meant
-// to read and could not marks the answer Truncated, and a part it deliberately
-// skipped does not. A file read only to its ceiling is the first kind; a cap on
-// the ROWS is neither, because Matched exceeding the row count reports a cut.
-//
-// "No matches" would otherwise mean two things — the text is not there, or it may
-// be in a subtree nobody could open — and one field serves both answers because a
-// caller can do exactly one thing with either: say the result is partial.
+// One rule in both directions: a part of the tree the search meant to read and could not marks the
+// answer Truncated; a part it deliberately skipped does not.
 
 // requireUnprivileged skips a fixture whose subject is a permission wall when the
 // test runs as root, because root opens a 0000 directory and the assertion would
@@ -36,9 +30,9 @@ func requireUnprivileged(t *testing.T) {
 	}
 }
 
-// TestSearch_UnreadableDirectoryMarksTruncated is the reported defect: a walk that
-// cannot descend into a subdirectory used to warn, continue, and report a complete
-// answer, so a hit inside that subtree was indistinguishable from no hit at all.
+// TestSearch_UnreadableDirectoryMarksTruncated — a walk that cannot descend into a
+// subdirectory must report a truncated answer, or a hit inside that subtree is
+// indistinguishable from no hit at all.
 func TestSearch_UnreadableDirectoryMarksTruncated(t *testing.T) {
 	requireUnprivileged(t)
 	h, dir, prefix := testDir(t)
@@ -50,7 +44,6 @@ func TestSearch_UnreadableDirectoryMarksTruncated(t *testing.T) {
 	if err := os.Chmod(closed, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	// Restore before TempDir's own cleanup, which cannot remove a 0000 directory.
 	t.Cleanup(func() { _ = os.Chmod(closed, 0o700) })
 
 	res := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
@@ -58,8 +51,6 @@ func TestSearch_UnreadableDirectoryMarksTruncated(t *testing.T) {
 	if !res.Truncated {
 		t.Error("truncated = false with a subtree the walk could not open; the reply claims to have covered it")
 	}
-	// The readable half still answers: an unreadable subtree makes the result
-	// partial, not empty.
 	if got := matchPaths(res); len(got) != 1 || !strings.HasSuffix(got[0], "open/found.txt") {
 		t.Errorf("matches = %v, want just open/found.txt", got)
 	}
@@ -120,8 +111,6 @@ func TestSearch_DeliberateSkipsDoNotMarkTruncated(t *testing.T) {
 		t.Errorf("truncated = true on a tree whose unread entries were all deliberate skips (matches %v)", matchPaths(res))
 	}
 	if got := matchPaths(res); len(got) != 2 {
-		// found.txt and link-target.txt; the symlink alias is skipped rather than
-		// reporting link-target.txt's content twice.
 		t.Errorf("matches = %v, want found.txt and link-target.txt", got)
 	}
 }
@@ -218,13 +207,8 @@ func TestLogSearchReadError_ClassifiesLossVersusSkip(t *testing.T) {
 	}
 }
 
-// TestWalkDir_ReadDirFailureMarksTruncated covers the enumeration half at any
-// privilege: the chunk in hand is consumed, but the REST of the directory was
-// never listed, so entries the search would have matched are unaccounted for.
-//
-// Driven with a handle on a regular file, which is what the kernel refuses to
-// enumerate (ENOTDIR) — the same shape as a directory whose listing fails
-// mid-walk, without needing a filesystem that can fail on demand.
+// TestWalkDir_ReadDirFailureMarksTruncated asserts that the chunk in hand is consumed, but the rest of the
+// directory was never listed, so the answer is truncated.
 func TestWalkDir_ReadDirFailureMarksTruncated(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notadir.txt")
@@ -235,7 +219,6 @@ func TestWalkDir_ReadDirFailureMarksTruncated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// walkDir closes the handle on the way out.
 
 	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 	if !sc.walkDir(searchDir{f: f, abs: dir}) {
@@ -270,14 +253,6 @@ func TestWalkDir_EndOfDirectoryIsNotTruncation(t *testing.T) {
 		t.Errorf("matches = %d, want 1: the fixture's only file holds the needle", len(res.Matches))
 	}
 }
-
-// --- The name path against the three bounding sites -----------------------
-//
-// A name hit opens nothing, so it spends no FILE, DIRECTORY or DEPTH budget —
-// and it DOES spend the match budget, through the same `collect` a content hit
-// goes through. Those are two different claims about three different mechanisms
-// (`capped`, `collect`, and `results`'s post-sort clamp), so they get one case
-// each with disjoint scopes: a single case cannot say which mechanism answered.
 
 // TestSearch_NameMatchSpendsNoFileOrDirBudget is the NARROW claim, and its name
 // says which budgets it is about so nobody reads it as "the name path never
@@ -345,14 +320,8 @@ func TestSearch_MatchCapStopsTheWalk(t *testing.T) {
 	}
 }
 
-// TestSearch_MatchCapClampsTheAnswer is the `results()` site, and the pin for the
-// RANK-AWARE clamp. The fixture collects far more than the cap — the name hits
-// stop the walk, and the candidates already accepted are then read, so their
-// content rows arrive AFTER the budget is spent — and the clamp cuts the SORTED
-// tail, so every surviving row is a name row and no content row survives at all.
-//
-// Content-bearing files are named to sort BEFORE the name matches, so path order
-// alone would keep them: only `nameFirst` leading the comparator can produce this answer.
+// TestSearch_MatchCapClampsTheAnswer pins the rank-aware cut at results(): far more hits than the
+// cap, clamped by rank.
 func TestSearch_MatchCapClampsTheAnswer(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	const (

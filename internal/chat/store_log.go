@@ -1,8 +1,7 @@
 package chat
 
-// The Store's log operations: every EntryLog call the agent and command packages
-// make goes through here, under the chat's per-chat mutex, so a header write and a
-// log append never race and the header hooks the log runs already hold the lock.
+// Every EntryLog call the agent and command packages make goes through the Store, under the chat's
+// per-chat mutex, so a header write and a log append never race.
 
 import (
 	"context"
@@ -10,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -37,8 +37,56 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	if err != nil {
 		return nil, err
 	}
+	// The log is published only once the queue is settled: a cached log is never
+	// held again, so an unsettled one would leave a previous process's rows
+	// sendable for this process's life.
+	if err := s.holdQueuedLocked(ctx, chatID, l); err != nil {
+		if cerr := l.Close(); cerr != nil {
+			slog.Warn("chat open: closing the unpublished log", "chat_id", chatID, "error", cerr)
+		}
+		return nil, fmt.Errorf("chat open: settle queued rows: %w", err)
+	}
 	s.logs.Store(chatID, l)
 	return l, nil
+}
+
+// holdQueuedLocked settles the follow-up queue a previous process left, at the
+// log's first open in this one and after the store-open closer. A row whose id a
+// turn_open already carries was sent and only lost its removal, so it goes; every
+// other row is marked Held, shown and never sent automatically, because nothing in
+// this process saw it queued. A chat with no header has nothing to settle. Caller
+// holds the chat's mutex.
+func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) error {
+	c, err := s.load(ctx, chatID)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case !slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return !q.Held }):
+		return nil
+	}
+	entries, err := l.All()
+	if err != nil {
+		return err
+	}
+	sent := make(map[string]bool)
+	for i := range entries {
+		if open, ok := promptOf(&entries[i]); ok {
+			sent[open.Prompt.ID] = true
+		}
+	}
+	_, err = s.mutateLocked(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		c.QueuedPrompts = slices.DeleteFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return sent[q.ID] })
+		for i := range c.QueuedPrompts {
+			c.QueuedPrompts[i].Held = true
+		}
+		return true
+	})
+	return err
 }
 
 // OpenTurn appends a turn_open to the chat's log and answers the entry, whose ID is
@@ -192,14 +240,13 @@ type Page struct {
 	Live        bool
 }
 
-// Page reads the newest `turns` turns, or the `turns` below `before`, with everything
-// the transcript GET serves beside them. `turns` is the page SIZE in whole turns, never
-// an entry count. False for a chat with no header; a `before` naming a turn the log does
-// not hold is an error the handler turns into a 400. The registry (Live and the open
-// tails) is read BEFORE the chat's lock: its writers take the store lock inside their own,
-// so the reverse order deadlocks. The stamps are read under the lock with the window, so
-// each certifies exactly the entries served; a tail that sealed between the two reads is
-// reconciled by id (openTail). An older page carries the `chat` stamp alone and no tails.
+// Page reads the newest `turns` whole turns, or the `turns` below `before`, with everything the
+// transcript GET serves beside them. False for a chat with no header; a `before` the log does not
+// hold is an error the handler answers 400.
+// The registry (Live and the open tails) is read BEFORE the chat's lock: its writers take the store
+// lock inside their own, so the reverse order deadlocks. The stamps are read under the lock with
+// the window, so each certifies exactly the entries served; a tail sealed in between is reconciled
+// by id (openTail). An older page carries the `chat` stamp alone and no tails.
 func (s *Store) Page(ctx context.Context, chatID marotte.ChatID, turns int, before string) (*Page, bool, error) {
 	if ctx.Err() != nil {
 		return nil, false, ctx.Err()
@@ -212,14 +259,19 @@ func (s *Store) Page(ctx context.Context, chatID marotte.ChatID, turns int, befo
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	c, err := s.load(ctx, chatID)
-	if err != nil {
+	if _, err := s.load(ctx, chatID); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Error("chat page", "chat_id", chatID, "error", err)
 		}
 		return nil, false, nil
 	}
 	l, err := s.logFor(ctx, chatID)
+	if err != nil {
+		return nil, false, err
+	}
+	// Read again: a first open can rewrite the queue (holdQueuedLocked), and the
+	// page must not serve the header from before it.
+	c, err := s.load(ctx, chatID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -394,15 +446,12 @@ func (s *Store) readLog(ctx context.Context, chatID marotte.ChatID, op func(l *E
 	return op(l)
 }
 
-// Revert is the rewind's store half under the record rule: ONE appended turn_revert,
-// no cut and nothing re-closed. It answers the record so the caller can
-// broadcast entry_appended for it, and the carrier's own turn_open when the log had to
-// mint one, which the caller announces AHEAD of the record.
-//
-// The counters are a CACHE under R2 — the log answers turn_count and the header is
-// rebuilt from it — so a failed counter write is a Warn and never fails a revert whose
-// record is already durable. The caller holds the lifecycle mutex across the registry
-// check and this call.
+// Revert is the rewind's store half: ONE appended turn_revert, nothing cut or re-closed. It answers
+// the record for the caller's entry_appended and, when the log had to mint a carrier, the carrier's
+// turn_open, which the caller announces ahead of the record.
+// The header counters are a cache rebuilt from the log, so a failed counter write is a Warn and
+// never fails a durable revert. The caller holds the lifecycle mutex across the registry check and
+// this call.
 func (s *Store) Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record, opened *marotte.Entry, err error) {
 	err = s.withLog(ctx, chatID, func(l *EntryLog) error {
 		s.index.drop(chatID)
@@ -442,11 +491,9 @@ func (s *Store) Reconcile(ctx context.Context, chatID marotte.ChatID, swap func(
 	return s.bumpChatWindow(ctx, chatID), true, nil
 }
 
-// bumpChatWindow mints the `chat` and `chats` versions after an operation that
-// changed which turns the window HOLDS, and broadcasts the header those turns' own
-// counters were cached into, so a disconnected client's digest sees the record move.
-// Named for the fact rather than the operation because R2 leaves two of them: the
-// revert's append and the merge swap.
+// bumpChatWindow mints the `chat` and `chats` versions after an operation that changed which turns
+// the window holds (a revert's append, the merge swap), and broadcasts the header, so a
+// disconnected client's digest sees the record move.
 func (s *Store) bumpChatWindow(ctx context.Context, chatID marotte.ChatID) string {
 	m := s.lock(chatID)
 	m.Lock()
@@ -492,11 +539,9 @@ func (s *Store) WriteCounters(ctx context.Context, chatID marotte.ChatID) error 
 	return nil
 }
 
-// NewestRevert answers the id of the LAST turn_revert in the chat's log in FILE
-// order, false when the log holds none: the provenance a resume's projection
-// snapshots at open and its swap re-reads, in place of the header counter revision
-// was. The log owns the definition (EntryLog.NewestRevert); this is the store-level
-// read the projection's open needs, which reaches no log of its own.
+// NewestRevert answers the id of the LAST turn_revert in the chat's log in file order, false when
+// none: the provenance a resume's projection snapshots at open and its swap re-reads.
+// EntryLog.NewestRevert owns the definition.
 func (s *Store) NewestRevert(ctx context.Context, chatID marotte.ChatID) (string, bool) {
 	var id string
 	var held bool

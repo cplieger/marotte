@@ -1,10 +1,5 @@
-// The per-call SILENCE VALUE: what it is derived from and what it says. Both of its
-// properties are about what the marker may NOT be — the input is `Date.now()`-derived
-// and the path reads no entry `ts`, so nothing here is ordering state wearing a
-// display value's name.
-//
-// Its companion is `tool-card-silence.test.ts`, which owns the CARD: when the marker
-// renders, and the frame that clears it.
+// The per-call SILENCE VALUE: `Date.now()`-derived and reading no entry `ts`, so it is never
+// ordering state. The CARD is `tool-card-silence.test.ts`'s.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import {

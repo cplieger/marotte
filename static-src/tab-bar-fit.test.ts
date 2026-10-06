@@ -69,10 +69,8 @@ describe("fitTabBar", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   });
 
   it("re-measures in label mode so icon mode does not latch", async () => {
-    // A bar measured while in icons mode has display:none labels (in the real
-    // CSS) and would never report overflow again; the measure resets to label
-    // mode first. Simulate the CSS effect: hide labels whenever the class is
-    // present, via a scoped style element.
+    // Labels hidden in icons mode never report overflow, so the measure resets to label mode first;
+    // a scoped style simulates that CSS.
     const style = document.createElement("style");
     style.textContent = `.${ICONS} .seg-label { display: none; }`;
     document.head.appendChild(style);
@@ -115,12 +113,8 @@ describe("fitTabBar", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
       expect(bar.classList.contains(ICONS)).toBe(true);
 
       (bar.parentElement as HTMLElement).style.width = "90px";
-      // Outwait the whole pipeline (RO delivery, then the deferred
-      // rAF measure) before asserting ONCE: a waitFor on the already-true
-      // class would pass at t=0 and never see a wrong flip. Frame order per
-      // spec: rAF callbacks run BEFORE RO delivery within a frame, so the
-      // measure queued by frame N's RO runs in frame N+1 — four frames
-      // covers it with margin.
+      // Outwait RO delivery plus the deferred rAF measure (rAF runs before RO within a frame), then assert
+      // ONCE: a waitFor on an already-true class would pass at t=0.
       for (let i = 0; i < 4; i++) {
         await new Promise((r) => requestAnimationFrame(r));
       }

@@ -302,7 +302,7 @@
 
   /* NO INLINE PADDING: the turn card already has a gutter (`.turn-body` padding),
    * and a second one on the prose alone put the text 16px right of every box in the
-   * same body — a tool card's border, a tool group, a subagent card, a todo list, a
+   * same body — a tool card's border, a tool group, a subagent card, a
    * plan card, a refusal callout and a reasoning bar all start on `.turn-body`'s
    * own content edge. `&.system` sets its own padding and is unaffected. */
 
@@ -1362,24 +1362,6 @@
   }
 }
 
-/* The reply's markdown SOURCE, in place of its rendering. A sibling of the whole
- * rendered region rather than a replacement, and hidden with `.hidden` rather
- * than opacity (messages-turn-actions.ts toggleTurnSource). NO `max-width`, for
- * the same reason the rendering it stands in for has none. */
-.turn-raw {
-  margin: 0;
-  padding: var(--sp-3);
-  background: var(--c-well);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  line-height: 1.55;
-  color: var(--c-text-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 /* Math (native MathML, no KaTeX). THE FONT IS THE WHOLE REASON THIS BLOCK EXISTS:
  * MathML Core layout is native everywhere this app targets, but Chromium ships no
  * math font, so without a stack a fraction lays out correctly while its stretchy
@@ -1750,4 +1732,50 @@
 .steer-note[data-state="dropped"] .steer-note-label,
 .steer-note[data-state="dropped"] .steer-note-text {
   color: var(--c-text-aside);
+}
+
+/* A withheld payload link stays in its sentence. The `min-*` reset is WCAG 2.5.8's
+ * inline exception, needed here because the prose exemption covers `a[href]` only. */
+.link-withheld {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  min-width: 0;
+  min-height: 0;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  color: var(--c-link);
+  text-decoration: underline dotted var(--c-warning);
+  text-underline-offset: 0.15em;
+  cursor: copy;
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
+    border-radius: var(--r-sm);
+  }
+}
+
+/* No entry animation: the fallback can stand in for content already on screen. */
+.entry-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r);
+}
+
+.entry-fallback-label {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+.entry-fallback-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--c-text-primary);
 }

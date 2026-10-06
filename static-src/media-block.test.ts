@@ -1,5 +1,5 @@
-// File-role rendering for a workspace file the agent presented with `![](…)`.
-// Native elements only, so the assertions are about which ELEMENT each role gets.
+// File-role rendering for a workspace file presented with `![](…)`: native elements, so the assertions are about which
+// element each role gets.
 import { describe, it, expect } from "vitest";
 import { mediaElementFor } from "./media-block.js";
 import { renderMarkdownInto } from "./markdown.js";
@@ -18,23 +18,19 @@ describe("mediaElementFor", () => {
     }
   });
 
-  // `metadata`, not `auto`: a transcript can hold several clips and none of them
-  // was asked for, but the transport bar needs a duration to draw.
+  // `metadata`, not `auto`: none of several clips was asked for, but the transport bar needs a duration.
   it("does not preload the audio itself", () => {
     const a = mediaElementFor("/workspace/out/clip.mp3", "") as HTMLAudioElement;
     expect(a.preload).toBe("metadata");
   });
 
-  // The label had nowhere to live inside a void `<img>`; as fallback content it
-  // is both the codec-missing message and a readable name.
+  // As fallback content the label is both the codec-missing message and a readable name.
   it("carries the label as the player's fallback content", () => {
     expect(mediaElementFor("/workspace/out/clip.mp3", "the clip")?.textContent).toBe("the clip");
     expect(mediaElementFor("/workspace/out/clip.mp3", "")?.textContent).toBe("clip.mp3");
   });
 
-  // The image half is already shipped (utils-url.ts rewrites the src on the
-  // `<img>` the parser built), so this module returns null rather than building a
-  // second path to it.
+  // The image half is utils-url.ts's src rewrite, so this module returns null.
   it("leaves an image to the <img> path", () => {
     for (const p of ["/workspace/a.png", "/workspace/a.webp", "/workspace/a.svg"]) {
       expect(mediaElementFor(p, ""), p).toBeNull();
@@ -46,10 +42,7 @@ describe("mediaElementFor", () => {
     expect(mediaElementFor("/etc/passwd", "")).toBeNull();
   });
 
-  // `/uploads` is a granted browse mount, so a file the reader dropped into the
-  // composer is served by the same route. This gate tested a literal
-  // `/workspace/` prefix, so moving the upload folder out of the workspace turned
-  // every such reference back into a bare broken `<img>`.
+  // `/uploads` is a granted browse mount, so an uploaded file is served by the same route, not only `/workspace/`.
   it("serves a file under the uploads root", () => {
     const a = mediaElementFor("/uploads/clip.mp3", "");
     expect(a?.tagName).toBe("AUDIO");
@@ -76,10 +69,7 @@ describe("mediaElementFor", () => {
     expect(link?.textContent).toContain("the report");
   });
 
-  // D21b's trap, from the other side: the download branch is the one place this
-  // module emits an anchor, and an SVG must never reach it. It is an image, so it
-  // returns null above — pinned here too because the consequence is stored XSS if
-  // it ever changes.
+  // The download branch is the one anchor this module emits, and an SVG must never reach it: stored XSS otherwise.
   it("never emits an anchor for an .svg", () => {
     expect(mediaElementFor("/workspace/docs/arch.svg", "diagram")).toBeNull();
     expect(mediaElementFor("/workspace/docs/ARCH.SVG", "diagram")).toBeNull();
@@ -93,8 +83,7 @@ describe("through the markdown renderer", () => {
     return host;
   }
 
-  // This is what `![clip](x.mp3)` used to do: render a broken `<img>`, because
-  // the tag is chosen when `![` opens and the path only arrives when `)` closes.
+  // The tag is chosen when `![` opens but the path arrives when `)` closes, so the tag must be revisited.
   it("turns an audio reference into a player rather than a broken image", () => {
     const host = render("![clip](/workspace/out/clip.mp3)\n");
     expect(host.querySelector("audio")).not.toBeNull();

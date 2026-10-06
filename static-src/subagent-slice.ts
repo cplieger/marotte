@@ -1,32 +1,8 @@
-// ---------------------------------------------------------------------------
-// subagent-slice: what a delegate is — and what the pipeline around it is —
-// projected out of a chat's entry log.
-//
-// A subagent execution has no record of its own anywhere. There is no
-// `/api/subagents/{id}`, no `subagent_*` SSE event and no store keyed by
-// subtask: what exists is the delegate's LANE. Every entry a delegate produced
-// carries its uuid as `Entry.lane`, and its dispatching `tool_call` carries the
-// same uuid in `payload.agent_subtask_id` while sitting in the ISSUER's lane
-// (section 3.4). So "the introspect subagent's output" is a QUERY over a
-// conversation's turns, and this module is that query.
-//
-// Pure and DOM-free, over a `TurnSource` plus a subtask id. Three consumers,
-// which is the whole reason it is not a private helper in any of them: the tab
-// factory (tab-materialize.ts) and the tab dot (subagent-dots.ts) need the
-// delegate's INVOCATION for a label and a status, and the subagent page
-// (subagent-view.ts) needs the turn its lane lives in. None can import another,
-// and none can import the transcript's dispatcher, which reaches the whole
-// rendering stack.
-//
-// NOTHING IS COPIED AND NO LANE IS CLEARED. A view renders the REAL turn with
-// the delegate's uuid as its render root, and every lane predicate in
-// `messages-blocks.ts` compares against that root — so the delegate's entries
-// render in the flow and a nested invocation renders as a card for the
-// grandchild. The `settledToolCall` join is the store's own pure function; the
-// store is never read here, because the two callers subscribe to it differently
-// (the factory peeks untracked, the page reads inside an effect) and a module
-// that fetched for them would make one of those wrong.
-// ---------------------------------------------------------------------------
+// What a delegate (and its pipeline) is, projected out of a chat's entry log. A delegate has no
+// record of its own: its entries carry its uuid as `Entry.lane`, and its dispatching `tool_call`
+// carries it in `payload.agent_subtask_id` from the ISSUER's lane. Pure and DOM-free, a leaf for
+// three consumers (tab-materialize.ts, subagent-dots.ts, subagent-view.ts). Nothing is copied: a
+// view renders the REAL turn with the uuid as render root, and the store is never read here.
 
 import type { Entry, OpenEntry, ToolCall, TurnState } from "./types.js";
 import { payloadOf, projectTurn, type Turn, type TurnSource } from "./turns.js";
@@ -34,35 +10,15 @@ import { callIDOfToolResult } from "./entry-ids.js";
 import { settledToolCall } from "./store.js";
 import { isSubagentInvocation, isToolActive } from "./tool-schema.js";
 
-/** The prefix KAS puts on a PIPELINE STAGE's tool-call id. The full shape is
- *  `invoke_subagent_<orchestrateToolCallId>_stage_<stageName>`, so a stage names its
- *  driver in its own id — the same way a workflow run's step names its run. No wire
- *  field carries this and none is needed; measured across 36 live chat files, 59 of 60
- *  stage calls have that shape.
- *
- *  Duplicated from `messages-blocks.ts` deliberately rather than imported: that
- *  module reaches the whole transcript stack, and this one is a leaf three other leaves
- *  read. Both copies are pinned against the same literals, each from its own side:
- *  `subagent-exec-source.test.ts` reads `pipelineOf`/`stageName` directly, and
- *  `messages-blocks.test.ts` drives its copy through the transcript's nesting. */
+/** The prefix KAS puts on a PIPELINE STAGE's tool-call id
+ *  (`invoke_subagent_<orchestrateToolCallId>_stage_<stageName>`). Duplicated from
+ *  `messages-blocks.ts` to stay a leaf; both copies are pinned against the same literals. */
 const STAGE_PREFIX = "invoke_subagent_";
 const STAGE_SEP = "_stage_";
 
-/** The orchestrate tool-call id a stage belongs to, or "" when the id is not
- *  stage-shaped (a plain `invoke_sub_agent` call has no pipeline).
- *
- *  `indexOf` for the separator, because only the RIGHT half can contain one. A driver
- *  id is machine-minted by KAS and a stage name is author-supplied, so the first
- *  occurrence is the seam and a stage called `run_stage_two` still resolves to its own
- *  driver. Measured over the 65 distinct stage ids on the live volume: every driver
- *  half is a `toolu_bdrk_*` tool-use id, and stage names carry underscores freely
- *  (`review_fable-sub-agent-start`, `perf_hotfix-sub-agent-start`).
- *
- *  `messages-blocks.ts` `stagePipelineID` used `lastIndexOf` and its comment named
- *  exactly the case that breaks it; both were corrected together. Nothing on the
- *  volume trips it today (zero ids carry two separators), so the defect was latent:
- *  such a stage would have resolved to a driver that does not exist and rendered as a
- *  flat sibling of its own pipeline. */
+/** The orchestrate tool-call id a stage belongs to, or "" when the id is not stage-shaped.
+ *  `indexOf`: driver ids are machine-minted and stage names author-supplied, so the FIRST
+ *  separator is the seam (`run_stage_two` still resolves). */
 export function pipelineOf(toolCallID: string): string {
   if (!toolCallID.startsWith(STAGE_PREFIX)) {
     return "";
@@ -90,30 +46,17 @@ export interface SubagentSlice {
    *  resident window does not hold it. It carries the name, the status and the
    *  wall clock, so the page's header is built from it and from nothing else. */
   readonly invocation: ToolCall | undefined;
-  /** The TURN whose log holds this delegate's lane, or undefined when neither the
-   *  lane nor its invocation is resident.
-   *
-   *  A delegate never spans two turns: a mid-turn model switch appends a
-   *  `model_switched` entry rather than closing the turn (section 4.2), so one lane
-   *  is one turn's and the page needs no second projection to stitch. */
+  /** The TURN holding this delegate's lane, or undefined when neither lane nor invocation is
+   *  resident. A delegate never spans turns (a model switch appends `model_switched`). */
   readonly turn: Turn | undefined;
-  /** The lane's SEALED entries, in `seq` order.
-   *
-   *  Carried for the two questions a caller asks WITHOUT rendering: whether the
-   *  delegate has produced anything (the page's empty note), and what its trailing
-   *  output is (`subagent-tail.ts`). A renderer takes `turn` instead and addresses
-   *  the lane itself, so nothing here is a copy the DOM depends on. */
+  /** The lane's SEALED entries in `seq` order, for the page's empty note and `subagent-tail.ts`;
+   *  a renderer takes `turn` and addresses the lane itself. */
   readonly entries: readonly Entry[];
   /** Whether the lane holds an OPEN entry — text arriving now, with no `seq` and no
-   *  position (section 3.4), so it is not in `entries`. */
+   *  position, so it is not in `entries`. */
   readonly open: boolean;
-  /** Whether the delegate is still working.
-   *
-   *  From the INVOCATION's own status when it is resident, because that is the
-   *  fact — a delegate can finish while its conversation carries on for another
-   *  ten minutes, and reading the chat's `thinking` flag would leave a settled
-   *  delegate under a streaming caret. The chat's flag is only the fallback for a
-   *  delegate whose invocation has been paged out. */
+  /** Whether the delegate is still working: from the INVOCATION's status when resident (a delegate
+   *  can finish while its chat carries on), else the chat's flag. */
   readonly live: boolean;
 }
 
@@ -124,10 +67,8 @@ interface LocatedCall {
   call: ToolCall;
 }
 
-/** Every `tool_call` entry of one turn as a card paints it, joined with its result.
- *
- *  Two passes over the turn rather than one, because a result is appended after its
- *  call and the join has to be complete before any call is answered. */
+/** Every `tool_call` entry of one turn joined with its result; two passes, since a result is
+ *  appended after its call. */
 function callsOfTurn(entries: readonly Entry[]): ToolCall[] {
   const settled = new Map<string, Entry>();
   for (const e of entries) {
@@ -155,10 +96,7 @@ function callsOfTurn(entries: readonly Entry[]): ToolCall[] {
   return out;
 }
 
-/** The tool call that dispatched `subtaskID`, with the turn it was issued in.
- *
- *  Walks the resident turns NEWEST first: a delegate a reader has a tab open for is
- *  almost always in the window's tail, and a hit ends the walk. */
+/** The tool call that dispatched `subtaskID` and its turn, walking resident turns NEWEST first. */
 function locateInvocation(src: TurnSource, subtaskID: string): LocatedCall | undefined {
   if (subtaskID === "") {
     return undefined;
@@ -181,22 +119,14 @@ function locateInvocation(src: TurnSource, subtaskID: string): LocatedCall | und
   return undefined;
 }
 
-/** The tool call that dispatched `subtaskID`, or undefined.
- *
- *  Exported on its own because the tab factory and the tab dot want only this: a
- *  label for a row and a status for its mark, with no reason to reach the lane. */
+/** The tool call that dispatched `subtaskID`, or undefined (what the tab factory and dot need). */
 export function findSubagentInvocation(src: TurnSource, subtaskID: string): ToolCall | undefined {
   return locateInvocation(src, subtaskID)?.call;
 }
 
-/** A shape signature over a lane's entries, for deciding whether a mounted render can
- *  be UPDATED or has to be rebuilt.
- *
- *  The dispatcher's incremental update appends past a watermark, so it is only correct
- *  while the prefix it mounted is unchanged: tail growth keeps it, a range read that
- *  filled a hole does not. Each component is the entry's KIND plus its `seq` — design
- *  8.8 states the kind alone, and the `seq` is what separates a same-kind entry
- *  inserted mid-lane from growth at the tail. */
+/** A shape signature over a lane's entries: whether a mounted render can be UPDATED (the
+ *  dispatcher appends past a watermark) or must rebuild. Kind plus `seq`, so a same-kind entry
+ *  inserted mid-lane differs from tail growth. */
 export function blockShape(entries: readonly Entry[]): string[] {
   return entries.map((e) => `${e.kind}\u0000${String(e.seq)}`);
 }
@@ -227,12 +157,8 @@ interface SubagentMember {
   turnID: string;
 }
 
-/** What a delegate BELONGS to, which decides whether its page is a tree or a leaf.
- *
- *  `pipeline` is the driver's tool-call id when the delegate is a stage of one, and
- *  `members` are every stage of that pipeline in conversation order, the requested
- *  one included. Both empty for a plain `invoke_sub_agent`, which is the single-leaf
- *  case and the one the exec page renders with no tree pane at all. */
+/** What a delegate BELONGS to: `pipeline` is the driver's tool-call id and `members` every stage
+ *  in conversation order; both empty for a plain `invoke_sub_agent` (the single-leaf case). */
 export interface SubagentGroup {
   pipeline: string;
   /** The `orchestrate_subagent` call that opened the pipeline, when it is resident.
@@ -245,14 +171,8 @@ export interface SubagentGroup {
 /** The title the `orchestrate_subagent` driver call carries. */
 const PIPELINE_TITLE = "Orchestrate Sub-agent";
 
-/** Resolve the pipeline a delegate belongs to, and its siblings.
- *
- *  Driven off the turn's tool calls rather than off lanes, for the reason
- *  `indexPipelines` is: a stage's entries carry only a bare subtask uuid, which names
- *  nothing, while the stage's INVOCATION carries both that uuid and its driver's id.
- *  Scanning the whole window also makes the two arrival orders equivalent — the driver
- *  and its first stage race on the wire, and after a reload the driver is persisted
- *  while live entries are not. */
+/** Resolve a delegate's pipeline and siblings from the turn's tool calls (a stage's entries carry
+ *  only a bare uuid). Scanning the whole window makes the driver/stage arrival orders equivalent. */
 export function groupOf(src: TurnSource, subtaskID: string): SubagentGroup {
   return resolveGroup(src, subtaskID).group;
 }
@@ -301,12 +221,8 @@ function resolveGroup(
 export interface SubagentProjection {
   /** The pipeline the requested delegate belongs to, and its siblings. */
   readonly group: SubagentGroup;
-  /** One slice per subtask id the group names, the requested delegate included.
-   *
-   *  Every named id HAS an entry, empty or not, because "not projected" and
-   *  "projected and empty" are different answers and the page says different things
-   *  for each: a delegate dispatched a moment ago has a real empty slice, while an id
-   *  this projection does not name is not a delegate of this group at all. */
+  /** One slice per subtask id the group names, empty or not: "projected and empty" differs from
+   *  "not projected". */
   readonly slices: Map<string, SubagentSlice>;
 }
 
@@ -322,20 +238,9 @@ function laneOf(state: TurnState, lane: string): { entries: Entry[]; open: boole
   return { entries: out, open: state.openEntries.has(lane) };
 }
 
-/** Project a delegate AND its siblings out of a conversation.
- *
- *  A pipeline's stages interleave with each other and with the chat's own lane, and the
- *  page needs all of them — a stage's page shows the WHOLE pipeline — so every member
- *  comes out of the ONE window scan `resolveGroup` makes, carrying the turn that scan
- *  found it in. The only lookup left is the FALLBACK for a lane whose invocation is not
- *  resident. It still costs a pass over every resident turn for a pipeline, plus one
- *  `projectTurn` per member: a caller wanting ONE lane's entries takes `readLane`.
- *
- *  `chatLive` is the fallback for `live` only, per member — see that field's own
- *  note. A stage can finish while its siblings and the conversation carry on.
- *
- *  `subtaskID === ""` names no delegate, so the projection is empty and the walk is
- *  skipped: the page early-returns on that before it ever gets here. */
+/** Project a delegate AND its siblings from ONE window scan (`resolveGroup`), plus a fallback for
+ *  a lane whose invocation is not resident; for one lane's entries take `readLane`. `chatLive` is
+ *  the per-member `live` fallback. `subtaskID === ""` skips the walk. */
 export function sliceSubagentGroup(
   src: TurnSource,
   subtaskID: string,
@@ -350,10 +255,7 @@ export function sliceSubagentGroup(
   for (const m of group.members) {
     wanted.set(m.subtaskID, { turnID: m.turnID, call: m.invocation });
   }
-  // The requested delegate is already a member whenever it is a STAGE — `resolveGroup`
-  // resolves the pipeline off its own invocation and then finds itself — so this
-  // branch is the plain `invoke_sub_agent` case, answered by the call that resolution
-  // already located.
+  // A STAGE is already a member, so this is the plain `invoke_sub_agent` case.
   if (subtaskID !== "" && !wanted.has(subtaskID)) {
     wanted.set(subtaskID, own);
   }
@@ -377,12 +279,8 @@ export function sliceSubagentGroup(
   return { group, slices };
 }
 
-/** The id of the turn whose log holds `lane`, or undefined. Newest first, for
- *  `locateInvocation`'s reason.
- *
- *  Exported because a caller holding a lane and nothing else has to name the turn
- *  before it can subscribe: the lane signal is keyed `(turn, lane)`. A caller that also
- *  wants the lane's entries takes `readLane`, which answers both from one walk. */
+/** The id of the turn whose log holds `lane`, newest first. The lane signal is keyed
+ *  `(turn, lane)`; for the entries too, take `readLane`. */
 export function turnHoldingLane(src: TurnSource, lane: string): string | undefined {
   if (lane === "") {
     return undefined;

@@ -9,8 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// BenchmarkReadLoop_Notifications measures JSON unmarshal throughput for
-// notification-shaped messages (the hot path in readLoop).
+// BenchmarkReadLoop_Notifications measures unmarshal throughput for notification frames, readLoop's hot path.
 func BenchmarkReadLoop_Notifications(b *testing.B) {
 	notif := marotte.RPCResponse{
 		JSONRPC: jsonRPCVersion,
@@ -39,8 +38,7 @@ func BenchmarkReadLoop_Notifications(b *testing.B) {
 	}
 }
 
-// BenchmarkReadLoop_Responses measures JSON unmarshal throughput for
-// response-shaped messages with varying payload sizes.
+// BenchmarkReadLoop_Responses measures unmarshal throughput for responses of varying size.
 func BenchmarkReadLoop_Responses(b *testing.B) {
 	sizes := []struct {
 		name string
@@ -62,7 +60,6 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			// Build N lines for the benchmark.
 			var sb strings.Builder
 			for range 100 {
 				sb.Write(line)

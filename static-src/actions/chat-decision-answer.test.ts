@@ -1,10 +1,6 @@
-// The three interactive asks share one answer path with a THREE-valued outcome.
-// What these pin is that "somebody else answered first" is not a failure: it
-// must not reach the error notification, because decision-dock.ts already
-// explains it with attribution and a second toast reads as a retry prompt.
-//
-// The server half is internal/command/validate.go's errAlreadyAnswered, served
-// as 409 {"error":"already_answered"} once hub.TakePendingPerm loses the race.
+// The three asks share one answer path; "somebody else answered first" (409
+// {"error":"already_answered"}, internal/command/validate.go) is not a failure and raises no
+// toast, because decision-dock.ts already explains it.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -18,16 +14,11 @@ vi.mock("../toast.js", () => ({
 
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Inert: present only so real-ESM linking succeeds.
   newOpID: vi.fn(() => "op-test"),
 }));
 
-// The TOTAL store mock, plus the one reader this file drives. Browser Mode links
-// real ESM, so every name any module in this graph imports has to be present —
-// which is what the shared helper is for, and what the hand-listed factory that
-// used to live here got wrong the moment store.ts gained an export.
+// The TOTAL store mock (real ESM linking needs every name), plus the reader this file drives.
 vi.mock("../store.js", async () => ({
   ...(await import("../__test-helpers__/store-mock.js")).storeMock,
   get: () => ({ id: "c1", model: "m1" }),
@@ -36,12 +27,11 @@ vi.mock("../store.js", async () => ({
   recordSteerQueued: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
+  setChatInterruptMode: vi.fn(),
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Inert: present only so real-ESM linking succeeds.
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
 }));
@@ -50,9 +40,7 @@ vi.mock("../api-client.js", () => ({
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
-  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
-  // modules reached through it import `apiGet`. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
 }));
@@ -65,8 +53,7 @@ import { respondPermission, respondElicitation, respondUserInput } from "./chat.
 const mockSend = vi.mocked(transportSend);
 const mockToastError = vi.mocked(toastError);
 
-/** One dispatch per ask kind, so a rule proved for permissions is proved for
- *  all three rather than assumed to generalise. */
+/** One dispatch per ask kind, so a rule proved for one is proved for all three. */
 const asks = [
   {
     name: "permission",
@@ -94,15 +81,13 @@ describe("answering an ask: the three outcomes", () => {
       mockSend.mockResolvedValue({ ok: false, status: 409, error: "already_answered" });
       const result = await ask.dispatch();
       expect(result).toBe("superseded");
-      // The whole point: the dock owns this explanation, so this layer is silent.
+      // The dock owns this explanation, so this layer is silent.
       expect(mockToastError).not.toHaveBeenCalled();
     });
 
     it(`${ask.name}: a real failure yields null and DOES raise an error toast`, async () => {
       mockSend.mockResolvedValue({ ok: false, status: 500, error: "bridge died" });
-      // The framework's contract: a failed dispatch resolves null (it does not
-      // reject) and fires the error notification. So "no toast" is the only
-      // observable difference between a superseded answer and a broken one.
+      // A failed dispatch resolves null and toasts, so "no toast" is the only difference here.
       await expect(ask.dispatch()).resolves.toBeNull();
       expect(mockToastError).toHaveBeenCalled();
     });
@@ -114,10 +99,8 @@ describe("answering an ask: the three outcomes", () => {
     });
   }
 
-  // A 409 that is NOT the already-answered sentinel is a different condition
-  // (the idempotency middleware answers 409 "request already in progress" for a
-  // truly concurrent duplicate), so it must stay an error rather than being
-  // swallowed by a status-only match.
+  // The idempotency middleware's 409 "request already in progress" is a different condition, so a
+  // status-only match must not swallow it.
   it("a 409 with a different body is still a failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 409, error: "request already in progress" });
     await expect(

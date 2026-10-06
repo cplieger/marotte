@@ -7,10 +7,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestToolCallDelta_SendsEachOutputChunkOnce is the measurement this reshape
-// exists for: the old frame carried the whole accumulated ToolCall, so a call's
-// output and diffs were re-sent in full on every later frame — 4.41 MiB of
-// output and 5.73 MiB of diffs behind five open tabs, p99 frame 122 KB.
+// TestToolCallDelta_SendsEachOutputChunkOnce pins that each output chunk travels on one
+// frame only, not re-sent in full on every later frame.
 func TestToolCallDelta_SendsEachOutputChunkOnce(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 
@@ -28,8 +26,7 @@ func TestToolCallDelta_SendsEachOutputChunkOnce(t *testing.T) {
 	if len(deltas) != 3 {
 		t.Fatalf("got %d tool_progress frames, want 3", len(deltas))
 	}
-	// parseToolUpdateContent appends a newline per content block, so each frame's
-	// delta is its own chunk plus one.
+	// parseToolUpdateContent appends a newline per content block.
 	for i, want := range []string{"first\n\n", "second\n\n", "third\n\n"} {
 		if deltas[i].OutputDelta != want {
 			t.Errorf("frame %d output_delta = %q, want %q — a delta must not restate what earlier frames delivered",
@@ -39,8 +36,6 @@ func TestToolCallDelta_SendsEachOutputChunkOnce(t *testing.T) {
 			t.Errorf("frame %d set output_replace on a plain append", i)
 		}
 	}
-	// And the fold still reproduces the whole object, which lastToolCallUpdate
-	// cross-checks against the buffer.
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
@@ -50,9 +45,7 @@ func TestToolCallDelta_SendsEachOutputChunkOnce(t *testing.T) {
 	}
 }
 
-// TestToolCallDelta_SendsEachDiffOnce is the diff half of the same measurement:
-// one Replace-in-File's 184 KB of diffs used to ride every later frame for that
-// call.
+// TestToolCallDelta_SendsEachDiffOnce is the diff half of the same rule.
 func TestToolCallDelta_SendsEachDiffOnce(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 
@@ -82,8 +75,8 @@ func TestToolCallDelta_SendsEachDiffOnce(t *testing.T) {
 	}
 }
 
-// TestToolCallDelta_NeverCarriesTheInput is 1.49 MiB of the measured total. An
-// update cannot change the input, so it has no field for it.
+// TestToolCallDelta_NeverCarriesTheInput pins that an update, which cannot change the
+// input, has no field for it.
 func TestToolCallDelta_NeverCarriesTheInput(t *testing.T) {
 	fields := reflect.VisibleFields(reflect.TypeFor[marotte.ToolProgressPayload]())
 	for _, f := range fields {
@@ -93,14 +86,9 @@ func TestToolCallDelta_NeverCarriesTheInput(t *testing.T) {
 	}
 }
 
-// TestToolCallDelta_TheTerminalOutputWinsOnTheResult is the one rule a
-// pure-append wire cannot express, and the reason the settled call travels as its
-// own entry rather than as a last delta.
-//
-// At completion adoptTerminalOutput takes the terminal's full stream over the ACP
-// fragments already on the card, which legitimately shortens or rewrites them. The
-// tool_result carries the WHOLE settled output, so a client replaces rather than
-// appends, and the completing frame is never a tool_progress.
+// TestToolCallDelta_TheTerminalOutputWinsOnTheResult pins the one rule a pure-append wire
+// cannot express: at completion the terminal's full stream replaces the ACP fragments,
+// so the settled call travels whole as tool_result, never as a tool_progress.
 func TestToolCallDelta_TheTerminalOutputWinsOnTheResult(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	const termID = "term-1"
@@ -139,14 +127,12 @@ func TestToolCallDelta_TheTerminalOutputWinsOnTheResult(t *testing.T) {
 	}
 }
 
-// TestToolCallDelta_AnUnchangedFieldIsAbsent is what makes "absent means
-// unchanged" safe for the client to rely on: a non-terminal frame that changes
-// only the status carries the status and the two addresses, nothing else.
+// TestToolCallDelta_AnUnchangedFieldIsAbsent pins "absent means unchanged": a status-only
+// frame carries the status and the two addresses, nothing else.
 func TestToolCallDelta_AnUnchangedFieldIsAbsent(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 
-	// KAS sends title and kind nullish on most updates, and the create already set
-	// both.
+	// KAS sends title and kind nullish on most updates.
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "in_progress",
@@ -166,9 +152,7 @@ func TestToolCallDelta_AnUnchangedFieldIsAbsent(t *testing.T) {
 	}
 }
 
-// TestToolCallDelta_SendsTheDuration is the half the normalisation above gives
-// up, asserted where it can be: the completion fold computes a duration, so the
-// frame that completes a call must carry one.
+// TestToolCallDelta_SendsTheDuration pins that the frame that completes a call carries the duration.
 func TestToolCallDelta_SendsTheDuration(t *testing.T) {
 	before := marotte.ToolCall{ID: "tc-1", Status: marotte.ToolInProgress}
 	after := before
@@ -179,8 +163,7 @@ func TestToolCallDelta_SendsTheDuration(t *testing.T) {
 	if d.DurationMs != 1234 {
 		t.Errorf("duration_ms = %d, want 1234 — a completed card shows it", d.DurationMs)
 	}
-	// And a frame that did not change it sends nothing, which is what stops every
-	// later frame for one call re-stating it.
+	// A frame that did not change it sends nothing.
 	after.DurationMs = before.DurationMs
 	if d2 := toolProgress("t1", &before, &after); d2.DurationMs != 0 {
 		t.Errorf("duration_ms = %d on an unchanged duration, want 0", d2.DurationMs)
@@ -198,8 +181,7 @@ func TestOutputDelta(t *testing.T) {
 		{name: "unchanged", before: "abc", after: "abc"},
 		{name: "appended", before: "abc", after: "abcdef", wantDelta: "def"},
 		{name: "first write", before: "", after: "abc", wantDelta: "abc"},
-		// The terminal-adoption cases: a shorter or a different value is not an
-		// extension, so it has to travel whole.
+		// Terminal adoption: a shorter or different value is not an extension, so it travels whole.
 		{name: "shortened", before: "abcdef", after: "abc", wantDelta: "abc", wantReplace: true},
 		{name: "rewritten", before: "abc", after: "xyz", wantDelta: "xyz", wantReplace: true},
 		{name: "cleared", before: "abc", after: "", wantDelta: "", wantReplace: true},

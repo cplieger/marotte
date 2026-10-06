@@ -1,16 +1,6 @@
-// ---------------------------------------------------------------------------
-// Fundamental: the ONE status glyph for every progress surface.
-//
-// One table for the three surfaces that render `PlanStatus` (the todo
-// checklist, the task pill and the spec tree), so they cannot drift. The glyphs
-// are CSS-drawn (a ring, a half ring, a filled ring with a check), so this
-// table carries class hooks and words, never characters, and no emoji reaches
-// the DOM.
-//
-// `queued` is Kiro's fourth checkbox mark (`~`) and is NOT a fourth status: KAS
-// treats a queued task as pending everywhere it decides anything, so it is a
-// tint over a pending glyph rather than a member of the record.
-// ---------------------------------------------------------------------------
+// The ONE status glyph table for both `PlanStatus` surfaces (task pill, spec tree). Glyphs are
+// CSS-drawn, so this carries class hooks and words, never characters. `queued` (Kiro's `~`) is a
+// tint over pending, not a fourth status: KAS treats it as pending everywhere it decides.
 
 import type { PlanStatus } from "../types.js";
 

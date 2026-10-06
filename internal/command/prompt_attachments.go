@@ -3,26 +3,19 @@ package command
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// documentExts maps a file extension to the MIME type marotte sends when
-// inlining an attachment as an ACP embedded `resource` block.
-//
-// Must stay a subset of KAS's SUPPORTED_DOCUMENT_MIME_TYPES:
-// extractContentFromPrompt keeps an inline blob resource only when its MIME
-// is in that allowlist with no else branch, so an entry here KAS does not
-// accept is read, base64'd, transmitted, then silently dropped.
-// TestDocumentExtsSubsetOfKAS pins the subset.
-//
-// KAS's allowlist also covers html/plain/markdown; those are omitted here
-// so the agent reads them in context with its file tools instead of as an
-// opaque base64 blob.
+// documentExts maps an extension to the MIME type of the ACP embedded `resource` block it inlines
+// as. It must stay a subset of KAS's SUPPORTED_DOCUMENT_MIME_TYPES (TestDocumentExtsSubsetOfKAS):
+// extractContentFromPrompt silently drops any other MIME after it was read and sent.
+// html/plain/markdown are omitted so the agent reads them with its file tools.
 var documentExts = map[string]string{
 	".pdf":  "application/pdf",
 	".csv":  "text/csv",
@@ -44,25 +37,16 @@ var unsupportedDocExts = map[string]bool{
 	".odp":  true,
 }
 
-// imageExts maps an image extension to the MIME type marotte sends when
-// inlining an attachment as an ACP `image` content block.
-//
-// KAS's extractContentFromPrompt pushes the image block unconditionally
-// (no allowlist to stay a subset of, unlike the document branch). Mirrors
-// KAS's own IMAGE_EXTENSIONS. Deliberately not svg or avif: KAS excludes
-// both, and an SVG is XML a vision model cannot see as a picture. Do not
-// unify with utils-url.ts's INLINE_IMAGE_EXT, which answers what a browser
-// renders inline — a different consumer.
-//
-// A block carrying `uri` is not sent: toDataUrl returns the uri instead of
-// the base64 data URL when present, which would hand the model a path it
-// cannot fetch.
+// imageExts maps an image extension to the MIME type of the ACP `image` block it inlines as,
+// mirroring KAS's IMAGE_EXTENSIONS (KAS pushes image blocks unconditionally). Not svg or avif: KAS
+// excludes both. Not unified with utils-url.ts's INLINE_IMAGE_EXT, which answers what a browser
+// renders inline.
 var imageExts = map[string]string{
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".gif":  "image/gif",
-	".webp": "image/webp",
+	".png":  mimePNG,
+	".jpg":  mimeJPEG,
+	".jpeg": mimeJPEG,
+	".gif":  mimeGIF,
+	".webp": mimeWebP,
 }
 
 // MaxDocumentBytes caps the size of one document or image attachment
@@ -70,14 +54,9 @@ var imageExts = map[string]string{
 // user can predict from a file listing, and the cheap pre-read gate.
 const MaxDocumentBytes = 10 * 1024 * 1024
 
-// MaxInlineEncodedBytes caps the base64 payload of one inlined attachment.
-// MaxDocumentBytes cannot be this gate: base64 inflates by 4/3, invisible
-// to any check that measures file bytes.
-//
-// The number is inferred, not measured: 5 MiB is the figure KiroCrew read
-// off its own backend's refusal text for an image over that size. Both
-// products front the same vendor's catalogue, and erring low ships a
-// smaller image while erring high can persist a rejected user image.
+// MaxInlineEncodedBytes caps the base64 payload of one inlined attachment; MaxDocumentBytes cannot,
+// since base64 inflates by 4/3. Inferred from KiroCrew's reading of the backend's refusal text:
+// erring low only ships a smaller image.
 const MaxInlineEncodedBytes = 5 * 1024 * 1024
 
 // MaxInlineTurnEncodedBytes caps the total encoded bytes one prompt may
@@ -90,19 +69,24 @@ const MaxInlineTurnEncodedBytes = 15 * 1024 * 1024
 // a session change can leave stale paths; both errors fail closed.
 const MaxHistoryInlineImages = 16
 
-// BuildPromptBlocks constructs the ACP prompt content array: a leading text
-// block followed by one block per attachment. On v3 (KAS) a supported
-// document type is always inlined as an embedded `resource` block;
-// everything else becomes a text path reference.
-func BuildPromptBlocks(ctx context.Context, text string, attachments []marotte.Attachment, historyImages int, resolve func(string) (string, error)) []map[string]any {
-	blocks := []map[string]any{marotte.TextBlock(text)}
+// BuildPromptBlocks constructs the ACP prompt content array: a leading text block (omitted for an
+// attachment-only prompt, since KAS refuses an empty text part), then one block per attachment: a
+// supported document as an embedded `resource`, an image as an `image` fitted by fitImage, anything
+// else a path reference. mcp is the prompt's bridge, so an MCP reference reads that chat's pool;
+// nil leaves them unresolved.
+func BuildPromptBlocks(ctx context.Context, text string, attachments []marotte.Attachment, historyImages int, ws Workspace, mcp bridgeCaller) []map[string]any {
+	blocks := make([]map[string]any, 0, 1+len(attachments))
+	if strings.TrimSpace(text) != "" || len(attachments) == 0 {
+		blocks = append(blocks, marotte.TextBlock(text))
+	}
+	blocks = append(blocks, mentionBlocks(ctx, text, ws, mcp)...)
 	budget := MaxInlineTurnEncodedBytes
 	imageAllowance := max(MaxHistoryInlineImages-historyImages, 0)
 	for _, att := range attachments {
 		if ctx.Err() != nil {
 			return blocks
 		}
-		block, spent := attachmentBlock(att, resolve, budget, imageAllowance > 0)
+		block, spent := attachmentBlock(ctx, att, ws, budget, imageAllowance > 0)
 		budget -= spent
 		blocks = append(blocks, block)
 		imageAllowance -= inlineImageBlockCount([]map[string]any{block})
@@ -125,25 +109,22 @@ func inlineImageBlockCount(blocks []map[string]any) int {
 	return count
 }
 
-// attachmentBlock builds the single ACP content block for one attachment. A
-// supported document type is inlined as an embedded `resource` block; an
-// image as an `image` block; everything else becomes a path reference.
-// Returns the encoded bytes this block consumed from the turn's inline
-// budget (zero for a path-reference block).
-func attachmentBlock(att marotte.Attachment, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
+// attachmentBlock builds the ACP content block for one attachment and returns the encoded bytes it
+// consumed from the turn's inline budget (zero for a path reference).
+func attachmentBlock(ctx context.Context, att marotte.Attachment, ws Workspace, budget int, allowImage bool) (block map[string]any, spentBytes int) {
 	displayName := filepath.Base(att.Path)
 	ext := strings.ToLower(filepath.Ext(att.Path))
 
 	if mime, isDoc := documentExts[ext]; isDoc {
-		return inlineResourceBlock(att, displayName, mime, resolve, budget)
+		return inlineResourceBlock(ctx, att, displayName, mime, ws, budget)
 	}
 	if mime, isImg := imageExts[ext]; isImg {
-		return inlineImageBlock(att, displayName, mime, resolve, budget, allowImage)
+		return inlineImageBlock(ctx, att, displayName, mime, ws, budget, allowImage)
 	}
 
-	// Path-reference branch: validate containment, then hand the agent the
-	// path to read with its file tools.
-	if _, err := resolve(att.Path); err != nil {
+	// Path-reference branch: validate containment only. marotte does not read
+	// this file; the agent does, through its own policy.
+	if _, err := ws.ResolveInside(att.Path); err != nil {
 		slog.Warn("attachment: path escapes workspace",
 			"path", displayName, keyError, err)
 		return marotte.TextBlock("Attached file (invalid path): " + displayName), 0
@@ -155,128 +136,158 @@ func attachmentBlock(att marotte.Attachment, resolve func(string) (string, error
 	return marotte.TextBlock("Attached file: " + att.Path), 0
 }
 
-// inlineResourceBlock reads a document attachment from disk and returns an
-// ACP embedded `resource` content block (v3/KAS has no `document` type; the
-// document rides the blob variant of EmbeddedResourceResource). On any
-// failure it returns a descriptive text block instead.
-func inlineResourceBlock(att marotte.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
-	abs, data, fallback := readForInline(att, displayName, mime, resolve, budget, true)
+// inlinePayload is what an attachment that passed every gate sends: the bytes,
+// their MIME type, and the absolute path they were read from.
+type inlinePayload struct {
+	abs  string
+	mime string
+	data []byte
+}
+
+// inlineResourceBlock reads a document attachment and returns an ACP embedded `resource` block (the
+// blob variant; v3 has no `document` type), or a descriptive text block on failure.
+func inlineResourceBlock(ctx context.Context, att marotte.Attachment, displayName, mime string, ws Workspace, budget int) (block map[string]any, spentBytes int) {
+	in, fallback := readForInline(ctx, att, displayName, mime, ws, budget, true)
 	if fallback != nil {
 		return fallback, 0
 	}
 	return map[string]any{
-		keyType: "resource",
-		"resource": map[string]any{
-			"uri":      "file://" + abs,
-			"mimeType": mime,
-			"blob":     base64.StdEncoding.EncodeToString(data),
+		keyType: keyResource,
+		keyResource: map[string]any{
+			keyURI:      "file://" + in.abs,
+			keyMimeType: in.mime,
+			"blob":      base64.StdEncoding.EncodeToString(in.data),
 		},
-	}, base64.StdEncoding.EncodedLen(len(data))
+	}, base64.StdEncoding.EncodedLen(len(in.data))
 }
 
-// inlineImageBlock reads an image attachment from disk and returns an ACP
-// `image` content block. Failure degrades to a path reference — KAS has an
-// image read tool over the same extension set, so the agent can still open
-// it at the cost of one tool call.
-//
-// The block carries `data` and `mimeType`, deliberately no `uri`: KAS's
-// toDataUrl returns a present uri instead of building the base64 data URL.
-func inlineImageBlock(att marotte.Attachment, displayName, mime string, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
-	_, data, fallback := readForInline(att, displayName, mime, resolve, budget, allowImage)
+// inlineImageBlock reads an image attachment and returns an ACP `image` block with the fitted bytes
+// and MIME type; failure degrades to a path reference. No `uri`: KAS's toDataUrl returns a present
+// uri instead of building the data URL.
+func inlineImageBlock(ctx context.Context, att marotte.Attachment, displayName, mime string, ws Workspace, budget int, allowImage bool) (block map[string]any, spentBytes int) {
+	in, fallback := readForInline(ctx, att, displayName, mime, ws, budget, allowImage)
 	if fallback != nil {
 		return fallback, 0
 	}
 	return map[string]any{
 		keyType:    "image",
-		"data":     base64.StdEncoding.EncodeToString(data),
-		"mimeType": mime,
-	}, base64.StdEncoding.EncodedLen(len(data))
+		"data":     base64.StdEncoding.EncodeToString(in.data),
+		"mimeType": in.mime,
+	}, base64.StdEncoding.EncodedLen(len(in.data))
 }
 
-// readForInline runs the gauntlet every inlined attachment must pass —
-// path containment, stat, the per-file cap, the turn's cumulative budget,
-// the read, and finally the encoded-payload cap — and returns either the
-// bytes or the text block to send instead.
-//
-// The encoded gate runs after the read since base64's 4/3 inflation is
-// invisible to a file-byte check. Shared by the document and image paths
-// so the budget accounting cannot drift between two copies. Every failure
-// degrades to a path reference: the agent still learns the file exists.
+// readForInline runs the gauntlet every inlined attachment passes (one confined open, the per-file
+// cap, the read, the per-kind gates) and returns the payload or the text block to send instead.
+// Sizes come from the opened descriptor, so the file judged is the file read and a FIFO or device
+// is refused.
 func readForInline(
+	ctx context.Context,
 	att marotte.Attachment,
 	displayName, mime string,
-	resolve func(string) (string, error),
+	ws Workspace,
 	budget int,
 	allowImage bool,
-) (abs string, data []byte, fallback map[string]any) {
+) (payload inlinePayload, fallback map[string]any) {
 	isImage := strings.HasPrefix(mime, "image/")
 	// text/csv is the one documentExts member whose bytes a file tool
 	// reads as text, so the caveat is keyed on MIME.
 	isBinaryDoc := !isImage && !strings.HasPrefix(mime, "text/")
 
-	abs, err := resolve(att.Path)
+	f, info, abs, err := ws.OpenAttachment(att.Path)
 	if err != nil {
-		slog.Warn("attachment: path escapes workspace",
-			"path", displayName, keyError, err)
-		return "", nil, marotte.TextBlock("Attached file (invalid path): " + displayName)
+		if errors.Is(err, errAttachmentOutsideRoots) {
+			slog.Warn("attachment: path escapes workspace",
+				"path", displayName, keyError, err)
+			return inlinePayload{}, marotte.TextBlock("Attached file (invalid path): " + displayName)
+		}
+		slog.Warn("attachment: open failed", "path", displayName, keyError, err)
+		return inlinePayload{}, marotte.TextBlock("Attached file (unreadable): " + displayName)
 	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		slog.Warn("attachment: stat failed", "path", displayName, keyError, err)
-		return "", nil, marotte.TextBlock("Attached file (unreadable): " + displayName)
-	}
+	defer f.Close()
 	if info.Size() > MaxDocumentBytes {
 		slog.Warn("attachment: too large",
 			"path", displayName, "size", info.Size(), "cap", MaxDocumentBytes)
-		// att.Path, not displayName: this branch needs a path a file tool
-		// can open.
-		if isImage {
-			// MaxDocumentBytes is KAS's own MAX_IMAGE_SIZE, so the image
-			// tool refuses at the same threshold — the only remedy is a
-			// smaller file.
-			return "", nil, marotte.TextBlock("Attached file: " + att.Path +
-				" (too large to inline, and the image tool refuses it at this size too — attach a smaller or resized image)")
-		}
-		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
-			" (too large to inline — read it with your file tools)")
+		return inlinePayload{}, tooLargeFileBlock(att.Path, isImage)
 	}
-	// An estimate against the same encoded unit the budget is denominated
-	// in; the authority is the post-read check below.
-	if base64.StdEncoding.EncodedLen(int(info.Size())) > budget {
+	// Documents are estimated before the read, in the budget's encoded unit; an image is charged on
+	// its fitted payload.
+	if !isImage && base64.StdEncoding.EncodedLen(int(info.Size())) > budget {
 		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
 			"path", displayName, "size", info.Size(), "remaining_encoded", budget)
-		if isBinaryDoc {
-			return "", nil, marotte.TextBlock("Attached file: " + att.Path +
-				" (not inlined: this turn's attachment budget is spent — read it with your file tools; this format may not be readable as text)")
-		}
-		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
-			" (not inlined: this turn's attachment budget is spent — read it with your file tools)")
+		return inlinePayload{}, budgetSpentBlock(att.Path, isBinaryDoc)
 	}
-	data, err = os.ReadFile(abs)
+	data, err := atomicfile.ReadBoundedFile(ctx, f, MaxDocumentBytes)
+	if errors.Is(err, atomicfile.ErrFileTooLarge) {
+		slog.Warn("attachment: grew past the cap during the read",
+			"path", displayName, "cap", MaxDocumentBytes)
+		return inlinePayload{}, tooLargeFileBlock(att.Path, isImage)
+	}
 	if err != nil {
 		slog.Warn("attachment: read failed",
 			"path", displayName, keyError, err)
-		return "", nil, marotte.TextBlock("Attached file (unreadable): " + displayName)
+		return inlinePayload{}, marotte.TextBlock("Attached file (unreadable): " + displayName)
 	}
-	// The encoded gate must run here: after the read, on len(data), since
-	// no pre-read check can see base64's 4/3 inflation. EncodedLen rather
-	// than len(EncodeToString(data)) avoids allocating bytes about to be
-	// thrown away.
+	if isImage {
+		return fitForInline(att, displayName, abs, data, budget, allowImage)
+	}
+	// After the read, on len(data): no pre-read check sees base64's 4/3 inflation. EncodedLen
+	// avoids allocating the encoding.
 	if encoded := base64.StdEncoding.EncodedLen(len(data)); encoded > MaxInlineEncodedBytes {
 		slog.Warn("attachment: encoded payload over cap, sending a path reference",
 			"path", displayName, "size", len(data), "encoded", encoded, "cap", MaxInlineEncodedBytes)
 		if isBinaryDoc {
-			return "", nil, marotte.TextBlock("Attached file: " + att.Path +
+			return inlinePayload{}, marotte.TextBlock("Attached file: " + att.Path +
 				" (too large to inline — read it with your file tools; this format may not be readable as text)")
 		}
-		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
+		return inlinePayload{}, marotte.TextBlock("Attached file: " + att.Path +
 			" (too large to inline — read it with your file tools)")
 	}
-	if isImage && !allowImage {
+	return inlinePayload{abs: abs, mime: mime, data: data}, nil
+}
+
+// fitForInline is the image half of readForInline: fit the bytes, then charge
+// the turn budget and the replayed-history allowance on what will be sent.
+func fitForInline(att marotte.Attachment, displayName, abs string, data []byte, budget int, allowImage bool) (payload inlinePayload, fallback map[string]any) {
+	out, outMime, reason := fitImage(data, MaxImageEdgePx, MaxInlineEncodedBytes)
+	if reason != "" {
+		slog.Warn("attachment: image could not be fitted, sending a path reference",
+			"path", displayName, "size", len(data), "reason", reason)
+		return inlinePayload{}, marotte.TextBlock("Attached file: " + att.Path +
+			" (not inlined: " + reason + "; read it with your file tools)")
+	}
+	if encoded := base64.StdEncoding.EncodedLen(len(out)); encoded > budget {
+		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
+			"path", displayName, "encoded", encoded, "remaining_encoded", budget)
+		return inlinePayload{}, budgetSpentBlock(att.Path, false)
+	}
+	if !allowImage {
 		slog.Warn("attachment: replayed image history budget exhausted, sending a path reference",
 			"path", displayName, "cap", MaxHistoryInlineImages)
-		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
+		return inlinePayload{}, marotte.TextBlock("Attached file: " + att.Path +
 			" (not inlined: this chat's replayed image history budget is spent — read it with your file tools)")
 	}
-	return abs, data, nil
+	return inlinePayload{abs: abs, mime: outMime, data: out}, nil
+}
+
+// tooLargeFileBlock is the path reference for a file over MaxDocumentBytes. It
+// names att.Path rather than the basename, because this branch needs a path a
+// file tool can open.
+func tooLargeFileBlock(path string, isImage bool) map[string]any {
+	if isImage {
+		// MaxDocumentBytes is KAS's own MAX_IMAGE_SIZE, so the image tool
+		// refuses at the same threshold; the only remedy is a smaller file.
+		return marotte.TextBlock("Attached file: " + path +
+			" (too large to inline, and the image tool refuses it at this size too — attach a smaller or resized image)")
+	}
+	return marotte.TextBlock("Attached file: " + path +
+		" (too large to inline — read it with your file tools)")
+}
+
+func budgetSpentBlock(path string, isBinaryDoc bool) map[string]any {
+	if isBinaryDoc {
+		return marotte.TextBlock("Attached file: " + path +
+			" (not inlined: this turn's attachment budget is spent — read it with your file tools; this format may not be readable as text)")
+	}
+	return marotte.TextBlock("Attached file: " + path +
+		" (not inlined: this turn's attachment budget is spent — read it with your file tools)")
 }

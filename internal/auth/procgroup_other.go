@@ -7,18 +7,12 @@ import (
 	"os/exec"
 )
 
-// setProcGroup is a no-op on non-unix platforms; marotte runs in Linux
-// containers. Tests on Windows fall back to a single-PID kill via
-// cmd.Process.Kill() in killProcessGroup.
-//
-// Consequence for boundChild: with no process group, its Cancel reaches
-// only the parent PID, so WaitDelay is the whole bound.
+// setProcGroup is a no-op on non-unix; marotte runs in Linux containers. Without a group, boundChild's Cancel
+// reaches only the parent, so WaitDelay is the whole bound.
 func setProcGroup(_ *exec.Cmd) {}
 
-// errUnsupportedKill is returned by killGroup on non-unix platforms so
-// killProcessGroup falls through to its single-PID Kill fallback.
+// errUnsupportedKill is killGroup's answer on non-unix, so killProcessGroup falls back to a single-PID Kill.
 var errUnsupportedKill = errors.New("process-group kill unsupported on this platform")
 
-// killGroup always returns errUnsupportedKill on non-unix so
-// killProcessGroup falls through to the single-PID Kill fallback.
+// killGroup always returns errUnsupportedKill on non-unix.
 func killGroup(_ *exec.Cmd) error { return errUnsupportedKill }

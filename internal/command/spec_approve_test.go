@@ -1,13 +1,6 @@
 package command
 
-// The spec-phase approval command: its compare-and-swap, its five refusals, and
-// the one frame it broadcasts.
-//
-// The property every refusal case shares is that NOTHING is recorded and NOTHING
-// is broadcast, because both failures are silent on the wire: an approval recorded
-// against a version nobody read makes the client's "changed since you approved it"
-// badge lie, and a frame sent for an approval that was not recorded makes every
-// connected client refetch a state that did not move.
+// Every refusal case records NOTHING and broadcasts NOTHING.
 
 import (
 	"context"
@@ -184,14 +177,8 @@ func TestCmdApproveSpecPhase_AnswersAnEmptyCurrentHashForAnAbsentDocument(t *tes
 	}
 }
 
-// Two documents share the requirements role, and the FIRST in display order is
-// the one the client's phase segment shows — so it is the one a reader approved
-// and the one the swap must compare. Comparing a later one would refuse a fresh
-// approval and accept a stale one.
-//
-// spec.Rank puts requirements.md and bugfix.md in the same group, so the tie-break
-// is the filename: bugfix.md leads. That is the document under the requirements
-// segment when a spec carries both, which is why it is the one this asserts on.
+// TestCmdApproveSpecPhase_ComparesTheFirstDocumentInDisplayOrder: two documents share the
+// requirements role, and the first is the one the reader saw and approved.
 func TestCmdApproveSpecPhase_ComparesTheFirstDocumentInDisplayOrderForASharedRole(t *testing.T) {
 	ws, hashes := seedSpec(t, map[string]string{
 		"requirements.md": "# Requirements\n",
@@ -270,9 +257,6 @@ func TestCmdApproveSpecPhase_RefusesAMalformedPayload(t *testing.T) {
 	if statusOf(err) != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 (body %s)", statusOf(err), errText(err))
 	}
-	// The payload, not the phase: a handler that ignored the decode error would
-	// answer the same 400 off the zero value's empty phase and say the wrong
-	// thing about what was wrong.
 	if !errors.Is(err, ErrInvalidPayload) {
 		t.Errorf("error = %v, want ErrInvalidPayload rather than a refusal of the zero value", err)
 	}
@@ -336,12 +320,8 @@ func TestCmdApproveSpecPhase_SurfacesTheStoresOwnRefusals(t *testing.T) {
 	}
 }
 
-// A spec in a first-level repository's own .kiro tree is addressable too, which
-// is the whole reason Address takes the root LIST rather than one root.
-//
-// The workspace carries its own .kiro as well, so Roots answers two entries with
-// the workspace's leading: a handler consulting only the first root would refuse
-// this spec, and with one root in the fixture nothing could tell.
+// TestCmdApproveSpecPhase_AddressesASpecInARepository: a spec in a first-level repository's own
+// .kiro tree is addressable, which is why Address takes the root list.
 func TestCmdApproveSpecPhase_AddressesASpecInARepositorysOwnKiroTree(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".kiro", "specs", "decoy"), 0o750); err != nil {

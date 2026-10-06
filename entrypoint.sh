@@ -3,45 +3,26 @@
 CONFIG_DIR="/config"
 TOOLS="$CONFIG_DIR/tools"
 
-# kiro-cli is pinned via Renovate against the public install manifest at
-# https://desktop-release.q.us-east-1.amazonaws.com/index.json. These three
-# literals are the ONLY kiro-cli knowledge left in this script: the server
-# installs from them (the cplieger/pinstall library, wired in
-# internal/composition/kirocli.go), so bumping one and rebuilding the image
-# makes the next boot download, verify and activate that version. The in-binary
-# auto-update is disabled so what runs always matches the version baked into the
-# image tag and the digest verified at install time. KIRO_CLI_SHA256 (x86_64) and
-# KIRO_CLI_SHA256_ARM64 (aarch64) are the per-arch sha256 of the headless zip,
-# BOTH enforced at install; the kiro-cli packageRule in cplieger/.github groups
-# all three literals into one Renovate PR.
-#
-# Keep them as bare double-quoted shell literals with their `# renovate:` anchor
-# comments intact: the shared custom datasource matches on exactly this shape,
-# and tests/shell/pins_export_test.sh asserts it along with the export below.
+# kiro-cli pins, tracked by Renovate against
+# https://desktop-release.q.us-east-1.amazonaws.com/index.json. The server installs
+# from them (internal/composition/kirocli.go) and enforces both per-arch sha256s.
+# Keep them bare double-quoted literals under their `# renovate:` anchors: the
+# shared custom datasource matches exactly this shape (tests/shell/pins_export_test.sh).
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
 KIRO_CLI_VERSION="2.28.0"
 KIRO_CLI_SHA256="4d6d20c3ffed99904081a062678b3c1978dc7d68c9f6c530f3f28f163011c8ee"
-# The `# kiro-cli <version>` trailer is Renovate's version anchor for this
-# arch's digest lookup — do not hand-edit or drop it.
+# The `# kiro-cli <version>` trailer is Renovate's anchor for this digest.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
 KIRO_CLI_SHA256_ARM64="39169fc43557ff3c007ccf5388ff95413539b2c6a8dfab6c69e4a7b8899bebbc" # kiro-cli 2.28.0
 
-# Export the pins to the server, which owns the install. Without this the server
-# sees no pins, resolves kiro-cli by bare name and turns its readiness gate OFF —
-# a container that reports healthy while installing nothing. That failure is
-# silent, so tests/shell/pins_export_test.sh reads both sides of this boundary.
+# Without the export the server sees no pins and turns its readiness gate off,
+# reporting healthy while installing nothing.
 export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
 
-# Tool installs (opt/, npm/, python/, go/) are owned by the in-process
-# tools engine, which creates its own subtree; bin/ is created here so
-# PATH resolution never races it. $TOOLS/kiro-cli-versions is the version-addressed
-# kiro-cli install root the server writes into — created here so the first boot
-# does not have to, and so this script's own /config failure branch covers it.
-# It is a SIBLING of the engine's opt/, never a child: the engine's per-tool prune
-# deletes every version directory under opt/<tool> that is not the one it just
-# installed, so a manifest entry named `kiro-cli` (any name is accepted, and
-# tools.json is hand-editable) used to be able to delete the active kiro-cli and its
-# retained predecessor.
+# The tools engine creates its own subtrees; bin/ is created here so PATH never
+# races it. kiro-cli-versions is the server's kiro-cli install root, created here so
+# this script's /config failure branch covers it. It must stay a sibling of opt/:
+# the engine prunes every non-current directory under opt/<tool>.
 mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
   "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
   "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
@@ -51,14 +32,9 @@ mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
     exit 1
   }
 
-# Normalize the modes of everything just created, EVERY boot — never trust
-# mkdir's result. The volume is host-owned storage: an inheritable ACL on the
-# mount (TrueNAS/SMB-managed ZFS datasets set these) or a nonstandard umask
-# stamps whatever modes it likes on new directories, mkdir -p silently keeps
-# whatever an existing directory already has, and two consumers refuse bad
-# modes outright — the tools engine will not execute from a group- or
-# other-writable root, and sshd/ssh refuses a lax ~/.ssh. Idempotent chmod is
-# cheap; a wrong mode here costs a disabled subsystem.
+# Normalize modes on every boot: an inheritable ACL or umask on the host volume
+# can stamp any mode, the tools engine refuses a group- or other-writable root, and
+# ssh refuses a lax ~/.ssh.
 chmod 755 "$HOME" || true
 chmod go-w "$TOOLS" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
   "$HOME/.local" "$HOME/.local/share" "$HOME/.local/share/kiro-cli" \
@@ -66,19 +42,10 @@ chmod go-w "$TOOLS" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
   "$HOME/.docker" "$HOME/.docker/cli-plugins" || true
 chmod 700 "$HOME/.ssh" || true
 
-# Give every LOGIN shell the PATH this process inherited. Debian's /etc/profile
-# ASSIGNS PATH rather than appending to it, and for uid 0 -- what this container
-# runs as -- it assigns only the six system directories. So `bash --login`, which
-# is what the browser shell spawns (internal/agent/shell.go), discards the three
-# /config entries the image exported and an engine-installed CLI stops resolving
-# by name one process-startup after the PTY received it. /etc/profile sources
-# /etc/profile.d through run-parts AFTER that assignment, which is what makes a
-# drop-in there the correct lever rather than a redundant one.
-#
-# The value written is $PATH as inherited HERE, so the Dockerfile's ENV stays the
-# single source of truth and an edit to it follows on the next boot. $TOOLS/bin is
-# created above so PATH resolution never races the engine; this carries that same
-# PATH one process further, to the shells that would otherwise lose it.
+# Give login shells (the browser shell runs `bash --login`) the inherited PATH:
+# Debian's /etc/profile assigns uid 0 only the system directories, dropping the
+# /config entries. profile.d is sourced after that assignment. The Dockerfile's ENV
+# stays the source of the value.
 emit_path_dropin() {
   printf '%s\n' \
     '# Generated by marotte entrypoint.sh on every boot -- edits are overwritten.' \
@@ -96,10 +63,8 @@ emit_path_dropin() {
   printf 'PATH=%s\nexport PATH\n' "$PATH"
 }
 
-# Written through a temp file in the same directory: a login shell must never
-# source a half-written PATH assignment, and mktemp's suffix means the temp name
-# does not end in `.sh`, so /etc/profile's own run-parts --regex ignores it.
-# Mode 0644 because the file is SOURCED by every login shell, never executed.
+# Through a temp file so a login shell never sources a half-written assignment;
+# the mktemp suffix keeps run-parts from matching it.
 install_path_dropin() {
   local dir=/etc/profile.d target tmp
   target="$dir/10-marotte-path.sh"
@@ -112,47 +77,35 @@ install_path_dropin() {
   return 1
 }
 
-# Warn, never abort: a login shell that resolves fewer binaries is a degraded
-# shell, not a dead container, and the mkdir above is the ONE place this script
-# fails the boot on /config state.
+# Warn only: the mkdir above is the one place this script fails the boot.
 if ! install_path_dropin; then
   printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$TOOLS/bin" >&2
 fi
 
-# One-time migration from the legacy KIRO_HOME (/config/kiro). The v3
-# engine (KAS) ignores KIRO_HOME and reads $HOME/.kiro, so KIRO_HOME now
-# points at /config/home/.kiro. Carry over the two files with user value:
-# the kiro-cli settings and the custom-instructions steering doc. The
-# generated environment.md is rewritten at startup, and /config/kiro
-# sessions are dead v2-engine state (v3 sessions were always written to
-# $HOME/.kiro/sessions). Guarded on the legacy dir, so this runs once.
+# One-time migration from the legacy KIRO_HOME (/config/kiro): KAS reads
+# $HOME/.kiro, so only the settings and custom steering doc carry over.
 if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
   printf "Migrating legacy kiro state /config/kiro -> %s\n" "$KIRO_HOME"
   mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/steering" "$KIRO_HOME/agents"
-  # Legacy copies are strictly newer than anything already at the
-  # destination (writes moved to /config/kiro when it became KIRO_HOME).
+  # Legacy copies are newer than anything at the destination.
   [ -f /config/kiro/settings/cli.json ] \
     && cp -f /config/kiro/settings/cli.json "$KIRO_HOME/settings/cli.json"
   [ -f /config/kiro/steering/custom.md ] \
     && cp -f /config/kiro/steering/custom.md "$KIRO_HOME/steering/custom.md"
-  # User-defined agent configs, if any; keep existing destination files.
   if [ -d /config/kiro/agents ]; then
     cp -rn /config/kiro/agents/. "$KIRO_HOME/agents/" 2>/dev/null || true
   fi
-  # A stale pre-migration environment.md at the destination would be
-  # loaded by kiro-cli before marotte's first regeneration replaces it;
-  # remove it so sessions never see outdated instructions.
+  # A stale environment.md would load before marotte regenerates it.
   rm -f "$KIRO_HOME/steering/environment.md"
   rm -rf /config/kiro
 fi
 
 # Reclaim superseded kiro-cli agent-server runtimes: each version unpacks a
-# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ on its first bridge launch
-# and kiro-cli never removes old ones, so keep the current tree and drop the rest.
-# Runs here because it must finish before the server can unpack a new tree.
-# Data-dir resolution mirrors kiro-cli's own (XDG_DATA_HOME, else
-# $HOME/.local/share): pruning a directory the CLI does not use is a silent
-# no-op. Warn, never fail the boot.
+# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ on its first bridge launch,
+# and nothing removes the old ones. Unrelated to KAS session state. Data-dir
+# resolution mirrors kiro-cli's (XDG_DATA_HOME, else $HOME/.local/share). Warn,
+# never fail the boot. It stays here because it must run before the server can
+# unpack a new tree.
 prune_superseded_kas_runtimes() {
   local data_home kas_dir kas_real entry name
   data_home="${XDG_DATA_HOME:-}"
@@ -162,11 +115,9 @@ prune_superseded_kas_runtimes() {
   fi
   kas_dir="$data_home/kiro-cli/kas"
   [ -d "$kas_dir" ] || return 0
-  # `-d` FOLLOWS symlinks and the rm below runs as root, so a `kiro-cli` or `kas`
-  # symlink planted on a volume that once permitted foreign writes would redirect
-  # this sweep at an arbitrary tree and delete every entry that does not match the
-  # pin. Prove the store is a real directory resolving where it is named, or skip
-  # the prune (warn, never fail: disk hygiene must not brick boot).
+  # `-d` follows symlinks and the rm runs as root, so a planted symlink could
+  # redirect the sweep at an arbitrary tree. Refuse unless the store is a real
+  # directory resolving where it is named.
   if [ -L "$data_home/kiro-cli" ] || [ -L "$kas_dir" ]; then
     printf "WARNING: kiro-cli data dir or its kas store is a symlink; refusing to prune through it (%s)\n" "$kas_dir" >&2
     return 0
@@ -184,20 +135,12 @@ prune_superseded_kas_runtimes() {
     # An empty store leaves the glob unexpanded.
     [ -e "$entry" ] || continue
     name="${entry##*/}"
-    # One pattern covers the tree and its sibling .lock (both carry the
-    # <version>-<hash> stem); quoting keeps a version string from being read as a
-    # glob. Anything not on the pin is a superseded version.
+    # Covers the tree and its sibling .lock; quoting keeps the version literal.
     case "$name" in
       "$KIRO_CLI_VERSION"-*) continue ;;
     esac
-    # Only VERSION-KEYED entries are superseded runtimes. kas/ is kiro-cli's
-    # directory, not ours, so an entry with no leading numeric version component is
-    # something this pruner has never seen (a store-wide lock, an unpack scratch
-    # dir, an index) -- and deleting another program's unrecognized state on every
-    # boot is a worse failure than leaving a few MB behind. Both layouts observed
-    # today (the <version>-<hash> tree and its .lock sibling) match, so this is a
-    # no-op against the current CLI; log the skip so a layout change is visible
-    # instead of silent.
+    # Only version-keyed entries are superseded runtimes: kas/ is kiro-cli's
+    # directory, so anything else is left in place and logged.
     if [[ ! "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
       printf "Leaving unrecognized (non version-keyed) entry in the kiro-cli agent runtime store: %s\n" "$name"
       continue
@@ -211,42 +154,23 @@ prune_superseded_kas_runtimes() {
   return 0
 }
 
-# Runs on EVERY boot and deliberately BEFORE the server starts: on a bump boot the
-# pin already names the NEW version while only the OLD tree is on disk, so the old
-# tree goes first and peak usage stays at one tree instead of two. The server
-# unpacks the new tree later, on the first bridge launch.
+# Before the server starts, so a bump boot drops the old tree before the new one
+# unpacks and peak usage stays at one tree.
 prune_superseded_kas_runtimes
 
-# One-time cleanup of residue EARLIER images left in the real HOME. Installs used to
-# run with the real HOME, so those images dropped their dispatchers in
-# $HOME/.local/bin -- which is on the image PATH (and, through the profile.d drop-in
-# written above, on the login-shell PATH too) and on the persistent /config volume.
-# Nothing removes what is already on an inherited volume, so a bare-name `kiro-cli`
-# could keep resolving to an old, unpinned copy for the container's lifetime. It stays
-# here rather than moving into the server with the rest of the install because it is
-# outside $TOOLS, the only tree the server's manager owns, and HOME is already
-# resolved here: warn, never fail.
-# `rm -rf` on an unmatched glob is already a silent no-op returning 0, so a non-zero
-# status here is a real failure (an immutable attribute, EPERM) worth surfacing.
+# Older images left kiro-cli dispatchers in $HOME/.local/bin, which is on PATH and
+# on the volume, so a bare `kiro-cli` could resolve to an unpinned copy. It lives
+# here because it is outside $TOOLS, the server's tree. An unmatched glob returns 0,
+# so a failure is real.
 if ! rm -rf "$HOME/.local/bin"/kiro-cli*; then
   printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$HOME" >&2
 fi
 
-# Make a value this script did not author safe inside a quoted logfmt field. The
-# untrusted classes reaching these log lines share one implementation so the rules
-# cannot drift: names read off the /config bind mount, which this script's threat
-# model treats as writable by a foreign host user -- the same premise
-# secure_tools_dir and the taint flag exist for -- and dpkg's own audit output.
-# So the actor a warning describes chooses the bytes inside the field that
-# reports him: a file named
-# `x" level=info msg="tools tree clean` would otherwise close the field early and append
-# attacker-authored logfmt keys, losing the rest of the real message.
-#
-# Bound the RAW length first (one bad value must not dominate the line, and truncating
-# after the backslash doubling could split a `\\` pair and leave a trailing lone
-# backslash that escapes the closing quote), double logfmt's escape character, replace
-# non-printables, then neutralize the quote that would close the field. $2 is the INPUT
-# bound, defaulting to 200 (at most 2x that emitted).
+# Make an untrusted value (a name off the /config volume, dpkg output) safe inside
+# a quoted logfmt field, so a crafted name cannot close the field and append keys.
+# Truncate the raw value first, or the doubling could split a `\\` pair; then
+# double backslashes, replace non-printables, and neutralize the quote. $2 is the
+# input bound (default 200).
 logfmt_value() {
   local raw=$1 safe
   safe=${raw:0:${2:-200}}
@@ -256,30 +180,14 @@ logfmt_value() {
   printf '%s' "$safe"
 }
 
-# Repair an interrupted dpkg transaction, unconditionally.
-#
-# This used to sit INSIDE the APT_PACKAGES block, which is why it moved rather
-# than being deleted with it: an interrupted install leaves dpkg wedged for the
-# whole container's life, and every later apt operation fails until somebody
-# reconfigures. Those operations are now the tools engine's (an `apt:` manifest
-# entry), so the repair can no longer be gated on an env var the engine does
-# not read -- and it has to run BEFORE the listener binds, because the engine
-# cannot repair a system database it does not own.
-#
-# The AUDIT OUTPUT is the primary evidence, not the exit status: `dpkg --audit`
-# returns 0 while REPORTING unpacked-but-unconfigured packages (measured: 464
-# bytes on stdout, rc=0), which is the ordinary interrupted state this exists
-# for -- gating on rc alone would never fire on it. A healthy tree prints
-# nothing at all, so non-empty output cannot false-positive. The updates journal
-# stays a third trigger: it is evidence of a transaction killed even earlier,
-# before any package reached the unpacked state.
-#
-# Warn-only, per the failure posture: the state is either absent (a no-op) or
-# the only thing standing between the operator and a working apt.
+# Repair an interrupted dpkg transaction before the listener binds: apt installs
+# are the tools engine's, and it cannot repair a database it does not own. Gate on
+# the audit OUTPUT as well as its status, because `dpkg --audit` exits 0 while
+# reporting unconfigured packages; a non-empty updates journal is a third trigger.
+# Warn only.
 dpkg_audit_rc=0
 dpkg_audit_out=$(timeout --signal=TERM --kill-after=30s 300s dpkg --audit 2>/dev/null) || dpkg_audit_rc=$?
-# Bounded for the log line: audit output is short in practice, and a truncated
-# first line is enough to tell an operator WHICH interrupted state was seen.
+# A truncated first line is enough to name the state.
 dpkg_audit_summary=$(printf '%s' "${dpkg_audit_out:0:400}" | tr '\n' ' ')
 if [ "$dpkg_audit_rc" -ne 0 ] || [ -n "$dpkg_audit_out" ] \
   || [ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]; then
@@ -292,12 +200,7 @@ if [ "$dpkg_audit_rc" -ne 0 ] || [ -n "$dpkg_audit_out" ] \
   fi
 fi
 
-# Everything else kiro-cli is the server's: it downloads the pinned archive,
-# verifies its per-arch sha256, installs into $TOOLS/kiro-cli-versions/<version>/,
-# selects the active version, reasserts the settings the pin depends on, prunes
-# superseded versions, and purges the layout this script's installer used to
-# promote into $TOOLS/bin. The listener binds first, so a first-boot download
-# shows up as /api/health reporting unready with a reason -- not as a container
-# with no server. Tool installs and updates are likewise the server's, via the
-# in-process tools engine; nothing blocks here.
+# The server owns the rest of kiro-cli (download, verify, install, select, prune)
+# and binds its listener first, so a first-boot download shows as /api/health
+# unready with a reason.
 exec /app/marotte

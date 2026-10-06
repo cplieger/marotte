@@ -23,11 +23,12 @@ func (nopChatRecords) PromptTexts(context.Context, marotte.ChatID) ([]string, er
 
 func (nopChatRecords) EmptyCompactions(context.Context, marotte.ChatID) (int, error) { return 0, nil }
 
+func (nopChatRecords) DepartedName(marotte.ChatID) (string, bool) { return "", false }
+
 var _ ChatRecords = nopChatRecords{}
 
-// recStore is a ChatRecords whose every call answers err, counting the header
-// writes, so a test can stage a chat the store refuses (deleted, or a disk fault)
-// and observe how each write site reports it.
+// recStore is a ChatRecords whose every call answers err, counting header writes, so a
+// test can stage a chat the store refuses and observe each write site's report.
 type recStore struct {
 	nopChatRecords
 	err         error
@@ -59,22 +60,19 @@ var _ ChatRecords = (*recStore)(nil)
 // whose MCP side effects they do not assert on.
 type nopMCPRecorder struct{}
 
-func (nopMCPRecorder) RecordConnected(context.Context, string, []string, []marotte.MCPPromptInfo, []marotte.MCPResourceInfo) {
+func (nopMCPRecorder) RecordConnected(context.Context, string, marotte.MCPSource, []string, []marotte.MCPPromptInfo, []marotte.MCPResourceInfo, []marotte.MCPResourceTemplateInfo) {
 }
 
-func (nopMCPRecorder) RecordOAuth(context.Context, string, string) {}
+func (nopMCPRecorder) RecordOAuth(context.Context, string, marotte.MCPSource, string) {}
 
-func (nopMCPRecorder) RecordInitFailure(context.Context, string, string) {}
+func (nopMCPRecorder) RecordInitFailure(context.Context, string, marotte.MCPSource, string) {}
 
-func (nopMCPRecorder) RecordDisabled(context.Context, string) {}
-
-func (nopMCPRecorder) SignalReady() {}
+func (nopMCPRecorder) RecordDisabled(context.Context, string, marotte.MCPSource) {}
 
 var _ MCPRecorder = nopMCPRecorder{}
 
 // hostDouble names every role a Translator takes, so one value fills every slot of Roles.
-// It exists ONLY for the doubles here and in the handler tests; production wires each role
-// to its own owner.
+// Test-only: production wires each role to its own owner.
 type hostDouble interface {
 	Broadcaster
 	PendingPermAdder
@@ -96,9 +94,8 @@ type hostDouble interface {
 	SentSteers
 	SteerBuffer
 	MCPRecorder() MCPRecorder
-	SetGovernance(state marotte.GovernanceStatePayload)
-	// WorkDir is a Roles FIELD in production; the double answers it as a method so rolesOf can
-	// fill that field per fixture, because relPath's table drives it.
+	GovernanceAccess
+	// WorkDir is a Roles FIELD in production; a method here so rolesOf fills it per fixture.
 	WorkDir() string
 }
 

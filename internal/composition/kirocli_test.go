@@ -12,23 +12,17 @@ import (
 	"github.com/cplieger/pinstall/v3"
 )
 
-// TestStartKiroCLIShapes pins the runtimes startKiroCLI can return for a
-// configuration it cannot install from, because each one answers /api/health
-// differently and the wrong choice is silent: a pin-less `go run` that gated
-// readiness would report a container unready forever, and unusable pins that did
-// not gate it would report healthy while installing nothing.
-//
-// The managed path is TestStartKiroCLIAdoptsACompleteVersionDirectory's, which
-// drives it end to end without a download.
+// TestStartKiroCLIShapes pins the runtimes startKiroCLI returns for a configuration it cannot
+// install from, since each answers /api/health differently and a wrong choice is silent.
 func TestStartKiroCLIShapes(t *testing.T) {
 	const goodDigest = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 	tests := map[string]struct {
 		cfg       Config
 		wantPath  string
-		wantGate  bool            // a readiness verdict is published at all
-		wantReady bool            // and what it says
-		reason    pinstall.Reason // its reason when not ready
-		rescan    bool            // the repair hook is wired
+		wantGate  bool
+		wantReady bool
+		reason    pinstall.Reason
+		rescan    bool
 	}{
 		"no pins resolves the bare name and installs nothing": {
 			cfg:      Config{ToolsDir: t.TempDir()},
@@ -54,9 +48,8 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			if got := kiro.cliPath(); got != tc.wantPath {
 				t.Errorf("cliPath() = %q, want %q", got, tc.wantPath)
 			}
-			// Called unconditionally by the bridge factory on every spawn, so a
-			// shape that left it nil would panic on the first chat rather than
-			// anywhere near this wiring. cliPath and stop are the same contract.
+			// Called unconditionally by the bridge factory on every spawn, so a nil here panics on
+			// the first chat.
 			if got := kiro.env(); tc.wantPath == "" && got != nil {
 				t.Errorf("env() = %v, want nil when no version is active", got)
 			}
@@ -79,19 +72,8 @@ func TestStartKiroCLIShapes(t *testing.T) {
 	}
 }
 
-// TestStartKiroCLIAdoptsACompleteVersionDirectory drives the MANAGED path end to
-// end with the pinned version directory already complete on the volume, so
-// nothing is downloaded. That is both the ordinary restart path in production and
-// the only way to exercise this wiring locally now that no env var can hand the
-// server a binary: populate $TOOLS/kiro-cli-versions/<version>/ and the manager adopts
-// it.
-//
-// Three properties only this test can see. Bind-first: startKiroCLI RETURNS while
-// the install work is still in flight, so Build reaches Listen instead of blocking
-// behind a download, and the poll below is what proves the work continued in the
-// background. The manager is the SOURCE of the path: cliPath resolves INSIDE the
-// activated version directory rather than to a bare name. And the repair hook is
-// wired, which only a managed run may do.
+// TestStartKiroCLIAdoptsACompleteVersionDirectory drives the managed path end to end with the
+// pinned version already complete, so nothing is downloaded.
 func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	const version = "9.9.9"
 	toolsDir := t.TempDir()
@@ -99,19 +81,12 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	if err := os.MkdirAll(versionDir, 0o750); err != nil {
 		t.Fatalf("create version dir: %v", err)
 	}
-	// The required set is {kiro-cli, kiro-cli-chat}: `kiro-cli acp` re-execs the
-	// chat sidecar through a PATH search, so a directory with no sidecar is NOT a
-	// complete install (see kirocli.go's Require comment for the measurement, and
-	// the sibling test below for the negative case). The fake answers --version
-	// with the pin (what selection probes) and exits 0 for the settings calls.
 	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
 	for _, name := range []string{"kiro-cli", "kiro-cli-chat"} {
 		if err := os.WriteFile(filepath.Join(versionDir, name), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
 			t.Fatalf("write fake %s: %v", name, err)
 		}
 	}
-	// Written LAST, exactly as the install order requires: it is the sentinel
-	// that makes the directory a selection candidate at all.
 	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
 		t.Fatalf("write sentinel: %v", err)
 	}
@@ -122,9 +97,8 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
 		ToolsDir:           toolsDir,
 	}
-	// Not t.Context(): this context governs the background install manager and
-	// must outlive the t.Cleanup(kiro.stop) teardown below — t.Context() is
-	// already cancelled by the time cleanup funcs run.
+	// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown, and t.Context()
+	// is cancelled before cleanups run.
 	kiro := startKiroCLI(context.Background(), &cfg)
 	t.Cleanup(kiro.stop)
 
@@ -132,7 +106,6 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		t.Fatalf("managed runtime is missing wiring: ready=%v rescan=%v",
 			kiro.ready != nil, kiro.rescan != nil)
 	}
-	// Activation happens in the background, so poll rather than sleep.
 	deadline := time.Now().Add(20 * time.Second)
 	var reason pinstall.Reason
 	for {
@@ -156,16 +129,8 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	}
 }
 
-// TestStartKiroCLIRejectsASidecarLessVersionDirectory is the negative half of
-// the required set, and it pins the defect that made the set wrong in the first
-// place. `--version` is answered by the MAIN binary, so a directory holding only
-// that binary passes the selection probe; before kiro-cli-chat was Required such
-// a directory was published .complete, reported READY, and then failed at every
-// single chat spawn because `kiro-cli acp` re-execs a sidecar that is not there.
-//
-// Readiness must stay WITHHELD here rather than the boot aborting: an incomplete
-// directory is simply not a selection candidate, so the install retries and the
-// reason names the phase. That is invariant 6's shape, not a violation of it.
+// TestStartKiroCLIRejectsASidecarLessVersionDirectory asserts that `--version` is answered by the main binary,
+// so a directory with no chat sidecar must not be adopted.
 func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
 	const version = "9.9.9"
 	toolsDir := t.TempDir()
@@ -174,7 +139,6 @@ func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
 		t.Fatalf("create version dir: %v", err)
 	}
 	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
-	// Deliberately ONLY the main dispatcher.
 	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
 		t.Fatalf("write fake dispatcher: %v", err)
 	}
@@ -188,15 +152,11 @@ func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
 		ToolsDir:           toolsDir,
 	}
-	// Not t.Context(): this context governs the background install manager and
-	// must outlive the t.Cleanup(kiro.stop) teardown below — t.Context() is
-	// already cancelled by the time cleanup funcs run.
+	// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown, and t.Context()
+	// is cancelled before cleanups run.
 	kiro := startKiroCLI(context.Background(), &cfg)
 	t.Cleanup(kiro.stop)
 
-	// A real download cannot succeed here (the digest is a fake), so the manager
-	// stays in its retry ladder. The assertion is that it never adopts the
-	// sidecar-less directory as a shortcut out of that ladder.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if ok, why := kiro.ready(); ok {
@@ -210,17 +170,8 @@ func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
 	}
 }
 
-// TestKiroSettingsLeavesTheIntegrityGateToTheManager pins the one rule this list
-// must obey: app.disableAutoupdates is NOT in it. kirocli.Release() declares that
-// assertion Mandatory, so pinstall forces it Required and merges it in on top of
-// whatever this list carries (it is what stops the binary replacing itself and
-// invalidating the verified digest). Listing it here would be the one way a
-// deployment could try to restate the integrity gate as a best-effort preference.
-//
-// It also pins that every entry speaks kiro-cli's own settings grammar. The
-// library takes a full argv and knows nothing about how kiro-cli is configured,
-// so a hand-built Assertion with the wrong verb would be accepted here and only
-// fail at runtime, as a warn, on a container nobody is watching.
+// TestKiroSettingsLeavesTheIntegrityGateToTheManager asserts that app.disableAutoupdates is not in the list,
+// because kirocli.Release() declares it Mandatory.
 func TestKiroSettingsLeavesTheIntegrityGateToTheManager(t *testing.T) {
 	settings := kiroSettings()
 	if len(settings) == 0 {

@@ -1,11 +1,5 @@
-// The on-demand step-transcript reader: which URL it asks for, when it declines to
-// ask, how it GRADES a failure, and what it commits to the run store.
-//
-// `api-client.js` is mocked and everything else is real, `run-store.js` included —
-// the adoption is the behaviour, so the assertions read the run's own log back rather
-// than a mock's calls. The GENERATED decoder is real too, which is the point of asking
-// for a typed read: a reply the decoder rejects must reach the caller as the transient
-// verdict rather than as content.
+// The on-demand step-transcript reader: which URL it asks for, when it declines to ask, how it
+// GRADES a failure, and what it commits to the run store.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Entry, OpenEntry, RunStepTranscript } from "./types.js";
@@ -14,8 +8,8 @@ const apiGetTypedOrError = vi.fn<(url: string, decode: unknown) => Promise<unkno
 
 vi.mock("./api-client.js", () => ({
   apiGetTypedOrError: (url: string, decode: unknown) => apiGetTypedOrError(url, decode),
-  // Present-but-inert so real-ESM linking succeeds whatever else this graph reaches
-  // (`run-store.js` imports two of these). No case here calls them.
+  // Present-but-inert so real-ESM linking succeeds whatever else this graph reaches (`run-store.js`
+  // imports two of these). No case here calls them.
   apiGet: vi.fn(),
   apiGetOrError: vi.fn(),
   apiGetTyped: vi.fn(),
@@ -32,8 +26,8 @@ const {
 } = await import("./run-step-transcript.js");
 const { appendRunEntry, runTurnHoles, runTurns } = await import("./run-store.js");
 
-/** The envelope `apiGetTypedOrError` answers with, structurally — `ApiResult` is
- *  private to `api-client.ts` and the consumer destructures rather than naming it. */
+/** The envelope `apiGetTypedOrError` answers with, structurally — `ApiResult` is private to
+ *  `api-client.ts` and the consumer destructures rather than naming it. */
 interface Envelope {
   readonly ok: boolean;
   readonly status: number;
@@ -56,9 +50,9 @@ function ok(over: Partial<RunStepTranscript> = {}): Envelope {
   return { ok: true, status: 200, data: body, error: "" };
 }
 
-/** A FAILURE envelope at `status`. `data` is null by construction on this side:
- *  `toApiResult` collapses it, because a caller handed a status has no business
- *  reading a body the transport rejected. */
+/** A FAILURE envelope at `status`. `data` is null by construction on this side: `toApiResult`
+ *  collapses it, because a caller handed a status has no business reading a body the transport
+ *  rejected. */
 function fail(status: number): Envelope {
   return { ok: false, status, data: null, error: "refused" };
 }
@@ -124,9 +118,9 @@ describe("run-step-transcript: the URL", () => {
     );
   });
 
-  // The one encoding rule this route has. A raw `#` would truncate the path at the
-  // fragment; an encoded "/" would be refused by the server's canonical-path gate,
-  // which compares the DECODED path against what its router would match.
+  // The one encoding rule this route has. A raw `#` would truncate the path at the fragment; an
+  // encoded "/" would be refused by the server's canonical-path gate, which compares the DECODED
+  // path against what its router would match.
   it("encodes a segment's own metacharacters without encoding the separators", async () => {
     await ask("wf_1", "wf_1/a b#0/build", ok());
     expect(apiGetTypedOrError.mock.calls[0]?.[0]).toBe("/api/runs/wf_1/steps/wf_1/a%20b%230/build");
@@ -152,10 +146,9 @@ describe("run-step-transcript: when it asks", () => {
     }
   });
 
-  // `unavailable` is the one verdict that means "could not be completed", which is
-  // transient by definition — so it is the one a later ask retries. What bounds that
-  // retry is the CALLER arming a read once per shown (node, state), not a backoff
-  // here.
+  // `unavailable` is the one verdict that means "could not be completed", which is transient by
+  // definition — so it is the one a later ask retries. What bounds that retry is the CALLER arming
+  // a read once per shown (node, state), not a backoff here.
   it("retries an unavailable answer", async () => {
     await ask("wf_1", "wf_1/a", ok({ state: "unavailable" }));
     expect(apiGetTypedOrError).toHaveBeenCalledTimes(1);
@@ -164,8 +157,8 @@ describe("run-step-transcript: when it asks", () => {
     expect(stepRead("wf_1", "wf_1/a")?.state).toBe("ready");
   });
 
-  // A repaint during a fetch must not start a second one, or a page that repaints on
-  // every store invalidation would issue a request per frame.
+  // A repaint during a fetch must not start a second one, or a page that repaints on every store
+  // invalidation would issue a request per frame.
   it("issues one request while one is outstanding", () => {
     apiGetTypedOrError.mockResolvedValue(ok());
     requestStepTranscript("wf_1", "wf_1/a");
@@ -187,8 +180,8 @@ describe("run-step-transcript: when it asks", () => {
     expect(stepRead("wf_1", "wf_1/b")?.state).toBe("gone");
   });
 
-  // A 5xx is the server failing to answer, which is transient by definition, so it
-  // keeps the retryable verdict AND a later ask retries it.
+  // A 5xx is the server failing to answer, which is transient by definition, so it keeps the
+  // retryable verdict AND a later ask retries it.
   it("records a 5xx as unavailable and retries it", async () => {
     await ask("wf_1", "wf_1/a", fail(500));
     expect(stepRead("wf_1", "wf_1/a")?.state).toBe("unavailable");
@@ -196,18 +189,16 @@ describe("run-step-transcript: when it asks", () => {
     expect(apiGetTypedOrError).toHaveBeenCalledTimes(2);
   });
 
-  // A 2xx the DECODER rejected arrives on the failure side carrying its real 2xx
-  // status, so it must not be graded as the caller's mistake.
+  // A 2xx the DECODER rejected arrives on the failure side carrying its real 2xx status, so it must
+  // not be graded as the caller's mistake.
   it("records an undecodable 2xx as unavailable", async () => {
     await ask("wf_1", "wf_1/a", fail(200));
     expect(stepRead("wf_1", "wf_1/a")?.state).toBe("unavailable");
   });
 
-  // A 4xx is the SERVER refusing the address: 404 is `errStepUnknown` (this run has
-  // no step at that path) and 400 is the first-segment assertion. Asking again fails
-  // identically, so the verdict is settled and the reader is offered no retry — which
-  // is the whole point of the state. The second half of each case is the one that
-  // matters: `settled()` must swallow the next ask.
+  // A 4xx is the SERVER refusing the address: 404 is `errStepUnknown` (this run has no step at that
+  // path) and 400 is the first-segment assertion. Asking again fails identically, so the verdict is
+  // settled and the reader is offered no retry — which is the whole point of the state.
   it.each([404, 400])("records a %i as the settled unaddressable verdict", async (status) => {
     await ask("wf_1", "wf_1/a", fail(status));
     expect(stepRead("wf_1", "wf_1/a")?.state).toBe("unaddressable");
@@ -216,10 +207,8 @@ describe("run-step-transcript: when it asks", () => {
     expect(apiGetTypedOrError).toHaveBeenCalledTimes(1);
   });
 
-  // A throw never reached the server, so it grades as status 0 — transient, like the
-  // 5xx above and unlike a 4xx. It must also be CAUGHT, because the caller `void`s
-  // the fetch by design, so an escaping rejection is an unhandled one; this suite
-  // fails the file on one, which is the other half of the assertion.
+  // A throw never reached the server, so it grades as status 0 — transient, like the 5xx above and
+  // unlike a 4xx.
   it("records a thrown fetch as unavailable and retries it", async () => {
     await reject("wf_1", "wf_1/a");
     expect(stepRead("wf_1", "wf_1/a")?.state).toBe("unavailable");
@@ -227,8 +216,8 @@ describe("run-step-transcript: when it asks", () => {
     expect(apiGetTypedOrError).toHaveBeenCalledTimes(2);
   });
 
-  // A status-0 envelope is the same fact reported through the RESULT rather than a
-  // throw (a dead network, an aborted request), so it takes the same verdict.
+  // A status-0 envelope is the same fact reported through the RESULT rather than a throw (a dead
+  // network, an aborted request), so it takes the same verdict.
   it("records a status-0 transport failure as unavailable", async () => {
     await ask("wf_1", "wf_1/a", fail(0));
     expect(stepRead("wf_1", "wf_1/a")?.state).toBe("unavailable");
@@ -236,8 +225,8 @@ describe("run-step-transcript: when it asks", () => {
     expect(apiGetTypedOrError).toHaveBeenCalledTimes(2);
   });
 
-  // Left at `loading` with no request behind it, that step could never be asked
-  // about again for the life of the tab.
+  // Left at `loading` with no request behind it, that step could never be asked about again for the
+  // life of the tab.
   it("does not wedge a step when the fetch rejects", async () => {
     await reject("wf_1", "wf_1/a");
     await ask("wf_1", "wf_1/a", ok());
@@ -264,10 +253,9 @@ describe("run-step-transcript: the version signal", () => {
   });
 });
 
-// The answer's CONTENT goes into the run store through the same operations the live
-// frames use, so the pane has one place to read from and a re-read cannot disagree
-// with a stream. Each case uses its own run id, because a run's log is durable state
-// that no verdict clear touches.
+// The answer's CONTENT goes into the run store through the same operations the live frames use, so
+// the pane has one place to read from and a re-read cannot disagree with a stream. Each case uses
+// its own run id, because a run's log is durable state that no verdict clear touches.
 describe("run-step-transcript: adopting the answer into the run store", () => {
   it("commits the answer's entries under their own turn, in file order", async () => {
     const entries = [turnOpen("t1", "wf/a"), text("t1", 1, "one"), text("t1", 2, "two")];
@@ -276,8 +264,8 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
     expect(runTurnHoles("wf_adopt")).toEqual([]);
   });
 
-  // Seated BEFORE the sealed entries, an open tail lands on a turn the answer has not
-  // created yet, which the store records as a hole rather than a tail.
+  // Seated BEFORE the sealed entries, an open tail lands on a turn the answer has not created yet,
+  // which the store records as a hole rather than a tail.
   it("seats an open tail on the turn the same answer created", async () => {
     await ask(
       "wf_tail",
@@ -289,10 +277,9 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
     expect(runTurnHoles("wf_tail")).toEqual([]);
   });
 
-  // The repair is a HOLE FILL rather than a rewrite: the prefix the store already
-  // holds is recognised as a redelivery and skipped, and the append resumes at the
-  // gap. Without that, a second read would mark a hole at `seq` 0 and the step would
-  // never settle.
+  // The repair is a HOLE FILL rather than a rewrite: the prefix the store already holds is
+  // recognised as a redelivery and skipped, and the append resumes at the gap. Without that, a
+  // second read would mark a hole at `seq` 0 and the step would never settle.
   it("recognises the prefix it already holds and resumes at the gap", async () => {
     const first = [turnOpen("t1", "wf/a"), text("t1", 1, "one")];
     await ask("wf_again", "wf/a", ok({ entries: first }));
@@ -306,17 +293,15 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
   });
 
   it("clears the hole its answer repairs", async () => {
-    // An entry for a turn the store never opened is exactly the gap this GET exists
-    // to close.
+    // An entry for a turn the store never opened is exactly the gap this GET exists to close.
     appendRunEntry("wf_hole", text("t1", 3, "orphan"));
     expect(runTurnHoles("wf_hole")).toEqual(["t1"]);
     await ask("wf_hole", "wf/a", ok({ entries: [turnOpen("t1", "wf/a"), text("t1", 1, "one")] }));
     expect(runTurnHoles("wf_hole")).toEqual([]);
   });
 
-  // A `ready` answer carrying nothing is its own fact — the step ran and wrote
-  // nothing — and the pane's note is keyed on the verdict, so the verdict is what
-  // this module records.
+  // A `ready` answer carrying nothing is its own fact — the step ran and wrote nothing — and the
+  // pane's note is keyed on the verdict, so the verdict is what this module records.
   it("records `ready` for an answer that carries no entries", async () => {
     await ask("wf_empty", "wf/a", ok({ state: "ready", entries: [] }));
     expect(stepRead("wf_empty", "wf/a")?.state).toBe("ready");
@@ -325,8 +310,8 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
 });
 
 describe("run-step-transcript: the re-read door", () => {
-  // A hole and a lost `turn_close` are both repaired by the same whole-turn answer,
-  // and a settled verdict would otherwise swallow the ask forever.
+  // A hole and a lost `turn_close` are both repaired by the same whole-turn answer, and a settled
+  // verdict would otherwise swallow the ask forever.
   it("re-asks a step whose settled verdict this client has found wanting", async () => {
     await ask("wf_1", "wf_1/a", ok({ state: "ready" }));
     requestStepTranscript("wf_1", "wf_1/a");
@@ -352,16 +337,16 @@ describe("run-step-transcript: the bound", () => {
     expect(stepRead("wf_1", "wf_1/a")).toBeUndefined();
   });
 
-  // The verdicts are this module's; the entries are the RUN's record, held under the
-  // run's own eviction rules, and a page retarget says nothing about them.
+  // The verdicts are this module's; the entries are the RUN's record, held under the run's own
+  // eviction rules, and a page retarget says nothing about them.
   it("keeps the run's turns when the verdicts are cleared", async () => {
     await ask("wf_keep", "wf/a", ok({ entries: [turnOpen("t1", "wf/a")] }));
     clearStepTranscripts();
     expect(entryIDs("wf_keep", "t1")).toEqual(["t1-open"]);
   });
 
-  // The in-flight set goes with it, or a read outstanding across a retarget would
-  // block the new page from ever asking for that step.
+  // The in-flight set goes with it, or a read outstanding across a retarget would block the new
+  // page from ever asking for that step.
   it("clears the in-flight set too", async () => {
     apiGetTypedOrError.mockResolvedValueOnce(ok());
     requestStepTranscript("wf_1", "wf_1/a");

@@ -53,7 +53,7 @@ func FuzzEffortLevelValid(f *testing.F) {
 	// Independent statement of the shape rule (Valid is a hand loop; this is
 	// the differential oracle). The vocabulary itself is per model and
 	// upstream-owned, so validity is a SHAPE question, not a member list —
-	// gpt-luna's "none" tier is the case the old closed set rejected.
+	// gpt-luna's "none" tier is a case a closed set would reject.
 	shape := regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 	f.Fuzz(func(t *testing.T, s string) {

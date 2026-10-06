@@ -18,7 +18,7 @@ func FuzzParseTransport(f *testing.F) {
 		if !tr.Valid() {
 			t.Fatalf("ParseTransport(%q) returned invalid transport %q", s, tr)
 		}
-		// sse is a first-class transport (no longer folded into http):
+		// sse is a first-class transport, not folded into http:
 		// KAS accepts a distinct {type:"sse"} mcpServers entry on the v3
 		// wire, so ParseTransport preserves it as TransportSSE.
 		if s == "sse" && tr != TransportSSE {

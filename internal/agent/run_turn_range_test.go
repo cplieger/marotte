@@ -13,12 +13,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The run's per-turn range read: the repair a run pane runs on a `run_turn` stamp
-// mismatch or a seq hole, addressed by TURN because that is what the stamp names.
+// The run's per-turn range read, addressed by turn as the `run_turn` stamp names it.
 
-// runTurnRangeFixture opens one step turn, seals two entries into it and answers the
-// registry plus that turn's id. The text seals at seq 1 and the tool_call at seq 2, so
-// the turn holds turn_open(0), text(1), tool_call(2).
+// runTurnRangeFixture opens one step turn holding turn_open(0), text(1), tool_call(2) and returns it.
 func runTurnRangeFixture(t *testing.T) (*runLog, string) {
 	t.Helper()
 	r := newRunLog(t.TempDir())
@@ -57,13 +54,8 @@ func TestRunTurnRange_AnswersTheTailAboveAfterAndStampsTheSeqItServed(t *testing
 	}
 }
 
-// A CLOSED turn is the case design 13 property 8 arm 2 turns on: after a gap the digest
-// answers `gone` for the stamp, the client reads this range, and what it needs back is the
-// tail INCLUDING the turn_close plus an empty subject, which is what lets it drop the stamp
-// and stop reading the step as live. Nothing about the function distinguishes an open turn
-// from a closed one except which branch of the stamp loop matches, so without this case a
-// later reader answering found=false from the `rec.open` miss turns the whole `gone` path
-// into a 404 with every other case still green.
+// A closed turn: after a gap the digest says `gone`, and this read must return
+// the tail with its turn_close and an empty subject so the client stops treating the step as live.
 func TestRunTurnRange_ServesAClosedTurnsTailWithNoStamp(t *testing.T) {
 	r, turn := runTurnRangeFixture(t)
 	if _, closed, err := r.CloseNode(t.Context(), "wf1", "root/step", "completed", ""); err != nil || !closed {
@@ -74,10 +66,7 @@ func TestRunTurnRange_ServesAClosedTurnsTailWithNoStamp(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("turnRange(from=2, the wire's after=1) on a closed turn = found %v, err %v; want the tail", found, err)
 	}
-	// THREE, not two: the close settles what it makes unsettleable, so the turn's unsettled
-	// tool_call takes a synthesized tool_result{aborted} before the turn_close. The client's
-	// range read adopts that result like any other entry, which is what stops a step's card
-	// spinning for the tab's life after a gap.
+	// Three: the close synthesizes a tool_result{aborted} for the unsettled tool_call, stopping the card spinning.
 	if len(entries) != 3 || entries[0].Kind != marotte.EntryKindToolCall ||
 		entries[1].Kind != marotte.EntryKindToolResult || entries[2].Kind != marotte.EntryKindTurnClose {
 		t.Fatalf("entries = %v, want the tool_call, its synthesized result, then the turn_close", kinds(entries))
@@ -100,8 +89,7 @@ func TestRunTurnRange_AnEmptyTailStampsTheSeqTheCallerHeld(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("entries = %v, want none above the newest seq", kinds(entries))
 	}
-	// One version AHEAD of the page is the defect this pins: the client would hold that
-	// version and never ask again.
+	// A version ahead of the page would stop the client asking.
 	if want := turnVersion(turn, 2); len(stamps) != 1 || stamps[0].Version != want {
 		t.Fatalf("stamp versions = %v, want one at %q", stampVersions(stamps), want)
 	}
@@ -144,10 +132,7 @@ func TestRunTurnRange_AParallelRunsOtherOpenTurnIsNeitherServedNorStamped(t *tes
 	}
 }
 
-// runTurnRangeUnreadableFixture opens one turn, seals one entry into it and then
-// overwrites the log's bytes IN PLACE at the same length, so the in-memory offset index
-// still points inside the file and it is the DECODE that fails rather than the index:
-// that is the shape a torn or corrupt log takes for a range read.
+// runTurnRangeUnreadableFixture overwrites the log in place at the same length, so the decode fails rather than the index.
 func runTurnRangeUnreadableFixture(t *testing.T) (*runLog, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -171,10 +156,7 @@ func runTurnRangeUnreadableFixture(t *testing.T) (*runLog, string) {
 	return r, turn.ID()
 }
 
-// A log this server cannot READ is its own fault, so the error travels and the route
-// answers 500; only an id the log holds no turn for is the caller's answer. Folding the
-// two made the route's 500 arm and its Warn unreachable, so a disk or decode fault
-// reached the client as a 404 telling it to stop asking about a turn that is there.
+// An unreadable log is a 500; only a missing turn is the caller's 404.
 func TestRunTurnRange_AnUnreadableLogAnswersTheError(t *testing.T) {
 	r, turn := runTurnRangeUnreadableFixture(t)
 
@@ -184,9 +166,7 @@ func TestRunTurnRange_AnUnreadableLogAnswersTheError(t *testing.T) {
 	}
 }
 
-// The run route's own half of that division, which nothing pinned while the error was
-// folded away: the chat twin is driven end to end through its router in internal/chat,
-// and this is the run side's.
+// The run route's half of that split; internal/chat drives the chat twin.
 func TestRunTurnRangeRoute_500sALogItCannotRead(t *testing.T) {
 	r, turn := runTurnRangeUnreadableFixture(t)
 	rr := &runRoutes{runs: &Runs{log: r}}
@@ -245,8 +225,7 @@ func TestRunTurnRangeRoute_ServesTheTailAnd404sAnUnknownTurn(t *testing.T) {
 	if len(got.Subject) != 1 {
 		t.Fatalf("subject refs = %v, want the turn's run_turn stamp", stampRefs(got.Subject))
 	}
-	// Both lists travel as arrays rather than null, or the client's array readers
-	// fail the whole page.
+	// Arrays, never null.
 	if raw := rec.Body.String(); !strings.Contains(raw, `"open_entries":[`) {
 		t.Fatalf("body = %s, want open_entries as an array", raw)
 	}
@@ -262,8 +241,7 @@ func TestRunTurnRangeRoute_ServesTheTailAnd404sAnUnknownTurn(t *testing.T) {
 	}
 }
 
-// stampRefs and stampVersions keep a failure readable: the stamps are pointers, so %v
-// on the slice prints addresses.
+// stampRefs and stampVersions print the pointed-to values.
 func stampRefs(s []*marotte.SubjectStamp) []string {
 	out := make([]string, len(s))
 	for i := range s {

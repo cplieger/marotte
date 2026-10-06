@@ -9,16 +9,13 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// bridgeManager owns the per-chat bridge map and serializes access to bridge
-// lifecycle operations. Runtime composes it and owns dispatch.
+// bridgeManager owns the per-chat bridge map and serializes bridge lifecycle operations.
 type bridgeManager struct {
 	spawnSF singleflight.Group
 	bridges map[marotte.ChatID]*sharedBridge
 	factory ACPBridgeFactory
-	// hostsLiveRun reports whether the chat's bridge hosts an open step turn of a
-	// chat-parented run. Such a bridge is BUSY to a retire whatever its prompt slot
-	// says: a run's steps never take the slot, so the launching chat reads idle for
-	// the whole time its workflow runs. Nil means no run registry, never busy.
+	// hostsLiveRun reports whether the chat's bridge hosts an open step turn of a chat-parented
+	// run; such a bridge is busy to a retire, since steps never take the prompt slot. Nil: never busy.
 	hostsLiveRun func(marotte.ChatID) bool
 	mu           sync.Mutex
 }
@@ -30,17 +27,15 @@ func newBridgeManager(factory ACPBridgeFactory) *bridgeManager {
 	}
 }
 
-// get returns the bridge for chatID, or nil if none exists.
+// get returns the bridge for chatID, or nil.
 func (bm *bridgeManager) get(chatID marotte.ChatID) *sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	return bm.bridges[chatID]
 }
 
-// orInsert returns the existing bridge for chatID, or creates one via the factory,
-// inserts it, and returns (newBridge, false). The caller's own serialization
-// (OpenBridge's spawnSF, loadRunCarrier's run host lock) is what lets the new bridge
-// be returned unlocked.
+// orInsert returns chatID's bridge, or creates and inserts one, returning (new, false). The
+// caller's own serialization lets it be returned unlocked.
 func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	if existing, ok := bm.bridges[chatID]; ok {
@@ -54,9 +49,8 @@ func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, exis
 	return sb, false
 }
 
-// insert registers an ALREADY-STARTED bridge under chatID: a launched run bridge's map
-// key is its workflow id, which only `workflow/new`'s reply knows. Replacing an entry
-// would orphan a live process, so insert refuses and reports false.
+// insert registers an already-started bridge (a run bridge keyed by its workflow id). It
+// never replaces an entry, which would orphan a live process.
 func (bm *bridgeManager) insert(chatID marotte.ChatID, sb *sharedBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -68,8 +62,7 @@ func (bm *bridgeManager) insert(chatID marotte.ChatID, sb *sharedBridge) bool {
 	return true
 }
 
-// remove deletes chatID from the map and returns the removed bridge, or nil. Does NOT
-// call Stop.
+// remove deletes chatID and returns the removed bridge, or nil. Does not Stop it.
 func (bm *bridgeManager) remove(chatID marotte.ChatID) *sharedBridge {
 	bm.mu.Lock()
 	sb := bm.bridges[chatID]
@@ -80,7 +73,7 @@ func (bm *bridgeManager) remove(chatID marotte.ChatID) *sharedBridge {
 	return sb
 }
 
-// removeIfSame removes chatID only if the current entry matches sb.
+// removeIfSame removes chatID only if the current entry is sb.
 func (bm *bridgeManager) removeIfSame(chatID marotte.ChatID, sb *sharedBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -91,9 +84,7 @@ func (bm *bridgeManager) removeIfSame(chatID marotte.ChatID, sb *sharedBridge) b
 	return false
 }
 
-// removeIfBridge removes chatID only if the current entry's bridge is the SAME
-// INSTANCE as bridge. The parameter is an identity, not a capability: it stays the
-// full ACPBridge so a caller cannot pass something the map could never have held.
+// removeIfBridge removes chatID only if the entry's bridge is the same instance as bridge.
 func (bm *bridgeManager) removeIfBridge(chatID marotte.ChatID, bridge ACPBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -104,7 +95,7 @@ func (bm *bridgeManager) removeIfBridge(chatID marotte.ChatID, bridge ACPBridge)
 	return false
 }
 
-// close removes the bridge for chatID and stops it. Idempotent.
+// close removes and stops chatID's bridge. Idempotent.
 func (bm *bridgeManager) close(chatID marotte.ChatID) {
 	sb := bm.remove(chatID)
 	if sb != nil {
@@ -119,7 +110,7 @@ func (bm *bridgeManager) count() int {
 	return len(bm.bridges)
 }
 
-// all returns a snapshot of every bridge, for callers that must inspect them all.
+// all returns a snapshot of every bridge.
 func (bm *bridgeManager) all() map[marotte.ChatID]*sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -128,23 +119,18 @@ func (bm *bridgeManager) all() map[marotte.ChatID]*sharedBridge {
 	return cp
 }
 
-// drain removes every bridge from the map and returns them for teardown.
-func (bm *bridgeManager) drain() []*sharedBridge {
+// drain removes and returns every bridge, for teardown.
+func (bm *bridgeManager) drain() map[marotte.ChatID]*sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
-	out := make([]*sharedBridge, 0, len(bm.bridges))
-	for id, sb := range bm.bridges {
-		out = append(out, sb)
-		delete(bm.bridges, id)
-	}
+	out := bm.bridges
+	bm.bridges = make(map[marotte.ChatID]*sharedBridge)
 	return out
 }
 
-// retireChatBridges stops idle chat bridges and marks busy ones for the next
-// bridge open, answering the stopped bridges' chat ids so the caller can close the
-// turns they hosted. Run bridges are durable work and rely on the relay's own
-// token refresh, so an account change does not interrupt them; a chat bridge
-// hosting a live run is busy for the same reason.
+// retireChatBridges stops idle chat bridges, marks busy ones for their next open, and
+// returns the stopped chats so the caller closes their turns. Run bridges, and chat bridges
+// hosting a live run, are not interrupted: they rely on the relay's token refresh.
 func (bm *bridgeManager) retireChatBridges() (closed []marotte.ChatID, marked int) {
 	var victims []*sharedBridge
 	bm.mu.Lock()
@@ -175,11 +161,9 @@ func (bm *bridgeManager) hostsRun(chatID marotte.ChatID) bool {
 	return bm.hostsLiveRun != nil && bm.hostsLiveRun(chatID)
 }
 
-// closeIfRetired removes and stops sb only after its active turn has released the
-// prompt slot and its hosted runs have closed their last step turn. reopen is
-// whether the caller must open a fresh bridge; stopped is whether THIS call stopped
-// sb, the one case that owes closeTurnsOnRetire (a map holding a different bridge
-// stops nothing).
+// closeIfRetired removes and stops sb once its turn released the prompt slot and its hosted
+// runs closed their last step turn. reopen: the caller must open a fresh bridge; stopped:
+// THIS call stopped sb and owes closeTurnsOnRetire.
 func (bm *bridgeManager) closeIfRetired(chatID marotte.ChatID, sb *sharedBridge) (reopen, stopped bool) {
 	bm.mu.Lock()
 	if bm.bridges[chatID] != sb {

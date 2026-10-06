@@ -21,11 +21,9 @@ const (
 	KindChats    Kind = "chats"
 	KindChat     Kind = "chat"
 	KindLiveTurn Kind = "live_turn"
-	// KindRunTurn is one open turn of a RUN's log, ref `<workflowID>/<turn>`, versioned
-	// by the turn's newest sealed seq. Per open turn rather than per run, because a
-	// parallel node is several open turns in one log and one version could not say
-	// which of them to re-read. Not spelled `run` or `runs`: KindRuns is the
-	// workspace-wide live-runs set, a different subject with a different ref shape.
+	// KindRunTurn is one open turn of a RUN's log, ref `<workflowID>/<turn>`, versioned by the
+	// turn's newest sealed seq: per open turn, because a parallel node is several open turns.
+	// Distinct from KindRuns, the workspace-wide live-runs set.
 	KindRunTurn Kind = "run_turn"
 	KindPending Kind = "pending"
 	KindRuns    Kind = "runs"

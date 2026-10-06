@@ -13,17 +13,14 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// seedChatEntries writes one chat through the store: the header named name, one
-// prompt turn, and one text entry per reply.
+// seedChatEntries writes one chat through the store: header name, one prompt turn, one text entry per reply.
 func seedChatEntries(t *testing.T, s *Store, id marotte.ChatID, name string, replies ...string) {
 	t.Helper()
 	seedSearchChat(t, s, id, name, "seed", replies...)
 }
 
-// seedChatDir writes one chat directory verbatim, bypassing the store so a
-// seeding loop over hundreds of chats costs two file writes each and no fsync:
-// chat.json holding c, entries.jsonl holding entries in file order, both stamped
-// with mtime.
+// seedChatDir writes one chat directory verbatim, bypassing the store's fsyncs for loops over hundreds of chats:
+// chat.json, entries.jsonl, both stamped with mtime.
 func seedChatDir(t *testing.T, s *Store, c *marotte.Chat, entries []marotte.Entry, mtime time.Time) {
 	t.Helper()
 	dir := filepath.Join(s.dir, c.ID)
@@ -54,16 +51,14 @@ func seedChatDir(t *testing.T, s *Store, c *marotte.Chat, entries []marotte.Entr
 	}
 }
 
-// oneTurnChat is a closed one-turn chat record: the header and one text entry.
+// oneTurnChat is a closed one-turn chat record.
 func oneTurnChat(id, name, body string, updatedAt int64) (*marotte.Chat, []marotte.Entry) {
 	entries, _ := chatOf(openTurn(id+"-t1", 1, prompt("m-1", "seed")).text("a1", body).
 		close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}))
 	return &marotte.Chat{ID: id, Name: name, UpdatedAt: updatedAt, TurnCount: 1}, entries
 }
 
-// The ranking's whole purpose: a short chat whose TITLE names the subject must
-// outrank a long one that merely mentions it many times. Without the title
-// boost, volume wins and the useful result is buried.
+// A short chat whose title names the subject outranks a long one that mentions it often.
 func TestScoreChat_TitleBeatsVolume(t *testing.T) {
 	titled := scoreChat(1, 1, 200)
 	rambling := scoreChat(30, 0, 200_000)
@@ -72,7 +67,7 @@ func TestScoreChat_TitleBeatsVolume(t *testing.T) {
 	}
 }
 
-// Naming the subject twice counts twice, unlike a boolean flag.
+// Naming the subject twice counts twice.
 func TestScoreChat_TitleHitsMultiply(t *testing.T) {
 	once := scoreChat(0, 1, 1000)
 	twice := scoreChat(0, 2, 1000)
@@ -81,8 +76,7 @@ func TestScoreChat_TitleHitsMultiply(t *testing.T) {
 	}
 }
 
-// The normaliser reads characters rather than entry count: the same hit count in
-// far more text is a weaker signal, and a count cannot see the difference.
+// The normaliser reads characters, not entries: the same hits in more text are weaker.
 func TestScoreChat_LengthNormalisesByChars(t *testing.T) {
 	short := scoreChat(3, 0, 500)
 	long := scoreChat(3, 0, 500_000)
@@ -97,9 +91,7 @@ func TestScoreChat_TinyChatIsNotDividedByZero(t *testing.T) {
 	}
 }
 
-// The ranking formula, at exact values. Every other score test compares two
-// scores, which a formula that returns NaN for every input satisfies. Inputs are
-// chosen so the normaliser is exact in binary: docChars of 3 KiB gives sqrt(1+3) = 2.
+// The formula at exact values, which a NaN-returning formula cannot pass; 3 KiB gives sqrt(1+3) = 2.
 func TestScoreChat_MatchesTheDocumentedFormula(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -122,8 +114,7 @@ func TestScoreChat_MatchesTheDocumentedFormula(t *testing.T) {
 	}
 }
 
-// `file:x` names no title text, so it must not boost every chat whose name
-// happens to contain "file".
+// `file:x` names no title text, so it must not boost names containing "file".
 func TestTitleHits_IgnoresFilterOnlyQueries(t *testing.T) {
 	if n := titleHits("my file notes", "file:main.go"); n != 0 {
 		t.Errorf("a filter-only query must not match a title, got %d", n)
@@ -160,11 +151,8 @@ func TestSearchAll(t *testing.T) {
 	}
 }
 
-// A row's hit count and its score spend EVERY occurrence in the chat, not the
-// length of the capped hit list the in-chat scan carries: a chat with 250
-// mentions outranks one with 200 and reads "250", not "200". The best hit is
-// untouched by the cap: the list is in log order, so the earliest turn's hit is
-// always inside it.
+// Hits and score count every occurrence, not the capped hit list: 250 mentions read "250". The best hit is in the
+// log-ordered list.
 func TestSearchAll_HitsCountEveryOccurrencePastTheHitCap(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedMentions := func(id marotte.ChatID, n int) {
@@ -198,11 +186,7 @@ func TestSearchAll_HitsCountEveryOccurrencePastTheHitCap(t *testing.T) {
 	}
 }
 
-// The score's denominator is the text the scan READ. A chat whose reasoning
-// dwarfs its prose is normalised by that reasoning: one mention in far more
-// searched text is the weaker signal, whichever kind holds the bulk. Two chats
-// with the same prose and the same single mention would otherwise tie and fall
-// through to recency, which is what the newer, more verbose one is seeded to win.
+// The denominator is the text the scan read, reasoning included, so equal prose and one mention do not tie.
 func TestSearchAll_RankingDenominatorCoversEverySearchedSpan(t *testing.T) {
 	s, _ := newTestStore(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -227,11 +211,8 @@ func TestSearchAll_RankingDenominatorCoversEverySearchedSpan(t *testing.T) {
 	}
 }
 
-// A chat the reader refuses is NOT scanned. Scanned is the number the History
-// page prints beside "no matches", so counting a chat whose contents were never
-// read tells the reader their text is in none of N conversations when one of the
-// N was skipped. The refusal sets Truncated instead. Both shapes are refused
-// under any uid: a permission refusal would not reproduce as root.
+// A refused chat is not scanned: History prints Scanned beside "no matches". It sets Truncated. Both refusals work
+// under any uid, root included.
 func TestSearchAll_AnUnreadChatIsNotScanned(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -289,9 +270,7 @@ func TestSearchAll_AnUnreadChatIsNotScanned(t *testing.T) {
 	}
 }
 
-// A chat matched on its NAME alone has no line inside the transcript, so its row
-// carries no best hit rather than a zero one: a zero hit would claim a segment
-// kind of "" on the wire, which the generated decoder refuses.
+// A name-only match carries no best hit: a zero hit would claim segment kind "", which the decoder refuses.
 func TestSearchAll_TitleOnlyMatchCarriesNoBestHit(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis migration", "we moved the cache today")
@@ -305,9 +284,7 @@ func TestSearchAll_TitleOnlyMatchCarriesNoBestHit(t *testing.T) {
 	}
 }
 
-// The result LIST is cut at maxChatResults and the COUNT is not, so a reader
-// shown 50 rows out of 51 is told 51. Truncated stays false: every chat was
-// read, and the cut is Matched exceeding the list.
+// The list caps at maxChatResults, the count does not; Truncated stays false.
 func TestSearchAll_MatchedCountsPastTheResultCap(t *testing.T) {
 	s, _ := newTestStore(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -331,11 +308,8 @@ func TestSearchAll_MatchedCountsPastTheResultCap(t *testing.T) {
 	}
 }
 
-// A cancelled cross-chat scan may not claim it read every chat: an already
-// cancelled context cuts the directory walk short, and without its truncated
-// flag the empty list would publish an authoritative "your text is in none of
-// your chats" for a scan that opened none of them. The fan-out half (the context
-// dying between the walk and the drain) has no schedulable test and is not pinned.
+// A cancelled scan must not claim it read every chat: the cut walk sets truncated. The context dying between walk
+// and drain is not schedulable and not pinned.
 func TestSearchAll_CancelledCollectionIsNotAnEmptyAnswer(t *testing.T) {
 	s, _ := newTestStore(t)
 	for _, id := range []marotte.ChatID{"c-aaaaaaaa", "c-bbbbbbbb", "c-cccccccc"} {
@@ -357,10 +331,7 @@ func TestSearchAll_CancelledCollectionIsNotAnEmptyAnswer(t *testing.T) {
 	}
 }
 
-// A store directory that cannot be listed read nothing it was asked to, so the
-// reply is truncated rather than an authoritative "in none of your chats". A
-// regular file stands in for the directory, so ReadDir fails with ENOTDIR under
-// any uid.
+// An unlistable store directory truncates the reply; a regular file makes ReadDir fail with ENOTDIR under any uid.
 func TestSearchAll_UnlistableDirIsNotAnEmptyAnswer(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis migration", "we moved the cache to redis today")
@@ -381,7 +352,7 @@ func TestSearchAll_UnlistableDirIsNotAnEmptyAnswer(t *testing.T) {
 	}
 }
 
-// An empty query must not fan out over every chat for nothing.
+// An empty query must not fan out.
 func TestSearchAll_EmptyQuery(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis", "redis")
@@ -393,10 +364,7 @@ func TestSearchAll_EmptyQuery(t *testing.T) {
 	}
 }
 
-// The end-to-end form of the ranking test. The long chat has to be REALISTIC
-// (tens of KiB, like a real transcript) because the normaliser is calibrated in
-// KiB: at a few hundred characters it barely discounts, and twenty mentions in a
-// tiny document legitimately IS a strong signal.
+// End to end. The long chat is realistic, tens of KiB, since the normaliser is calibrated in KiB.
 func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 	s, _ := newTestStore(t)
 	padding := strings.Repeat("context and discussion that surrounds the mention. ", 40)
@@ -417,10 +385,7 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 	}
 }
 
-// The DECISION behind the missing `case` parameter: a cross-chat "which
-// conversation was that in" is asked from memory, and memory does not remember
-// capitalisation. Two halves have to hold end to end, the body scan and the title
-// boost, because titleHits folds independently of Search.
+// Cross-chat search ignores case, in the body scan and in titleHits, which folds independently.
 func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -436,8 +401,7 @@ func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s, _ := newTestStore(t)
-			// One chat matches only in its TITLE, the other only in its BODY, and
-			// both are spelled in a case the queries disagree with.
+			// One chat matches only in its title, the other only in its body, each in a case the queries do not use.
 			seedChatEntries(t, s, "c-aaaaaaaa", "REDIS migration", "moved the cache over")
 			seedChatEntries(t, s, "c-bbbbbbbb", "Assorted notes", "we touched Redis in passing")
 
@@ -455,9 +419,8 @@ func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 	}
 }
 
-// The compile-time half of the decision: the client's toggle is gated on the
-// parameter's ABSENCE, so the moment SearchAll grows one the History box must
-// gain its `Aa` button in the same change. handleSearchAll forwards only `q`.
+// The compile-time half: the client's toggle relies on SearchAll having no case parameter, so adding one means
+// adding the History `Aa` button. handleSearchAll forwards only `q`.
 func TestSearchAll_TakesNoCaseArgument(t *testing.T) {
 	t.Parallel()
 	s, _ := newTestStore(t)
@@ -467,13 +430,10 @@ func TestSearchAll_TakesNoCaseArgument(t *testing.T) {
 	}
 }
 
-// searchAllSignature is the shape handleSearchAll forwards to: a context and a
-// query, and NO case flag.
+// searchAllSignature is what handleSearchAll forwards to: a context and a query, no case flag.
 type searchAllSignature func(context.Context, string) SearchAllResult
 
-// The row shows the EARLIEST hit, where the conversation first touches the
-// subject. Ties within one turn keep the first hit found, so the excerpt a result
-// row shows does not move around between searches.
+// The earliest hit shows; a tie within a turn keeps the first, so the excerpt is stable.
 func TestBestHit_PicksTheEarliestTurnAndKeepsTheFirstOfATie(t *testing.T) {
 	tests := []struct {
 		name string
@@ -500,11 +460,8 @@ func TestBestHit_PicksTheEarliestTurnAndKeepsTheFirstOfATie(t *testing.T) {
 	}
 }
 
-// Every chat is a candidate, however many there are and however old. The oldest
-// hundred of six hundred chats carry a word the rest do not; all six hundred are
-// scanned, the word is found, and nothing is reported unread. The old chats sit
-// at MIDDLE filename positions so the verdict cannot ride on how a directory
-// listing happens to be ordered.
+// Every chat is a candidate however many and however old: the word in the oldest hundred of six hundred is found
+// with nothing unread. The old chats sit mid-listing so order cannot decide.
 func TestSearchAll_ReadsEveryChatHoweverMany(t *testing.T) {
 	s, _ := newTestStore(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

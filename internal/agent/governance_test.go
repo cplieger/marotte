@@ -1,10 +1,5 @@
 package agent
 
-// Tests for governance.go: the cache set/get + warm-signal, the GET
-// /api/governance snapshot serving the cache, and the utility-bridge capture
-// path (cacheGovernanceFromUtility) that decodes + caches the copy the utility
-// bridge receives.
-
 import (
 	"encoding/json"
 	"net/http"
@@ -38,7 +33,7 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 	default:
 	}
 
-	c.set(sampleGovernance())
+	c.setProfile(sampleGovernance())
 	got, ok := c.get()
 	if !ok || !got.Known || !got.Features.MCPEnabled {
 		t.Fatalf("after set: got=%+v ok=%v", got, ok)
@@ -50,16 +45,37 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 	}
 
 	// A second set must not panic (close-once) and must overwrite.
-	c.set(marotte.GovernanceStatePayload{Known: true})
+	c.setProfile(marotte.GovernanceStatePayload{Known: true})
 	if got, _ := c.get(); got.Features.MCPEnabled {
 		t.Error("second set did not overwrite the cached state")
 	}
 }
 
+func TestGovernanceCache_AdminRulesResolveOnce(t *testing.T) {
+	c := newGovernanceCache()
+	if c.adminPolicyKnown() {
+		t.Fatal("cold cache reports the administrator rules known")
+	}
+	if ch := c.setAdminFailed(false); ch.adminResolved || c.adminPolicyKnown() {
+		t.Error("a reload with no fatal error resolved the administrator rules; nothing was read")
+	}
+	if ch := c.setAdmin(reduceAdminRules(nil)); !ch.adminResolved || !c.adminPolicyKnown() {
+		t.Errorf("the first rules read: adminResolved=%v known=%v, want both true", ch.adminResolved, c.adminPolicyKnown())
+	}
+	if ch := c.setAdmin(reduceAdminRules(nil)); ch.adminResolved {
+		t.Error("a second rules read reported a first resolution")
+	}
+
+	failed := newGovernanceCache()
+	if ch := failed.setAdminFailed(true); !ch.adminResolved || !failed.adminPolicyKnown() {
+		t.Errorf("a fatal policy error: adminResolved=%v known=%v, want both true (it fails closed)", ch.adminResolved, failed.adminPolicyKnown())
+	}
+}
+
 func TestHandleGovernance_ServesWarmCache(t *testing.T) {
 	h, _, _ := newTestHub()
-	// Pre-seed the cache so the handler serves it directly (no bridge warm-up).
-	h.config.SetGovernance(sampleGovernance())
+	// Pre-seeded, so no bridge warm-up.
+	h.config.SetGovernance(t.Context(), sampleGovernance())
 
 	rec := httptest.NewRecorder()
 	h.config.handleGovernance(rec, httptest.NewRequest(http.MethodGet, "/api/governance", nil))
@@ -98,7 +114,7 @@ func TestCacheGovernanceFromUtility(t *testing.T) {
 		t.Errorf("disabled_reason = %q, want 'org policy'", got.DisabledReason)
 	}
 
-	// An invalid copy must be ignored (no panic, cache unchanged).
+	// An invalid copy is ignored.
 	h.config.cacheGovernanceFromUtility(json.RawMessage("{"))
 	if got2, _ := h.config.governance.get(); got2.DisabledReason != "org policy" {
 		t.Error("invalid utility copy clobbered the cache")

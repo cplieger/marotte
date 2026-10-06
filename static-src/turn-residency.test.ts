@@ -1,26 +1,10 @@
 // ---------------------------------------------------------------------------
-// Turn residency over the fold policy: which turns carry a real `.turn-body`.
-//
-// The fold policy stays the single authority for OPEN/CLOSED (fold-state.test.ts
-// pins it); these cases pin MOUNTEDNESS, which `block-window.ts` decides on an
-// ENTRY and TOOL-CARD budget. The planner's own arithmetic is
-// block-window.node.test.ts's; what is here is the renderer's half — a non-resident
-// turn is a header/footer stub whose body DOM does not exist until an interaction
-// or a fold-pass transition builds it, and a stub always offers the toggle that
-// reveals it.
-//
-// WHY THE FIXTURES ARE BIG. Residency is measured in what a paint costs, so a
-// case that wants a stub has to actually spend the budget: eight prose turns cost
-// eight entries and are ALL resident, correctly. That is the same fact the old
-// `TURNS_WARM = 5` window got wrong from the other side — it stubbed those
-// eight cheap turns while mounting one 580-entry turn whole.
-//
-// WHY THE HEAVY FIXTURE IS `thinking` ENTRIES. `sliceTurn` snaps a window down to a
-// prose run's first entry and up past its last, so a body of N sealed `text` entries
-// is ONE mounted element and every ordinal assertion here would read 1. A `thinking`
-// entry renders at its own position and joins no run, so a heavy turn has N ordinals
-// a window can sit inside. `turnFoldHides` also answers true for one, which is what
-// keeps such a turn on the ordinary fold ladder.
+// Turn residency: which turns carry a real `.turn-body`. The fold policy owns OPEN/CLOSED
+// (fold-state.test.ts); `block-window.ts` decides MOUNTEDNESS on an entry and tool-card budget
+// (block-window.node.test.ts). Here: a non-resident turn is a header/footer stub whose body is built
+// on interaction or a fold-pass transition, and a stub always offers the toggle. Fixtures are BIG
+// because residency is priced in paint cost. Heavy turns use `thinking` entries: `sliceTurn` merges
+// a run of `text` entries into ONE element.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -43,10 +27,8 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-// scroll.ts is a self-initialising singleton over a real scroller; the canonical
-// mock is what every other suite in this graph uses. Its compensation helpers
-// run their mutation, so the fold pass applies immediately unless a case
-// overrides them to hold the deferred queue open.
+// The canonical scroll.ts mock; its compensation helpers run their mutation, so the fold pass
+// applies immediately unless a case holds the queue open.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 // The clipboard action, so what a turn's Copy hands over is observable. A REPLACING
@@ -174,15 +156,9 @@ function toolTurns(n: number): Entry[][] {
   return Array.from({ length: n }, (_, i) => toolTurn(`u${String(i + 1)}`, i + 1));
 }
 
-/** ONE tool-bearing turn whose `turn_close` carries `extra` — which is where the
- *  fields deciding a turn's OUTCOME live.
- *
- *  The tool card is what puts the turn on the ordinary residency ladder, and it is
- *  what makes an outcome case able to fail at all: a prose-only turn's face equals
- *  its body, so it carries `data-no-fold` and stays open AND mounted at any distance
- *  whatever its severity. A fixture built from `plainTurns` therefore cannot tell
- *  the fold policy's failure exemption from that rule — measured, with the exemption
- *  deleted outright and both outcome cases below still green. */
+/** ONE tool-bearing turn whose `turn_close` carries `extra` (the outcome fields). The tool card puts
+ *  it on the ordinary residency ladder; a prose-only turn is `data-no-fold`, open and mounted at
+ *  any distance, and was measured to keep the outcome cases green with the exemption deleted. */
 function outcomeTurn(outcome: string, extra = {}): Entry[] {
   const entries = toolTurn("u1");
   entries[entries.length - 1] = turnClose("u1", 3, outcome, extra);
@@ -375,8 +351,7 @@ describe("the mounted derivation", () => {
   it("mounts every turn of a cheap chat, however many there are", () => {
     const id = chatID();
     activate(id, plainTurns(8));
-    // 8 turns is more than the old 5-turn window, and 8 prose turns cost 8
-    // entries against a 320-entry budget. Distance is not a cost.
+    // 8 prose turns cost 8 entries against a 320-entry budget. Distance is not a cost.
     for (let n = 1; n <= 8; n++) {
       expect(hasBody(`u${String(n)}`), `turn ${String(n)} body`).toBe(true);
     }
@@ -385,10 +360,8 @@ describe("the mounted derivation", () => {
   it("stubs a FOLDED turn the window is not grown over, however cheap it is", () => {
     const id = chatID();
     activate(id, toolTurns(8));
-    // A folded body is `block-size: 0` + `content-visibility: hidden`, so its
-    // ordinals hold no height and the window is not grown over them: bodying one
-    // would spend the budget on content nobody can see. Only the newest turn is
-    // open, and it is the only one that gets a body.
+    // A folded body holds no height, so the window is not grown over it; only the open newest turn gets
+    // a body.
     for (let n = 1; n <= 7; n++) {
       expect(hasBody(`u${String(n)}`), `turn ${String(n)} stub`).toBe(false);
       expect(isFolded(`u${String(n)}`), `turn ${String(n)} folded`).toBe(true);
@@ -405,10 +378,8 @@ describe("the mounted derivation", () => {
     // in for the ordinals above it.
     expect(hasBody("big")).toBe(true);
     expect(isFolded("big")).toBe(false);
-    // The paint takes ONE slice and owes the rest, so the settled shape is what the
-    // window is about: the head spacer alone, standing in for the ordinals above the
-    // window, with the tail reached. Asserting it in the paint reads the slice's own
-    // edge as the window's (measured: [65,97) of a [65,385) window).
+    // The paint takes ONE slice and owes the rest, so assert the settled shape: the head spacer alone,
+    // tail reached.
     await vi.waitFor(() => {
       expect(spacersIn("big")).toEqual(["head"]);
     });
@@ -421,10 +392,8 @@ describe("the mounted derivation", () => {
 
   it("stubs the older turns behind an over-budget newest one, contiguously", () => {
     const id = chatID();
-    // REVEALED, all three, or the case cannot fail for the reason it names: a folded
-    // turn is outside the window whatever the budget says, so with the fold doing the
-    // stubbing a newest turn made cheap still leaves all three hollow (measured, as
-    // an in-fence control). Revealed, the spent budget is the only thing that can.
+    // REVEALED, all three: a folded turn is outside the window whatever the budget, so only revealed
+    // turns let the spent budget be the cause.
     for (const n of [1, 2, 3]) {
       setTurnOpen(id, `u${String(n)}`, true);
     }
@@ -438,9 +407,8 @@ describe("the mounted derivation", () => {
 
   it("STUBS a turn the fold policy wants open where the window cannot reach it", () => {
     const id = chatID();
-    // A stub folds to its face and offers the toggle: an OPEN card whose only child is
-    // one whole-turn spacer reads as a blank box (23,988px on a 400-entry turn), and
-    // keeping the turn's height on the page is not worth that.
+    // An open card whose only child is a whole-turn spacer is a blank box (23,988px on a 400-entry
+    // turn), so a stub folds to its face and offers the toggle instead.
     setTurnOpen(id, "u1", true);
     activate(id, [toolTurn("u1"), heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
     expect(hasBody("u1")).toBe(false);
@@ -522,11 +490,8 @@ describe("the mounted derivation", () => {
 
 // --- The invariant the two shapes above share ----------------------------------
 //
-// Nothing pinned this until 2026-09: the renderer had a rule for OPEN and a rule
-// for MOUNTED and no rule relating them, so an open card with nothing in it was a
-// representable state — and the one the reader reported. A spacer prices the
-// ordinals it stands in for, so a card holding one and no row is pure reserved
-// height.
+// A spacer prices the ordinals it stands in for, so an OPEN card holding a spacer and no row is pure
+// reserved height and must be unrepresentable.
 
 describe("the open-turn invariant", () => {
   it("never renders a turn body as a spacer with no ordinal beside it", async () => {
@@ -593,10 +558,8 @@ describe("the fold policy over residency", () => {
 
   it("offers the toggle on every stub, whatever the fold rules say", () => {
     const id = chatID();
-    // A PROSE-ONLY turn is the case that needs the rule: its fold hides nothing,
-    // so the ordinary answer is no toggle at all — and on a stub the toggle is the
-    // only route to a body that does not exist yet. Without this the reader would
-    // be stranded looking at a claim line.
+    // A PROSE-ONLY turn's fold hides nothing (no toggle), but on a stub the toggle is the only route to
+    // its body.
     activate(id, [...plainTurns(2), heavyTurn("big", RESIDENT_ENTRIES + 64, 3)]);
     for (const n of [1, 2]) {
       expect(hasBody(`u${String(n)}`), `turn ${String(n)} stub`).toBe(false);
@@ -606,26 +569,17 @@ describe("the fold policy over residency", () => {
 
   it("never stubs the NEWEST turn, so its missing toggle strands nobody", () => {
     const id = chatID();
-    // Presence follows the WINDOW, not the fold policy — a policy-open turn the
-    // window cannot reach is a stub. The newest turn is the one that can never be
-    // one while the reader is at the live edge, because that is where the window is
-    // seeded. Nothing is stranded when it IS one either: `canFold` reads true for
-    // every stub, so the toggle appears exactly where the fold rules withhold it.
+    // Presence follows the WINDOW, not the fold policy; the newest turn is never a stub at the live
+    // edge. `canFold` reads true for every stub.
     activate(id, [heavyTurn("big", RESIDENT_ENTRIES + 64)]);
     expect(hasBody("big")).toBe(true);
     expect(card("big").hasAttribute("data-no-fold")).toBe(true);
   });
 
   it("keeps a failed turn OPEN and mounted at any distance", () => {
-    // REVERSED, and the sentence this case used to carry — "the face carries the
-    // error" — is the premise that was measured false. The face's error row came
-    // from a scan for an `event` message, and a turn that failed on the wire's own
-    // turn_close carries none, so folding it produced a header, an empty body and a
-    // footer. `fold-state.ts` had promised in its own header comment that a broken
-    // turn never auto-folds; now it does not, and residency follows openness.
-    //
-    // The turn ran a TOOL, so the exemption is the only thing holding it open; see
-    // `outcomeTurn` for why a prose-only fixture pins nothing here.
+    // A broken turn does not auto-fold, and residency follows openness: a turn failed on its wire
+    // turn_close has no event row, so its face would be empty. It ran a TOOL, so the exemption alone
+    // holds it open (see `outcomeTurn`).
     const id = chatID();
     activate(id, [
       outcomeTurn("refused", { refusal: { category: "safety" } }),
@@ -636,10 +590,8 @@ describe("the fold policy over residency", () => {
   });
 
   it("still folds and unmounts a CANCELLED turn, which is not a failure", () => {
-    // The control for the case above: `cancelled` is `stopped` rather than `broken`,
-    // so it keeps the ordinary residency ladder — the window is not grown over a
-    // folded turn, so the fold IS the unmount. Without this the exemption above
-    // could be widened to every non-clean outcome and nothing would notice.
+    // The control: `cancelled` is `stopped`, not `broken`, so its fold IS the unmount; a widened
+    // exemption fails here.
     const id = chatID();
     activate(id, [outcomeTurn("cancelled"), ...plainTurns(10).slice(1)]);
     expect(isFolded("u1")).toBe(true);
@@ -665,8 +617,8 @@ describe("the fold policy over residency", () => {
       turnClose("u1", 2),
     ];
     activate(id, [launcher, ...plainTurns(4).slice(1)]);
-    // A live run no longer holds a turn open, and it no longer earns a second
-    // rendering: the composer band's run bar is the persistent surface for one, so
+    // A live run does not hold a turn open or earn a second rendering: the composer
+    // band's run bar is the persistent surface for one, so
     // the fold takes away nothing a reader is watching.
     expect(isFolded("u1")).toBe(true);
     // The launcher turn carries no top-level prose, so `turnFaceProse` is "" and
@@ -679,10 +631,8 @@ describe("the fold policy over residency", () => {
   });
 
   it("the NEWEST turn ignores a recorded collapse — it cannot be folded", () => {
-    // Its toggle is hidden (data-no-fold), so a recorded fold can only be a
-    // leftover from an earlier build or from before a rewind made this turn
-    // newest; honouring it would strand the tail closed with no control left
-    // to reopen it.
+    // Its toggle is hidden (data-no-fold), so a recorded fold is a leftover from an older build or a
+    // rewind; honouring it would strand the tail closed with no way to reopen it.
     const id = chatID();
     setTurnOpen(id, "u8", false);
     activate(id, toolTurns(8));
@@ -807,11 +757,8 @@ describe("expanding a stub", () => {
       expect(ordinalsIn("old")).toBeGreaterThan(0);
     });
 
-    // Past PIN_GOAL_MS with the reader still where they were. The reveal is a
-    // standing request, so the grant outlives its clock; the clock alone used to
-    // expire under them and replace every row with one whole-turn spacer on a card
-    // still rendering OPEN — the reader's own content becoming a blank box two
-    // seconds after they asked for it.
+    // Past PIN_GOAL_MS with the reader unmoved: the reveal is a standing request, so the grant outlives
+    // its clock instead of blanking the reader's open card.
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10_000);
     bumpMessages(id, "shape");
 
@@ -846,7 +793,7 @@ describe("expanding a stub", () => {
 
   it("expanding a stub renders exactly what a resident turn renders, one copy of every entry kind", async () => {
     // One turn carrying every body surface: reasoning trace, text bubble, plain
-    // tool card, todo checklist, delegate box, run card.
+    // tool card, delegate box, run card.
     const everyKind = (turnID: string): Entry[] => [
       turnOpen(turnID, 1, "the prompt"),
       sealed(turnID, 1, "thinking", { text: "considering" }),
@@ -860,38 +807,27 @@ describe("expanding a stub", () => {
         output: "ok",
       }),
       sealed(turnID, 4, "tool_call", {
-        id: "tc-todo",
-        title: "todo_list",
-        kind: "other",
-        status: "completed",
-        ts: 4,
-        input: { todos: [{ content: "step one", status: "completed" }] },
-      }),
-      sealed(turnID, 5, "tool_call", {
         id: "tc-inv",
         title: "Sub-agent: helper",
         kind: "other",
         status: "completed",
-        ts: 5,
+        ts: 4,
         agent_subtask_id: "sub-par",
       }),
-      sealed(turnID, 6, "text", { text: "delegate words" }, "sub-par"),
-      sealed(turnID, 7, "tool_call", {
+      sealed(turnID, 5, "text", { text: "delegate words" }, "sub-par"),
+      sealed(turnID, 6, "tool_call", {
         id: "tc-run",
         title: "Run Workflow",
         kind: "other",
         status: "completed",
-        ts: 7,
+        ts: 6,
         workflow_id: "wf-par",
       }),
-      turnClose(turnID, 8),
+      turnClose(turnID, 7),
     ];
 
-    // Reference: the same turn mounted RESIDENT and open by the ordinary paint.
-    //
-    // Identity artifacts are normalized on BOTH sides before comparing; none of
-    // them is turn shape. The disclosure ids come off a page-global counter; the
-    // delegate's Open link carries its own chat's id.
+    // Reference: the same turn mounted RESIDENT and open by the ordinary paint. Disclosure ids (a
+    // page-global counter) and the delegate link's chat id are normalized on both sides.
     const normalize = (html: string, chat: string): string =>
       html.replaceAll(/uip-disclosure-\d+/g, "uip-disclosure-N").replaceAll(chat, "CHAT");
     const warmChat = chatID();
@@ -906,7 +842,6 @@ describe("expanding a stub", () => {
       ".reasoning-block",
       ".message.assistant",
       ".tool-call",
-      ".todo-list",
       ".subagent-block",
       ".run-card",
     ]) {
@@ -914,12 +849,9 @@ describe("expanding a stub", () => {
     }
     const wantHTML = normalize(warmBody.innerHTML, warmChat);
 
-    // Subject: the same content as a STUB, expanded by the reader's own gesture.
-    // The stub comes from the FOLD rather than from a spent budget, and the gesture
-    // rather than a bare `mountTurnBody`, because both of those bound what may be
-    // mounted: a demand grant is clamped by a COUNT of rendering entries and applied
-    // in SEQ space, so it stops one ordinal short of the turn's tail (the hand-off in
-    // this box's report). The reveal the click records is what asks for the body.
+    // Subject: the same content as a FOLD stub, expanded by the reader's gesture. Not a spent budget or
+    // a bare `mountTurnBody`: a demand grant is clamped by an entry COUNT in SEQ space and stops one
+    // ordinal short of the tail (a known gap).
     const stubChat = chatID();
     activate(stubChat, [everyKind("uv"), ...toolTurns(4)]);
     expect(hasBody("uv")).toBe(false);
@@ -1023,13 +955,8 @@ describe("the cold build", () => {
     });
     activate(id, [markedTail("u1", RESIDENT_ENTRIES + 20)]);
     expect(queue.length).toBeGreaterThan(0);
-    // Held: the plan wants the whole body and the DOM still holds the hole. No build
-    // is owed in this state, which is what makes the plan's own answer a lie. Read off
-    // the MOUNTED ordinals rather than off the spacers, which the refusing pass
-    // re-prices for the range it wanted: the body is over-height and under-mounted.
-    // The hole is at the HEAD, which is the edge `updateTurn` refuses: the tail-ward
-    // half of the growth lands, so `to` reaches the turn's span while `from` stays
-    // where the grant put it and the ordinals under it are absent from the DOM.
+    // Held: the plan wants the whole body and the DOM still holds a hole at the HEAD, the edge
+    // `updateTurn` refuses; no build is owed. Read off the MOUNTED ordinals, not the re-priced spacers.
     expect(mountedWindow("u1")?.from).toBe(76);
     expect(mountedSeqs("u1")[0]).toBe(76);
 
@@ -1045,10 +972,8 @@ describe("the cold build", () => {
     copied.length = 0;
     activate(id, [eventTurn("u-evt")]);
 
-    // The premises. The body holds every ordinal of the turn and no spacer, so it IS
-    // the complete answer; one of those ordinals is an EVENT row built by
-    // messages-events.ts rather than by the block dispatcher; and the turn is open,
-    // so the face offers no bubble to fall back on.
+    // Premises: the body holds every ordinal and no spacer, one ordinal is a messages-events.ts EVENT
+    // row, and the turn is open (no face bubble).
     expect(mountedWindow("u-evt")).toEqual({ from: 0, to: 4 });
     expect(spacersIn("u-evt")).toEqual([]);
     expect(card("u-evt").querySelector(":scope > .turn-body > .boundary")).not.toBeNull();
@@ -1075,10 +1000,8 @@ describe("the cold build", () => {
 
   it("stops taking slices on the frame once the pass has spent its entry allowance", async () => {
     const id = chatID();
-    // Twelve WALK-granted turns, and a grant is the whole population the
-    // allowance exists for: the window's own bodies cannot sum past one window,
-    // while a grant is outside the budget. Granted before the chat is activated,
-    // so the paint that creates the cards is the paint that bodies them.
+    // Twelve WALK-granted turns: grants sit outside the budget, so only they can sum past one window.
+    // Granted before activation, so the creating paint bodies them.
     const turnEntries: Entry[][] = [];
     const grants: Promise<void>[] = [];
     for (let n = 1; n <= 12; n++) {
@@ -1106,10 +1029,8 @@ describe("the cold build", () => {
     // Nothing is lost: the drain finishes all twelve off the frame.
     await vi.waitFor(() => {
       for (let n = 1; n <= 12; n++) {
-        // 39 of the turn's 40 ordinals: the walk's grant is `2 * OVERSCAN_ENTRIES`
-        // capped by the turn's rendering-entry COUNT and applied in SEQ space, where
-        // seq 0 is the header's. What this case is about is every body reaching its
-        // whole grant rather than stalling at the one slice the paint could take.
+        // 39 of 40 ordinals: the walk's grant is `2 * OVERSCAN_ENTRIES`, count-capped, in SEQ space (seq 0
+        // is the header). The point is every body reaching its whole grant.
         expect(ordinalsIn(`h${String(n)}`), `h${String(n)} complete`).toBeGreaterThan(38);
       }
     });
@@ -1124,10 +1045,8 @@ describe("the cold build", () => {
     activate(id, [toolTurn("u1"), heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
     expect(hasBody("u1")).toBe(false);
 
-    // The search-wide loop builds every hit turn and THEN asks for a repaint, so a
-    // grant that did not survive that pass would leave the walker nothing to mark.
-    // One pin slot cannot serve the loop, which is why the walk has a scope of its
-    // own rather than a deadline.
+    // The search-wide loop builds every hit turn and THEN repaints, so grants must survive that pass;
+    // one pin slot cannot serve the loop, hence the walk's own scope.
     await mountTurnBodyForWalk(id, "u1");
     expect(hasBody("u1")).toBe(true);
     bumpMessages(id, "shape");
@@ -1146,11 +1065,8 @@ describe("the cold build", () => {
     // A forwarded ordinal outlives the entry it named — a hit index after a rewind
     // trims the turn — so an `at` past the span is the caller's, not a defect here.
     await mountTurnBody(id, "u-heavy", 10_000);
-    // The clamp lands the requested ordinal at the turn's own tail, so the grant is
-    // one overscan HEAD-ward of it and the ordinals above it stand behind a spacer.
-    // CONTAINS rather than equals: the grant stops one ordinal short of the last
-    // entry, so a tail spacer survives too — production's, and the hand-off in this
-    // box's report, so a fix there must not redden this case.
+    // The grant ends one overscan HEAD-ward of the clamped ordinal and one short of the tail, so a tail
+    // spacer survives (the known gap above): CONTAINS, so a fix there must not redden this.
     expect(ordinalsIn("u-heavy")).toBeGreaterThan(0);
     expect(mountedSeqs("u-heavy")[0]).toBeGreaterThan(96 - GRANT);
     expect(mountedSeqs("u-heavy").at(-1)).toBeGreaterThanOrEqual(96 - OVERSCAN_ENTRIES);
@@ -1160,10 +1076,8 @@ describe("the cold build", () => {
   it("gives the PIN's range to a turn the walk also named", async () => {
     const id = chatID();
     activate(id, [heavyTurn("u-heavy", 96), heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
-    // After any search-wide reveal EVERY hit turn is in the walk's set, so a
-    // navigation onto one of them is the common path rather than an edge. The pin
-    // names the ordinal the reader is being sent to; the walk asked for none, so
-    // its head range would leave that ordinal unmounted.
+    // Every hit turn is in the walk's set, so navigating onto one is the common path; the pin names the
+    // ordinal the walk's head range would leave unmounted.
     await mountTurnBodyForWalk(id, "u-heavy");
     expect(spacersIn("u-heavy")).toEqual(["tail"]);
 
@@ -1182,10 +1096,8 @@ describe("the cold build", () => {
     expect(started).toBeGreaterThan(0);
     expect(started).toBeLessThan(RESIDENT_ENTRIES);
 
-    // A newer turn arrives and folds it, in the same task the drain is queued
-    // behind: the fold pass unmounts the body, and it calls the drain on the line
-    // after. The owed build must not come back and rebuild the body under a folded
-    // card, which is the work residency exists to refuse.
+    // A newer turn folds it in the task the drain is queued behind; the owed build must not rebuild a
+    // body under a folded card.
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64), toolTurn("u1", 2)]);
     expect(hasBody("u-heavy")).toBe(false);
 
@@ -1229,10 +1141,8 @@ describe("navigation onto a stub", () => {
   });
 
   it("keeps the jumped-to turn resident across the next paint", async () => {
-    // The jump records no fold and no reveal, so nothing in `fold-state.ts` speaks
-    // for it — and the budget is already spent by the newest turn. Without a pin
-    // the next paint evicts the body the jump just built, which is both a wasted
-    // build and a turn the reader was sent to going hollow under them.
+    // A jump records no fold and no reveal, and the budget is spent, so without a pin the next paint
+    // evicts the body the jump just built.
     const id = chatID();
     // Tool-bearing turns, so a fold HIDES something: this case reads the fold
     // state after a repaint, and a prose-only turn legitimately re-opens there.

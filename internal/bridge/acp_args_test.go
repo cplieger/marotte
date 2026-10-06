@@ -14,17 +14,25 @@ func TestFilterACPArgs(t *testing.T) {
 	}{
 		{"empty", nil, []string{}},
 		{"keeps verbose", []string{"-v"}, []string{"-v"}},
-		{"keeps agent", []string{"--agent", "my-agent"}, []string{"--agent", "my-agent"}},
 		{
-			// The refusal that protects an invariant: marotte removed the v2
-			// handlers, so an operator v1/v2 stalls session/new.
+			// kiro-cli rejects --agent alongside v3 and exits before initialize.
+			name: "refuses agent and its value",
+			in:   []string{"--agent", "my-agent", "-v"},
+			want: []string{"-v"},
+		},
+		{
+			name: "refuses agent inline without eating the next token",
+			in:   []string{"--agent=my-agent", "-v"},
+			want: []string{"-v"},
+		},
+		{
+			// marotte removed the v2 handlers, so an operator v1/v2 stalls session/new.
 			name: "refuses agent-engine and its value",
 			in:   []string{"--agent-engine", "v2", "-v"},
 			want: []string{"-v"},
 		},
 		{
-			// A --flag=value spelling must be refused too, or the invariant is
-			// reopenable by a typo's worth of difference.
+			// The --flag=value spelling is refused too.
 			name: "refuses agent-engine in inline form without eating the next token",
 			in:   []string{"--agent-engine=v2", "-v"},
 			want: []string{"-v"},
@@ -45,9 +53,7 @@ func TestFilterACPArgs(t *testing.T) {
 			want: []string{"-v"},
 		},
 		{
-			// The FATAL refusal: kiro-cli rejects these alongside
-			// --agent-engine=v3 and exits before answering initialize, so one of
-			// them in the compose value would take down every chat bridge.
+			// Fatal: kiro-cli rejects these with --agent-engine=v3 and exits before initialize, taking down every chat bridge.
 			name: "refuses model and its value",
 			in:   []string{"--model", "claude-opus-5", "-v"},
 			want: []string{"-v"},
@@ -73,10 +79,10 @@ func TestFilterACPArgs(t *testing.T) {
 			want: []string{"--some-flag-upstream-adds", "value"},
 		},
 		{
-			// -a is NOT value-bearing, so the token after it survives.
+			// -a takes no value, so the next token survives.
 			name: "short trust-all does not consume the next token",
-			in:   []string{"-a", "--agent", "x"},
-			want: []string{"--agent", "x"},
+			in:   []string{"-a", "--future", "x"},
+			want: []string{"--future", "x"},
 		},
 	}
 	for _, tc := range cases {
@@ -114,11 +120,10 @@ func TestParseACPArgs(t *testing.T) {
 	}{
 		{"empty yields nil", "", nil},
 		{"whitespace only yields nil", "   \t ", nil},
-		{"splits on whitespace", "-v --agent x", []string{"-v", "--agent", "x"}},
-		{"collapses runs of whitespace", "-v    --agent\tx", []string{"-v", "--agent", "x"}},
+		{"splits on whitespace", "-v --future x", []string{"-v", "--future", "x"}},
+		{"collapses runs of whitespace", "-v    --future\tx", []string{"-v", "--future", "x"}},
 		{"filters while parsing", "--agent-engine v1 -v", []string{"-v"}},
-		// Everything refused: the result is empty, not nil, and callers append
-		// it harmlessly either way.
+		// Everything refused: empty, not nil.
 		{"all refused", "--agent-engine v1 -a", []string{}},
 	}
 	for _, tc := range cases {
@@ -131,10 +136,8 @@ func TestParseACPArgs(t *testing.T) {
 	}
 }
 
-// TestRefuseReasonNamesTheRealSurface pins that each refusal EXPLAINS itself.
-// An operator who sets --trust-all-tools and sees it silently vanish would
-// reasonably conclude permissions are off; the reason has to point at
-// permissions.yaml. Same for the engine pin.
+// TestRefuseReasonNamesTheRealSurface pins that an operator whose --trust-all-tools silently vanished would assume
+// permissions are off, so the reason must point at permissions.yaml. Same for the engine pin.
 func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 	cases := []struct {
 		flag        string
@@ -143,11 +146,11 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 		{flagAgentEngine, []string{"v3-only"}},
 		{flagAuthMethod, []string{"exits before initialize", "cli"}},
 		{flagAuthMethodAlias, []string{"exits before initialize", "cli"}},
-		{flagTrustAll, []string{"inert", "permissions.yaml"}},
-		{flagTrustAllShort, []string{"inert", "permissions.yaml"}},
-		{flagTrustTools, []string{"inert", "permissions.yaml"}},
-		// The fatal pair must say WHY it is fatal and where the real control
-		// lives, or an operator reads the refusal as marotte being obstructive.
+		{flagTrustAll, []string{"exits before initialize", "permissions.yaml"}},
+		{flagTrustAllShort, []string{"exits before initialize", "permissions.yaml"}},
+		{flagTrustTools, []string{"exits before initialize", "permissions.yaml"}},
+		{flagAgent, []string{"exits before initialize", "mode"}},
+		// The fatal pair must say why and where the real control lives.
 		{flagModel, []string{"exits before initialize", "composer"}},
 		{flagEffort, []string{"exits before initialize", "composer"}},
 	}
@@ -164,15 +167,16 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 			}
 		})
 	}
-	if _, refused := refuseReason("--agent"); refused {
-		t.Error("refuseReason(--agent) refused = true, want false")
+	// Allow-unknown: a flag upstream adds later must pass.
+	for _, flag := range []string{"-v", "--future"} {
+		if _, refused := refuseReason(flag); refused {
+			t.Errorf("refuseReason(%q) refused = true, want false", flag)
+		}
 	}
 }
 
-// TestBuildACPArgsPrecedesExtraArgs pins the ordering the design calls for: a
-// launch flag is an INITIAL value, so it lands after the derived args (kiro-cli
-// takes the last spelling of a repeated flag) and marotte's own switch_model /
-// set_effort still win afterwards over session/set_config_option.
+// TestBuildACPArgsPrecedesExtraArgs pins that a launch flag is an initial value, so it follows the derived args (kiro-cli
+// takes the last spelling) and switch_model / set_effort still win later.
 func TestBuildACPArgsPrecedesExtraArgs(t *testing.T) {
 	derived := buildACPArgs("v3")
 	extra := []string{"-v"}
@@ -184,18 +188,13 @@ func TestBuildACPArgsPrecedesExtraArgs(t *testing.T) {
 	if full[len(full)-1] != "-v" {
 		t.Errorf("last arg = %q, want the operator flag last", full[len(full)-1])
 	}
-	// The derived prefix must survive verbatim.
 	if !slices.Equal(full[:len(derived)], derived) {
 		t.Errorf("derived prefix changed: %v, want %v", full[:len(derived)], derived)
 	}
 }
 
-// The counts are the whole diagnostic. Values are deliberately never logged —
-// a compose-expansion mistake or a value-bearing flag could put a secret in the
-// log — so an operator whose flag vanished has nothing but "kept N, refused M"
-// to reconcile against what they set.
-//
-// Not parallel: it swaps the process-wide slog default.
+// The counts are the whole diagnostic: values are never logged, since a flag could carry a secret. Not parallel: it
+// swaps the process-wide slog default.
 func TestParseACPArgs_LogsHowManyItKeptAndRefused(t *testing.T) {
 	logs := captureLogs(t)
 

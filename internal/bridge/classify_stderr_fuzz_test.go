@@ -21,7 +21,7 @@ func FuzzClassifyStderrLevel(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, line string) {
 		lvl := classifyStderrLevel(line)
-		// Level must be one of the standard slog levels or Info (default).
+		// A standard slog level, or Info by default.
 		switch lvl {
 		case slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError:
 		default:

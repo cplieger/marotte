@@ -1,10 +1,7 @@
-// ---------------------------------------------------------------------------
-// ONE SIZE CLASS FOR EVERY TOOLTIP IN THE APP; only the VIEW may differ.
-// Three halves, none answering another's question: the source read says both
-// numbers are TOKENS with no second writer; the desktop measurement says the cap
-// binds over the longest content a tooltip carries; the narrow measurement says
-// the viewport term is real (a `min()` reads as a literal at one size).
-// ---------------------------------------------------------------------------
+// ONE SIZE CLASS FOR EVERY TOOLTIP; the only admissible difference is the VIEW. One rule sizes 139
+// `data-tooltip` sites. THREE halves: the source read (both numbers are TOKENS with no second
+// writer), the desktop measurement (the cap binds over the longest production content), and the
+// narrow one (the viewport term is real).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` is a stub
@@ -22,11 +19,8 @@ import {
 /** The one rule that sizes every tooltip. */
 const TIP = ".uip-tooltip";
 
-/** Tooltip content at production lengths, worst case first. Each is a
- *  `data-tooltip` shape: an agent description (role-picker.ts), a typed steer
- *  (pending-steers.ts), a docs badge sentence (docs.ts), a file path at the longest
- *  measured length (tool-card.ts, 121 chars against a p99 of 85), and two
- *  icon-button hints. */
+/** Real tooltip content, worst case first: an agent description, a typed steer, a docs badge, the
+ *  longest live file path (121 chars; p99 85 over 28,841 inputs), and two icon-button hints. */
 const SAMPLES: readonly { readonly what: string; readonly text: string }[] = [
   {
     what: "an agent's front-matter description",
@@ -184,15 +178,8 @@ describe("every tooltip lands in one size class", () => {
   });
 
   it("holds a real file path inside the clamped box", () => {
-    // The measurement that decided the line count, and the reason it is 2 rather
-    // than 1. Over 28,870 file-path tool inputs on the live volume: at one line
-    // (57 chars fit) 19.26% of real paths clip, at two (114) 6 of 28,870 = 0.02%,
-    // at three 0. So two lines is where the clip rate stops paying for a taller
-    // box, and the residual is the six longest paths ever seen — each a
-    // `.worktrees/<branch>/static-src/node_modules/...` chain.
-    //
-    // The threshold is MEASURED rather than asserted as a literal, so a type-scale
-    // or cap change moves it here instead of silently clipping paths in the app.
+    // Two lines, measured: over 28,870 live file-path inputs, one line clips 19.26%, two clip 0.02%,
+    // three 0. MEASURED, so a type-scale or cap change moves the threshold here.
     expect(longestFittingPath(), "two lines no longer hold a real path").toBeGreaterThanOrEqual(
       100,
     );

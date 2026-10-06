@@ -1,29 +1,8 @@
-// Does the transcript paint ONE hue per severity, on every surface?
-//
-// This file used to ask a weaker question — does every OUTCOME have a treatment —
-// and it passed while the defect it now guards was live. Four surfaces in
-// 29-turns.css (the header dot, the footer wash, the footer glyph, the rail
-// marker and cluster) each carried their own per-outcome colour table, and a fifth
-// (`.turn-notice`) read `severityOf`. So `interrupted` — graded BROKEN by the
-// shared table — painted the notice red and the other four yellow, on one card,
-// for one outcome. Measured in the live render.
-//
-// The fix is a severity partition, and this file asserts it in BOTH DIRECTIONS.
-// The forward direction (every severity that paints a mark has a rule) is what the
-// old cases did. The MISSING one — no surface may carry a `[data-outcome=…]`
-// colour rule of its own for an outcome the table grades `broken` — is what would
-// have caught the defect, because it is the shape that lets a hue be set per
-// outcome behind the partition's back.
-//
-// Source facts rather than computed ones, for the reason `css-rules.ts` records:
-// the test page links no app stylesheet, so `getComputedStyle` has no cascade to
-// report on. Every case below asks which rule owns a selector and what that rule
-// declares, which is the association a file-wide grep cannot make.
-//
-// A CSS rule keyed on an attribute nothing writes paints nothing and fails
-// silently, so this file is only meaningful beside `turn-outcome-attr.test.ts`,
-// which drives the three real writers in a real DOM and asserts each stamps
-// `data-severity` from `severityOf`.
+// Does the transcript paint ONE hue per severity, on every surface? Asserted in BOTH DIRECTIONS:
+// every painting severity has a rule, and no surface carries a `[data-outcome=…]` colour rule for an
+// outcome the table grades `broken` (per-surface tables once painted `interrupted` red and yellow
+// on one card). Source facts: the test page links no app stylesheet (`css-rules.ts`). Meaningful
+// only beside `turn-outcome-attr.test.ts`, which pins the writers.
 import { describe, it, expect } from "vitest";
 
 import { allRules, loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -47,10 +26,8 @@ const OUTCOMES: TurnOutcome[] = [
   "empty",
 ];
 
-/** The four MARK surfaces, each as the selector prefix its severity arms take
- *  plus the descendant the mark itself is. The `.turn-notice` prose surface is
- *  asserted separately at the foot of the file: it is the one that already read
- *  the table, and it carries ink rather than a mark. */
+/** The four MARK surfaces: the severity arms' selector prefix plus the mark descendant.
+ *  `.turn-notice` carries ink, not a mark, and is asserted at the foot. */
 const SURFACES = [
   { name: "header dot", sel: (attr: string) => `.turn-header[${attr}] .turn-dot` },
   { name: "footer wash", sel: (attr: string) => `.turn-footer[${attr}]` },
@@ -58,14 +35,8 @@ const SURFACES = [
   { name: "rail marker", sel: (attr: string) => `.rail-marker[${attr}]` },
 ] as const;
 
-/** The rail marker's RESTING declarations.
- *
- *  `ruleContaining` cannot reach this one: TWO top-level rules list `.rail-marker`
- *  — the shared box rule it holds with the cluster and the zoom-out button, and a
- *  later one-liner giving it `position: relative` so the search-hit dot has
- *  something to anchor to — and the helper demands exactly one match rather than
- *  silently picking a first hit. So the lookup says which by naming the
- *  declaration it is after. */
+/** The rail marker's RESTING declarations. TWO top-level rules list `.rail-marker` and
+ *  `ruleContaining` demands exactly one match, so the lookup names the declaration it wants. */
 function restingMarkerRule(): string {
   const hits = allRules(turns).filter(
     (r) =>
@@ -96,10 +67,7 @@ describe("hue comes off the severity table, on every surface", () => {
   });
 
   it("re-colours a BROKEN turn away from the resting ink on every surface, and never hides it", () => {
-    // The failure DIRECTION rather than the hue. `display: none` is `clean`'s and
-    // `running`'s treatment on the two footer surfaces and would erase a failure
-    // outright; the resting green ring on the glyph and the resting tertiary ink on
-    // the rail both read as "this worked".
+    // The failure DIRECTION: `display: none`, a green ring or tertiary ink would all read as success.
     const dot = ruleContaining(turns, '.turn-header[data-severity="broken"] .turn-dot');
     expect(dot.body).not.toMatch(/display:\s*none/u);
     expect(dot.body).not.toMatch(/var\(--c-text-tertiary\)/u);
@@ -156,12 +124,7 @@ describe("hue comes off the severity table, on every surface", () => {
   });
 
   it("keeps the in-flight marks on the TAB STRIP's ink", () => {
-    // One fact, one violet. Both of these used to take `--c-accent`, a
-    // near-neighbour of the tab dot's `--c-dot-working`, so "a turn is running"
-    // carried two colours depending on which surface you read it from. The two
-    // marks are asserted together because that agreement is the whole point —
-    // repointing one and not the other would leave the transcript disagreeing
-    // with itself.
+    // One fact, one violet: both running marks share the tab dot's working colour.
     const dot = ruleContaining(turns, '.turn-header[data-severity="running"] .turn-dot');
     expect(dot.body).toContain("var(--c-dot-working)");
     expect(dot.body).not.toContain("--c-accent");
@@ -172,10 +135,8 @@ describe("hue comes off the severity table, on every surface", () => {
   });
 
   it("keeps the header dot breathing, since motion is its second channel", () => {
-    // The dot renders only below 48rem, where the tab strip is off-canvas, so it
-    // is the off-screen-work case the pulsing-dot rule carves out
-    // (13-messages.css). Motion is also what separates `running` from a still
-    // outcome without relying on hue.
+    // The dot renders only below 48rem (strip off-canvas), the off-screen-work pulse case
+    // (13-messages.css); motion separates `running` without hue.
     const dot = ruleContaining(turns, '.turn-header[data-severity="running"] .turn-dot');
     expect(dot.body).toContain("vk-dot-beat");
     expect(dot.body).toContain("--beat-peak: 0.4");
@@ -183,17 +144,11 @@ describe("hue comes off the severity table, on every surface", () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE MISSING DIRECTION. Everything above would have passed on the defective
-// stylesheet too, because a per-outcome rule sitting behind the partition still
-// leaves the partition's own rules in place. What the old file could not ask is
-// whether anything OVERRIDES it.
+// THE MISSING DIRECTION: does anything OVERRIDE the partition?
 // ---------------------------------------------------------------------------
 
-/** Every `[data-outcome="…"]` colour rule left in the sheet, as
- *  (outcome, selector, body) triples. A COLOUR rule: `data-outcome` legitimately
- *  keys other things (the `[data-outcome]`-free trigger and fold attributes are a
- *  different vocabulary), so the sweep is scoped to the three properties the
- *  partition owns. */
+/** Every `[data-outcome="…"]` colour rule left, as (outcome, selector, body). Scoped to the three
+ *  properties the partition owns; `data-outcome` keys other things too. */
 function outcomeColourRules(): { outcome: string; selector: string; body: string }[] {
   const out: { outcome: string; selector: string; body: string }[] = [];
   for (const rule of allRules(turns)) {
@@ -212,10 +167,7 @@ function outcomeColourRules(): { outcome: string; selector: string; body: string
 
 describe("no hue may be set per OUTCOME behind the severity partition", () => {
   it("carries no colour rule for any outcome the table grades broken", () => {
-    // THE CASE THAT WOULD HAVE CAUGHT THE REPORTED DEFECT. Before the fix
-    // `.turn-footer[data-outcome="interrupted"] .turn-ledger-glyph` set a yellow
-    // fill on an outcome `severityOf` grades `broken`, and every forward-direction
-    // assertion in this file stayed green.
+    // A per-outcome fill on a `broken` outcome.
     const broken = OUTCOMES.filter((o) => severityOf(o) === "broken");
     expect(broken, "the population this case is about").toEqual([
       "interrupted",
@@ -230,12 +182,8 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
   });
 
   it("leaves `unknown` as the ONLY per-outcome colour rule, and states its ink", () => {
-    // The one stated exception, because the table cannot express it: `unknown` and
-    // `cancelled` are both `stopped`, and a pure partition would paint an unreadable end
-    // the same yellow a user's own cancel gets, while an end marotte could not read has
-    // no honest hue. FIVE rules, one per surface, uniform across all of them; the rail's
-    // surfaces are ONE — its markers — the only node the rail draws that carries an
-    // outcome.
+    // The one exception: `unknown` and `cancelled` are both `stopped`, but an end marotte could not read
+    // has no honest hue. FIVE rules, one per surface; the rail's is its markers.
     const rules = outcomeColourRules();
     expect(
       [...new Set(rules.map((r) => r.outcome))].sort(),
@@ -254,10 +202,7 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
       '.turn-notice[data-outcome="unknown"]',
     ]);
 
-    // Each carries the NEUTRAL ink, except the wash, which restates the base
-    // `.turn-footer` background — `unknown` keeps today's untinted footer rather
-    // than gaining a neutral tint, which would be a fresh visual decision inside a
-    // hue-consistency fix.
+    // Neutral ink everywhere except the wash, which restates the base background (untinted).
     for (const [selector, body] of bySelector) {
       if (selector === '.turn-footer[data-outcome="unknown"]') {
         expect(body).toMatch(/background:\s*var\(--c-bg-tertiary\)/u);
@@ -304,10 +249,7 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
   });
 
   it("keeps the marker's words as the channel colour cannot carry", () => {
-    // `unknown` and `completed` share an ink by decision, so the separation has to
-    // live somewhere colour-blind and screen-reader users can reach. It is
-    // `rail-labels.ts`, pinned in its own suite; this case is the cross-reference —
-    // the stylesheet may share an ink ONLY because the label does not.
+    // `unknown` and `completed` share an ink, so `rail-labels.ts`'s label is the separation.
     expect(restingMarkerRule(), "the resting ink is the premise of this case").toMatch(
       /color:\s*var\(--c-text-tertiary\)/u,
     );
@@ -333,13 +275,8 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The turn's own failure notice: the durable inline surface that did not exist.
-//
-// A failed turn used to render a red footer mark, a lead word and an empty body,
-// with the cause reaching the reader through a 12-second toast alone. The notice is
-// what closes that, and it is a CARD-level sibling rather than part of the face
-// precisely so an OPEN turn shows it — a broken turn is the one turn that never
-// auto-folds, so a face-only surface was unreachable exactly when it was needed.
+// The turn's own failure notice: a CARD-level sibling, not part of the face, so an OPEN turn shows
+// it; a broken turn never auto-folds.
 // ---------------------------------------------------------------------------
 
 describe("the failure notice", () => {
@@ -353,14 +290,8 @@ describe("the failure notice", () => {
   });
 
   it("tints by severity, so it never calls a cancel a failure", () => {
-    // Red is the default because `broken` is the population it exists for; a
-    // `stopped` turn takes the same yellow its footer glyph takes.
-    //
-    // Neither current `stopped` outcome reaches that arm — `cancelled` mounts no
-    // notice at all and `unknown` has its own later override — so this pins the
-    // severity's FALLBACK. It is worth pinning for the direction rather than the
-    // hue: with the arm gone, the base `--c-red` would paint a `stopped` outcome
-    // added later as a failure.
+    // Red by default; `stopped` takes yellow. No current `stopped` outcome reaches the arm, so this pins
+    // the FALLBACK's direction: without it a future `stopped` outcome would paint as a failure.
     expect(ruleContaining(turns, ".turn-notice").body).toMatch(/color:\s*var\(--c-red\)/u);
     expect(ruleContaining(turns, '.turn-notice[data-severity="stopped"]').body).toMatch(
       /color:\s*var\(--c-yellow\)/u,

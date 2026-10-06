@@ -1,11 +1,6 @@
-// view-swap.test.ts — the synchronous-swap + one-slot WAAPI entry-fade
-// contract: the caller's DOM update is final before any animation
-// frame, a new swap cancels the previous handle, and the animation — never the
-// swap — is skipped under reduced motion, a hidden document, and pre-boot.
-//
-// Real WAAPI throughout: Browser Mode runs this in Chromium, so getAnimations()
-// and elementFromPoint() report the engine's own animation and hit-testing
-// state rather than a mock's.
+// The synchronous swap plus one-slot WAAPI entry fade: the DOM update is final before any frame, a
+// new swap cancels the previous handle, and the animation (never the swap) is skipped under
+// reduced motion, a hidden document and pre-boot. Real WAAPI in Chromium.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { swapViews, markBootDone, DUR_ENTER_MS, EASE_ENTER, _resetForTest } from "./view-swap.js";

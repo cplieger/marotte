@@ -1,11 +1,7 @@
-// Fundamental: SteerNote — a message delivered into a turn already running, rendered at the
-// `seq` where the agent read it. A CARD on the tool-card box vocabulary, not a left rail:
-// a leading rail is reserved for work this agent did not do itself.
-//
-// IT HOLDS THE READER'S WORDS ALONE AND CARRIES NO CONTROL. The agent's acknowledgement is
-// its own `steer_ack` entry rendering at its own position, so the note carries a MARKER for
-// it — an attribute plus a clause on the label, never agent prose — and the label's other
-// clauses come from recorded facts: why a drop went unread, and whether this one resends.
+// SteerNote: a message delivered into a running turn, at the `seq` where the agent read it. A CARD
+// on the tool-card vocabulary, since a leading rail is reserved for work this agent did not do.
+// It holds the reader's words alone and no control: the agent's `steer_ack` renders at its own
+// position, marked here by an attribute plus a label clause.
 
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "../clamp-text.js";
@@ -22,36 +18,22 @@ export interface SteerNoteData {
   /** Why it was never read, verbatim from the entry. A wire ENUM, so the wording table
    *  below is total over it and a reason nobody worded cannot compile. */
   reason?: SteerReason;
-  /** This message re-sends an earlier drop, which the entry states by naming it. The
-   *  earlier note is not drawn, so this one carries its state — and only that state, because
-   *  `resends` names the entry and never why it went unread. */
-  resent?: boolean;
   /** The agent acknowledged it. The acknowledgement's own words are elsewhere. */
   acknowledged?: boolean;
-  /** The DELEGATE lane that read it, empty when the turn's own agent did. The reader's
-   *  words belong to the reader, so the note renders in the parent's flow either way and
-   *  this is the marker for who consumed them: a clause plus `data-lane`, which carries
-   *  the lane itself, because a lane id is a uuid and the label is for a person. */
+  /** The DELEGATE lane that read it, empty for the turn's own agent: a clause plus `data-lane`
+   *  (the lane id is a uuid; the label is for a person). */
   lane?: string;
 }
 
-/** The four labels, TOTAL over the origin so a third value cannot compile without wording
- *  of its own. KAS's steering buffer is the only inbound channel into a live turn, so a
- *  workflow's report arrives on it beside the reader's own corrections — and with one label
- *  the report read as something they had typed.
- *
- *  A DROPPED LABEL STATES WHAT IS KNOWN AND NOTHING MORE: what happened next is a recorded
- *  fact, so the resend's own note says it and no label may assert one. */
+/** The labels, TOTAL over the origin so a new one needs wording. A dropped label states only what
+ *  is known; the resend's own note says what happened next. */
 const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
   user: { read: "Mid-turn message", dropped: "Not read" },
   agent: { read: "Workflow result", dropped: "Workflow result not delivered" },
 };
 
-/** The wording for each drop reason, TOTAL over the wire enum so a third reason cannot
- *  compile without wording of its own — which is why `SteerReason` is a registered enum
- *  rather than a free string: a reason with no clause renders the bare state, and the note
- *  then reads as if nothing had gone wrong. The `Object.hasOwn` guard below stays anyway,
- *  because the value arrives off the wire and totality is a claim about THIS build. */
+/** Drop-reason wording, TOTAL over the registered wire enum. The `Object.hasOwn` guard stays: the
+ *  value comes off the wire and totality is a claim about THIS build. */
 const REASONS: Record<SteerReason, string> = {
   restart: "the session restarted",
   boundary: "the turn ended first",
@@ -115,15 +97,12 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
 }
 
 /** The base label plus one clause per recorded fact, in the order a reader needs them:
- *  what the state is, why, and what this message is. */
+ *  what the state is, why, and who read it. */
 function labelFor(d: SteerNoteData): string {
   const parts = [d.dropped ? LABELS[d.origin].dropped : LABELS[d.origin].read];
   const why = d.dropped ? reasonWording(d.reason) : undefined;
   if (why !== undefined) {
     parts.push(why);
-  }
-  if (d.resent === true) {
-    parts.push("not read earlier, resent");
   }
   if (readByDelegate(d)) {
     parts.push(d.acknowledged === true ? "acknowledged by a delegate" : "read by a delegate");

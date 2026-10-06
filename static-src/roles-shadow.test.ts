@@ -1,10 +1,4 @@
 // D67b: agent scope shadowing, modelled rather than deduped away.
-//
-// A workspace agent and a catalog agent (bundled, or the user's global
-// ~/.kiro/agents) can share an id. The merge used to filter the WORKSPACE entry
-// out, so the surviving row was the global one — while the comment three lines
-// above claimed the workspace definition was what a session would load. The
-// picker did not merely hide one of the two, it showed the wrong one.
 import { describe, it, expect } from "vitest";
 import {
   isCustomSource,
@@ -24,8 +18,8 @@ describe("mergeCatalogAndWorkspace", () => {
     const merged = mergeCatalogAndWorkspace(catalog, ["reviewer"]);
     const rows = merged.filter((p) => p.mode.id === "reviewer");
     expect(rows).toHaveLength(1);
-    // KAS's last-write-wins: the workspace definition is what a session loads,
-    // so it is the one offered.
+    // KAS's last-write-wins: the workspace definition is what a session loads, so it is the one
+    // offered.
     expect(rows[0]?.mode.source).toBe("workspace");
     expect(rows[0]?.mode.description).toBe(WORKSPACE_AGENT_DESC);
   });
@@ -44,8 +38,8 @@ describe("mergeCatalogAndWorkspace", () => {
   });
 
   it("withholds the mark when the colliding entry is itself workspace-sourced", () => {
-    // The live catalog carries the workspace agents, so the merge matches an
-    // entry against itself; "shadows workspace" claims two definitions of one.
+    // The live catalog carries the workspace agents, so the merge matches an entry against itself;
+    // "shadows workspace" claims two definitions of one.
     const live: readonly SessionMode[] = [
       { id: "app-implementer", name: "app-implementer", source: "workspace" },
     ];
@@ -69,8 +63,8 @@ describe("mergeCatalogAndWorkspace", () => {
   });
 
   it("emits exactly one row per id", () => {
-    // Two rows carrying the same id would offer a choice session/set_mode cannot
-    // express: both would send the same mode id.
+    // Two rows carrying the same id would offer a choice session/set_mode cannot express: both
+    // would send the same mode id.
     const merged = mergeCatalogAndWorkspace(catalog, ["reviewer", "vibe", "extra"]);
     const ids = merged.map((p) => p.mode.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -78,9 +72,8 @@ describe("mergeCatalogAndWorkspace", () => {
   });
 
   it("treats a catalog entry with no source as bundled when shadowed", () => {
-    // BUILTIN_MODES tags its own source, but the pre-fetch fallback path and any
-    // future catalog entry may not, and "shadows undefined" would be a worse
-    // answer than naming the default group.
+    // BUILTIN_MODES tags its own source, but the pre-fetch fallback path and any future catalog
+    // entry may not, and "shadows undefined" would be a worse answer than naming the default group.
     const merged = mergeCatalogAndWorkspace([{ id: "x", name: "X" }], ["x"]);
     expect(merged[0]?.shadowed).toBe("bundled");
   });
@@ -99,8 +92,7 @@ describe("scopeLabel", () => {
   });
 
   it("says nothing for a bundled or unset source", () => {
-    // Every row in the top group is bundled, so labelling each one restates the
-    // divider above it.
+    // Every row in the top group is bundled, so labelling each one restates the divider above it.
     expect(scopeLabel("bundled")).toBe("");
     expect(scopeLabel(undefined)).toBe("");
   });
@@ -113,17 +105,17 @@ describe("isCustomSource", () => {
   });
 
   it("keeps bundled and unset in the top group", () => {
-    // BUILTIN_MODES tags itself bundled, but the pre-fetch fallback path and any
-    // catalog entry that omits the field must not land under "Custom agents".
+    // BUILTIN_MODES tags itself bundled, but the pre-fetch fallback path and any catalog entry that
+    // omits the field must not land under "Custom agents".
     expect(isCustomSource("bundled")).toBe(false);
     expect(isCustomSource(undefined)).toBe(false);
     expect(isCustomSource("")).toBe(false);
   });
 
   it("treats a source value it has never seen as custom", () => {
-    // The whole reason this tests what IS bundled rather than enumerating what is
-    // custom. A vocabulary that grows upstream must not put an unknown scope in
-    // the group a reader trusts to be Kiro's own; the divider is the safe side.
+    // The whole reason this tests what IS bundled rather than enumerating what is custom. A
+    // vocabulary that grows upstream must not put an unknown scope in the group a reader trusts to
+    // be Kiro's own; the divider is the safe side.
     expect(isCustomSource("organization")).toBe(true);
   });
 });

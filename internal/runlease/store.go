@@ -16,10 +16,8 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// FileName is the store's file, beside schedules.json in the config dir. A SIBLING
-// file rather than a record inside schedules.json, which is a bare JSON array with
-// nowhere to put a version, and two subsystems behind one parse would mean a
-// malformed file disabling both.
+// FileName is the store's file, beside schedules.json: a sibling so a malformed file
+// cannot disable both subsystems.
 const FileName = "runs.json"
 
 // Version is the on-disk format version, and why the file's top-level value is an
@@ -35,14 +33,9 @@ type file struct {
 	Version int     `json:"version"`
 }
 
-// Store persists run leases in one 0600 JSON file, rewritten atomically: the set is
-// bounded by the single-run rule, so a full rewrite per mutation is simpler than
-// incremental edits. The ZERO VALUE is usable, an empty path persisting nothing, and
-// nothing here reaches back into its caller.
-//
-// The 0600 is verified by the WRITE rather than by a pass afterwards — atomicfile
-// fchmods and fstats the open temp descriptor and fails rather than publishing a
-// wider file — so do not add a second EnforceFile on s.path, which checks by NAME.
+// Store persists run leases in one 0600 JSON file, rewritten atomically per mutation.
+// The zero value is usable and persists nothing. atomicfile verifies the 0600 on the
+// written descriptor, so no EnforceFile pass by NAME is needed.
 type Store struct {
 	leases map[string]Lease
 	path   string
@@ -55,14 +48,9 @@ type Store struct {
 // NewMemory returns an in-memory store that persists nothing.
 func NewMemory() *Store { return &Store{leases: map[string]Lease{}} }
 
-// NewStore opens (or starts) the store at <dir>/runs.json.
-//
-// It ALWAYS returns a usable store; the error is diagnostic. The opposite of
-// schedule.NewStore, deliberately: a schedule is the user's configuration, while a
-// lease is DERIVED state, and refusing to open it would leave no lease registry at
-// all, so no run would get a wall clock. An unrecognised version is discarded for
-// the same reason a malformed file is — acting on half-understood leases is how a
-// live run gets cancelled — and the next mutation rewrites at this build's version.
+// NewStore opens (or starts) the store at <dir>/runs.json. It ALWAYS returns a usable
+// store; the error is diagnostic. A lease is derived state, so refusing to open would leave
+// no run bounded; a malformed or unknown-version file is discarded and rewritten.
 func NewStore(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, FileName), leases: map[string]Lease{}}
 	data, err := os.ReadFile(s.path)
@@ -84,8 +72,7 @@ func NewStore(dir string) (*Store, error) {
 		if l.WorkflowID == "" || !l.Origin.Valid() {
 			continue
 		}
-		// A deadline read from disk describes a process that no longer exists, so
-		// parking it keeps the bound on EXECUTING time; the next start re-arms.
+		// A deadline read from disk describes a dead process: park it; the next start re-arms.
 		l.Deadline = time.Time{}
 		s.leases[l.WorkflowID] = l
 	}
@@ -127,9 +114,8 @@ func (s *Store) Get(workflowID string) (Lease, bool) {
 	return l, ok
 }
 
-// Put grants a lease, replacing any lease already held for the run. A persist
-// failure is reported but the lease is KEPT in memory: the run is on the wire either
-// way, and forgetting it would leave it unbounded here as well as absent next time.
+// Put grants a lease, replacing any held for the run. On a persist failure the lease is
+// KEPT in memory: the run is on the wire either way.
 func (s *Store) Put(ctx context.Context, l *Lease) error {
 	if l.WorkflowID == "" {
 		return errors.New("lease workflow id is required")
@@ -144,8 +130,8 @@ func (s *Store) Put(ctx context.Context, l *Lease) error {
 	return s.persistLocked(ctx)
 }
 
-// Release forgets a run's lease. Releasing one that is gone is not an error: both
-// the terminal frame and the cancel path release, and neither knows which was first.
+// Release forgets a run's lease; releasing a gone one is not an error (both the terminal
+// frame and the cancel path release).
 func (s *Store) Release(ctx context.Context, workflowID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,14 +160,9 @@ func (s *Store) SetFirstAbsentAt(ctx context.Context, workflowID string, at time
 	return s.persistLocked(ctx)
 }
 
-// SetDeadline re-stamps a lease's deadline, or parks it with the zero time, which is
-// what makes the bound one on EXECUTING time: every start re-arms, every pause parks.
-//
-// THE ERROR REPORTS DURABILITY, NOT THE MUTATION: whenever the lease exists the
-// in-memory deadline IS the one asked for by the time this returns. A caller treating
-// a non-nil error as "the deadline was not set" would arm no timer against a lease
-// that reads bounded, and the arm's own idempotence check makes that permanent.
-// ErrNotFound is the one error meaning nothing was stored.
+// SetDeadline re-stamps a lease's deadline, or parks it with the zero time.
+// The error reports DURABILITY, not the mutation: when the lease exists the in-memory
+// deadline is set regardless. ErrNotFound is the one error meaning nothing was stored.
 func (s *Store) SetDeadline(ctx context.Context, workflowID string, deadline time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

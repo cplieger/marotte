@@ -1,10 +1,7 @@
 package agent
 
-// The per-chat ADMISSION slot. A reservation is minted synchronously, before any
-// bridge exists, so a prompt is admitted or refused before its turn_open is
-// appended; OpenTurn then creates the Turn record and StartTurn stamps the model
-// and the metering baseline with the bridge live. The reservation is NOT a Turn,
-// and a wire-started turn holds no reservation at all.
+// The per-chat admission slot, reserved synchronously before any bridge exists, so a prompt is admitted or refused
+// before its turn_open. OpenTurn then makes the Turn and StartTurn stamps model and baseline. A wire turn holds no reservation.
 
 import (
 	"context"
@@ -24,12 +21,8 @@ func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
 	return true
 }
 
-// holderSourceLocked names the admission holder: the prompt-class turn owed its
-// bracket, else the reservation, else the own turn. The prompt side wins because
-// a prompt is admitted BESIDE an open wire_turn_start turn, and a second prompt
-// must read that prompt as the holder (Busy) rather than the wire turn (Starting);
-// own comes last so a wire turn with nothing reserved is still visible to a
-// refusal. Caller holds mu.
+// holderSourceLocked names the admission holder: the bracket-owed prompt turn, else the reservation, else own. A
+// prompt admitted beside a wire turn must read as Busy, and a bare wire turn still shows. Caller holds mu.
 func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 	if lc.pending != nil {
 		return lc.pending.Source, true
@@ -43,13 +36,29 @@ func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-// tryReserve takes chatID's admission slot iff it is free — the shell door's
-// and the recovery retry's form, never a wait.
-func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+// tryReserve takes the slot iff free and the fence holds, never waiting (shell door, recovery retry, drain).
+func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	return lc.reserveLocked(source)
+	return lc.fenceHoldsLocked(fence) && lc.reserveLocked(source)
+}
+
+// promptHolder names the prompt-class turn holding admission: the bracket-owed one, else a non-finalizing own one.
+func (r *turnRegistry) promptHolder(chatID marotte.ChatID) (string, bool) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return "", false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	switch {
+	case lc.pending != nil && !lc.pending.finalizing:
+		return lc.pending.ID, true
+	case lc.own != nil && !lc.own.finalizing && lc.own.Source.PromptClass():
+		return lc.own.ID, true
+	}
+	return "", false
 }
 
 // releaseReservation frees the admission slot and wakes every parked waiter,
@@ -63,10 +72,8 @@ func (r *turnRegistry) releaseReservation(chatID marotte.ChatID) {
 	lc.wakeLocked()
 }
 
-// reserveOrHolder attempts the reservation and, when refused, names the holder
-// and hands back the channel that closes on the chat's next state change — all
-// in ONE acquisition, so a release landing between a failed try and the park
-// cannot strand the waiter on a stale answer.
+// reserveOrHolder tries the reservation and on refusal returns the holder and the next-change channel in one
+// acquisition, so a release between try and park cannot strand the waiter.
 func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource) (ok bool, holder marotte.TurnOpenSource, changed <-chan struct{}) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -78,9 +85,7 @@ func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.Tur
 	return false, holder, lc.changed
 }
 
-// admissionHolder reports the chat's admission holder's source: the open
-// turn's when one is open, else the reservation's, and false when neither is
-// held.
+// admissionHolder reports the holder's source (open turn, else reservation), false when neither.
 func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -88,12 +93,21 @@ func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenS
 	return lc.holderSourceLocked()
 }
 
-// TryReserveTurn takes the chat's admission slot iff it is free, minting NO
-// Turn. The shell door reserves through this (a `!cmd` during any held slot
-// refuses immediately), and the empty-turn recovery re-reserves through it (a
-// user prompt that won the slot first abandons the retry).
+// TryReserveTurn takes the admission slot iff free, minting no Turn: the shell door (a `!cmd` refuses at once)
+// and the empty-turn recovery (abandoned if a prompt won).
 func (bc *BridgeCoordinator) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	return bc.turns.tryReserve(chatID, source)
+	return bc.turns.tryReserve(chatID, source, command.TurnFence{})
+}
+
+// TryReserveTurnFenced is TryReserveTurn for a close's drain, refused once a turn
+// opened after the closed one. The open checks the fence again where it appends.
+func (bc *BridgeCoordinator) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
+	return bc.turns.tryReserve(chatID, source, fence)
+}
+
+// PromptHolder names the prompt-class turn holding the chat's admission.
+func (bc *BridgeCoordinator) PromptHolder(chatID marotte.ChatID) (string, bool) {
+	return bc.turns.promptHolder(chatID)
 }
 
 // ReleaseTurnReservation frees the admission slot TryReserveTurn or
@@ -102,21 +116,15 @@ func (bc *BridgeCoordinator) ReleaseTurnReservation(chatID marotte.ChatID) {
 	bc.turns.releaseReservation(chatID)
 }
 
-// AdmissionHolderSource reports who holds the chat's admission: the open
-// turn's source when one is open (an engine-opened turn holds no reservation),
-// else the reservation's. Satisfies command.TurnOutcomeAccess; the steer refusal
-// and the prompt-refusal arm both key on it.
+// AdmissionHolderSource reports the holder: the open turn's source (a wire turn holds no reservation), else the
+// reservation's. Satisfies command.TurnOutcomeAccess.
 func (bc *BridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return bc.turns.admissionHolder(chatID)
 }
 
-// ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up
-// to wait while it is held; at most one waiter acquires per wake.
-//
-// The refusal arm keys on the HOLDER'S SOURCE: a prompt-class holder answers Busy
-// immediately, bridge live or not, because CmdSteer parks a steer for a spawning
-// prompt; a local_shell holder parks the waiter and answers Starting at the
-// budget. A dead ctx also answers Starting: nothing reads the answer.
+// ReserveTurnForPrompt takes the slot for a prompt, waiting up to wait; one waiter acquires per wake. A
+// prompt-class holder answers Busy at once (CmdSteer parks the steer); a local_shell holder parks the waiter
+// and answers Starting at the budget. A dead ctx answers Starting.
 func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -138,9 +146,7 @@ func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID ma
 	}
 }
 
-// expiredAdmission is the budget-expiry arm, keyed on the holder's source. One
-// last try first: a release landing exactly at expiry is an acquisition, not a
-// refusal.
+// expiredAdmission is the budget-expiry arm, keyed on the holder; one last try first.
 func (bc *BridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.AdmissionOutcome {
 	ok, holder, _ := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
 	if ok {
@@ -152,10 +158,7 @@ func (bc *BridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.Adm
 	return command.AdmissionStarting
 }
 
-// bridgeLive reports whether the chat has a bridge PAST its spawn. The manager
-// registers the record before Start so concurrent opens coalesce, so mere
-// presence is not liveness — a bridge still starting is exactly the "starting"
-// state the refusal names.
+// bridgeLive reports whether the chat's bridge is past its spawn; the manager registers before Start, so presence is not liveness.
 func (bc *BridgeCoordinator) bridgeLive(chatID marotte.ChatID) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	return sb != nil && sb.startedPastSpawn()

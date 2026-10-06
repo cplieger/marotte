@@ -47,9 +47,8 @@ func TestKiroHome_resolverResultCachedOnce(t *testing.T) {
 	}
 }
 
-// The Kiro path helpers join their name argument under the matching
-// subdirectory of KiroHome(). The "steering" / "settings" segments are
-// load-bearing: kiro-cli and marotte must agree on them.
+// The path helpers join under KiroHome()'s "steering" / "settings" subdirectories, names
+// kiro-cli and marotte must agree on.
 func TestKiroPathHelpers(t *testing.T) {
 	prev := kiroHomeResolver
 	kiroHomeResolver = nil

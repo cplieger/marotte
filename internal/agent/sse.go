@@ -12,9 +12,8 @@ import (
 	"github.com/cplieger/sse"
 )
 
-// wireHeader is the request header a v3 client sends; its absence marks a legacy
-// (v2 bundle) connect, which still needs the numeric floor/head on `connected`
-// and the per-item pending replay.
+// wireHeader is the request header a v3 client sends; without it the connect is a v2 bundle, which still
+// needs numeric floor/head on `connected` and the per-item pending replay.
 const wireHeader = "SSE-Wire"
 
 // clientTagHeader carries the client's tag for the hub's presence table.
@@ -31,22 +30,16 @@ func (b *bus) PendingPermsAdd(requestID int64, evt marotte.ServerEvent) {
 	b.pendingPerms.Add(requestID, evt)
 }
 
-// emit is the single publish path for live frames. It touches evt.Subject in
-// exactly one case: a chat_status frame takes the stamp MergeStamped minted in the
-// same critical section as the payload it publishes.
+// emit is the single publish path for live frames. It touches evt.Subject only for chat_status, taking the
+// stamp MergeStamped minted with the payload.
 func (b *bus) emit(evt marotte.ServerEvent) {
 	switch evt.Type {
 	case marotte.EventChatStatus:
-		// A producer of this event may NOT hold chatLifecycle.mu: stageStatusDesc takes it
-		// and sync.Mutex is not reentrant, so that is a self-deadlock -race hangs on
-		// rather than reports.
+		// A producer of this event must not hold chatLifecycle.mu: stageStatusDesc takes it (non-reentrant).
 		if p, ok := evt.Payload.(marotte.ChatStatusPayload); ok {
-			// The RAW description, before the merge: Turn.statusDesc is what the agent
-			// declared during THIS turn, and stageStatusDescription drops an empty one.
+			// The raw description: Turn.statusDesc is this turn's declaration.
 			b.stageStatusDesc(evt.ChatID, p.Description)
-			// The MERGED payload on the wire: the client replaces both fields, so a
-			// description-only declaration would delete a retained waiting_on_user there.
-			// evt is a value, so this reaches the marshal below and no caller sees it.
+			// The merged payload, since the client replaces both fields. evt is a value.
 			evt.Payload, evt.Subject = b.chatStatus.MergeStamped(evt.ChatID, p)
 		}
 	case marotte.EventTurnClosed:
@@ -65,10 +58,8 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 		slog.Error("emit publish", "type", evt.Type, "error", err)
 		return
 	}
-	// The hub refused the frame whole. A stamped frame is not lost: subject_changed
-	// carries the same stamp as a fetch instruction, and the client refetches the
-	// subject through its action. An unstamped frame that large has no fetch to
-	// substitute, so it is dropped and the log is the only signal.
+	// The hub refused the frame. A stamped frame is recovered through subject_changed's refetch; an unstamped one
+	// that large is dropped and logged.
 	if evt.Subject == nil {
 		slog.Error("emit: frame exceeds the hub's cap and carries no subject; dropped",
 			"type", evt.Type, "chat_id", evt.ChatID, "bytes", len(data), "cap", sse.MaxFrameBytes)
@@ -89,10 +80,8 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 	}
 }
 
-// handleSSE opens the /api/events stream. The sse library owns the transport
-// (headers, the hello, Last-Event-ID replay, keepalives, slow-client eviction);
-// marotte owns the connected handshake and the initial state the client cannot
-// derive from the event log.
+// handleSSE opens /api/events. The sse library owns the transport; marotte owns the connected handshake and the
+// initial state the event log cannot give.
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	legacy := r.Header.Get(wireHeader) == ""
 	tag := r.Header.Get(clientTagHeader)
@@ -106,8 +95,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	slog.Info("SSE connected", "client", client,
 		"last_event_id", logsafe.Field(r.Header.Get("Last-Event-ID")))
 
-	// A reconnect reloads push preferences from disk so settings edited while SSE
-	// was down take effect without a restart.
+	// A reconnect reloads push preferences from disk.
 	if r.Header.Get("Last-Event-ID") != "" && rt.push != nil {
 		rt.push.ReloadPreferences(r.Context())
 	}
@@ -121,35 +109,21 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	slog.Info("SSE disconnected", "client", client)
 }
 
-// The connect payload's two list bounds. POLICY numbers derived from what a
-// realistic reconnect must CARRY, so the gate over them fails rather than being
-// raised: a connect that exceeds one is the defect, never the constant.
+// The connect payload's two list bounds, policy numbers: exceeding one is the defect, never the constant.
 const (
-	// maxBusyChats bounds the busy-chat list the handshake carries. A chat id is 34
-	// characters, so one JSON array element is 37 bytes with its quotes and comma:
-	// 256 × 37 ≈ 9.5 KiB. Deliberately far past every other bound in the system — one
-	// bridge per chat at ~300 MB of process tree — so it is a ceiling on the BYTES
-	// rather than a limit anyone reaches.
+	// maxBusyChats bounds the handshake's busy list: 256 × 37 bytes ≈ 9.5 KiB, far past any real chat count.
 	maxBusyChats = 256
-	// maxConnectLiveRuns bounds the live-run inventory the handshake carries. A row is
-	// a wf_<16 hex> id, a c-<32 hex> chat id and a bool, so ~100 bytes of JSON:
-	// 128 × 100 ≈ 12.8 KiB. The single-run rule bounds concurrent runs to a handful in
-	// practice, but that is a PRODUCT rule and not a bound on this array — a
-	// stale-lease accumulation is exactly what inflates it.
+	// maxConnectLiveRuns bounds the handshake's live-run inventory: 128 rows of ~100 bytes ≈ 12.8 KiB. The single-run
+	// rule is a product rule, not a bound; stale leases are what inflate it.
 	maxConnectLiveRuns = 128
 )
 
-// streamInitialState is the OnConnect body: the connected handshake, then the
-// workspace-wide state a client cannot derive from the event log. A v3 connect gets
-// two aggregate frames, pending_snapshot and status_snapshot, each the WHOLE set
-// (possibly empty) plus its stamp; a legacy connect gets the per-item replay its
-// decoders know and numeric floor/head on `connected`. Every frame is id-less and
-// unnamed: the v2 bundle reads through onmessage, which a named event never reaches.
-// `connected` carries no Subject: one scalar stamp cannot vouch for several subjects.
+// streamInitialState is the OnConnect body: `connected`, then workspace state the event log cannot give. A v3
+// connect gets pending_snapshot and status_snapshot, each whole and stamped; a legacy one gets the per-item
+// replay and numeric floor/head. Frames are id-less and unnamed (v2 reads onmessage); `connected` has no Subject.
 func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool) error {
 	busy := rt.coord.turns.busyChatIDs()
-	// An over-cap list is withheld rather than truncated: on either the client
-	// retracts nothing.
+	// Withheld rather than truncated, so the client retracts nothing.
 	busyStated := len(busy) <= maxBusyChats
 	if !busyStated {
 		slog.Warn("connect busy-chat list withheld: over cap", "cap", maxBusyChats, "count", len(busy))
@@ -170,8 +144,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 		LiveRunsStated: liveRunsStated,
 	}
 	if legacy {
-		// The v2 bundle's gap arithmetic reads numbers: floor 0 means "not resumed,
-		// refetch", which is what the hello's Resumed already decided.
+		// The v2 bundle reads floor 0 as "not resumed, refetch".
 		var floor uint64
 		if h.Resumed {
 			floor = h.Floor
@@ -205,30 +178,24 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 	return writeEvent(statusFrame)
 }
 
-// replayLegacyState is the per-item replay a v2 bundle's decoders know: every
-// pending permission, run ask and steer, then every retained waiting status for a
-// chat that is not busy. Kept for the life of the last v2 bundle.
+// replayLegacyState is the per-item replay v2 decoders know: pending permissions, run asks and steers, then
+// waiting statuses of idle chats. Kept while a v2 bundle can exist.
 func (rt *Runtime) replayLegacyState(writeEvent func(marotte.ServerEvent) error) error {
 	if err := rt.replayPendingPermissions(writeEvent); err != nil {
 		return err
 	}
-	// Beside the permissions rather than folded into them: the two registries have
-	// different lifetimes (run_ask.go), and a parked run has no deadline of its own.
+	// Separate from permissions: different lifetimes (run_ask.go).
 	if err := rt.replayPendingRunAsks(writeEvent); err != nil {
 		return err
 	}
-	// The steering buffer, for the same reason and on the same terms: KAS holds it,
-	// nothing can read it back, and the gap door empties the client's dock without
-	// promoting anything. See replayPendingSteers for what it cannot recover.
+	// KAS holds the steering buffer and nothing can read it back (replayPendingSteers).
 	if err := rt.replayPendingSteers(writeEvent); err != nil {
 		return err
 	}
 	return rt.replayWaitingStatus(writeEvent, rt.coord.turns.ownTurns())
 }
 
-// replayWaitingStatus emits a chat_status event for every chat the agent left
-// waiting on a person and whose turn is not running. Keyed on `open` because a
-// chat whose turn is running must still suppress a stale waiting_on_user.
+// replayWaitingStatus emits chat_status for every chat left waiting on a person whose turn is not running.
 func (rt *Runtime) replayWaitingStatus(
 	writeFn func(marotte.ServerEvent) error,
 	open map[marotte.ChatID]*Turn,
@@ -247,10 +214,7 @@ func (rt *Runtime) replayWaitingStatus(
 	return nil
 }
 
-// replayPendingPermissions sends the unresolved permission_needed events to a newly
-// connected client, so dialogs survive a reconnect that outlived the ring buffer.
-// EVERY unresolved request goes, however old: the agent server holds
-// session/request_permission open until answered, so an old card is a live question.
+// replayPendingPermissions sends every unresolved permission_needed to a new client, however old: KAS holds the request open until answered.
 func (rt *Runtime) replayPendingPermissions(writeFn func(marotte.ServerEvent) error) error {
 	for _, evt := range rt.bus.pendingPerms.List("") {
 		if err := writeFn(evt); err != nil {
@@ -260,9 +224,7 @@ func (rt *Runtime) replayPendingPermissions(writeFn func(marotte.ServerEvent) er
 	return nil
 }
 
-// replayPendingRunAsks sends every unanswered workflow-step question to a newly
-// connected client, so a reload, a second device and a transport gap converge on the
-// same set. The client's dock de-duplicates by ask id.
+// replayPendingRunAsks sends every unanswered step question to a new client; the dock de-duplicates by ask id.
 func (rt *Runtime) replayPendingRunAsks(writeFn func(marotte.ServerEvent) error) error {
 	for _, evt := range rt.runs.asks.List("") {
 		if err := writeFn(evt); err != nil {

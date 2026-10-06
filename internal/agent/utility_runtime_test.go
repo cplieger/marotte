@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,16 +17,13 @@ import (
 func TestUtilityBridge_LazyStart(t *testing.T) {
 	h, _, br := newTestHub()
 
-	// Utility bridge should not exist yet.
 	h.lifecycle.mu.Lock()
 	if u := h.utility.peek(); u != nil && u.session.started {
 		t.Error("utility bridge started before first call")
 	}
 	h.lifecycle.mu.Unlock()
 
-	// No chunks; the drain loop will exit on the idle timer since
-	// kiro-cli's real behaviour is "response is the turn-end signal".
-	// This test only cares that the bridge started.
+	// No chunks: the drain exits on the idle timer, since the response ends the turn.
 	_, err := h.UtilityPrompt(t.Context(), "test prompt", "")
 	if err != nil {
 		t.Fatalf("UtilityPrompt error = %v", err)
@@ -42,11 +40,7 @@ func TestUtilityBridge_LazyStart(t *testing.T) {
 func TestUtilityBridge_DrainCollectsChunks(t *testing.T) {
 	h, _, br := newTestHub()
 
-	// Deliver the agent's reply chunks in RESPONSE to the prompt Call
-	// (chunksOnCall sends them on notifCh after the Call begins). Doing it
-	// this way instead of pre-buffering keeps the test deterministic against
-	// UtilityPrompt's at-start responseCh drain, which would otherwise race
-	// and eat chunks that landed before the Call.
+	// Chunks arrive in response to the prompt Call, so UtilityPrompt's at-start drain cannot eat them.
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"hello ", "world"}}
 
 	result, err := h.UtilityPrompt(t.Context(), "test", "")
@@ -61,7 +55,6 @@ func TestUtilityBridge_DrainCollectsChunks(t *testing.T) {
 func TestUtilityBridge_StopAndRestart(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	// Manually set up a utility runtime with a started session.
 	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: newFakeBridge()}
 	h.lifecycle.mu.Lock()
 	h.utility = &utilityLease{rt: &utilityRuntime{session: s, textgen: newUtilityAgent(s)}}
@@ -76,9 +69,8 @@ func TestUtilityBridge_StopAndRestart(t *testing.T) {
 	h.lifecycle.mu.Unlock()
 }
 
-// agentForDrainTest builds an agent over a preset started session, for
-// exercising drainResponse directly.
-// context.Background() rather than t.Context(): no *testing.T is in scope here.
+// agentForDrainTest builds an agent over a preset started session for exercising drainResponse.
+// context.Background(): no *testing.T is in scope.
 func agentForDrainTest(bridge ACPBridge) *utilityAgent {
 	s := &utilitySession{shutdownCtx: context.Background(), bridge: bridge, started: true, gen: 1}
 	return newUtilityAgent(s)
@@ -97,8 +89,7 @@ func TestDrainUtilityResponse_ChannelClose(t *testing.T) {
 	_, _, _ = newTestHub()
 	ua := agentForDrainTest(newFakeBridge())
 
-	// A closed chunk channel ends the drain immediately with whatever
-	// was collected (a culled session mid-drain looks exactly like this).
+	// A closed channel ends the drain with what was collected, as a mid-drain cull does.
 	chunks := make(chan utilityChunkPayload)
 	close(chunks)
 
@@ -129,9 +120,6 @@ func BenchmarkUtilityBridge_DrainResponse(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				// Feed the drain through a pre-filled, closed chunk channel:
-				// the drain consumes all n chunks and returns on the close,
-				// measuring the actual collection loop.
 				ch := make(chan utilityChunkPayload, n)
 				for _, m := range msgs {
 					var c utilityChunkPayload
@@ -152,10 +140,9 @@ func BenchmarkUtilityBridge_DrainResponse(b *testing.B) {
 func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	h, _, br := newTestHub()
 
-	// Pre-start the utility bridge so concurrent calls don't race on start.
+	// Pre-start the bridge so concurrent calls do not race on start.
 	_, _ = h.UtilityPrompt(t.Context(), "warmup", "")
 
-	// Replace the bridge with a fresh one that won't be stopped.
 	freshBr := newFakeBridge()
 	u := h.utility.peek()
 	u.session.mu.Lock()
@@ -171,19 +158,14 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	results := make([]string, goroutines)
 	errs := make([]error, goroutines)
 
-	// Feed chunks for each goroutine's prompt. Since calls serialize,
-	// each prompt drains the idle timer before the next starts. The frames are
-	// built HERE, on the test's own goroutine: newChunkMsg can t.Fatalf, and a
-	// Fatal off the test goroutine ends the wrong one.
+	// Built on the test goroutine: newChunkMsg can t.Fatalf, which off it ends the wrong goroutine.
 	frames := make([]*marotte.RPCResponse, goroutines)
 	for i := range frames {
 		frames[i] = newSessionChunkMsg(string(freshBr.SessionID()), fmt.Sprintf("resp-%d", i))
 	}
 	go func() {
 		for i := range goroutines {
-			// Pace the feed so each chunk lands inside a live drain window
-			// rather than between two of them (the fixture, not a wait for an
-			// async effect: 20ms against drainResponse's 50ms idle debounce).
+			// Paced so each chunk lands inside a drain window (20ms against the 50ms idle debounce).
 			time.Sleep(20 * time.Millisecond)
 			freshBr.mu.Lock()
 			stopped := freshBr.stopped
@@ -203,16 +185,13 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 
 	wg.Wait()
 
-	// Assert: no panics occurred (test would have crashed), and all
-	// goroutines got a result or error (no deadlock).
 	for i := range goroutines {
 		if errs[i] != nil {
 			t.Logf("goroutine %d error: %v", i, errs[i])
 		}
 	}
 
-	// Verify serialization: the fakeBridge call log should show exactly
-	// goroutines session/prompt calls (one per goroutine, serialized).
+	// Exactly one serialized session/prompt call per goroutine.
 	freshBr.mu.Lock()
 	promptCalls := 0
 	for _, c := range freshBr.calls {
@@ -244,20 +223,16 @@ func TestCheapestModel_RapidInvariants(t *testing.T) {
 		result := cheapestModel(ctx, catalog)
 
 		if result == "" {
-			// Either empty catalog or all models excluded/auto.
 			return
 		}
 
-		// Result must be present in catalog.
 		var found bool
 		for _, m := range catalog {
 			if m.ID == result {
 				found = true
-				// Must not be "auto".
 				if m.ID == "auto" {
 					rt.Fatal("selected 'auto' model")
 				}
-				// Must not be excluded.
 				if modelExcluded(m.Name) || modelExcluded(m.Description) {
 					rt.Fatalf("selected excluded model %q", m.ID)
 				}
@@ -270,24 +245,21 @@ func TestCheapestModel_RapidInvariants(t *testing.T) {
 	})
 }
 
-// newTestUtilityRuntime builds a utility runtime whose factory hands out
-// a fresh fakeBridge on each call (so a recycle visibly swaps the
-// instance) and whose model catalog is empty.
-// context.Background() rather than t.Context(): no *testing.T is in scope here.
+// newTestUtilityRuntime builds a utility runtime with an empty model catalog whose factory hands out a fresh
+// fakeBridge per call, so a recycle visibly swaps it. context.Background(): no *testing.T is in scope.
 func newTestUtilityRuntime() *utilityRuntime {
 	return newUtilityRuntime(
 		context.Background(),
 		func() ACPBridge { return newFakeBridge() },
 		func() []marotte.SessionModel { return nil },
-		utilitySessionHooks{},
+		&utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
 	)
 }
 
-// presetStartedSession marks the runtime's session as started on the given
-// bridge at generation 1 and syncs the agent's counters to it, so a test
-// can preset counters without the generation-mismatch resync zeroing them.
+// presetStartedSession marks the session started on br at generation 1 and syncs the agent's counters, so a test
+// can preset counters without the resync zeroing them.
 func presetStartedSession(u *utilityRuntime, bridge ACPBridge) {
 	u.session.bridge = bridge
 	u.session.started = true
@@ -295,10 +267,8 @@ func presetStartedSession(u *utilityRuntime, bridge ACPBridge) {
 	u.textgen.counterGen = 1
 }
 
-// At the prompt cap (promptCount == maxUtilityPrompts) with the session
-// already started, the next UtilityPrompt recycles: resetIf stops the
-// old subprocess, the re-acquire starts a fresh one (new generation), the
-// counter resync zeroes, then the increment lands at 1.
+// At the prompt cap the next UtilityPrompt recycles: the old process stops, a new generation starts, the counter
+// resyncs to zero and lands at 1.
 func TestUtilityPrompt_RecyclesAtPromptCap(t *testing.T) {
 	u := newTestUtilityRuntime()
 	br0 := newFakeBridge()
@@ -318,8 +288,7 @@ func TestUtilityPrompt_RecyclesAtPromptCap(t *testing.T) {
 	}
 }
 
-// A fresh runtime (session not started) skips the recycle branch; after
-// one prompt the counter is 1.
+// A fresh runtime skips the recycle branch; one prompt leaves the counter at 1.
 func TestUtilityPrompt_IncrementsPromptCount(t *testing.T) {
 	u := newTestUtilityRuntime()
 	defer u.session.Stop()
@@ -333,8 +302,7 @@ func TestUtilityPrompt_IncrementsPromptCount(t *testing.T) {
 	}
 }
 
-// TestAnswerUtilityHostRequest verifies the utility bridge answers the shell
-// type request rather than leaving session creation blocked.
+// TestAnswerUtilityHostRequest pins that the utility bridge answers the shell type request.
 func TestAnswerUtilityHostRequest(t *testing.T) {
 	t.Run("shell_type answered with bash", func(t *testing.T) {
 		rb := newRespondingBridge()
@@ -352,13 +320,9 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 	})
 }
 
-// TestForward_RoutesPolicyNotifications pins that the utility session hands
-// _kiro/policy/{changed,error} to its hook instead of dropping them.
-//
-// These notifications bypass the main dispatch table, so this is the ONLY path a
-// policy reload has to the client with no chat bridge alive — which is exactly how
-// Settings -> Permissions is used. Without it the panel never hears about the write
-// it just made, and the switch paints itself back off until a reload.
+// TestForward_RoutesPolicyNotifications pins that _kiro/policy/{changed,error} reach the utility session's hook.
+// With no chat bridge alive this is the only path to Settings, Permissions; without it the switch paints itself
+// back off.
 func TestForward_RoutesPolicyNotifications(t *testing.T) {
 	notifCh := make(chan marotte.Notification, 2)
 	responseCh := make(chan utilityChunkPayload, 4)
@@ -392,11 +356,32 @@ func TestForward_RoutesPolicyNotifications(t *testing.T) {
 	}
 }
 
-// TestForwardChunk_ForwardsAssistantText is the positive half its sibling
-// below cannot supply: it pins that a real KAS frame reaches the channel with
-// its text intact. Without it, forwardChunk could reject every frame and the
-// whole file stayed green — which is what happened. The kind discriminator sits
-// on the `update` object, so a fixture that flattens it tests nothing.
+// TestForward_RecipesChangedBroadcastsAnInvalidation pins that the drop arm must not swallow _kiro/workflow/recipes_changed.
+func TestForward_RecipesChangedBroadcastsAnInvalidation(t *testing.T) {
+	notifCh := make(chan marotte.Notification, 1)
+	responseCh := make(chan utilityChunkPayload, 1)
+	done := make(chan struct{})
+	var calls atomic.Int32
+	us := &utilitySession{hooks: utilitySessionHooks{
+		onRecipesChanged: func() { calls.Add(1) },
+	}}
+
+	go us.forward(newFakeBridge(), testFwdGen, notifCh, responseCh, done)
+	notifCh <- marotte.Notification{Msg: &marotte.RPCResponse{Method: methodKiroWorkflowRecipesChanged}, Seq: 1}
+	close(notifCh)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("forward did not exit after notifCh closed")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("onRecipesChanged called %d times, want 1", got)
+	}
+}
+
+// TestForwardChunk_ForwardsAssistantText pins that a real KAS frame reaches the channel intact. The kind sits on
+// the update object, so a flattened fixture tests nothing.
 func TestForwardChunk_ForwardsAssistantText(t *testing.T) {
 	ch := make(chan utilityChunkPayload, 4)
 	forwardChunk(newSessionChunkMsg("sess-utility", "feat/branch-name"), "sess-utility", ch, nil)
@@ -410,9 +395,8 @@ func TestForwardChunk_ForwardsAssistantText(t *testing.T) {
 	}
 }
 
-// TestForwardChunk_IgnoresOtherKinds keeps the filter honest in the other
-// direction: only agent_message_chunk is assistant text, and a tool_call
-// forwarded as one would splice tool metadata into a generated commit message.
+// TestForwardChunk_IgnoresOtherKinds pins that only agent_message_chunk is assistant text; a tool_call would leak into a
+// generated commit message.
 func TestForwardChunk_IgnoresOtherKinds(t *testing.T) {
 	ch := make(chan utilityChunkPayload, 4)
 	forwardChunk(newToolCallMsg(t, "tc-1", "readFile", "pending"), "", ch, nil)
@@ -421,12 +405,9 @@ func TestForwardChunk_IgnoresOtherKinds(t *testing.T) {
 	}
 }
 
-// TestForwardChunk_NonBlockingDropsWhenFull verifies forwardChunk never
-// blocks on a full responseCh. A blocking send would park the forward
-// goroutine so it never observes notifCh closing, deadlocking reset()'s
-// <-forwardDone (taken under ub.mu) and the whole utility subsystem.
+// TestForwardChunk_NonBlockingDropsWhenFull pins that a blocking send parks the forward goroutine, which then never sees
+// notifCh close and deadlocks reset()'s <-forwardDone.
 func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
-	// Buffered size 1, pre-filled: the next chunk has nowhere to go.
 	ch := make(chan utilityChunkPayload, 1)
 	ch <- utilityChunkPayload{}
 
@@ -447,12 +428,8 @@ func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
 	}
 }
 
-// TestForwardChunk_DropsAForeignSessionsChunk is the cross-session leak. KAS can
-// hydrate a CHAT's session inside the utility bridge's process, and this session
-// denies every tool and persists nothing, so that turn's assistant text belongs
-// to a transcript rather than to whichever UtilityPrompt is draining. Adopting it
-// puts another chat's output in a commit message, a PR description or a branch
-// name.
+// TestForwardChunk_DropsAForeignSessionsChunk pins that KAS can hydrate a chat's session inside the utility process, and
+// adopting its text puts another chat's output in a commit message or branch name.
 func TestForwardChunk_DropsAForeignSessionsChunk(t *testing.T) {
 	ch := make(chan utilityChunkPayload, 4)
 
@@ -464,14 +441,8 @@ func TestForwardChunk_DropsAForeignSessionsChunk(t *testing.T) {
 	}
 }
 
-// TestForwardChunk_AdmitsItsOwnAndThePreSessionWindow is the negative the screen
-// needs as much as the positive. Made unconditional it would drop the frames
-// arriving before session/new has answered, and every utility result would come
-// back EMPTY — the exact symptom the flat-decode bug produced for months.
-//
-// The pre-session window cannot contaminate anything: contamination needs a
-// draining UtilityPrompt, a drain needs a prompt, and a prompt needs the session
-// that supplies the id.
+// TestForwardChunk_AdmitsItsOwnAndThePreSessionWindow pins that frames before session/new answers must pass, or every
+// result comes back empty. The window cannot contaminate: a drain needs a prompt, which needs the session id.
 func TestForwardChunk_AdmitsItsOwnAndThePreSessionWindow(t *testing.T) {
 	tests := map[string]struct {
 		frameSession string
@@ -500,25 +471,21 @@ func TestForwardChunk_AdmitsItsOwnAndThePreSessionWindow(t *testing.T) {
 	}
 }
 
-// TestUtilityPrompt_DrainsStaleResponseChAtStart verifies a chunk left in
-// responseCh by a prior turn is drained before the next turn's Call, so it
-// can't prepend to this task's output.
+// TestUtilityPrompt_DrainsStaleResponseChAtStart pins that a chunk a prior turn left in responseCh is drained
+// before the next Call.
 func TestUtilityPrompt_DrainsStaleResponseChAtStart(t *testing.T) {
 	u := newTestUtilityRuntime()
 	defer u.session.Stop()
 	ctx := t.Context()
 
-	// Warm up so the bridge + responseCh exist and are empty.
 	if _, err := u.textgen.UtilityPrompt(ctx, "warmup", ""); err != nil {
 		t.Fatalf("warmup: %v", err)
 	}
-	// Inject a residual chunk from a "prior turn" directly into responseCh.
 	var stale utilityChunkPayload
 	stale.Content.Text = "STALE"
 	u.session.responseCh <- stale
 
-	// The next prompt (no chunks delivered) must return empty — the stale
-	// chunk was drained at the top, not collected by drainResponse.
+	// No chunks delivered: empty, because the stale chunk was drained at the top.
 	got, err := u.textgen.UtilityPrompt(ctx, "real", "")
 	if err != nil {
 		t.Fatalf("UtilityPrompt: %v", err)
@@ -528,11 +495,8 @@ func TestUtilityPrompt_DrainsStaleResponseChAtStart(t *testing.T) {
 	}
 }
 
-// TestUtilityAgent_PromptCountResetOnRestart verifies the counter resync on
-// a session-generation change, so a culled-then-restarted session doesn't
-// recycle after fewer than maxUtilityPrompts. The cull marks the session
-// stopped WITHOUT resetting the agent's counters; the restart bumps the
-// generation and syncCounters zeroes them.
+// TestUtilityAgent_PromptCountResetOnRestart pins that the cull stops the session without resetting counters, and the
+// restart's new generation makes syncCounters zero them.
 func TestUtilityAgent_PromptCountResetOnRestart(t *testing.T) {
 	u := newTestUtilityRuntime()
 	defer u.session.Stop()
@@ -545,13 +509,11 @@ func TestUtilityAgent_PromptCountResetOnRestart(t *testing.T) {
 		t.Fatalf("promptCount after p1 = %d, want 1", u.textgen.promptCount)
 	}
 
-	// Mimic the cull: stop the session without touching agent counters.
 	if !u.session.stopIfIdle(time.Now().Add(time.Minute)) {
 		t.Fatal("stopIfIdle did not stop the just-active session with a future cutoff")
 	}
 
-	// The next prompt restarts the session (new generation); syncCounters
-	// must zero the stale count so it lands at 1, not 2.
+	// The restart's new generation zeroes the count, so it lands at 1, not 2.
 	if _, err := u.textgen.UtilityPrompt(ctx, "p2", ""); err != nil {
 		t.Fatalf("p2: %v", err)
 	}
@@ -560,9 +522,7 @@ func TestUtilityAgent_PromptCountResetOnRestart(t *testing.T) {
 	}
 }
 
-// TestAccountUsage_CallHasTimeout verifies AccountUsage bounds the utility
-// bridge Call with a context deadline. Without it, a wedged getUsage holds
-// the single utility mutex indefinitely, starving chat auto-rename etc.
+// TestAccountUsage_CallHasTimeout pins that a wedged getUsage without a deadline holds the utility mutex indefinitely.
 func TestAccountUsage_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -576,8 +536,7 @@ func TestAccountUsage_CallHasTimeout(t *testing.T) {
 	}
 }
 
-// TestPolicyList_CallHasTimeout verifies PolicyList bounds its Call with a
-// deadline (same mutex-starvation concern as AccountUsage).
+// TestPolicyList_CallHasTimeout pins the same deadline for PolicyList.
 func TestPolicyList_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{"rules":[]}`, `{}`)
@@ -589,8 +548,7 @@ func TestPolicyList_CallHasTimeout(t *testing.T) {
 	}
 }
 
-// TestPolicyExplain_CallHasTimeout verifies PolicyExplain bounds its Call
-// with a deadline.
+// TestPolicyExplain_CallHasTimeout pins the same deadline for PolicyExplain.
 func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{}`, `{"capability":"fs_write","effect":"ask"}`)
@@ -602,10 +560,8 @@ func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 	}
 }
 
-// TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge verifies the sweep
-// captures the idle utility session's bridge under the session mutex and
-// stops that exact instance. The utility session is the ONLY bridge with an
-// idle timer — a chat bridge is owned by its tab and never swept.
+// TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge pins that the sweep stops the exact bridge it captured under
+// the session mutex. Only the utility session has an idle timer.
 func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.utility.get()
@@ -616,14 +572,13 @@ func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 	if !ok {
 		t.Fatal("utility bridge is not a *fakeBridge")
 	}
-	// Backdate activity so the cull considers it idle.
 	u.session.mu.Lock()
 	u.session.lastActiveAt = time.Now().Add(-bridgeIdleTimeout - time.Minute)
 	u.session.mu.Unlock()
 
 	h.cullIdleUtilityBridgeOnce()
 
-	// cull stops the captured victim in a goroutine; poll for it.
+	// The cull stops its victim in a goroutine.
 	deadline := time.Now().Add(2 * time.Second)
 	stopped := false
 	for time.Now().Before(deadline) {
@@ -646,9 +601,8 @@ func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 	}
 }
 
-// TestStopUtilityBridge_ConcurrentWithCull_NoRace exercises stopUtilityBridge
-// concurrently with the cull. Both must coordinate on h.lifecycle.mu for the
-// the utility slot's read/nil; -race flags the fix's absence.
+// TestStopUtilityBridge_ConcurrentWithCull_NoRace pins that both sides coordinate on h.lifecycle.mu for the utility slot;
+// -race catches a regression.
 func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.utility.get()
@@ -678,10 +632,7 @@ func countCalls(b *fakeBridge, method string) int {
 	return n
 }
 
-// At the byte budget (promptBytes >= maxUtilityPromptBytes) with the
-// bridge started, the next UtilityPrompt recycles even though the prompt
-// COUNT is far below its cap — the second recycle trigger, bounding the
-// dead context a few large diffs would otherwise re-bill every turn.
+// At the byte budget the next UtilityPrompt recycles even far below the prompt cap.
 func TestUtilityPrompt_RecyclesAtByteBudget(t *testing.T) {
 	u := newTestUtilityRuntime()
 	br0 := newFakeBridge()
@@ -702,16 +653,14 @@ func TestUtilityPrompt_RecyclesAtByteBudget(t *testing.T) {
 	}
 }
 
-// Per-task effort: the first prompt at a level issues one effortLevel
-// set_config_option; a same-level follow-up issues none; a different
-// level issues one more. Params carry configId=effortLevel + the value.
+// Effort: a new level issues one effortLevel set_config_option, the same level none.
 func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 	br := newFakeBridge()
 	u := newUtilityRuntime(
 		t.Context(),
 		func() ACPBridge { return br },
 		func() []marotte.SessionModel { return nil },
-		utilitySessionHooks{},
+		&utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
 	)
@@ -735,9 +684,8 @@ func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 	}
 }
 
-// A failed effortLevel set_config_option (model without a reasoning-effort
-// config) latches effortUnsupported: the prompt still succeeds, and later
-// tasks skip the round-trip entirely until the next session start.
+// A failed effortLevel set_config_option latches effortUnsupported: the prompt succeeds and later tasks skip the
+// call until the next session start.
 func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	br := newFakeBridge()
 	br.callErrs = map[string]error{marotte.MethodSetConfigOption: fmt.Errorf("no such config option")}
@@ -745,7 +693,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 		t.Context(),
 		func() ACPBridge { return br },
 		func() []marotte.SessionModel { return nil },
-		utilitySessionHooks{},
+		&utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
 	)
@@ -765,10 +713,8 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	}
 }
 
-// Tool-use requests on the utility session are actively refused so an
-// unanswered request can never wedge the turn until the 60s ceiling:
-// permission requests get a cancelled outcome, fs/terminal requests get
-// an error, and unknown peer requests get an error.
+// The utility session refuses tool-use requests so none can wedge the turn until the 60s ceiling: permissions get a
+// cancelled outcome, fs, terminal and unknown requests an error.
 func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 	cases := []struct {
 		method    string
@@ -781,12 +727,8 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 		{method: "terminal/create", wantErr: true},
 		{method: "_kiro/auth/get" + "AccessToken", wantErr: true},
 		{method: "_kiro/some/future_request", wantErr: true},
-		// The security property D69 bought, asserted where a regression would
-		// land: executeHook asks marotte to run a shell command a hook FILE
-		// specifies, and this session used to answer it for the Run-now trigger.
-		// It must now reach the default refusal branch like any other capability
-		// marotte does not offer. A re-added special case would return a result
-		// here and fail this row.
+		// executeHook runs a shell command a hook file names; it must reach the default refusal like any capability marotte
+		// does not offer.
 		{method: "_kiro/hooks/executeHook", wantErr: true},
 	}
 	for _, tc := range cases {
@@ -821,9 +763,7 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 	}
 }
 
-// The live utility session id is exempted from the orphan-session sweep's
-// referenced-set computation; a stopped or never-created utility bridge
-// contributes nothing.
+// The live utility session id is exempt from the orphan-session sweep; a stopped or absent one contributes nothing.
 func TestUtilityLiveSessionID(t *testing.T) {
 	u := newTestUtilityRuntime()
 	if got := u.session.liveID(); got != "" {
@@ -841,11 +781,8 @@ func TestUtilityLiveSessionID(t *testing.T) {
 	}
 }
 
-// TestRPCReadsDoNotQueueBehindTextTurn pins the refactor's point: the
-// session's stateless RPC reads (account usage, specs, policy, hooks,
-// knowledge) complete while a text-generation turn is in flight on the
-// same session. Under the old single-mutex utilityBridge this deadlined:
-// the RPC queued behind the turn's held mutex.
+// TestRPCReadsDoNotQueueBehindTextTurn pins that the session's stateless RPC reads complete while a text turn is in
+// flight on the same session.
 func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	br := newFakeBridge()
 	release := make(chan struct{})
@@ -854,19 +791,17 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 		t.Context(),
 		func() ACPBridge { return br },
 		func() []marotte.SessionModel { return nil },
-		utilitySessionHooks{},
+		&utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()
 
-	// Start a text turn that parks inside its prompt Call.
 	turnDone := make(chan struct{})
 	go func() {
 		defer close(turnDone)
 		_, _ = u.textgen.UtilityPrompt(t.Context(), "slow", "")
 	}()
-	// Wait until the turn's Call is actually in flight.
 	deadline := time.Now().Add(2 * time.Second)
 	for countCalls(br, marotte.MethodPrompt) == 0 {
 		if time.Now().After(deadline) {
@@ -875,7 +810,6 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	// An RPC read must complete while the turn is still blocked.
 	rpcCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	if _, err := u.session.accountUsageRaw(rpcCtx); err != nil {
@@ -891,10 +825,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	<-turnDone
 }
 
-// The sweep must leave a session that was active a moment ago alone. Its cutoff
-// is NOW MINUS the idle timeout, so a sign error puts the cutoff in the future
-// and every sweep stops the live bridge — which the next prompt then has to
-// respawn, one process per tick.
+// The cutoff is now minus the idle timeout; a sign error would stop the live bridge every tick.
 func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.utility.get()
@@ -908,9 +839,7 @@ func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T
 
 	h.cullIdleUtilityBridgeOnce()
 
-	// The cull stops its victim in a goroutine, so a stop would not be visible
-	// immediately; give it the same window the idle-cull test allows before
-	// concluding nothing was stopped.
+	// The cull stops its victim in a goroutine, so allow the idle-cull test's window before concluding.
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		live.mu.Lock()
@@ -929,14 +858,9 @@ func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T
 	}
 }
 
-// TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore is the
-// utility session's half of the capability the chat spawn already pins — a separate
-// spawn with its own StartOpts, and the bridge MCP's OAuth runs on.
-//
-// KAS asks any client that declared the capability to persist every credential, so
-// declaring it without a store drops each one silently while withholding it where a
-// store exists is the same regression from the other side. The store opens
-// best-effort, making this a runtime question rather than a constant.
+// TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore pins that KAS asks a client that declared the
+// capability to persist every credential, so declaring it without a store drops them and withholding it with one
+// fails the same way. The store opens best-effort, so this is a runtime question.
 func TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
 	startedUtilityBridge := func(t *testing.T, opts ...Option) *fakeBridge {
 		t.Helper()
@@ -944,11 +868,10 @@ func TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *te
 		br := newFakeBridge()
 		h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
 		cs.wire(h)
-		h.mcpRegistry.SignalReady()
 		br.callResults = map[string]json.RawMessage{
 			methodKiroGetUsage: json.RawMessage(`{"success":true,"message":"ok"}`),
 		}
-		// Any utility call spins the session up; usage is the cheapest.
+		// Any utility call starts the session; usage is the cheapest.
 		if _, err := h.AccountUsage(t.Context()); err != nil {
 			t.Fatalf("AccountUsage: %v", err)
 		}

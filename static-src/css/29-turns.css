@@ -146,15 +146,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Pushed to the far end of the meta row, so the header band's action sits where the footer
-   band's ledger does. In the META row rather than inside `.turn-req`, which keeps it
-   outside a folded turn's clamp; the box and `[hidden]` are 61-mcp-tools.css's. */
-.turn-copy-req {
-  margin-inline-start: auto;
-  flex-shrink: 0;
-}
-
-/* REWIND keeps a resting border where the four action buttons beside it have none: it is
+/* REWIND keeps a resting border where the action buttons beside it have none: it is
    the destructive control at the far edge. `justify-content: center` is not decoration —
    the hit floor widens this box, and an icon-only button then renders its glyph off-centre. */
 .turn-rewind {
@@ -490,8 +482,16 @@
   color: var(--c-text-tertiary);
 }
 
+/* The notice's one action row, on the notice's own fill so the two read as one region. */
+.turn-notice-actions {
+  padding-block-end: var(--sp-2);
+  padding-inline: var(--sp-3);
+  background: var(--c-turn-body);
+}
+
 /* Last child with no ledger footer, so it owns the bottom corners, as `.turn-face` does. */
-.turn-notice:last-child {
+.turn-notice:last-child,
+.turn-notice-actions:last-child {
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
 }
@@ -685,6 +685,35 @@
   color: var(--c-text-secondary);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+
+/* A value holding several items, one per line: the steering documents, the request ids. */
+.turn-info-list {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+}
+
+.turn-info-ids > code {
+  font-family: var(--font-mono);
+}
+
+/* A steering document opens in the editor. A TEXT control, so accent ink on hover. */
+.turn-info-link {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted;
+  cursor: pointer;
+
+  @media (any-hover: hover) {
+    &:hover {
+      color: var(--c-accent);
+    }
+  }
 }
 
 .turn-ledger-file {

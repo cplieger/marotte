@@ -17,9 +17,8 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// validateProvider rejects anything that is not a well-formed HTTPS URL; empty
-// passes, so kiro-cli falls back to the default Builder ID flow. A phishing
-// guardrail: an attacker-controlled start URL hands the user's SSO session away.
+// validateProvider rejects anything but a well-formed HTTPS URL; empty passes for the default Builder ID flow. An
+// attacker-controlled start URL would hand away the user's SSO session.
 func validateProvider(v string) error {
 	if v == "" {
 		return nil
@@ -31,8 +30,7 @@ func validateProvider(v string) error {
 	if perr != nil || u.Scheme != "https" || u.Host == "" {
 		return errors.New("provider must be an https URL")
 	}
-	// Some HTTP clients dereference embedded userinfo credentials before following a
-	// redirect (CWE-601 URL-credential confusion).
+	// Some HTTP clients use embedded userinfo before a redirect (CWE-601).
 	if u.User != nil {
 		return errors.New("provider must not contain credentials")
 	}
@@ -69,10 +67,8 @@ func buildLoginArgs(provider, region string) []string {
 	return args
 }
 
-// parseLoginRequest decodes and validates the POST body. It writes the error
-// response itself and returns ok=false on any failure, so the caller just returns.
-// An empty body is legitimate — the default Builder ID flow — and yields zero values
-// with ok=true.
+// parseLoginRequest decodes and validates the POST body, writing the error response itself and returning
+// ok=false. An empty body (the default Builder ID flow) yields zero values and ok=true.
 func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region string, ok bool) {
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var body struct {
@@ -102,28 +98,24 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 	return body.Provider, body.Region, true
 }
 
-// handleLogin spawns `kiro-cli login --use-device-flow` and returns the first auth
-// URL its stdout carries. The subprocess deliberately outlives the HTTP request,
-// capped at LoginTimeout. Only one login is in flight at a time; a concurrent POST
-// gets 409.
+// handleLogin spawns `kiro-cli login --use-device-flow` and returns the first auth URL on its stdout. The process
+// outlives the request, capped at LoginTimeout. One login at a time; a concurrent POST gets 409.
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	// Audit trail; client_ip is webhttp.ClientIP's spoof-safe resolved host.
+	// Audit trail; client_ip is webhttp.ClientIP's spoof-safe host.
 	slog.Info("login: request received",
 		"client_ip", webhttp.ClientIP(r, h.trusted...),
 		"user_agent", logsafe.Field(r.Header.Get("User-Agent")))
 	select {
 	case h.loginSem <- struct{}{}:
-		// Ownership transfers to the reap goroutine once cmd.Start succeeds; an
-		// earlier return releases via the semReleased guard.
+		// Once cmd.Start succeeds the reap goroutine owns the sem; earlier returns release through semReleased.
 	default:
 		httpreply.Conflict(w, "login in progress")
 		return
 	}
-	// Only fires if we return before the reap goroutine takes ownership.
 	semReleased := false
 	defer func() {
 		if !semReleased {
@@ -134,9 +126,12 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Wall-clock cap on the SUBPROCESS, not r.Context(): the client disconnects right
-	// after we write the auth URL and comes back minutes later. This bounds an
-	// abandoned flow; the select below bounds URL discovery at LoginURLTimeout.
+	if msg := h.loginRefusal(provider); msg != "" {
+		webhttp.WriteJSONStatus(w, http.StatusForbidden, httpreply.ErrorJSON(msg))
+		return
+	}
+	// Capped on the subprocess, not r.Context(): the client leaves after the URL and returns minutes later. The select
+	// below bounds URL discovery.
 	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginTimeout)
 	cmd := exec.CommandContext(ctx, h.cliPath(), buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
 	setProcGroup(cmd)
@@ -149,8 +144,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			httpreply.ErrorJSON("login unavailable"))
 		return
 	}
-	// Bounded, and separate from stdout so stderr chatter does not count against the
-	// URL scanner's maxLoginLines cap.
+	// Separate from stdout so stderr does not count against maxLoginLines.
 	stderrBuf := procout.NewBuffer(stderrCap)
 	cmd.Stderr = stderrBuf
 	if err := cmd.Start(); err != nil {
@@ -160,27 +154,22 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	urlCh := make(chan map[string]string, 1)
-	// The subprocess keeps writing banners while the user completes the browser flow,
-	// so the drain runs in the background or the child wedges on a full pipe.
-	// stdoutDone is what the reap goroutine waits on before cmd.Wait closes the pipe.
+	// The process keeps writing during the browser flow, so the drain runs in the background or the pipe fills.
+	// stdoutDone gates the reap's cmd.Wait.
 	stdoutDone := make(chan struct{})
 	go func() {
 		defer close(stdoutDone)
 		scanLoginOutputWithDrain(stdout, urlCh)
 	}()
 
-	// From here the sem is held until cmd.Wait returns, so a second attempt during
-	// the device-code window still gets 409.
+	// Held until cmd.Wait returns, so a retry during the device-code window gets 409.
 	semReleased = true
 
-	// The browser polls /api/whoami every 3s while the modal is open; without this a
-	// fresh cache entry keeps answering signed_out for its full TTL, so the login
-	// that just succeeded looks like it never did.
+	// The browser polls /api/whoami every 3s during login; without this a fresh entry answers signed_out for a full TTL.
 	h.identity.invalidate()
 
-	// Reaped whichever branch of the select wins, so both collect the exit status. On
-	// timeout the process GROUP is killed — CommandContext kills only the PID, which
-	// orphans helpers holding the stdout pipe — and waited for, to reclaim the FDs.
+	// Reaped on either branch. On timeout the process group is killed (CommandContext kills only the PID, orphaning
+	// helpers on the pipe) and waited for, reclaiming the FDs.
 	waitDone := make(chan struct{})
 	go h.reapLoginProcess(loginReap{
 		ctx:        ctx,
@@ -194,8 +183,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	select {
 	case result := <-urlCh:
 		if result["url"] == "" {
-			// No user completion is coming and the device code is wasted either way,
-			// so reap eagerly rather than waiting for the hard cap.
+			// No completion is coming and the code is wasted, so reap now rather than at the hard cap.
 			killProcessGroup(cmd)
 			<-waitDone
 		}

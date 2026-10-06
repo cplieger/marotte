@@ -1,7 +1,5 @@
-// The scan's own contract: a position indexes the ORIGINAL text, occurrences do
-// not overlap, and the case flag decides whether the fold is applied. The
-// cross-language rows are occurrences.node.test.ts's, read off the Go-produced
-// fixture; these are the shapes that file does not need a fixture for.
+// Positions index the ORIGINAL text, occurrences do not overlap, the case flag decides the fold.
+// Cross-language rows are occurrences.node.test.ts's.
 
 import { describe, it, expect } from "vitest";
 import { fold } from "./fold.js";

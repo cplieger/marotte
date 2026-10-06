@@ -12,8 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// envNames pulls the NAMEs out of a composed environment so a case can assert on
-// membership without restating every value.
+// envNames returns the names in a composed environment.
 func envNames(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
@@ -26,13 +25,8 @@ func envNames(env []string) []string {
 	return out
 }
 
-// The security half: a credential-shaped name in the inherited environment does
-// not reach the spawn.
-//
-// Cases are one per credential FAMILY rather than one per name, because the
-// mistake that matters is a family the rules do not reach at all. The
-// enumeration of the individual spellings the decision names is the next test,
-// where it is an assertion rather than the map compared against itself.
+// A credential-shaped inherited name does not reach the spawn. One case per family: a family the rules miss is the
+// mistake that matters.
 func TestScreenBridgeEnv_DropsCredentialShapedNames(t *testing.T) {
 	cases := map[string]struct{ name, value string }{
 		"forge token":            {"GITHUB_TOKEN", "ghp_live"},
@@ -51,9 +45,7 @@ func TestScreenBridgeEnv_DropsCredentialShapedNames(t *testing.T) {
 			if !slices.Equal(dropped, []string{c.name}) {
 				t.Errorf("dropped = %v, want [%s]", dropped, c.name)
 			}
-			// The value is what must not travel. Assert on it directly rather
-			// than only on the name, so a future "mask the value" shortcut
-			// that still passes the variable through fails here.
+			// Assert on the value, so a mask-the-value shortcut fails.
 			for _, kv := range env {
 				if strings.Contains(kv, c.value) {
 					t.Errorf("value survived in %q", kv)
@@ -63,13 +55,12 @@ func TestScreenBridgeEnv_DropsCredentialShapedNames(t *testing.T) {
 	}
 }
 
-// The enumeration D96 names, asserted one spelling at a time. The suffix rules
-// are what actually catch most of them, so this is the test that would fail if a
-// rule were narrowed to an exact list and a name were forgotten.
+// Each named credential spelling, one at a time, so narrowing a suffix rule to an exact list fails here.
 func TestScreenBridgeEnv_DropsEveryNameTheDecisionNames(t *testing.T) {
 	named := []string{
 		"GH_TOKEN", "GITHUB_TOKEN", "GITLAB_TOKEN", "GITEA_SERVER_TOKEN", "NPM_TOKEN",
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
+		"KIRO_API_KEY",
 	}
 	for _, name := range named {
 		t.Run(name, func(t *testing.T) {
@@ -81,18 +72,15 @@ func TestScreenBridgeEnv_DropsEveryNameTheDecisionNames(t *testing.T) {
 	}
 }
 
-// The usability half, and it is the half that decides whether the guard survives
-// contact with the work: the agent's children are compilers, package managers,
-// linkers and git, so a screen that took an ordinary build variable would be
-// switched off rather than corrected.
+// The agent's children are compilers, package managers and git; a screen taking an ordinary build variable gets
+// switched off.
 func TestScreenBridgeEnv_KeepsTheAmbientBuildEnvironment(t *testing.T) {
 	inherited := []string{
 		"PATH=/usr/bin", "HOME=/config/home", "TERM=xterm", "LANG=C.UTF-8", "TZ=UTC",
 		"CGO_ENABLED=1", "GOFLAGS=-mod=mod", "GOMODCACHE=/config/go/pkg/mod",
 		"CARGO_HOME=/config/cargo", "npm_config_registry=https://registry.npmjs.org",
 		"AWS_REGION=eu-west-1", "AWS_PROFILE=default",
-		// Names that merely CONTAIN a credential word. The rules are suffix and
-		// exact-match, so none of these is a credential and none may be dropped.
+		// Names that only contain a credential word are kept.
 		"TOKEN_BUCKET_SIZE=64", "SECRET_DIR=/run/secrets", "TOKENIZER=bpe",
 		"AWS_DEFAULT_REGION=eu-west-1", "SSH_AUTH_SOCK=/run/ssh-agent",
 	}
@@ -105,8 +93,7 @@ func TestScreenBridgeEnv_KeepsTheAmbientBuildEnvironment(t *testing.T) {
 	}
 }
 
-// A name that is nothing but the suffix reaches no consumer, so firing on it
-// would be the one case where the rule drops a variable and protects nothing.
+// A name that is only the suffix reaches nobody.
 func TestScreenBridgeEnv_BareSuffixIsNotACredential(t *testing.T) {
 	for _, name := range []string{"_TOKEN", "_SECRET"} {
 		env, dropped := screenBridgeEnv([]string{name + "=x"}, nil, nil)
@@ -116,10 +103,7 @@ func TestScreenBridgeEnv_BareSuffixIsNotACredential(t *testing.T) {
 	}
 }
 
-// The overlay is marotte's own, built in this process rather than inherited, and
-// os/exec keeps the LAST value for a repeated key. Filtering it could silently
-// drop an entry this server deliberately set and leave PATH resolving out of the
-// wrong install, so the screen must not touch it — including when it carries a
+// The overlay is marotte's own and os/exec keeps a key's last value, so the screen never touches it, even for a
 // name the inherited half would lose.
 func TestScreenBridgeEnv_OverlayIsExemptAndStaysLast(t *testing.T) {
 	env, dropped := screenBridgeEnv(
@@ -140,9 +124,7 @@ func TestScreenBridgeEnv_OverlayIsExemptAndStaysLast(t *testing.T) {
 	}
 }
 
-// The overlay is appended whether or not anything was inherited. A server whose
-// inherited environment is empty still has to receive marotte's own overlay,
-// which is what puts the active install's directory at the front of PATH.
+// The overlay is appended with nothing inherited too.
 func TestScreenBridgeEnv_OverlayLandsWithNothingInherited(t *testing.T) {
 	overlay := []string{"PATH=/config/tools/kiro-cli-versions/2.18.1", "MAROTTE_HOME=/config"}
 	env, dropped := screenBridgeEnv(nil, overlay, nil)
@@ -154,8 +136,7 @@ func TestScreenBridgeEnv_OverlayLandsWithNothingInherited(t *testing.T) {
 	}
 }
 
-// The override, which is what keeps a false positive from being a reason to
-// disable the whole screen.
+// The override keeps a false positive from being a reason to disable the screen.
 func TestScreenBridgeEnv_OperatorOverridePassesTheNameThrough(t *testing.T) {
 	inherited := []string{"BUILDKITE_AGENT_TOKEN=needed", "GITHUB_TOKEN=leak"}
 	env, dropped := screenBridgeEnv(inherited, nil, ParseEnvAllowlist("BUILDKITE_AGENT_TOKEN"))
@@ -164,6 +145,14 @@ func TestScreenBridgeEnv_OperatorOverridePassesTheNameThrough(t *testing.T) {
 	}
 	if !slices.Equal(dropped, []string{"GITHUB_TOKEN"}) {
 		t.Errorf("dropped = %v, want the unallowed credential", dropped)
+	}
+}
+
+// An exact-name credential yields to the allowlist: a headless API-key deployment opts in by naming it.
+func TestScreenBridgeEnv_AllowlistedExactNamePassesThrough(t *testing.T) {
+	env, dropped := screenBridgeEnv([]string{KiroAPIKeyVar + "=k"}, nil, ParseEnvAllowlist(KiroAPIKeyVar))
+	if !slices.Equal(env, []string{KiroAPIKeyVar + "=k"}) || len(dropped) != 0 {
+		t.Errorf("screenBridgeEnv(allowlisted %s) env = %v, dropped = %v, want it kept", KiroAPIKeyVar, env, dropped)
 	}
 }
 
@@ -194,9 +183,7 @@ func TestParseEnvAllowlist(t *testing.T) {
 	}
 }
 
-// A variable with no `=` cannot be an assignment, but os.Environ has been
-// observed to carry one on exotic platforms and the screen must not index past
-// the end of the string classifying it.
+// An entry with no `=` must not make the screen index past the string.
 func TestScreenBridgeEnv_MalformedEntryIsKeptWhole(t *testing.T) {
 	env, dropped := screenBridgeEnv([]string{"NOTANASSIGNMENT", "ALSO_A_TOKEN"}, nil, nil)
 	if !slices.Equal(env, []string{"NOTANASSIGNMENT"}) {
@@ -207,9 +194,7 @@ func TestScreenBridgeEnv_MalformedEntryIsKeptWhole(t *testing.T) {
 	}
 }
 
-// FuzzScreenBridgeEnv pins the invariant the screen exists for, on arbitrary
-// input: nothing whose NAME is credential-shaped survives into the composed
-// environment, and nothing else is lost.
+// FuzzScreenBridgeEnv pins on arbitrary input that no credential-shaped name survives and nothing else is lost.
 func FuzzScreenBridgeEnv(f *testing.F) {
 	f.Add("PATH=/usr/bin\nGITHUB_TOKEN=ghp\nHOME=/config/home")
 	f.Add("AWS_SECRET_ACCESS_KEY=x\nAWS_REGION=eu-west-1")
@@ -238,9 +223,7 @@ func FuzzScreenBridgeEnv(f *testing.F) {
 	})
 }
 
-// envDumpFake writes a fake kiro-cli that records the environment it was spawned
-// with before answering the handshake, so a test can assert on what the child
-// actually received rather than on what the composer returned.
+// envDumpFake writes a fake kiro-cli that records its spawn environment before the handshake.
 func envDumpFake(t *testing.T, dir, dumpPath string) string {
 	t.Helper()
 	script := `#!/bin/sh
@@ -270,14 +253,8 @@ done
 	return scriptPath
 }
 
-// The screen holds through a real spawn, and the operator is told which names it
-// took away. Both halves matter: the unit cases above prove the composer's
-// answer, and this proves the spawn uses it — a screen applied to a value the
-// spawn then ignored would pass every one of them. The log is the only notice an
-// operator gets that a variable they set never reached the agent, so a silent
-// drop is a support call about a tool that "doesn't authenticate".
-//
-// Not parallel: it sets an environment variable and swaps the slog default.
+// The screen holds through a real spawn and the dropped names are logged, the operator's only notice. Not parallel:
+// it sets an environment variable and swaps the slog default.
 func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 	const probe = "MAROTTE_SPAWN_PROBE_TOKEN"
 	t.Setenv(probe, "shh")
@@ -306,46 +283,80 @@ func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 	}
 }
 
-// The memory switch's second lever is an environment variable rather than a wire
-// key, because the settings bridge reaches the gate's veto and not its
-// eligibility term. These two tests cover the halves separately: the composer's
-// own rule, and that a real spawn carries the result.
+// The session id joins a reap line to its chat. Not parallel: it swaps the slog default.
+func TestStop_ReapLineNamesTheSession(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := envDumpFake(t, dir, filepath.Join(dir, "child.env"))
 
-func TestMemoryEnv_StatesBothValuesExplicitly(t *testing.T) {
-	for _, on := range []bool{false, true} {
-		name := "off"
-		if on {
-			name = "on"
-		}
-		t.Run(name, func(t *testing.T) {
-			got := memoryEnv(on)
-			want := []string{MemoryEnvVar + "=" + strconv.FormatBool(on)}
-			if !slices.Equal(got, want) {
-				t.Errorf("memoryEnv(%t) = %q, want %q", on, got, want)
-			}
-		})
+	logs := captureLogs(t)
+
+	b := New(scriptPath, dir)
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	// The off state must be an explicit "false" and never an empty slice. The env
-	// provider parses this to a real boolean and overrides in both directions, so
-	// withholding it hands the external A/B arm back to the experiment — which is
-	// the state this switch exists to take away from it.
-	if len(memoryEnv(false)) != 1 {
-		t.Errorf("memoryEnv(false) = %q, want one explicit assignment: an absent variable is not the off state",
-			memoryEnv(false))
+	b.Stop()
+
+	var reap string
+	for line := range strings.SplitSeq(logs.String(), "\n") {
+		if strings.Contains(line, `msg="kiro-cli reaped"`) || strings.Contains(line, `msg="kiro-cli ended on its own"`) {
+			reap = line
+		}
+	}
+	if reap == "" {
+		t.Fatalf("Stop logged no reap line:\n%s", logs.String())
+	}
+	if !strings.Contains(reap, "session_id=sess-env ") {
+		t.Errorf("reap line = %q, want session_id=sess-env (the session the handshake returned)", reap)
 	}
 }
 
-func TestStart_ChildEnvironmentCarriesTheMemoryLever(t *testing.T) {
-	// The ambient value is part of this fixture, so it is set rather than assumed:
-	// os/exec keeps the LAST value for a repeated key and the bridge appends after
-	// the screen, so a conflicting inherited assignment is exactly what proves the
-	// append order rather than a coincidence of an unset host.
-	t.Setenv(MemoryEnvVar, "ambient-should-lose")
+// spawnEnvDump starts a bridge against the env-dumping fake and returns the child environment's lines.
+func spawnEnvDump(t *testing.T, opts *marotte.StartOpts) []string {
+	t.Helper()
+	dir := t.TempDir()
+	dumpPath := filepath.Join(dir, "child.env")
+	scriptPath := envDumpFake(t, dir, dumpPath)
+	b := New(scriptPath, dir)
+	t.Cleanup(b.Stop)
+	opts.Lifetime = context.Background()
+	if err := b.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	dump, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read the child environment dump: %v", err)
+	}
+	return strings.Split(string(dump), "\n")
+}
+
+// The session door's memory mode is the one memory switch, so a spawn leaves the memory arm to AWS's ramp.
+func TestStart_ChildEnvironmentPinsNoMemoryArm(t *testing.T) {
+	for _, line := range spawnEnvDump(t, &marotte.StartOpts{Memory: marotte.MemoryPreference{Mode: "disabled"}}) {
+		if strings.HasPrefix(line, "KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED=") {
+			t.Errorf("child environment carries %q; the memory arm must follow the ramp", line)
+		}
+	}
+}
+
+// A run bridge turns KAS's LLM session title off; a chat bridge leaves it alone.
+func TestStart_SessionTitleSwitchOnlyWhenAsked(t *testing.T) {
+	const want = "KIRO_DISABLE_SESSION_TITLE_LLM=true"
+	if lines := spawnEnvDump(t, &marotte.StartOpts{DisableSessionTitles: true}); !slices.Contains(lines, want) {
+		t.Errorf("run-bridge child environment is missing %q", want)
+	}
+	if lines := spawnEnvDump(t, &marotte.StartOpts{}); slices.Contains(lines, want) {
+		t.Errorf("chat-bridge child environment carries %q; titles name History rows there", want)
+	}
+}
+
+func TestStart_ChildEnvironmentCarriesTheToolLoadLever(t *testing.T) {
+	const toolLoadEnvVar = "KIRO_FEATURE_TOOL_LOAD_ENABLED"
+	t.Setenv(toolLoadEnvVar, "ambient-should-lose")
 
 	for _, on := range []bool{false, true} {
-		name := "memory off"
+		name := "tool load off"
 		if on {
-			name = "memory on"
+			name = "tool load on"
 		}
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -355,8 +366,8 @@ func TestStart_ChildEnvironmentCarriesTheMemoryLever(t *testing.T) {
 			b := New(scriptPath, dir)
 			t.Cleanup(b.Stop)
 			if err := b.Start(context.Background(), &marotte.StartOpts{
-				Lifetime: context.Background(),
-				Memory:   on,
+				Lifetime:   context.Background(),
+				ToolSearch: on,
 			}); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
@@ -365,29 +376,21 @@ func TestStart_ChildEnvironmentCarriesTheMemoryLever(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read the child environment dump: %v", err)
 			}
-			// Composed through the production function rather than restating its
-			// rule, so a change to the spelling cannot leave this test asserting
-			// the old one.
-			want := memoryEnv(on)[0]
-			if !slices.Contains(strings.Split(string(dump), "\n"), want) {
-				t.Errorf("child environment is missing %q with Memory=%t; the spawn does not carry the memory lever:\n%s",
-					want, on, dump)
+			lines := strings.Split(string(dump), "\n")
+			want := toolLoadEnvVar + "=" + strconv.FormatBool(on)
+			if !slices.Contains(lines, want) {
+				t.Errorf("child environment is missing %q with ToolSearch=%t:\n%s", want, on, dump)
 			}
-			if slices.Contains(strings.Split(string(dump), "\n"), MemoryEnvVar+"=ambient-should-lose") {
-				t.Errorf("the inherited %s survived with Memory=%t; the lever must be appended AFTER the screen so it wins",
-					MemoryEnvVar, on)
+			if slices.Contains(lines, toolLoadEnvVar+"=ambient-should-lose") {
+				t.Errorf("the inherited %s survived with ToolSearch=%t; the lever must be appended after the screen",
+					toolLoadEnvVar, on)
 			}
 		})
 	}
 }
 
-// The child locale is pinned by the parent, and the inherited value loses.
-//
-// Two halves, and the ordering one is what the test exists for: the credential
-// screen is a denylist that passes LANG through by name, so a locale appended
-// BEFORE it is a silent no-op against an operator's own value — os/exec keeps the
-// LAST assignment of a repeated key. The ambient value is set rather than assumed
-// for that reason.
+// The parent pins the child locale over the inherited value. The screen passes LANG through, and os/exec keeps the
+// last assignment, so a locale appended before it is a no-op; the ambient value is set for that reason.
 func TestStart_ChildEnvironmentPinsTheLocale(t *testing.T) {
 	t.Setenv(localeEnvVar, "ambient-should-lose")
 
@@ -406,8 +409,7 @@ func TestStart_ChildEnvironmentPinsTheLocale(t *testing.T) {
 		t.Fatalf("read the child environment dump: %v", err)
 	}
 	lines := strings.Split(string(dump), "\n")
-	// Composed through the production function so a change to the value cannot
-	// leave this test asserting the old one.
+	// Composed through the production function so the expected value cannot go stale.
 	if want := localeEnv()[0]; !slices.Contains(lines, want) {
 		t.Errorf("child environment is missing %q; every spawned tool then chooses its own output encoding:\n%s",
 			want, dump)

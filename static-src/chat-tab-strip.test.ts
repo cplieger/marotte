@@ -1,16 +1,6 @@
-// ---------------------------------------------------------------------------
-// The tab strip's per-open-row store subscriptions + the context-bar effect
-// (chat.ts installStoreSubscribers).
-//
-// One effect per OPEN chat tab, registry synced on the tab projection's emit;
-// the context bar on its own active-session effect. These tests drive the REAL
-// store (an in-process collaborator we own) and assert through the tab-write
-// seam (renameTab / setTabStatus) — a command boundary to a separate DOM
-// subsystem. The registry seam (openChatRefs) and the decision
-// dock are signal-backed fakes, so the real reactive graph decides what
-// re-runs: what these tests pin is the SUBSCRIPTION TOPOLOGY, not the writers'
-// rendering.
-// ---------------------------------------------------------------------------
+// The tab strip's per-open-row store subscriptions and the context-bar effect (chat.ts
+// installStoreSubscribers), on the REAL store, asserted through the tab-write seam. The
+// registry and dock are signal-backed fakes: what is pinned is the SUBSCRIPTION TOPOLOGY.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Type-only, for the `importOriginal` below.
@@ -34,9 +24,7 @@ vi.mock("./tabs.js", async () => {
   h.openRefs = signal<string[]>([]);
   return {
     ...tabsMock(),
-    // The registry seam: a TRACKED read of which chat refs hold an open tab.
-    // Signal-backed so a test's write stands in for the projection's emit and
-    // re-runs the sync effect for real.
+    // A TRACKED read of which chat refs have an open tab; a test write stands in for the emit.
     openChatRefs: () => h.openRefs.value,
     tabIdFor: h.tabIdFor,
     renameTab: h.renameTab,
@@ -60,11 +48,8 @@ vi.mock("./decision-dock.js", async () => {
 
 vi.mock("./context-ui.js", () => ({ refreshContextUI: h.refreshContextUI }));
 
-// chat.ts's remaining first-hop dependencies, inert. The store is deliberately
-// NOT on this list: the subject is what its signals re-run.
-// `confirmChatExists` is present-but-inert so real-ESM linking succeeds: `chat.ts`
-// imports it for the deep-link arm, and Browser Mode links for real rather than
-// reading properties off a namespace object. No case here reaches it.
+// chat.ts's other first-hop dependencies, inert; never the store, whose signals are the
+// subject. `confirmChatExists` exists so real-ESM linking succeeds.
 vi.mock("./store-load.js", () => ({
   loadList: vi.fn(),
   loadMessages: vi.fn(),
@@ -89,7 +74,10 @@ vi.mock("./messages.js", () => ({
   transcriptViewFor: vi.fn(() => null),
   disposeChatView: vi.fn(),
 }));
-vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
+vi.mock("./attachments.js", () => ({
+  addAttachment: vi.fn(),
+  unownedAttachmentPaths: vi.fn(() => []),
+}));
 vi.mock("./composer-state.js", () => ({
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
@@ -102,9 +90,8 @@ vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel:
 vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
 vi.mock("./dom.js", () => ({
   $: { messages: document.createElement("div"), promptInput: { focus: () => undefined } },
-  // The real `paintPlaceholder` comes through the `./skeleton.js` mock's
-  // `importOriginal` and marks its host busy through this module. Browser Mode links
-  // for real, so an absent export fails COLLECTION before any case runs.
+  // `paintPlaceholder` marks its host busy through this module; an absent export fails
+  // COLLECTION.
   setBusy: (el: Element, busy: boolean) => {
     if (busy) {
       el.setAttribute("aria-busy", "true");
@@ -114,7 +101,13 @@ vi.mock("./dom.js", () => ({
   },
 }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_ACTIVATE_CHAT: "activate-chat" }));
+// governance.ts, reached through the settings actions, imports `onSSE`; Browser
+// Mode links for real, so the name has to exist.
+vi.mock("./bus.js", () => ({
+  onBus: vi.fn(),
+  onSSE: undefined,
+  BUS_ACTIVATE_CHAT: "activate-chat",
+}));
 vi.mock("./transport.js", () => ({ newOpID: () => "op-test" }));
 vi.mock("./actions/chat.js", () => ({
   setMode: { dispatch: vi.fn() },
@@ -185,9 +178,7 @@ describe("per-row effects write only their own row", () => {
     installStoreSubscribers();
     clearStripSpies();
 
-    // The flip is a LIVENESS statement, not `thinking`: the dot derives `working`
-    // from an open turn (`turnLive`), and `thinking` is deliberately not an input to
-    // that derivation, so setting it would churn the signal and paint `idle`.
+    // A LIVENESS statement: `working` derives from an open turn, never from `thinking`.
     setTurnOpen("a", true);
 
     expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
@@ -224,14 +215,9 @@ describe("per-row effects write only their own row", () => {
     expect(h.setTabStatus).not.toHaveBeenCalledWith("tb_b", "input", UPDATED_AT);
   });
 
-  // The other direction, and the one a mapping test structurally cannot see: the
-  // ask LEAVING has to re-run the row and write the recovered state. A workflow
-  // run's ask is filed under the LAUNCHING chat's key, so this row is the one that
-  // was reported stuck on `input` after the run's own sub-tab had recovered.
+  // The ask LEAVING must re-run the row: a run's ask is filed under the launching chat.
   it("writes the recovered state when a background chat's ask is cleared", () => {
-    // The launching turn ended when the run was created, so `done` is what a is
-    // waiting to go back to — carried by the HEADER's own `last_turn_outcome`, which
-    // is the dot's one verdict source now, rather than by a client-held latch.
+    // `done` comes from the HEADER's `last_turn_outcome`, the dot's one verdict source.
     setSessions([session("a", { last_turn_outcome: "completed" }), session("b")]);
     setActive("b");
     h.openRefs.value = ["a", "b"];
@@ -276,9 +262,7 @@ describe("row-effect lifecycle follows the tab projection", () => {
   });
 
   it("paints a row that opened before its store record arrived", () => {
-    // A tab can land ahead of the session list (a remote open before loadList
-    // resolves). The row effect tracks the set's structure, so the record
-    // arriving is what paints the row.
+    // A tab can land before the session list; the record arriving paints the row.
     h.openRefs.value = ["a"];
     installStoreSubscribers();
     clearStripSpies();

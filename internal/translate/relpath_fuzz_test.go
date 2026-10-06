@@ -21,8 +21,7 @@ func FuzzTranslatorRelPath(f *testing.F) {
 	f.Add("", "/workspace/file.go")
 	f.Add("/workspace", "/workspace/../escape")
 	f.Add("/workspace", "/workspace/deep/../../out")
-	// A first component that merely BEGINS with two dots is a name, not a
-	// traversal: the separator-precise rule must keep these relative.
+	// A first component merely BEGINNING with two dots is a name, not a traversal.
 	f.Add("/workspace", "/workspace/..drafts/main.go")
 	f.Add("/workspace", "/workspace/..")
 
@@ -41,9 +40,7 @@ func FuzzTranslatorRelPath(f *testing.F) {
 		clean := filepath.Clean(abs)
 		root := filepath.Clean(workDir)
 		rel, err := filepath.Rel(root, clean)
-		// Oracle for the escape half, spelled separator-precisely (the
-		// contract pathinside.RelEscapes implements): a name that merely
-		// begins with two dots is inside and must NOT fall back to abs.
+		// The escape oracle, separator-precise (pathinside.RelEscapes's contract).
 		if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 			if result != abs {
 				t.Fatalf("escaping: got %q, want %q", result, abs)

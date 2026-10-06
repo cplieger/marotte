@@ -1,5 +1,4 @@
-// A PR row's title link keeps its hit target on `--hit-floor` while its painted
-// box stays a line box. A real hit test over a row the production path built.
+// A PR title link keeps its hit target on `--hit-floor` while its painted box stays a line box; a real hit test.
 
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
@@ -61,11 +60,9 @@ const forge = {
   connected: true,
   reconnect_required: false,
 };
-/** cplieger/one's id, the key its routes and its rows carry. */
 const REPO_ID = "v1.63706c69656765722f6f6e65";
 
-/** Long enough to ellipsise in the title column at any width this suite runs at,
- *  so the clip is doing real work rather than sitting inert. */
+/** Long enough to ellipsise at every width here, so the clip does real work. */
 const LONG_TITLE =
   "A pull request title long enough that it has to ellipsise against the action column at " +
   "every width this suite runs at, which takes rather more words than one line of prose";
@@ -99,7 +96,7 @@ function pr(n: number) {
   };
 }
 
-/** A transcript-width column, IN the viewport, so every rect is a real one. */
+/** In the viewport, so every rect is real. */
 const host = document.createElement("div");
 host.style.cssText = "position:fixed;top:0;left:0;inline-size:900px;";
 document.body.appendChild(host);
@@ -125,8 +122,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Two rows of one repo, rendered by the tab itself. Two, because a target that
- *  overhangs into its neighbour is the failure a single row cannot show. */
+/** Two rows: overhanging into the neighbour is the failure one row cannot show. */
 async function rows(): Promise<HTMLElement[]> {
   ensureForges.mockImplementation(() => Promise.resolve({ forges: [forge], kinds: ["github"] }));
   const list = {
@@ -161,9 +157,7 @@ async function rows(): Promise<HTMLElement[]> {
   return found;
 }
 
-/** `--hit-floor` in pixels for the tier currently set. A custom property reads back
- *  as its raw token, so the only honest way to get the length is to let the engine
- *  resolve it on a real box. */
+/** A custom property reads back as its raw token, so the engine resolves it on a real box. */
 function hitFloorPx(): number {
   const probe = document.createElement("div");
   probe.style.blockSize = "var(--hit-floor)";
@@ -187,7 +181,7 @@ describe("a PR row's title link", () => {
     const box = link.getBoundingClientRect();
     const floor = hitFloorPx();
 
-    // The expander is centred on the link, so it reaches half the shortfall each way.
+    // The expander is centred, reaching half the shortfall each way.
     const reach = (floor - box.height) / 2;
     expect(reach, "the link paints under the floor, or there is nothing to test").toBeGreaterThan(
       1,
@@ -202,15 +196,13 @@ describe("a PR row's title link", () => {
       document.elementFromPoint(cx, box.bottom + reach - 1),
       "and one just inside its bottom edge",
     ).toBe(link);
-    // The control. Without it an expander of any size passes, including one
-    // overhanging the row into the next row's own title.
+    // The control: without it an expander of any size passes, including one overhanging the next row's title.
     expect(
       document.elementFromPoint(cx, box.bottom + reach + 2),
       "and the target stops there: it may not reach past the floor",
     ).not.toBe(link);
 
-    // The neighbour keeps its own controls: an expander is only admissible while it
-    // steals nothing.
+    // An expander is admissible only while it steals nothing from the neighbour.
     const nextLink = titleOf(second!);
     const nb = nextLink.getBoundingClientRect();
     expect(
@@ -236,15 +228,13 @@ describe("a PR row's title link", () => {
       const text = link.querySelector<HTMLElement>(".git-pr-row-text");
       expect(text, "the text needs its own span for the clip to live on").not.toBeNull();
 
-      // The box stays a line box. A `min-height` on the anchor would satisfy the
-      // floor too, and it is what this asserts against: the row grows with it.
+      // A `min-height` on the anchor would satisfy the floor too, but grows the row.
       expect(
         link.getBoundingClientRect().height,
         `${tier}: the paint stays a line box; only the target takes the floor`,
       ).toBeLessThan(hitFloorPx());
 
-      // The clip is the span's, and the anchor may not carry one — an `overflow` on
-      // the anchor clips the expander away, which is invisible to a cascade read.
+      // The clip is the span's: an `overflow` on the anchor clips the expander away, invisibly to a cascade read.
       expect(getComputedStyle(text!).overflow, `${tier}: the span clips`).toBe("hidden");
       expect(getComputedStyle(link).overflow, `${tier}: the anchor does not`).toBe("visible");
       expect(

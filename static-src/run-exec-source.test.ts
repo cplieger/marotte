@@ -1,12 +1,4 @@
-// ---------------------------------------------------------------------------
 // The workflow adapter: KAS's `inspect` reply folded into the exec view's model.
-//
-// Pure, so these are plain value assertions with no DOM. What they pin is the half of
-// the reply nothing used to read — the control-flow containers, `nodePlan`, and
-// `state.inputs` — plus the two derivations that are this file's own judgement rather
-// than a copy of the wire: the roll-up of a container's state from its children, and
-// the alert's precedence.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
 import { runToExec, indexPlan } from "./run-exec-source.js";
@@ -17,11 +9,9 @@ import type { RunAsks } from "./fundamentals/run-card.js";
 
 const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
 
-// `root` stays `unknown`: one case hands over a container whose `type` is not in
-// `RunNode`'s union, which is the foreign-shape axis the adapter's structural walk
-// exists for, so a typed parameter would refuse the case rather than the shape. The
-// factory supplies every field production reads, and the assertion is narrowed to
-// that one member.
+// `root` stays `unknown`: one case hands over a container whose `type` is not in `RunNode`'s union,
+// which is the foreign-shape axis the adapter's structural walk exists for, so a typed parameter
+// would refuse the case rather than the shape.
 function stateWith(root: unknown, extra: Record<string, unknown> = {}): RunState {
   return { ...makeRunState({ status: "running" }), root: root as RunNode, ...extra };
 }
@@ -35,8 +25,8 @@ const step = (nodeId: string, status: string, extra: Record<string, unknown> = {
 });
 
 describe("runToExec structure", () => {
-  // The root is a container KAS names after the workflow itself, so keeping it would
-  // put one group around everything — an indent carrying no information.
+  // The root is a container KAS names after the workflow itself, so keeping it would put one group
+  // around everything — an indent carrying no information.
   it("unwraps the synthetic root and keeps the real top level", () => {
     const run = runToExec(
       "wf_1",
@@ -50,13 +40,12 @@ describe("runToExec structure", () => {
       NO_ASKS,
     );
     expect(run.nodes.map((n) => n.label)).toEqual(["a", "b"]);
-    // The path still carries the root, because it is the address the server stamps on
-    // a step frame and the two sides of that join must agree.
+    // The path still carries the root, because it is the address the server stamps on a step frame
+    // and the two sides of that join must agree.
     expect(run.nodes[0]?.path).toBe("wf_1/a");
   });
 
-  // The regression this file exists to prevent: every surface flattened the tree to
-  // its leaves, so a loop, a parallel and a watch were all invisible.
+  // Flattening the tree to its leaves would make a loop, a parallel and a watch invisible.
   it("keeps control-flow containers as nodes of their own", () => {
     const run = runToExec(
       "wf_1",
@@ -91,24 +80,23 @@ describe("runToExec structure", () => {
       "step:work",
       "watch:watch",
     ]);
-    // The iteration container keeps its own id as its LABEL and contributes KAS's
-    // frame spelling to the PATH: the detail pane addresses a step's live
-    // transcript by path, so a tree keyed on the state tree's `loop#0` selects a
-    // row nothing ever streams into.
+    // The iteration container keeps its own id as its LABEL and contributes KAS's frame spelling to
+    // the PATH: the detail pane addresses a step's live transcript by path, so a tree keyed on the
+    // state tree's `loop#0` selects a row nothing ever streams into.
     expect(flatten(run.nodes).map((n) => n.path)).toEqual([
       "wf_1/loop",
       "wf_1/loop/iter-0",
       "wf_1/loop/iter-0/work",
       "wf_1/watch",
     ]);
-    // Only the leaves count as steps: a container's span is its children's, so
-    // counting it would inflate the total and double-count the time.
+    // Only the leaves count as steps: a container's span is its children's, so counting it would
+    // inflate the total and double-count the time.
     expect(counters(run.nodes).total).toBe(2);
     expect(leaves(run.nodes).map((n) => n.label)).toEqual(["work", "watch"]);
   });
 
-  // A node type this build has never seen must land on a kind the CSS has a rule for,
-  // or the row renders with no glyph and no treatment.
+  // A node type this build has never seen must land on a kind the CSS has a rule for, or the row
+  // renders with no glyph and no treatment.
   it("maps an unknown node type onto group rather than passing it through", () => {
     const run = runToExec(
       "wf_1",
@@ -121,9 +109,9 @@ describe("runToExec structure", () => {
 });
 
 describe("runToExec container state", () => {
-  // A container reads `running` for as long as anything inside it is open, which tells
-  // a reader nothing they cannot already see. The worst outcome beneath it is what a
-  // collapsed group has to be able to say.
+  // A container reads `running` for as long as anything inside it is open, which tells a reader
+  // nothing they cannot already see. The worst outcome beneath it is what a collapsed group has to
+  // be able to say.
   it("rolls the worst child outcome up to its container", () => {
     for (const [child, want] of [
       ["failed", "fail"],
@@ -153,8 +141,8 @@ describe("runToExec container state", () => {
     }
   });
 
-  // All children done means the container is done, even while its own status still
-  // says running — which it does until KAS settles it.
+  // All children done means the container is done, even while its own status still says running —
+  // which it does until KAS settles it.
   it("settles a container once every child has", () => {
     const run = runToExec(
       "wf_1",
@@ -179,8 +167,8 @@ describe("runToExec container state", () => {
 });
 
 describe("runToExec reads what nothing read before", () => {
-  // `state.inputs` had zero readers on any surface: what the run was ASKED to do was
-  // displayed nowhere in the app.
+  // `state.inputs` had zero readers on any surface: what the run was ASKED to do was displayed
+  // nowhere in the app.
   it("carries the run's inputs", () => {
     const run = runToExec(
       "wf_1",
@@ -191,9 +179,9 @@ describe("runToExec reads what nothing read before", () => {
     expect(run.inputs).toEqual({ repo: "marotte" });
   });
 
-  // `nodePlan` had zero readers: passed through verbatim by GET /api/runs/{id} and
-  // decoded by nothing, so a loop's bound and its exit condition were on the wire and
-  // had never been on screen.
+  // `nodePlan` had zero readers: passed through verbatim by GET /api/runs/{id} and decoded by
+  // nothing, so a loop's bound and its exit condition were on the wire and had never been on
+  // screen.
   it("states a repeat's bound and stop condition from the plan", () => {
     const run = runToExec(
       "wf_1",
@@ -251,8 +239,7 @@ describe("runToExec reads what nothing read before", () => {
     expect(facts.get("Watch")).toBe("reached a terminal state");
   });
 
-  // `auto` is the ABSENCE of a model choice, so naming it as one implies a pin that
-  // never happened.
+  // `auto` is the ABSENCE of a model choice, so naming it as one implies a pin that never happened.
   it("does not report auto as a model", () => {
     const run = runToExec(
       "wf_1",
@@ -266,9 +253,8 @@ describe("runToExec reads what nothing read before", () => {
 });
 
 describe("indexPlan tolerance", () => {
-  // A foreign shape whose members grow between kiro-cli releases. The page's other
-  // half renders fine whether or not this walk understood all of it, so nothing here
-  // may throw.
+  // A foreign shape whose members grow between kiro-cli releases. The page's other half renders
+  // fine whether or not this walk understood all of it, so nothing here may throw.
   it("survives a plan that is not the shape it expects", () => {
     for (const input of [undefined, null, 42, "nope", {}, [], [null, 7, "x"]]) {
       expect(() => indexPlan(input)).not.toThrow();
@@ -288,25 +274,25 @@ describe("indexPlan tolerance", () => {
     expect(idx.get("nested")?.join).toBe("any");
   });
 
-  // `stopWhen` is the other spelling; the engine rejects a node declaring both, so
-  // folding them into one field cannot lose one.
+  // `stopWhen` is the other spelling; the engine rejects a node declaring both, so folding them
+  // into one field cannot lose one.
   it("takes stopWhen as a stop condition", () => {
     expect(indexPlan([{ nodeId: "n", stopWhen: "watch.terminal" }]).get("n")?.stopCondition).toBe(
       "watch.terminal",
     );
   });
 
-  // A node the plan mentions with nothing interesting on it earns no entry, so a
-  // caller can treat "present" as "has a fact".
+  // A node the plan mentions with nothing interesting on it earns no entry, so a caller can treat
+  // "present" as "has a fact".
   it("indexes only nodes that carry a fact", () => {
     expect(indexPlan([{ nodeId: "bare", type: "step" }]).size).toBe(0);
   });
 });
 
 describe("runToExec alert precedence", () => {
-  // An unanswered ask outranks the run's own status, because the run genuinely still
-  // reads `running` while a step's ask blocks it — so the status reports nothing wrong
-  // and would leave the one actionable state unsaid.
+  // An unanswered ask outranks the run's own status, because the run genuinely still reads
+  // `running` while a step's ask blocks it — so the status reports nothing wrong and would leave
+  // the one actionable state unsaid.
   it("puts an unanswered ask ahead of everything", () => {
     const run = runToExec(
       "wf_1",
@@ -326,8 +312,8 @@ describe("runToExec alert precedence", () => {
     expect(run.nodes[0]?.state).toBe("input");
   });
 
-  // A deliberate stop is not a failure, and telling them apart is the whole reason
-  // `stopInitiator` is on the wire.
+  // A deliberate stop is not a failure, and telling them apart is the whole reason `stopInitiator`
+  // is on the wire.
   it("separates a user stop from a failure", () => {
     const stopped = runToExec(
       "wf_1",
@@ -340,7 +326,23 @@ describe("runToExec alert precedence", () => {
       NO_ASKS,
     );
     expect(stopped.alert?.kind).toBe("stopped");
-    expect(stopped.alert?.text).toContain("changed my mind");
+    expect(stopped.alert?.text).toBe("Stopped by you: changed my mind");
+
+    const paused = runToExec(
+      "wf_1",
+      stateWith(step("a", "paused"), { status: "paused", stopInitiator: "user" }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(paused.alert?.text).toBe("Paused by you");
+
+    const pending = runToExec(
+      "wf_1",
+      stateWith(step("a", "running"), { status: "running", pausePending: { initiator: "user" } }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(pending.alert).toEqual({ kind: "paused", text: "Pausing after the current step" });
 
     const failed = runToExec(
       "wf_1",
@@ -369,9 +371,8 @@ describe("runToExec alert precedence", () => {
     expect(run.alert?.text).toContain("transient");
   });
 
-  // `pauseDetail.class` gained a second member upstream in 2.21.1. An exhausted
-  // continuation budget is not a transient failure, and the reason sentence
-  // already carries upstream's own explanation.
+  // `pauseDetail.class` gained a second member upstream in 2.21.1. An exhausted continuation budget
+  // is not a transient failure, and the reason sentence already carries upstream's own explanation.
   it("does not call an exhausted continuation budget a transient error", () => {
     const run = runToExec(
       "wf_1",
@@ -388,10 +389,10 @@ describe("runToExec alert precedence", () => {
     expect(run.alert?.text).not.toContain("transient");
   });
 
-  // The two need-input literals reach the reader as a sentence about THEM rather
-  // than verbatim, and on this page the alert also has to say what the Resume
-  // BUTTON beside it will do: KAS's resume clears the run's pause reason and leaves
-  // the step node's own signal, so the next step execution parks again.
+  // The two need-input literals reach the reader as a sentence about THEM rather than verbatim, and
+  // on this page the alert also has to say what the Resume BUTTON beside it will do: KAS's resume
+  // clears the run's pause reason and leaves the step node's own signal, so the next step execution
+  // parks again.
   it("rewrites a need-input pause and warns that Resume alone re-parks it", () => {
     for (const reason of [
       "Step requested user input via send_message.",
@@ -409,16 +410,16 @@ describe("runToExec alert precedence", () => {
         "A step is waiting for your answer. Resume alone will park it again, " +
           "so answer or waive it in the dock",
       );
-      // The literal itself never reaches the reader: it names a tool and a node id
-      // where the reader needs to know somebody owes an answer.
+      // The literal itself never reaches the reader: it names a tool and a node id where the reader
+      // needs to know somebody owes an answer.
       expect(run.alert?.text, reason).not.toContain("send_message");
     }
   });
 
-  // The branch arm: KAS composes `Parallel '<id>' is waiting on branch '<branch>'.`
-  // onto the run because the branch's own sentence went to a shallow state copy, so
-  // before the node-signal arm this page quoted a sentence naming a branch at a reader
-  // who needed to know somebody owes an answer.
+  // The branch arm: KAS composes `Parallel '<id>' is waiting on branch '<branch>'.` onto the run
+  // because the branch's own sentence went to a shallow state copy, so before the node-signal arm
+  // this page quoted a sentence naming a branch at a reader who needed to know somebody owes an
+  // answer.
   it("recognises a park inside a parallel branch and says the same thing", () => {
     const run = runToExec(
       "wf_1",
@@ -463,8 +464,4 @@ describe("runToExec alert precedence", () => {
   });
 });
 
-// The run-level roll-up this file used to pin is GONE with `ExecRun.outputs`:
-// `RunState.capturedOutputs` and `RunState.artifacts` are keyed by capture name with
-// no node attribution anywhere on the wire, so a per-step region cannot be sourced
-// from them and the roll-up lost its only reader. Both fields stay on `RunState`,
-// which is a documented verbatim passthrough of KAS's own schema.
+// Both fields stay on `RunState`, which is a documented verbatim passthrough of KAS's own schema.

@@ -1,30 +1,13 @@
-//
-// THE COMPOSER'S FOCUS TREATMENT, TESTED AS AN EVENT ORDER.
-//
-// The bug: `.prompt-box:focus-within` made the accent border a function of
-// whether ANY descendant held focus, and a press on a descendant that cannot
-// hold focus drops focus to <body> on the way down and restores it on the way
-// up. The order is mousedown -> blur -> mouseup -> click, so the border went
-// off-then-on-again inside one gesture — a flicker, not a state change.
-//
-// The reported instance was the "Supervised mode" row in the `+` menu, the one
-// <label> in a card whose three siblings are <button>s. It was never one row's
-// bug: `#context-card` is built entirely from spans, and `.prompt-pills` own
-// padding is not focusable either. So a snapshot of one row proves nothing; what
-// has to be proved is that the predicate the border keys on does not ROUND TRIP
-// across the gesture, for a press on a non-focusable descendant.
-//
-// Two halves, and both are needed. The source half reads which predicate the
-// stylesheet actually uses, because the test page loads no app stylesheet. The event
-// half drives the real order against the real menu and evaluates that predicate
-// with `matches()` at every step — the browser supports `:has(… :focus)`, so
-// this is the shipped selector being asked the question, not a re-description of
-// it. `:focus-within` is modelled by hand (the assertion is about the authored
-// rule, not about the live selector) and
-// labelled as such; it is here to show the round trip the fix removes.
+// The composer's accent border, tested as an event order. `:focus-within` flickers on a press on a non-focusable
+// descendant (focus drops to <body> on mousedown and returns on click); `#context-card` and the pill padding are
+// non-focusable too. The source half reads the shipped predicate (the page loads no app sheet); the event half asks it
+// with `matches()` at every step. `:focus-within` is hand-modelled to show the round trip the predicate avoids.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import type * as Store from "./store.js";
+import type * as ChatActions from "./actions/chat.js";
+import type * as Toast from "./toast.js";
 
 const { setSupervisedDispatch, collapseAll } = vi.hoisted(() => ({
   setSupervisedDispatch: vi.fn(),
@@ -34,7 +17,8 @@ const { setSupervisedDispatch, collapseAll } = vi.hoisted(() => ({
 let activeID = "";
 let supervised: boolean | undefined;
 
-vi.mock("./store.js", () => ({
+vi.mock("./store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Store>()),
   activeSession: {
     peek: () => (activeID === "" ? undefined : { id: activeID, supervised_mode: supervised }),
     get value() {
@@ -42,28 +26,26 @@ vi.mock("./store.js", () => ({
     },
   },
   isThinking: () => false,
-  // The tangent row is disabled on an empty chat, and this file drives the menu
-  // for a chat that has one, so every row it presses is a live one.
+  // The tangent row is disabled on an empty chat; this chat has one, so every pressed row is live.
   isEmptyChat: () => false,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  get: vi.fn(() => undefined),
-  getActive: vi.fn(() => undefined),
-  getSessions: vi.fn(() => []),
-  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker: vi.fn() }));
 vi.mock("./chat.js", () => ({ openTangentChat: vi.fn() }));
-vi.mock("./toast.js", () => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
-vi.mock("./actions/chat.js", () => ({
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  ...(await import("./__test-helpers__/toast-mock.js")).toastMock(),
+}));
+vi.mock("./actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ChatActions>()),
   setSupervised: { dispatch: setSupervisedDispatch },
+  setInterruptMode: { dispatch: vi.fn() },
   compactChat: { dispatch: vi.fn() },
+  renameChat: { dispatch: vi.fn() },
+  downloadKiroSession: { dispatch: vi.fn() },
 }));
 vi.mock("./submit.js", () => ({ submitPrompt: vi.fn() }));
 
-/** The selector the border keys on, read out of the shipped stylesheet. */
 function focusSelector(): string {
   const body = ruleBody(loadCSS("15-input.css"), ".prompt-box");
   const m = /&(:[^\s{]+)\s*\{[^}]*border-color:\s*var\(--c-accent\)/.exec(body);
@@ -74,10 +56,7 @@ function focusSelector(): string {
   return `.prompt-box${m![1]}`;
 }
 
-/** `:focus-within`, hand-modelled, so the assertion is about the authored rule
- *  rather than about a live selector match on a
- *  focused descendant, so the OLD behaviour has to be expressed rather than
- *  queried. This IS its definition — some descendant is the active element. */
+/** `:focus-within` by definition (some descendant is the active element), so the rule is expressed, not queried. */
 function focusWithinModel(box: Element): boolean {
   const active = document.activeElement;
   return active !== null && active !== document.body && box.contains(active);
@@ -109,7 +88,6 @@ async function mount(): Promise<{
   };
 }
 
-/** The supervised row's <label>, found the way a user finds it. */
 function supervisedLabel(card: HTMLElement): HTMLLabelElement {
   const label = [...card.querySelectorAll("label.chat-opt-row")].find((l) =>
     (l.textContent ?? "").includes("Supervised mode"),
@@ -148,8 +126,6 @@ describe("the composer's focus treatment", () => {
     const checkbox = card.querySelector<HTMLInputElement>("#chat-opt-supervised");
     expect(checkbox, "the supervised row must carry its checkbox").not.toBeNull();
 
-    // The gesture starts with focus in the message box — the state the user was
-    // in when they noticed the border going away.
     input.focus();
     const lit: boolean[] = [];
     const litOld: boolean[] = [];
@@ -159,23 +135,17 @@ describe("the composer's focus treatment", () => {
     };
     sample();
 
-    // mousedown. The browser walks up from the label for a mouse-focusable
-    // ancestor, finds none, and clears focus to <body>. Modelled explicitly
-    // because a synthetic pointer event moves no focus; this IS the step
-    // the diagnosis names.
+    // A synthetic pointer event moves no focus, so the drop to <body> on mousedown is modelled explicitly.
     label.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     input.blur();
     sample();
 
-    // mouseup, then the click the label forwards to its checkbox, which takes
-    // focus — the "until release" half of the report.
     label.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
     checkbox!.checked = true;
     checkbox!.focus();
     checkbox!.dispatchEvent(new Event("change", { bubbles: true }));
     sample();
 
-    // The interaction still works: the row toggled and persisted.
     expect(
       setSupervisedDispatch,
       "the click must still reach the supervised action",
@@ -184,24 +154,18 @@ describe("the composer's focus treatment", () => {
       enabled: true,
     });
 
-    // The border must be LIT at the start, or the rest of this proves nothing:
-    // a selector that is false throughout cannot round-trip either, and reverting
-    // to a live `:focus-within` match would make the
-    // round-trip check below pass vacuously.
+    // The border must be lit at the start, or a selector false throughout passes the round-trip check vacuously.
     expect(
       lit[0],
       "the border must be lit while the message box holds focus, or the round-trip check below is vacuous",
     ).toBe(true);
 
-    // The old predicate round-trips — true, false, true — which is the flicker.
     expect(
       litOld,
       "the :focus-within model must reproduce the reported flicker, or this test is not exercising the bug",
     ).toEqual([true, false, true]);
 
-    // The shipped selector does not. It goes false when the message box genuinely
-    // loses focus and stays there; no value appears, disappears and reappears
-    // inside one gesture.
+    // The shipped selector goes false when the box really loses focus and stays there.
     const roundTrips = lit.some(
       (v, i) => i > 0 && i < lit.length - 1 && !v && lit[i - 1] && lit[i + 1],
     );
@@ -213,9 +177,7 @@ describe("the composer's focus treatment", () => {
   });
 
   it("does not round-trip on a press inside the context card either", async () => {
-    // Same class, no <label> and no checkbox anywhere: #context-card is spans.
-    // It has no press affordance inviting the gesture, which is the only reason
-    // nobody reported it.
+    // Same class with no <label>: #context-card is spans, with no press affordance inviting the gesture.
     const { box, input } = await mount();
     const selector = focusSelector();
     const row = document.createElement("span");
@@ -231,8 +193,6 @@ describe("the composer's focus treatment", () => {
     row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 
-    // Nothing refocuses the box, so the state after release equals the state
-    // during the press: one transition, not two.
     expect(
       box.matches(selector),
       "a press on a span must not restore the border it just took away",

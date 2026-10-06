@@ -11,10 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// configOptionFake writes a fake kiro-cli that logs every request line to
-// logPath and answers the three methods Start needs. session/new reports a
-// model the caller did not ask for, so a test can tell the requested model
-// apart from the session default.
+// configOptionFake writes a fake kiro-cli that logs every request line to logPath and answers Start's three methods.
+// session/new reports a model the caller did not ask for.
 func configOptionFake(t *testing.T, logPath string) string {
 	t.Helper()
 	script := `#!/bin/sh
@@ -45,15 +43,8 @@ done
 	return scriptPath
 }
 
-// The requested model and effort reach a new session as config options, because
-// they cannot reach it as launch flags: kiro-cli refuses --model and --effort
-// with --agent-engine=v3 and exits before answering initialize (measured on
-// 2.17.0 and 2.18.0). Before this, a chat's model request was written into argv,
-// so the process died on spawn and the model was never applied at all — every
-// session ran on the engine default and every model switch 500'd.
-//
-// It asserts on the RAW request bytes rather than on a Go struct because the
-// defect class is a value that never leaves the process.
+// The requested model and effort reach a new session as config options: as launch flags kiro-cli refuses them with
+// v3 and exits (2.17.0, 2.18.0). Raw request bytes, since the defect is a value that never leaves the process.
 func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
@@ -84,15 +75,13 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 		}
 	}
 
-	// The bridge must report the model it actually selected, not the default it
-	// was handed: the chat header reads this.
+	// The bridge reports the model it selected; the chat header reads it.
 	if id := b.ModelID(); id != "claude-opus-5" {
 		t.Errorf("ModelID() = %q, want claude-opus-5", id)
 	}
 }
 
-// A model equal to the session default costs no round trip, and `auto` is not a
-// model id at all — sending it would make KAS reject a legal chat.
+// A model equal to the default costs no round trip, and `auto` is not a model id KAS accepts.
 func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -125,10 +114,8 @@ func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 	}
 }
 
-// An effort level too malformed to be a tier id is dropped rather than sent, so
-// a corrupted persisted setting cannot turn into a failed call on the
-// session-creation path. Shape-checked only: the tier vocabulary is per model
-// and KAS's to judge, so an unknown-but-well-formed level DOES flow.
+// A malformed effort is dropped, so a corrupt setting cannot fail session creation. Shape only: well-formed unknown
+// tiers flow.
 func TestNewSession_DropsMalformedEffort(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
@@ -149,9 +136,7 @@ func TestNewSession_DropsMalformedEffort(t *testing.T) {
 	}
 }
 
-// An invalid model identifier is refused before the process is spawned. It no
-// longer flows into argv, but it does flow onto the wire, and Start is the one
-// place that sees it.
+// An invalid model identifier is refused before spawn; Start is the one place that sees it.
 func TestStart_RefusesInvalidModelIdentifier(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
@@ -167,22 +152,9 @@ func TestStart_RefusesInvalidModelIdentifier(t *testing.T) {
 	}
 }
 
-// The context that bounds the startup handshake must NOT own the subprocess.
-//
-// This is the bug that made marotte's bridges die after the first message.
-// CmdPrompt runs a turn under a per-turn context and cancels it on handler
-// return; Start assigned that context to the subprocess, so exec's Cancel hook
-// closed the process's stdin and signalled its head the moment the FIRST prompt
-// finished. Nothing detected it — kiro-cli passes its stdio down to
-// kiro-cli-chat and node, so all three hold the write end of the stdout pipe
-// and the head's death never reaches the readLoop as EOF. The bridge stayed
-// registered and healthy-looking while every write returned "file already
-// closed", which is what made every model switch fall back to a restart, and
-// each abandoned child tree leaked ~250 MB.
-//
-// The assertion is a live round trip rather than a liveness probe on the pid:
-// "the bridge is still usable" is the property that broke, and it holds whether
-// or not a reaper has collected anything.
+// The handshake context must not own the subprocess. A per-turn context once closed stdin when the first prompt
+// returned; kiro-cli's helpers kept stdout open, so the bridge looked healthy while every write failed and each tree
+// leaked about 250 MB. Asserted by a live round trip.
 func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
@@ -198,7 +170,7 @@ func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Exactly what CmdPrompt's `defer cancel()` does when a turn's handler returns.
+	// What CmdPrompt's `defer cancel()` does when a turn returns.
 	cancelHandshake()
 
 	if _, err := b.Call(context.Background(), "_probe/ping", map[string]any{}); err != nil {
@@ -206,9 +178,7 @@ func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	}
 }
 
-// The lifetime context DOES own the subprocess, so agent shutdown still reaps a
-// bridge even if Stop races or panics. Without this the belt-and-braces kill
-// that the handshake context used to provide would simply be gone.
+// The lifetime context owns the subprocess, so shutdown still reaps it if Stop races or panics.
 func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
@@ -223,8 +193,7 @@ func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
 
 	cancelLifetime()
 
-	// Cancel closes the process's stdin, so the fake's `read` loop ends and its
-	// stdout EOFs; readLoop then drains the waiters and closes notifCh.
+	// Cancel closes stdin, the fake's read loop ends, readLoop closes notifCh.
 	select {
 	case <-b.NotifCh():
 	case <-time.After(5 * time.Second):
@@ -232,19 +201,7 @@ func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
 	}
 }
 
-// A caller that names no lifetime is REFUSED. The nil case used to be a
-// default: Start substituted context.WithoutCancel of the handshake ctx, which
-// is an uncancellable context handed to exec.CommandContext, so a caller who
-// forgot the field got a subprocess only Stop() could ever reach — silently,
-// and one Stop() bug away from a leaked kiro-cli tree. Refusing at Start makes
-// that a startup error at the site that would have caused it, and a caller who
-// genuinely wants Stop-only ownership says so by passing context.Background()
-// (which is what the tests above do).
-//
-// The property the old default protected — the subprocess must not inherit the
-// HANDSHAKE context's cancellation — is pinned by
-// TestStart_HandshakeCtxDoesNotOwnTheSubprocess above, which is the assertion
-// that actually matters and does not depend on a nil field.
+// A nil lifetime is refused; a caller wanting an uncancellable one passes context.Background().
 func TestStart_RefusesNilLifetime(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
@@ -265,18 +222,15 @@ func TestStart_RefusesNilLifetime(t *testing.T) {
 	}
 }
 
-// A chat that picked a role reaches its new session as a mode switch. v3's
-// session/new always starts in the engine default, so the switch is the only
-// door — a chat opened in a bundled mode or a workspace agent-as-mode would
-// otherwise silently run as vibe.
-func TestNewSession_AppliesRequestedMode(t *testing.T) {
+// A chosen role rides session/new as _meta.kiro.modeId in the door's one _meta.kiro object, with no set_mode after.
+func TestNewSession_SendsModeAtTheDoor(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Mode: "spec"}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Mode: "spec", Model: "claude-opus-5"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -284,19 +238,23 @@ func TestNewSession_AppliesRequestedMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read request log: %v", err)
 	}
-	got := string(raw)
-	for _, want := range []string{`"method":"session/set_mode"`, `"modeId":"spec"`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("request log does not contain %s\nlog:\n%s", want, got)
-		}
+	if strings.Contains(string(raw), `"method":"session/set_mode"`) {
+		t.Errorf("Start sent session/set_mode; the mode belongs on the session/new door\nlog:\n%s", raw)
 	}
-	if mode := b.CurrentMode(); mode != "spec" {
-		t.Errorf("CurrentMode() = %q, want spec", mode)
+	kiro := sessionNewKiroMeta(t, string(raw))
+	if kiro["modeId"] != "spec" {
+		t.Errorf("session/new _meta.kiro.modeId = %v, want spec", kiro["modeId"])
+	}
+	if kiro["modelId"] != "claude-opus-5" {
+		t.Errorf("session/new _meta.kiro.modelId = %v, want claude-opus-5 beside the mode", kiro["modelId"])
+	}
+	if _, ok := kiro["settings"].(map[string]any); !ok {
+		t.Errorf("session/new _meta.kiro lost the session door's settings beside the mode: %v", kiro)
 	}
 }
 
-// A mode the session is already in costs no round trip.
-func TestNewSession_SkipsRedundantModeSwitch(t *testing.T) {
+// An unset mode sends no modeId: KAS would validate an empty id.
+func TestNewSession_UnsetModeSendsNoModeKey(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
@@ -312,16 +270,27 @@ func TestNewSession_SkipsRedundantModeSwitch(t *testing.T) {
 		t.Fatalf("read request log: %v", err)
 	}
 	if strings.Contains(string(raw), `"method":"session/set_mode"`) {
-		t.Errorf("an unset mode sent a switch it did not need\nlog:\n%s", raw)
+		t.Errorf("an unset mode sent a switch\nlog:\n%s", raw)
+	}
+	if _, present := sessionNewKiroMeta(t, string(raw))["modeId"]; present {
+		t.Errorf("an unset mode put a modeId on the door\nlog:\n%s", raw)
 	}
 }
 
-// The session-config appliers are best-effort and report a failure by logging,
-// so a warning is the only signal the operator gets that a chat is not running
-// the model or the effort it asked for. A start where every call succeeded must
-// stay quiet, or that signal means nothing.
-//
-// Not parallel: it swaps the process-wide slog default.
+// sessionNewKiroMeta returns the session/new request's _meta.kiro object.
+func sessionNewKiroMeta(t *testing.T, log string) map[string]any {
+	t.Helper()
+	for line := range strings.SplitSeq(strings.TrimSpace(log), "\n") {
+		if strings.Contains(line, `"method":"session/new"`) {
+			return digObject(t, "the session door", line, "params", "_meta", "kiro")
+		}
+	}
+	t.Fatalf("no session/new request in the log:\n%s", log)
+	return nil
+}
+
+// A warning is the operator's only sign a chat is not on its requested model or effort, so a clean start stays
+// quiet. Not parallel: it swaps the slog default.
 func TestNewSession_SuccessfulConfigCallsStayQuiet(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
@@ -343,7 +312,6 @@ func TestNewSession_SuccessfulConfigCallsStayQuiet(t *testing.T) {
 	for _, unwanted := range []string{
 		`msg="apply initial session model"`,
 		`msg="apply initial reasoning effort"`,
-		`msg="apply initial session mode"`,
 	} {
 		if strings.Contains(logs.String(), unwanted) {
 			t.Errorf("a successful start logged %q\nlog:\n%s", unwanted, logs.String())

@@ -57,12 +57,9 @@ func TestHandleStatusAll_ScopedReadRescansOnlyTheOwningRepo(t *testing.T) {
 	scanned := mkRepo(t, workDir, "scanned")
 	skipped := mkRepo(t, workDir, "skipped")
 	h := NewHandler(workDir)
-	// The seeded row exists in no workspace, so a full rescan could not reproduce it.
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{
 		repoRow("scanned"), repoRow("skipped"), repoRow("seeded"),
 	}, time.Now())
-	// Both are dirtied so the scope is falsifiable: were `skipped` clean, the
-	// assertion would pass under a full rescan too.
 	for _, dir := range []string{scanned, skipped} {
 		if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("x"), 0o600); err != nil {
 			t.Fatalf("Setup: write in %s: %v", dir, err)
@@ -96,7 +93,6 @@ func TestHandleStatusAll_AScopedReadAnswersWithItsOwnScan(t *testing.T) {
 	workDir := t.TempDir()
 	repo := mkRepo(t, workDir, "one")
 	h := NewHandler(workDir)
-	// Fresh and clean, so only this read's own scan can report the write.
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, time.Now())
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("Setup: write: %v", err)
@@ -166,8 +162,6 @@ func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
 	repo := mkRepo(t, workDir, "one")
 	h := NewHandler(workDir)
 	old := time.Now().Add(-time.Minute)
-	// Seeded CLEAN then dirtied: with no difference, the wait below reads the
-	// pre-merge snapshot and passes whatever the merge does to the stamp.
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, old)
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("Setup: write: %v", err)
@@ -179,7 +173,6 @@ func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
 			"scoped scan did not establish", got.AgeMS)
 	}
 
-	// The dirty row is the merge landing; only then is the stamp worth reading.
 	waitForRepoRow(t, h, statusKeyPoll, "one", true)
 	snap, _ := h.statusCache.read(statusKeyPoll)
 	if snap.at.After(old) {
@@ -249,13 +242,11 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 		t.Fatalf("finish returned %v, want exactly {b}: the joining read's repository "+
 			"was dropped and its rows stay stale", next)
 	}
-	// Waiters are woken either way, because the snapshot they were waiting on moved.
 	select {
 	case <-first:
 	default:
 		t.Error("finish left the waiters blocked on a channel it replaced")
 	}
-	// The slot is STILL claimed, so a third read joins this chain.
 	if _, again := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); again {
 		t.Error("the slot opened between passes; a third read would start a concurrent scan")
 	}
@@ -296,7 +287,6 @@ func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 		t.Errorf("finish returned scope %v, want nil: a drained full intent must scan "+
 			"EVERY repository, not the scope of the pass that preceded it", next)
 	}
-	// The scoped pass left `at` alone, which is why the full pass was still needed.
 	snap, _ := c.read(statusKeyPoll)
 	if snap.at.After(old) {
 		t.Errorf("snapshot at = %v, want the original %v after a SCOPED pass", snap.at, old)
@@ -340,7 +330,6 @@ func TestStatusCache_AWriteBehindAFullScansCursorIsStillRescanned(t *testing.T) 
 			"was dropped by the full scan it arrived behind", next)
 	}
 
-	// The follow-up pass is SCOPED, so the full scan's newer `at` must survive.
 	published, _ := c.read(statusKeyPoll)
 	if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); run {
 		t.Error("the chain did not end after the scoped follow-up pass")
@@ -417,7 +406,6 @@ func TestStatusAll_ColdWaitCoversTheWholeScan(t *testing.T) {
 	if got := h.coldWait(nil, false); got != statusColdWait {
 		t.Errorf("coldWait(cold, poll) = %v, want %v", got, statusColdWait)
 	}
-	// A read that HAS a snapshot never waits: that is what makes the poll cheap.
 	if got := h.coldWait(&statusSnapshot{at: time.Now()}, false); got != 0 {
 		t.Errorf("coldWait(warm, poll) = %v, want 0", got)
 	}
@@ -427,8 +415,6 @@ func TestStatusAll_ColdWaitCoversTheWholeScan(t *testing.T) {
 // accepts, driven through the resolver rather than HTTP so each rule fails on its own.
 func TestStatusScope(t *testing.T) {
 	workDir := t.TempDir()
-	// The WORKSPACE ROOT is a repository too, which is what makes the traversal case
-	// below mean anything: "." owns every path no subdirectory repo claims.
 	for _, name := range []string{".", "alpha", "beta"} {
 		if err := os.MkdirAll(filepath.Join(workDir, name, ".git"), 0o750); err != nil {
 			t.Fatalf("Setup: mkdir %s: %v", name, err)
@@ -472,8 +458,6 @@ func TestStatusScope(t *testing.T) {
 			wantRepos:  []string{"alpha", "beta"},
 		},
 		{
-			// ownerOf answers for a path INSIDE a repository; its own directory is how
-			// a caller that thinks in repositories names one.
 			name:       "a repository's own directory names that repository",
 			query:      "?paths=alpha",
 			snap:       warm,
@@ -481,7 +465,6 @@ func TestStatusScope(t *testing.T) {
 			wantRepos:  []string{"alpha"},
 		},
 		{
-			// Checked before ownerOf, or "." would own a path outside the tree.
 			name:       "a traversal is owned by nothing",
 			query:      "?paths=../etc/passwd",
 			snap:       warm,
@@ -496,7 +479,6 @@ func TestStatusScope(t *testing.T) {
 			wantRepos:  []string{"alpha"},
 		},
 		{
-			// The precondition for a merge. A cold read has nothing to merge into.
 			name:       "a cold read carrying paths is not scoped",
 			query:      "?paths=alpha/main.go",
 			snap:       nil,
@@ -531,7 +513,6 @@ func TestStatusScope_CapsThePathCount(t *testing.T) {
 	}
 	h := NewHandler(workDir)
 
-	// statusPathsMax unowned paths, then a real one: the cap must cut before it.
 	query := "?paths="
 	for range statusPathsMax {
 		query += "nowhere/f.txt,"

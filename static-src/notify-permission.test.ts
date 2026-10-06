@@ -1,23 +1,3 @@
-// ---------------------------------------------------------------------------
-// The permission ask wired to the real browser: a cue that could not fire arms it,
-// the reader's next click raises the prompt, and a grant turns the settings switch on.
-//
-// The reported gap is that marotte never asked at all — the master switch defaults to
-// not-opted-in, so `notifyIfHidden` refused every cue and nothing on any code path
-// raised the browser prompt outside the Settings panel. So the claims here are the
-// three links of that chain, end to end through the real `notifyIfHidden`.
-//
-// `notify-ask.node.test.ts` is the sibling that owns the DECISIONS with no DOM at
-// all; this file owns the BINDING, which is the half a fake env cannot prove: that
-// the arm sits where every cue passes, that a real click reaches the gesture, and
-// that a grant reaches the settings write.
-//
-// `Notification` is shadowed rather than driven, because a real prompt in a headless
-// browser is auto-dismissed and would make every case below pass for the wrong
-// reason. `persist.js` and the push action are the two unmanaged edges (a settings
-// write and a subscription), so they are the two things mocked.
-// ---------------------------------------------------------------------------
-
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { chatTarget } from "./push-subject.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
@@ -54,12 +34,7 @@ vi.mock("./actions/notify.js", () => ({
 
 const notify = await import("./notify.js");
 
-/** A stand-in for `window.Notification`: the two statics the ask reads, plus a
- *  settled answer the case chooses.
- *
- *  A FUNCTION with statics attached, because the real global is a constructor and the
- *  binding tests for one — an object here would pass the shadow while failing to
- *  represent what the browser exposes. */
+/** Stand-in for `window.Notification`: the two statics the ask reads, plus a chosen answer. */
 interface FakeNotification {
   (): void;
   permission: string;
@@ -119,10 +94,8 @@ describe("a cue that could not fire arms the ask", () => {
   it("raises the prompt on the reader's next click", async () => {
     expect.assertions(3);
     const fake = shadowNotification("default", "granted");
-    // The master switch is off, which is exactly why nothing was ever asked before:
-    // this call refuses the cue and used to refuse silently.
     expect(notify.notifyIfHidden("Marotte", "Agent finished", chatTarget("c1"))).toBe(false);
-    expect(fake.requests).toBe(0); // the prompt needs a gesture, so not yet
+    expect(fake.requests).toBe(0);
     click();
     await settle();
     expect(fake.requests).toBe(1);
@@ -130,9 +103,7 @@ describe("a cue that could not fire arms the ask", () => {
 
   it("arms even while the page is in front of the reader", async () => {
     expect.assertions(2);
-    // `notifyIfHidden` declines a visible page, and this is the ordering claim: the
-    // arm leads every gate, so the moment a cue wanted to notify counts whether or
-    // not it could. The reader is present, which is the best moment to be asked.
+    // The arm leads every gate, so a visible page still counts the cue.
     expect(document.visibilityState).toBe("visible");
     const fake = shadowNotification("default", "granted");
     notify.notifyIfHidden("Marotte", "Agent finished", chatTarget("c1"));
@@ -163,9 +134,6 @@ describe("a cue that could not fire arms the ask", () => {
   it("raises nothing after the switch was turned off on purpose", async () => {
     expect.assertions(1);
     const fake = shadowNotification("default", "granted");
-    // What the Settings master switch does on its way off. Both reach the client as
-    // `notifications_enabled: false`, so this marker is the only thing separating a
-    // refusal from "never opted in".
     notify.spendNotifyAsk();
     notify.notifyIfHidden("Marotte", "Agent finished", chatTarget("c1"));
     click();
@@ -184,7 +152,6 @@ describe("a grant turns the settings switch on", () => {
     expect(mocks.patches).toEqual([{ notifications_enabled: true }]);
     expect(notify.areNotificationsEnabled()).toBe(true);
     expect(mocks.pushes).toBe(1);
-    // The per-kind switches are their own choices and are not swept along.
     expect(Object.keys(mocks.patches[0] ?? {})).toEqual(["notifications_enabled"]);
   });
 
@@ -197,8 +164,6 @@ describe("a grant turns the settings switch on", () => {
     await settle();
     expect(mocks.patches).toHaveLength(1);
     expect(notify.areNotificationsEnabled()).toBe(false);
-    // No subscription either: one that outlived a refused write would deliver
-    // notifications the settings page shows as off.
     expect(mocks.pushes).toBe(0);
   });
 
@@ -235,7 +200,7 @@ describe("the Settings door and the automatic one share the ask", () => {
     expect.assertions(1);
     const fake = shadowNotification("default", "granted");
     notify.requestPermission();
-    fake.permission = "default"; // the reader dismissed it rather than answering
+    fake.permission = "default";
     notify.notifyIfHidden("Marotte", "Agent finished", chatTarget("c1"));
     click();
     await settle();

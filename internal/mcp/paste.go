@@ -1,24 +1,9 @@
 package mcp
 
-// Pasting a publisher's block.
-//
-// Every MCP server's README hands out a JSON block in the Claude-Desktop /
-// KAS family shape — a MAP of servers under one wrapper key. This file
-// translates that block into marotte's own records.
-//
-// The translation is the INVERSE of kasfile.go's renderKASServers,
-// deliberately: reading the renderer backwards is the cheapest
-// correctness check available.
-//
-// # Unknown keys are NAMED, not dropped
-//
-// encoding/json ignores a key with no matching field, so a typo like
-// "comand" produced a server that did nothing. Blanket
-// DisallowUnknownFields is the wrong tool: a real publisher block
-// legitimately carries keys marotte has no field for. So keys are
-// classified in three: consumed, known-but-unmodelled (accepted,
-// reported as a note), and unknown (400 naming the key with a nearest
-// match).
+// Pasting a publisher's block: the Claude-Desktop/KAS-family JSON map of servers a README hands
+// out, translated into marotte's records as the inverse of kasfile.go's renderKASServers. Keys fall
+// in three classes: consumed, known-but-unmodelled (accepted with a note), and unknown (400 naming
+// the key and its nearest match), since encoding/json would silently drop a typo like "comand".
 
 import (
 	"bytes"
@@ -47,8 +32,9 @@ const (
 // here because a single-server paste (the panel's own template) carries its
 // name inside the object, where a block carries it as the map key.
 var pasteServerKeys = []string{
-	"args", "autoApprove", "command", "disabled", "disabledTools",
-	"env", "headers", "name", "oauth", "prewarm", "type", "url",
+	"args", "command", "disabled", "disabledTools",
+	"env", "headers", "name", "oauth", "prewarm", "timeout", "type", "url",
+	"waitForReady",
 }
 
 // pasteServerIgnored are the per-server keys marotte recognises and has nowhere
@@ -57,39 +43,29 @@ var pasteServerKeys = []string{
 // was a typo. The reasons are the user's, not the schema's: "no field for it"
 // is actionable, "unknown key" would not be.
 var pasteServerIgnored = map[string]string{
-	"$schema":      "a schema pointer, not configuration",
-	"alwaysAllow":  `another client's spelling of "autoApprove". Rename it to carry it over`,
-	"cwd":          "marotte has no working-directory field",
-	"description":  "not stored, because the name is the label",
-	"icon":         "not stored",
-	"oauthScopes":  "marotte has no OAuth scope field",
-	"timeout":      "marotte has no timeout field, and the agent sets its own",
-	"waitForReady": "marotte has no wait-for-ready field",
+	"$schema":     "a schema pointer, not configuration",
+	"alwaysAllow": "marotte does not pre-approve MCP tools, so every call asks for permission",
+	"autoApprove": "marotte does not pre-approve MCP tools, so every call asks for permission",
+	"cwd":         "marotte has no working-directory field",
+	"description": "not stored, because the name is the label",
+	"icon":        "not stored",
+	"oauthScopes": "marotte has no OAuth scope field",
 }
 
-// pasteOAuthKeys are the keys of a server's nested `oauth` object — the whole
-// set, because KAS's own schema carries exactly these two (a scope list is the
-// sibling `oauthScopes`, classified above, not a member here).
+// pasteOAuthKeys are the keys of a server's nested `oauth` object: KAS's closed
+// schema. A scope list is the sibling `oauthScopes`, classified above.
 //
 // The nested object needs its own classification pass: encoding/json drops a
-// key with no matching field, so without one a misspelt `clientSecrect` was
-// accepted, discarded, and stored as an EMPTY secret — silently, at the one
-// boundary where the input is copied out of somebody else's README.
-var pasteOAuthKeys = []string{"clientId", "clientSecret"}
+// key with no matching field, so without one a misspelt `clientIdd` would be
+// accepted and discarded silently.
+var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "redirectUri"}
 
-// pasteOAuthIgnored is the nested oauth object's ignored set: a key KAS's
-// schema carries that marotte recognises and cannot honour. Accepted
-// with a note, like pasteServerIgnored, rather than refused.
-//
-// clientMetadataUrl is kiro-cli 2.19.2's addition. marotte cannot pin the
-// loopback redirect port KAS binds, so the authorization server would
-// reject the request whatever document was published, and marotte has
-// no field to store the URL in — so it installs and the note says why
-// the field is dropped, rather than the paste failing on an
-// unrecognized key.
-var pasteOAuthIgnored = map[string]string{
-	"clientMetadataUrl": "marotte cannot pin the loopback redirect port KAS binds, so the authorization server would reject the request",
-}
+// pasteOAuthSecretKey is refused by name, before the typo pass: a confidential
+// client cannot authenticate through KAS, so the server would fail at its token
+// endpoint with invalid_client rather than at the paste.
+const pasteOAuthSecretKey = "clientSecret"
+
+const confidentialClientRefusal = "Kiro's v3 engine has no OAuth client secret, so it supports public pre-registered clients only"
 
 // pasteTopKeys are the top-level keys of a pasted block. Only the wrapper is
 // consumed; a single-server object is detected by the wrapper's absence.
@@ -113,8 +89,9 @@ type importRequest struct {
 // pasteOAuth is the publisher shape of a pre-registered OAuth client, the
 // inverse of kasfile.go's kasOAuth.
 type pasteOAuth struct {
-	ClientID     string `json:"clientId"`
-	ClientSecret string `json:"clientSecret"`
+	ClientID          string `json:"clientId"`
+	ClientMetadataURL string `json:"clientMetadataUrl"`
+	RedirectURI       string `json:"redirectUri"`
 }
 
 // pasteServer is the publisher-shaped server object. `env` and `headers` are
@@ -129,9 +106,10 @@ type pasteServer struct {
 	Name          *string     `json:"name"`
 	Disabled      *bool       `json:"disabled"`
 	Prewarm       *bool       `json:"prewarm"`
+	WaitForReady  *bool       `json:"waitForReady"`
+	Timeout       *int        `json:"timeout"`
 	Args          []string    `json:"args"`
 	DisabledTools []string    `json:"disabledTools"`
-	AutoApprove   []string    `json:"autoApprove"`
 }
 
 // parseImportBody translates a pasted body into records ready for the store.
@@ -241,11 +219,14 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		Transport:     transport,
 		Args:          spec.Args,
 		DisabledTools: spec.DisabledTools,
-		AutoApprove:   spec.AutoApprove,
 		// A publisher block spells the flag the other way round, and marotte's
 		// own default is on: a server nobody switched off is one the user just
 		// asked for.
-		Enabled: spec.Disabled == nil || !*spec.Disabled,
+		Enabled:      spec.Disabled == nil || !*spec.Disabled,
+		WaitForReady: spec.WaitForReady != nil && *spec.WaitForReady,
+	}
+	if spec.Timeout != nil {
+		sv.TimeoutMS = *spec.Timeout
 	}
 	switch transport {
 	case TransportStdio:
@@ -261,7 +242,8 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		}
 		if spec.OAuth != nil {
 			sv.OAuthClientID = strings.TrimSpace(spec.OAuth.ClientID)
-			sv.OAuthClientSecret = strings.TrimSpace(spec.OAuth.ClientSecret)
+			sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
+			sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
 		}
 	}
 	return sv, nil
@@ -319,15 +301,9 @@ func importName(raw string, req *importRequest) (string, error) {
 	return clean, nil
 }
 
-// sanitizeName folds a raw name into the shared grammar: anything outside
-// NameAllowedRune becomes "-", the result is trimmed to open on a lead
-// rune, and it is capped at NameMaxLen.
-//
-// This is a REPAIRER, not a rejector — it is what lets a README's
-// `@scope/pkg` install instead of erroring — but its charset and its
-// bound are validate.go's, not its own.
-// TestSanitizeNameAlwaysValid asserts the postcondition mechanically:
-// every output ValidateName accepts.
+// sanitizeName folds a raw name into the shared grammar (outside NameAllowedRune becomes "-",
+// trimmed to open on a lead rune, capped at NameMaxLen), so a README's `@scope/pkg` installs.
+// TestSanitizeNameAlwaysValid asserts ValidateName accepts every output.
 func sanitizeName(raw string) string {
 	var b strings.Builder
 	b.Grow(len(raw))
@@ -354,11 +330,6 @@ func sanitizeName(raw string) string {
 // of being dropped into an empty credential. Absent or null yields nothing to
 // classify; a non-object is named here rather than surfacing later as a decode
 // error about the whole server.
-//
-// It has an ignored set, and it did not always: the comment here used to say
-// "both of KAS's oauth members are consumed, so any other key really is a typo",
-// which kiro-cli 2.19.2 made false by adding clientMetadataUrl. See
-// pasteOAuthIgnored for why that key is accepted rather than honoured.
 func classifyOAuthKeys(where string, raw json.RawMessage, req *importRequest) error {
 	if len(raw) == 0 {
 		return nil
@@ -367,7 +338,10 @@ func classifyOAuthKeys(where string, raw json.RawMessage, req *importRequest) er
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return fmt.Errorf(`%s"oauth" must be a JSON object: %w`, where, err)
 	}
-	return classifyKeys(where+"oauth: ", obj, pasteOAuthKeys, pasteOAuthIgnored, req)
+	if _, ok := obj[pasteOAuthSecretKey]; ok {
+		return fmt.Errorf("%soauth: %q is not supported. %s", where, pasteOAuthSecretKey, confidentialClientRefusal)
+	}
+	return classifyKeys(where+"oauth: ", obj, pasteOAuthKeys, nil, req)
 }
 
 // classifyKeys splits an object's keys into the ones the translator consumes,
@@ -443,16 +417,10 @@ func editDistance(a, b string) int {
 	return prev[len(b)]
 }
 
-// decodeOrderedPairs reads a JSON record into ordered KeyPairs, preserving
-// the document's order. Absent yields nil. A scalar value is stringified,
-// while an object, array or null is a mistake worth naming rather than
-// flattening.
-//
-// The pair count is bounded HERE rather than only at the store's
-// validator, because the slice is what a hostile body amplifies:
-// measured on go1.27.0, an env object at webhttp's 1 MiB body cap
-// decoded to 174,762 KeyPairs and 39.4 MB of allocation before meeting
-// the store's own limit.
+// decodeOrderedPairs reads a JSON record into ordered KeyPairs (nil when absent), stringifying
+// scalars and naming an object, array or null as a mistake. The count is bounded here: an env
+// object at the 1 MiB body cap decoded to 174,762 pairs and 39.4 MB before reaching the store's
+// limit (go1.27.0).
 func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 	if len(raw) == 0 {
 		return nil, nil

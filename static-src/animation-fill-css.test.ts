@@ -1,26 +1,9 @@
-// Does every animation drop off its element when it finishes, and does every
-// one that must NOT stay put?
-//
-// An entry animation in this app declares only `from`, so its last keyframe IS
-// the element's own value and a forwards fill changes nothing about how it looks
-// while keeping the finished animation attached for the element's whole life.
-// That is not only bookkeeping: Chromium will not treat a text run under an
-// animated opacity as opaque, so it drops subpixel antialiasing for it. Measured
-// as a live defect on the streaming chunk spans, where the reveal buffer emits
-// one span per 3-10 characters, so a settled reply held hundreds of finished
-// opacity animations and each chunk painted differently from the plain text
-// around it. The reasoning and the full classification live at the keyframe
-// library (css/03-base.css).
-//
-// An exit animation is the opposite case: its last keyframe is a state the
-// element does not otherwise have, so dropping the fill snaps it back. Both
-// directions are here because fixing one by sweeping `both` out of the
-// stylesheets would silently break the other, and neither shows up in a
-// screenshot.
-//
-// Every case mounts real markup under the real stylesheet and reads
-// `getAnimations()`, so a selector that stops matching fails loudly instead of
-// passing on an empty list.
+// Every animation drops off its element when it finishes, except those that must stay.
+// An entry animation declares only `from`, so a forwards fill changes nothing visible but
+// keeps it attached, and Chromium drops subpixel antialiasing under an animated opacity
+// (the classification lives at the keyframe library, css/03-base.css). An exit animation's
+// last frame is a state the element lacks, so dropping its fill snaps it back. Both
+// directions are pinned with real markup and `getAnimations()`.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -107,18 +90,17 @@ const ENTRY: readonly Fixture[] = [
   { what: "a tab entering the strip", el: "div.tab.entering" },
 ];
 
-/** A container whose height the CONTENT decides may carry no entry animation at
- *  all. Animating `opacity` or `transform` composites the element, and a layer
- *  costs its own area x DPR^2 x 4 bytes — so a 3,203 CSS px turn card is a 47 MB
- *  layer on a DPR-3 phone, per mount, which crashes WebKit. A re-added animation
- *  fails here rather than silently costing a layer again. */
+/**
+ * A container whose height the CONTENT decides may carry no entry animation: a composited
+ * layer costs area x DPR^2 x 4 bytes (a tall turn card is tens of MB on a DPR-3 phone),
+ * enough to crash WebKit.
+ */
 const UNBOUNDED: readonly Fixture[] = [
   { what: "an appended chat element", el: "div[data-chat-entry]" },
   { what: "a turn card", el: "div.turn[data-chat-entry]" },
   { what: "a tool card", el: "div.tool-call" },
   { what: "a tool group", el: "div.tool-group" },
   { what: "a delegated-work card", el: "div.subagent-block" },
-  { what: "a todo checklist", el: "div.todo-list" },
   { what: "a plan card", el: "div.plan-message" },
   { what: "a run card", el: "div.run-card" },
 ];
@@ -146,8 +128,7 @@ describe("an entry animation detaches when it finishes", () => {
     it(`drops off ${f.what}`, async () => {
       const node = mount(f);
       const running = node.getAnimations();
-      // Guard the assertion below against a selector that no longer matches:
-      // with no animation to start with, "none is left" is trivially true.
+      // Guard against a selector that stopped matching, which makes "none left" trivially true.
       expect(running, `the rule reaches ${f.what}`).toHaveLength(1);
       await Promise.all(running.map((a) => a.finished));
       expect(node.getAnimations(), `nothing left attached to ${f.what}`).toEqual([]);
@@ -223,9 +204,10 @@ function fromOnlyKeyframes(css: string): Set<string> {
   return out;
 }
 
-/** Every finite `animation` shorthand in the bundle, whitespace-normalized so a
- *  wrapped declaration cannot hide its fill keyword — which is exactly how the
- *  vendored toast progress bar's `both` escaped a line-oriented grep. */
+/**
+ * Every finite `animation` shorthand in the bundle, whitespace-normalized so a wrapped
+ * declaration cannot hide its fill keyword.
+ */
 function finiteAnimations(css: string): string[] {
   const out: string[] = [];
   for (const m of css.matchAll(/(?:^|[{;\s])animation\s*:([^;}]*)/gu)) {
@@ -237,10 +219,7 @@ function finiteAnimations(css: string): string[] {
   return out;
 }
 
-// The sweep, and the reason it exists beside the per-selector cases above: those
-// pin the rules that leaked, and a rule added next month is not among them. This
-// asks the question of the WHOLE corpus, so a new entry animation cannot arrive
-// carrying a forwards fill.
+// The whole-corpus sweep: a rule added later cannot arrive carrying a forwards fill.
 describe("the whole stylesheet", () => {
   it("never pairs a from-only keyframe with a forwards fill", () => {
     const css = sheet.textContent ?? "";

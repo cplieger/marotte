@@ -12,10 +12,9 @@ import {
   skeletonRows,
 } from "./skeleton.js";
 
-// The accessibility contract: the placeholder is `aria-hidden` and the HOST carries
-// the busy state. Nothing here mocks `./dom.js`, so `setBusy` is the real one — the
-// literal `"true"` and the attribute REMOVAL are its own contract, and a fake would
-// re-state it rather than test it.
+// The accessibility contract: the placeholder is `aria-hidden` and the HOST carries the busy state.
+// Nothing here mocks `./dom.js`, so `setBusy` is the real one — the literal `"true"` and the
+// attribute REMOVAL are its own contract, and a fake would re-state it rather than test it.
 
 function host(): HTMLElement {
   const h = document.createElement("div");
@@ -35,9 +34,9 @@ function placeholder(): HTMLElement {
   return p;
 }
 
-/** The shape of both git mounts (`static/index.html` `#git-changes-mount` and
- *  `#git-prs-mount`), which is the one host family where `aria-busy` changes when
- *  the region's announcements reach the reader. */
+/** The shape of both git mounts (`static/index.html` `#git-changes-mount` and `#git-prs-mount`),
+ *  which is the one host family where `aria-busy` changes when the region's announcements reach
+ *  the reader. */
 function liveRegionHost(): HTMLElement {
   const h = document.createElement("div");
   h.className = "git-multirepo-mount";
@@ -80,17 +79,17 @@ describe("paintPlaceholder marks the host busy", () => {
     const teardown = paintPlaceholder(h, placeholder);
     expect(h.getAttribute("aria-busy")).toBe("true");
     teardown();
-    // `hasAttribute` rather than a value comparison: the empty string is not a busy
-    // state, so ABSENT is the claim — an attribute left behind at any value silences
-    // this region for the rest of the session.
+    // `hasAttribute` rather than a value comparison: the empty string is not a busy state, so
+    // ABSENT is the claim — an attribute left behind at any value silences this region for the rest
+    // of the session.
     expect(h.hasAttribute("aria-busy")).toBe(false);
     expect(h.getAttribute("aria-live")).toBe("polite");
   });
 });
 
 describe("every painter's root is hidden from the accessibility tree", () => {
-  // ENUMERATED rather than swept: the marker is per-painter, so a new painter that
-  // forgets it is the failure this catches.
+  // ENUMERATED rather than swept: the marker is per-painter, so a new painter that forgets it is
+  // the failure this catches.
   const roots: readonly [string, () => Element][] = [
     ["chatSkeleton", () => chatSkeleton()],
     ["loadMoreSkeleton", () => loadMoreSkeleton()],

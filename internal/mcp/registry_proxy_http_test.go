@@ -543,14 +543,9 @@ func TestRegistryProxy_fetchSearch_differentLimitsAreDistinctKeys(t *testing.T) 
 	}
 }
 
-// Singleflight coalescing. Two concurrent
-// fetchSearch calls with the same (q, limit) key must coalesce to a
-// single upstream GET; the follower returns the leader's result with
-// cached=true.
-//
-// Contract: fetchSearch godoc — "N browser tabs typing the same
-// query no longer hold N outbound goroutines waiting on the same
-// 10-second HTTP call."
+// Singleflight coalescing: two concurrent fetchSearch calls with the same
+// (q, limit) key must coalesce to a single upstream GET; the follower returns
+// the leader's result with cached=true.
 func TestRegistryProxy_fetchSearch_coalescesConcurrentCallers(t *testing.T) {
 	var hits atomic.Int32
 	release := make(chan struct{})
@@ -626,9 +621,8 @@ func TestRegistryProxy_fetchSearch_coalescesConcurrentCallers(t *testing.T) {
 	}
 }
 
-// A follower sees the leader's error when the
-// upstream fails: the `bar.err != nil` branch in
-// fetchSearch.
+// The follower sees the leader's error when the upstream fails (the
+// `bar.err != nil` branch in fetchSearch).
 func TestRegistryProxy_fetchSearch_followerReceivesLeaderError(t *testing.T) {
 	var hits atomic.Int32
 	release := make(chan struct{})

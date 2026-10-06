@@ -2,7 +2,7 @@
    tasks.md as a live checklist. See static-src/spec-view.ts. The tree skin is
    the deleted specs board's (26-specs.css at f776c166^) under the page's class
    vocabulary; the status glyphs are the shared work-status hooks that
-   fundamentals/todo.ts and task-list.ts paint too, drawn here once. */
+   task-list.ts paints too, drawn here once. */
 
 /* --- The view's layout: #run-view's column, no bottom bar ------------------ */
 

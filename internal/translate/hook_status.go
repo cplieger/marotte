@@ -2,6 +2,8 @@ package translate
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -32,7 +34,7 @@ func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID
 	if turn == nil {
 		return
 	}
-	call := hookToolCall(h, time.Now().UnixMilli())
+	call := hookToolCall(h, time.Now().UnixMilli(), t.workDir)
 	entry := marotte.EntryToolCallOf(&call)
 	sealed, err := turn.ToolCall(ctx, "", &entry)
 	t.publishSealed(ctx, chatScope(chatID), sealed)
@@ -43,14 +45,43 @@ func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID
 
 // hookToolCall is the settled tool call one hook_update frame becomes: no input, no
 // output, no content.
-func hookToolCall(h *hookUpdateBlock, ts int64) marotte.ToolCall {
+func hookToolCall(h *hookUpdateBlock, ts int64, workDir string) marotte.ToolCall {
 	return marotte.ToolCall{
-		ID:     "hook-" + h.OperationID,
-		Title:  "Hook fired: " + displayText(h.Name),
-		Kind:   marotte.ToolKindHook,
-		Status: hookToolStatus(h.Status),
-		Ts:     ts,
+		ID:         "hook-" + h.OperationID,
+		Title:      "Hook fired: " + displayText(h.Name),
+		Kind:       marotte.ToolKindHook,
+		Status:     hookToolStatus(h.Status),
+		SourcePath: hookSourcePath(workDir, h.HookID),
+		Ts:         ts,
 	}
+}
+
+// hookIDFileSep separates a hook file's absolute path from the hook's index in it.
+const hookIDFileSep = "#hook-"
+
+// hookSourcePath is the workspace-relative hook file a hook id names, or "".
+//
+// KAS mints a file hook's id as `<absolute file path>#hook-<index>` and an agent
+// profile's as `<profile id>#hook-<index>`, which names no file; the frame carries
+// no other path. A file outside the workspace is a global hook and stays "".
+func hookSourcePath(workDir, hookID string) string {
+	at := strings.LastIndex(hookID, hookIDFileSep)
+	if at <= 0 || workDir == "" {
+		return ""
+	}
+	index := hookID[at+len(hookIDFileSep):]
+	if index == "" || strings.Trim(index, "0123456789") != "" {
+		return ""
+	}
+	file := hookID[:at]
+	if !filepath.IsAbs(file) {
+		return ""
+	}
+	rel := relPathIn(workDir, file)
+	if filepath.IsAbs(rel) || rel == "." {
+		return ""
+	}
+	return rel
 }
 
 // hookToolStatus maps the frame's status onto the card's terminal state.

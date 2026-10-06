@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 import { initBeatPhase, resetBeatPhaseForTest } from "./beat-phase.js";
 
-/** Must match `--dot-beat-dur` (01-tokens.css), which is also
- *  @cplieger/web-terminal-ui's `--dot-beat-dur` — the beat is shared across the two
- *  apps. Declared here because the token stylesheet is not loaded in a unit test,
- *  and the module reads the token off the document rather than restating it — so
- *  this IS the input under test. */
+/**
+ * Must match `--dot-beat-dur` (01-tokens.css), shared with @cplieger/web-terminal-ui. The
+ * token stylesheet is not loaded here and the module reads the token, so this IS the
+ * input under test.
+ */
 const PERIOD = 1600;
 
 /** The animation NAME is the contract with the stylesheet. That the CSS still spells
@@ -79,14 +79,8 @@ describe("beat phase", () => {
   });
 
   it("is what puts them there, not the shared duration", async () => {
-    // The negative control, and it has to turn the MODULE off rather than force the
-    // property: `stamp` overwrites whatever is there, so an inline `0ms` is aligned
-    // like any other dot and the control silently passes. Two other shapes are
-    // wrong too — comparing an aligned dot against a single unaligned one lands
-    // wherever the wall clock sits (an aligned dot's local time is `now mod period`
-    // whatever moment it started), and asserting on delays rather than paint tests
-    // the arithmetic instead of the result. With the listener detached, two dots
-    // 600ms apart are a quarter period apart, deterministically.
+    // The negative control turns the MODULE off: `stamp` overwrites an inline `0ms`. With the
+    // listener detached, two dots 600ms apart are deterministically a quarter period apart.
     resetBeatPhaseForTest();
     const first = await beatingDot();
     await new Promise((r) => setTimeout(r, 600));
@@ -97,11 +91,8 @@ describe("beat phase", () => {
   });
 
   it("re-stamps a beat that genuinely restarted, so a re-seated dot returns to the grid", async () => {
-    // The production trigger is a re-seat: `tabs-drag.ts` re-inserts the dragged row on
-    // every completed drop, and re-inserting an attached node destroys and recreates every
-    // animation in it. This replaced a permanent stamped-once flag, under which such a dot
-    // never got a second stamp and sat off the shared grid for the life of the page with
-    // nothing able to put it back.
+    // The production trigger: `tabs-drag.ts` re-inserts the dragged row on every drop, which
+    // recreates every animation in it.
     const first = await beatingDot();
     await new Promise((r) => setTimeout(r, 600));
     const moved = await beatingDot();
@@ -123,12 +114,8 @@ describe("beat phase", () => {
   });
 
   it("does not re-stamp on an echoed event, so the write cannot loop", async () => {
-    // Measured in Chromium 151: writing the delay on a running beat fires NO
-    // `animationstart` and leaves `startTime` untouched, so this echo does not occur here.
-    // The guard is keyed on the animation INSTANCE rather than on that measurement,
-    // because an engine that did re-fire would otherwise walk the dot off the grid one
-    // event at a time — a permanent visual loop. Same animation, same `startTime`, so the
-    // stamp must be refused.
+    // Chromium 151 fires no `animationstart` on the delay write, but the guard keys on the
+    // animation INSTANCE: an engine that re-fired would otherwise walk the dot off the grid.
     const el = await beatingDot();
     const first = phaseOf(el);
     await new Promise((r) => setTimeout(r, 200));
@@ -187,13 +174,8 @@ describe("beat phase", () => {
   });
 
   it("uses the period the stylesheet actually declares", () => {
-    // PERIOD above is a TRANSCRIPTION of `--dot-beat-dur`, and every other case in
-    // this file feeds it to the module as the input under test — so a token retune
-    // that misses it leaves the whole file green while asserting the phase grid of a
-    // period nothing runs at. Its comment has warned about that since it was
-    // written; this is the warning made mechanical, and it earned its keep on the
-    // 2026-09 alignment with web-terminal-kiro, where the two numbers had to move
-    // together.
+    // PERIOD transcribes `--dot-beat-dur`; every case feeds it to the module, so this fails
+    // when a token retune misses it.
     const declared = /--dot-beat-dur:\s*([\d.]+)(m?s)\s*;/.exec(loadCSS("01-tokens.css"));
     expect(declared, "01-tokens.css declares --dot-beat-dur").not.toBeNull();
     const ms = Number.parseFloat(declared![1]!) * (declared![2] === "ms" ? 1 : 1000);

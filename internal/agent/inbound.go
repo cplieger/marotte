@@ -11,8 +11,7 @@ type inbound struct {
 	coord    *BridgeCoordinator
 	chats    runChatReader
 	bus      *bus
-	// specs is the workspace-global spec_changed coalescer every write and
-	// delete under a spec directory marks.
+	// specs is the workspace-global spec_changed coalescer every spec-directory write marks.
 	specs   *spec.Notifier
 	secrets *secretstore.Store `wiring:"optional"`
 }

@@ -1,8 +1,8 @@
 package mcp
 
 // A PUT may change `url` while masked secret rows survive. mergeSecrets keys its
-// index on the header NAME alone, so the bearer issued for the old origin used
-// to be re-attached, persisted, and rendered into KAS's config file — whose
+// index on the header NAME alone, so the bearer issued for the old origin would
+// be re-attached, persisted, and rendered into KAS's config file — whose
 // watcher hands it to the new origin. These tests pin the refusal, and pin that
 // an edit which does NOT change the origin still round-trips.
 
@@ -12,17 +12,16 @@ import (
 	"testing"
 )
 
-// newRemoteServer stores one remote server carrying a bearer and an OAuth
-// client secret, and returns its stored (masked) record.
+// newRemoteServer stores one remote server carrying a bearer, and returns its
+// stored (masked) record.
 func newRemoteServer(t *testing.T, s *Store, transport Transport, rawURL string) *Server {
 	t.Helper()
 	got, err := s.Create(t.Context(), &Server{
-		Transport:         transport,
-		Name:              "hosted",
-		URL:               rawURL,
-		Headers:           []KeyPair{{Name: "Authorization", Value: "Bearer old-origin-token"}},
-		OAuthClientSecret: "old-origin-secret",
-		Enabled:           true,
+		Transport: transport,
+		Name:      "hosted",
+		URL:       rawURL,
+		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer old-origin-token"}},
+		Enabled:   true,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -69,28 +68,6 @@ func TestUpdate_URLOriginChangeRefusesAPreservedHeader(t *testing.T) {
 	}
 }
 
-func TestUpdate_URLOriginChangeRefusesAPreservedOAuthSecret(t *testing.T) {
-	s := newTestStore(t)
-	stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
-
-	_, err := s.Update(t.Context(), stored.ID, &Server{
-		Transport:         TransportHTTP,
-		Name:              "hosted",
-		URL:               "https://new.example.com/mcp",
-		OAuthClientSecret: SecretMask,
-		Enabled:           true,
-	})
-	if err == nil {
-		t.Fatal("expected a refusal when the origin changes under a preserved oauth secret")
-	}
-	if !strings.Contains(err.Error(), "oauth_client_secret") {
-		t.Errorf("error %q should name the field", err)
-	}
-	if got := s.EnabledRaw(t.Context())[0].OAuthClientSecret; got != "old-origin-secret" {
-		t.Errorf("stored secret = %q, want it untouched", got)
-	}
-}
-
 // Re-entering the value for the new origin is the way through. The guard refuses
 // a PRESERVED secret, never a supplied one.
 func TestUpdate_URLOriginChangeAcceptsARetypedSecret(t *testing.T) {
@@ -98,21 +75,17 @@ func TestUpdate_URLOriginChangeAcceptsARetypedSecret(t *testing.T) {
 	stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
 
 	if _, err := s.Update(t.Context(), stored.ID, &Server{
-		Transport:         TransportHTTP,
-		Name:              "hosted",
-		URL:               "https://new.example.com/mcp",
-		Headers:           []KeyPair{{Name: "Authorization", Value: "Bearer new-origin-token"}},
-		OAuthClientSecret: "new-origin-secret",
-		Enabled:           true,
+		Transport: TransportHTTP,
+		Name:      "hosted",
+		URL:       "https://new.example.com/mcp",
+		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer new-origin-token"}},
+		Enabled:   true,
 	}); err != nil {
 		t.Fatalf("a retyped secret must be accepted: %v", err)
 	}
 	raw := s.EnabledRaw(t.Context())
 	if raw[0].Headers[0].Value != "Bearer new-origin-token" {
 		t.Errorf("header = %q", raw[0].Headers[0].Value)
-	}
-	if raw[0].OAuthClientSecret != "new-origin-secret" {
-		t.Errorf("oauth secret = %q", raw[0].OAuthClientSecret)
 	}
 }
 
@@ -131,12 +104,11 @@ func TestUpdate_SameOriginStillPreservesSecrets(t *testing.T) {
 			stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
 
 			if _, err := s.Update(t.Context(), stored.ID, &Server{
-				Transport:         TransportHTTP,
-				Name:              "hosted",
-				URL:               next,
-				Headers:           []KeyPair{{Name: "Authorization", Value: SecretMask}},
-				OAuthClientSecret: SecretMask,
-				Enabled:           true,
+				Transport: TransportHTTP,
+				Name:      "hosted",
+				URL:       next,
+				Headers:   []KeyPair{{Name: "Authorization", Value: SecretMask}},
+				Enabled:   true,
 			}); err != nil {
 				t.Fatalf("same-origin edit must preserve secrets: %v", err)
 			}
@@ -144,9 +116,6 @@ func TestUpdate_SameOriginStillPreservesSecrets(t *testing.T) {
 			if raw[0].Headers[0].Value != "Bearer old-origin-token" {
 				t.Errorf("header = %q, want the stored value preserved",
 					raw[0].Headers[0].Value)
-			}
-			if raw[0].OAuthClientSecret != "old-origin-secret" {
-				t.Errorf("oauth secret = %q, want it preserved", raw[0].OAuthClientSecret)
 			}
 			if raw[0].URL != next {
 				t.Errorf("url = %q, want %q", raw[0].URL, next)

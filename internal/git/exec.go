@@ -1,9 +1,5 @@
-// Hardened git subprocess execution and credential scrubbing.
-//
-// This was internal/gitexec, a package named after its mechanism whose only
-// importer was this one. Rolling it up here made every name below unexported,
-// which is the point: the allowlist, the hardening flags and the scrubber are
-// implementation detail of the git surface, not an API anyone else calls.
+// Hardened git subprocess execution and credential scrubbing, unexported because they are
+// implementation detail of the git surface.
 
 package git
 
@@ -30,50 +26,20 @@ import (
 // refusal: that one names a caller's mistake, this one names the image.
 var errGitUnavailable = errors.New("git: not available")
 
-// resolveGitBinary is the package's one resolution of the git binary, and the
-// reassignable func-var seam its tests stage a fake git through. Production
-// never reassigns it.
-//
-// The seam is required rather than convenient: this package's clone and transfer
-// tests used to shadow git by PREPENDING a fake to PATH, and the pin above is
-// precisely what makes PATH unreachable — so without a seam those tests would
-// silently start driving the real git against a real remote. Two of them did,
-// for 25 seconds each, before this existed.
+// resolveGitBinary is the package's one resolution of the git binary and the func-var seam tests
+// stage a fake git through. Required: the systembin pin makes a PATH-prepended fake unreachable, so
+// tests would drive the real git against a real remote.
 var resolveGitBinary = func() (string, bool) { return systembin.Resolve("git") }
 
-// gitTimeouts consolidates git subprocess timeout budgets into a single
-// policy struct. Handler holds one so the budget is explicit and testable.
-//
-// There is no Plumbing budget here, and its absence is the measured state
-// rather than an omission. The field existed until 2026-09 with a
-// plumbingTimeout const behind it and ZERO readers: nothing applied it, so a
-// local-only command (`remote get-url`, `status --porcelain`, `show`) is bounded
-// by its CALLER's context. Declaring a budget nothing enforces is worse than
-// declaring none, because a reader costs a change out on the belief that raising
-// the number changes behaviour. It was deleted rather than wired: a filesystem
-// slow enough to need a bound here is one a 5s refusal turns into a git panel
-// that reports nothing, and the two operations that genuinely wait on something
-// remote have their own budgets below. Applying one is a decision with a
-// user-visible cost, not a tidy-up.
-//
-// That caller is NOT always an HTTP request, and the difference is why this
-// closes rather than merely being deferred: every path that DETACHES from the
-// request carries its own budget instead of inheriting nothing — the status scan
-// (`statusScanBudget`), pull-all (`pullAllBudget`) and the forge list cache
-// (its `listRevalidateBudget`) each wrap `context.WithoutCancel` in a `WithTimeout`. So
-// there is no unbounded plumbing path to close, and a per-command budget added
-// here would be a second bound over paths that already have one.
+// gitTimeouts holds the git subprocess timeout budgets. There is deliberately no plumbing budget: a
+// local-only command is bounded by its caller's context, and every path that detaches from a
+// request (statusScanBudget, pullAllBudget, the forge list cache) carries its own WithTimeout.
 type gitTimeouts struct {
 	// Fetch bounds network read-only operations: fetch --quiet.
 	Fetch time.Duration
 	// Push bounds network write operations: push, pull.
 	Push time.Duration
 }
-
-// There is no Clone budget here any more: a clone's liveness is its own
-// progress stream (runTransfer's stall watchdog), bounded overall by
-// cloneCeiling — a fixed transfer budget kills a large repo that is
-// downloading fine, which is the defect that motivated the change.
 
 // defaultTimeouts returns the production timeout policy.
 func defaultTimeouts() gitTimeouts {
@@ -103,41 +69,10 @@ var urlQueryTokenPattern = regexp.MustCompile(`([?&](?:token|access_token|privat
 // headers. Case-insensitive on the header name only.
 var authHeaderPattern = regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|token|basic)\s+)\S+`)
 
-// --- Credential redaction, and the three destinations it composes with ---
-//
-// redactCredentials on its own is UNBOUNDED and NOT single-line, so its result
-// must never reach a sink directly. The three helpers below are the only callers,
-// and the ORDER inside each is the substance: a sanitizer that runs BEFORE the
-// redactor can defeat it, because redaction is a byte-exact pattern match and a
-// transform on either side moves the bytes. Nothing outside this file can obtain
-// redacted-but-unbounded text, which is what makes the wrong order inexpressible
-// rather than merely discouraged.
-//
-// Redaction stays at the EMIT site and is deliberately NOT pushed down into
-// gitCmd or runTransfer, even though a producer-side redaction would remove the
-// chance of forgetting one: `git remote get-url` output is PARSED
-// (commitURLPrefix, prRemoteHost) as well as displayed, and redacting at the
-// producer would corrupt the parse. So this closes the ORDER class and not the
-// OMISSION class.
-//
-// THE OMISSION CLASS IS CLOSED AS ACCEPTED, on a measurement rather than on
-// effort. The obvious answer is to make it unrepresentable — have gitCmd return a
-// type whose value cannot reach a sink without picking one of the three helpers —
-// and it fails on the shape of the population: this package has 41 producer calls
-// (36 gitCmd, 5 runTransfer) against 25 destination-helper calls, because most git
-// output here is consumed internally (a branch name compared, an ahead/behind
-// count parsed, a rev resolved) and never emitted at all. For that majority
-// redaction is WRONG, so they would each take the wrapper's raw-value escape — and
-// a type whose escape hatch is the common case constrains nothing while costing
-// every call site. A lint allowlist is refused for its own reason: it is a denylist
-// of spellings over a package whose next emit site has a spelling nobody has
-// written yet.
-//
-// What WOULD close it is a narrower producer than a wrapper: the emit population is
-// git's own FAILURE text plus `remote get-url`, so a variant returning output
-// already bound for a sink would make the choice at the few sites that need it
-// rather than at all 41. That is a shape change, not a guard, and it is not made
-// on a package with no observed omission.
+// redactCredentials is UNBOUNDED and NOT single-line, so its only callers are the three helpers
+// below, and the order inside each is the substance: a transform before or after the byte-exact
+// redactor can defeat it. Redaction stays at the EMIT site because `git remote get-url` output is
+// also parsed (commitURLPrefix, prRemoteHost).
 
 // maxClientOutputBytes bounds a multi-line git output block sent to a client.
 // Generous: it is a transcript a human reads, and git's own failure messages
@@ -152,29 +87,17 @@ const maxRemoteURLBytes = 512
 // clientOutputTruncated marks a client block the cap cut.
 const clientOutputTruncated = "\n[output truncated]"
 
-// logField prepares git output for a slog attribute: redact, then the app's ONE
-// slog door (internal/logsafe's single-line preset plus its byte cap).
-//
-// One redaction pass is enough here, and the asymmetry with clientBlock is the
-// point. logsafe's preset REPLACES an unsafe rune with a space, so it can only
-// ever shorten or break a match — never build a `://` that was not there.
+// logField prepares git output for a slog attribute: redact, then internal/logsafe's single-line
+// preset and cap. One pass: the preset replaces unsafe runes with a space, so it cannot build a
+// `://`.
 func logField(s string) string {
 	return logsafe.Field(redactCredentials(s))
 }
 
-// clientBlock prepares multi-line git output for a client that renders it as a
-// transcript: redact, defuse, redact AGAIN, then cap with a marker.
-//
-// The SECOND pass is required here and nowhere else. sanitize.Output DELETES
-// hidden runes rather than replacing them, so it can CONSTRUCT a match the first
-// pass could not see: `https:/<U+200B>/user:tok@host/x` carries no literal `://`
-// until the zero-width space is removed, and then it does. Do not "align" the
-// three helpers by adding or removing a pass — each one's count follows from what
-// its sanitizer does to the bytes.
-//
-// Multi-line is preserved deliberately: git output is legitimately several lines
-// and the client renders it as such, so flattening it here would damage the
-// payload rather than protect anything.
+// clientBlock prepares multi-line git output for a client transcript: redact, sanitize.Output,
+// redact AGAIN, cap with a marker. The second pass is required because sanitize.Output DELETES
+// hidden runes and can construct a match (`https:/<U+200B>/user:tok@host`). Each helper's pass
+// count follows from its sanitizer; do not align them. Multi-line is preserved.
 func clientBlock(s string) string {
 	out := sanitize.Output(redactCredentials(s))
 	out = redactCredentials(out)
@@ -193,20 +116,10 @@ func clientLine(s string) string {
 	return runesafe.SanitizeSingleLineBounded(redactCredentials(s), maxRemoteURLBytes)
 }
 
-// redactCredentials strips credentials from a git subprocess output string.
-// Idempotent: chained userinfo segments (`http://a@b@c@host`) are
-// consumed until the match set stabilises. The regex strictly shrinks
-// the string on every match (each iteration removes at least one
-// `@segment`), so the loop is bounded by input length with no DoS risk.
-//
-// All three patterns are confined to a single LINE by their real producer — git
-// prints a URL on one line, and neither a '\r' nor a '\n' appears inside one — so
-// every truncation in this package must land on a line boundary or a pattern can
-// straddle the cut and the credential survives. cappedBuffer holds that invariant
-// on the transfer path; see its doc comment.
-//
-// Not called directly anywhere but the three helpers above: its result is
-// neither bounded nor single-line, and a sink needs both.
+// redactCredentials strips credentials from git output, repeating until chained userinfo
+// (`http://a@b@c@host`) stabilises; each match shrinks the string, so the loop is bounded. Every
+// pattern matches within one LINE, so every truncation in this package must land on a line boundary
+// (cappedBuffer). Called only by the three helpers above.
 func redactCredentials(s string) string {
 	if s == "" {
 		return ""
@@ -225,17 +138,10 @@ func redactCredentials(s string) string {
 
 // --- Hardened subprocess execution ---
 
-// allowedSubcommands lists git subcommands that may be invoked through
-// gitExec. Any first non-flag argument outside this set causes gitExec
-// to return a no-op command that exits with an error, defending against
-// callers that accidentally let untrusted input choose the subcommand.
-//
-// CodeQL's go/command-injection rule cannot prove safety from
-// validation done at HTTP-handler layer (e.g. isValidGitRef on body
-// fields); declaring the allowlist at the exec boundary makes the
-// guarantee local to this package.
-// Subcommand names this package builds argv from in more than one place, so the
-// allowlist entry and every call site are the same token by construction.
+// allowedSubcommands gates the first non-flag argument of every gitExec call; anything else gets a
+// command that fails without launching git. Declared at the exec boundary because CodeQL's
+// go/command-injection cannot see handler-layer validation. The named constants are argv tokens
+// built in more than one place.
 const (
 	subAdd      = "add"
 	subCheckout = "checkout"
@@ -308,17 +214,9 @@ func firstSubcommand(args []string) string {
 // fails without launching git. Callers supply a context with a timeout.
 func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	if _, ok := allowedSubcommand(args); !ok {
-		// Build a synthetic command that fails without launching git. /bin/false
-		// always exits 1, and this branch deliberately spawns no shell: giving it
-		// an argv it could interpolate would hand a command-injection taint path
-		// to the exact boundary this allowlist exists to close.
-		//
-		// It also produces no OUTPUT, which used to be the whole diagnostic
-		// problem — a caller composing the output into its own message rendered a
-		// bare "clean:" naming no cause. That is fixed one layer up rather than
-		// here: gitCmd runs the same check and returns a real error, so the only
-		// callers that can reach this branch are the two that pass gitExec a
-		// literal subcommand, for which it is pure defence-in-depth.
+		// /bin/false, no shell: an interpolatable argv would hand a taint path to the boundary this
+		// allowlist closes. gitCmd reports the refusal as a real error, so this is defence in
+		// depth.
 		return refuseExec(ctx, dir)
 	}
 	// Prepend hardening -c flags. Command-line -c values take priority
@@ -326,47 +224,25 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	// `[protocol "ext"] allow = always` cannot re-enable ext::.
 	hardenedArgs := append([]string{
 		"-c", "protocol.ext.allow=never",
-		// core.fsmonitor names a command git runs on status and diff — the
-		// two subcommands the git panel calls most — and an empty value is
-		// the documented "no monitor" setting. It is cleared CENTRALLY
-		// rather than per call site because it is a config key, so it costs
-		// nothing on the subcommands that ignore it, and because there is
-		// no legitimate use for it here at all: this container has no
-		// fsmonitor daemon, so any value present came from a repo's own
-		// .git/config.
+		// core.fsmonitor names a command git runs on status and diff; cleared centrally because no
+		// legitimate value exists here, so any value came from a repo's .git/config.
 		"-c", "core.fsmonitor=",
-		// Without this git C-quotes any path holding a non-ASCII byte, so
-		// café.txt reaches a caller as "caf\303\251.txt". The status parser is
-		// unaffected either way (it reads -z, which emits paths verbatim — see
-		// parseGitStatusOutput), so what this actually repairs is the non--z
-		// output that reaches the model: handlers_ai.go builds commit messages,
-		// PR descriptions and branch names from `status --porcelain` and
-		// `diff --no-textconv`, and an escaped filename there ends up written
-		// into a commit message the user keeps.
-		//
-		// It does not make quoting unreachable: a path containing a literal
-		// double quote, a newline or a control byte is still quoted, so no
-		// parser may drop its quote handling on the strength of this flag.
+		// Stops git C-quoting non-ASCII paths in the non--z output that reaches the model (commit
+		// messages, PR descriptions, branch names). Quoting stays reachable (quotes, newlines,
+		// controls), so no parser may drop its quote handling.
 		"-c", "core.quotePath=false",
 	}, args...)
-	// argv[0] is an absolute path from internal/systembin's fixed system-directory
-	// set, NOT the bare name: PATH[0] in this image is the toolbelt engine's link
-	// directory on the persistent volume, so a bare `git` would let a file planted
-	// there be executed by the SERVER on its own timers — outside Cedar, with no
-	// user present, surviving container recreation. A miss refuses rather than
-	// falling back, because one site's fallback voids the pin everywhere.
+	// argv[0] is an absolute systembin path, not the bare name: PATH[0] is the toolbelt engine's
+	// link directory on the persistent volume, so a planted `git` would run as the server outside
+	// Cedar. A miss refuses: one site's fallback voids the pin everywhere.
 	gitBin, ok := resolveGitBinary()
 	if !ok {
 		slog.Error("git binary not found in the trusted system directories; refusing to spawn")
 		return refuseExec(ctx, dir)
 	}
-	// The directive below also suppresses the unused-directive check: golangci-lint's
-	// gosec integration reports this line nondeterministically (at the pinned 2.13.1
-	// G702 appeared on 6 of 8 cold runs, and a silent run fails the build for an
-	// unused directive). Standalone gosec is deterministic here, so the instability
-	// is the integration's, and deleting the directive only swaps which half of the
-	// flip goes red. Never open a comment line with the token that names that check:
-	// gocritic's whyNoLint reads it as a second directive.
+	// The directive also suppresses the unused-directive check: golangci-lint's gosec integration
+	// reports this line nondeterministically. Never start a comment line with the check's name:
+	// gocritic's whyNoLint reads it as a directive.
 	//nolint:gosec,nolintlint // G702: the subcommand is checked against allowedSubcommands above and argv[0] is an absolute path from a fixed system-directory set that reads no environment; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
 	cmd := exec.CommandContext(ctx, gitBin, hardenedArgs...)
 	cmd.Dir = dir
@@ -375,11 +251,8 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
 		"GIT_PROTOCOL_FROM_USER=0",
-		// Clear runtime GIT_CONFIG_* injection: a malicious parent
-		// could otherwise set GIT_CONFIG_COUNT + GIT_CONFIG_KEY_n /
-		// GIT_CONFIG_VALUE_n to inject arbitrary inline config that
-		// overrides our cmdline hardening. (gitconfig FILES on disk
-		// are still loaded — that's where credential helpers live.)
+		// Clear runtime GIT_CONFIG_* injection, which would override the cmdline hardening; config
+		// files on disk still load.
 		"GIT_CONFIG_COUNT=",
 		"GIT_CONFIG_PARAMETERS=",
 	)
@@ -396,15 +269,9 @@ func allowedSubcommand(args []string) (string, bool) {
 	return sub, ok
 }
 
-// refuseExec builds a command that fails without launching git, shared by
-// gitExec's two refusals (a disallowed subcommand, and a git binary absent from
-// the trusted system directories). /bin/false always exits 1, and this
-// deliberately spawns no shell: giving it an argv it could interpolate would
-// hand a command-injection taint path to the boundary the refusal exists for.
-//
-// It produces no OUTPUT, which is why both refusals are ALSO reported one layer
-// up in gitCmd: a caller composing empty output into its own message rendered a
-// bare "clean:" naming no cause.
+// refuseExec builds a command that fails without launching git (/bin/false, no shell), for
+// gitExec's two refusals: a disallowed subcommand, and a git binary absent from the trusted system
+// directories.
 func refuseExec(ctx context.Context, dir string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "/bin/false")
 	cmd.Dir = dir
@@ -412,12 +279,8 @@ func refuseExec(ctx context.Context, dir string) *exec.Cmd {
 }
 
 func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
-	// Checked here as well as in gitExec, because only this layer can return a
-	// message. gitExec's refusal is a command that exits 1 in silence, and a
-	// caller composing that silence into its own error produced a string ending
-	// at its own colon — which is how a missing allowlist entry presented as
-	// "Couldn't discard 6 files: clean:" and named nothing. No subprocess is
-	// spawned on this path at all.
+	// Checked here too, because only this layer can return a message: gitExec's refusal is a silent
+	// exit 1, which callers rendered as "clean:" naming nothing.
 	if sub, ok := allowedSubcommand(args); !ok {
 		return "", fmt.Errorf("git: subcommand not allowed: %s", sub)
 	}
@@ -432,21 +295,10 @@ func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// splitRemote extracts the host and repository path from an https or
-// scp-style git remote URL. The path is normalized to the forge's own
-// spelling of a repository: no leading or trailing slash, no ".git".
-//
-//	https://github.com/foo/bar.git     → github.com, foo/bar
-//	git@github.com:foo/bar.git         → github.com, foo/bar
-//	ssh://git@gitlab.com/grp/sub/bar   → gitlab.com, grp/sub/bar
-//
-// Both halves come from ONE parse deliberately: a caller building a web URL
-// needs them to describe the same remote, and two independent parses can
-// disagree about which branch a given string took.
-//
-// ok is false for a shape neither parseSCPStyle nor url.Parse recognises and
-// for a host sanitizeHost rejects. repoPath may still be empty when ok is
-// true (a remote naming only a host), so a caller that needs it checks.
+// splitRemote extracts the host and repository path (no surrounding slash, no ".git") from an https
+// or scp-style remote, e.g. git@github.com:foo/bar.git → github.com, foo/bar. One parse for both
+// halves so they describe the same remote. ok is false for an unrecognised shape or a host
+// sanitizeHost rejects; repoPath may be empty when ok is true.
 func splitRemote(raw string) (host, repoPath string, ok bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -480,36 +332,23 @@ func parseRemoteHost(raw string) string {
 	return host
 }
 
-// commitURLPrefix derives the forge web location a commit hash appends to,
-// from a repository's origin remote. The result always ends in "/", so a
-// caller builds a commit link by appending the hash and nothing else.
-//
-//	https://github.com/foo/bar.git     → https://github.com/foo/bar/commit/
-//	git@github.com:foo/bar.git         → https://github.com/foo/bar/commit/
-//	ssh://git@gitlab.com/foo/bar.git   → https://gitlab.com/foo/bar/-/commit/
-//
-// Returns "" when no https location can be derived: no remote, a shape
-// splitRemote does not recognise, no repository path, or a result that is not
-// a well-formed https URL. The client renders a plain hash then, which is the
-// honest answer — a guess is a link to the wrong page.
+// commitURLPrefix derives the forge web location a commit hash appends to, always ending in "/"
+// (GitLab's under "/-/commit/"). "" when no well-formed https location can be derived; the client
+// then renders a plain hash rather than a link to the wrong page.
 func commitURLPrefix(remote string) string {
 	host, repoPath, ok := splitRemote(remote)
 	if !ok || repoPath == "" {
 		return ""
 	}
-	// GitLab nests every repository page under a "/-/" separator, so a group
-	// path can never be read as a page name. Classified the way prRefShape
-	// classifies the same two families; keep the two in step rather than
-	// growing a second host table.
+	// GitLab nests repository pages under "/-/"; classified as prRefShape classifies the same
+	// families, so keep the two in step.
 	shape := "/commit/"
 	if strings.Contains(host, "gitlab") {
 		shape = "/-/commit/"
 	}
 	prefix := "https://" + host + "/" + repoPath + shape
-	// Round-trip what is about to be handed to a browser. sanitizeHost admits
-	// characters url.Parse refuses in a host, and a path carrying "?" or "#"
-	// would silently truncate the link so it pointed somewhere other than the
-	// commit — a wrong link is worse than no link.
+	// Round-trip what goes to a browser: a host url.Parse refuses, or a path with "?" or "#", would
+	// point the link elsewhere.
 	u, err := url.Parse(prefix)
 	if err != nil || u.Scheme != "https" || u.Host != host || u.RawQuery != "" || u.Fragment != "" {
 		return ""
@@ -567,14 +406,9 @@ func sanitizeHost(h string) string {
 	return h
 }
 
-// parseSCPStyle recognises git's scp-like remote syntax (user@host:path)
-// and returns (host, repoPath, true) on a successful match. Returns ok=false
-// for anything else, including URLs with a :// scheme, strings without @,
-// and ext:: remote-helper prefixes.
-//
-// The second result is NOT named `path`: this file uses the path package,
-// and a result named after an imported package shadows it for the whole
-// function body.
+// parseSCPStyle recognises git's scp-like remote syntax (user@host:path) and returns (host,
+// repoPath, true); false for a :// URL, a string without @, or an ext:: prefix. The result is not
+// named `path`, which would shadow the package.
 func parseSCPStyle(raw string) (host, repoPath string, ok bool) {
 	if strings.Contains(raw, "://") {
 		return "", "", false

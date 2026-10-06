@@ -1,9 +1,5 @@
-// ---------------------------------------------------------------------------
-// Git Changes tab: one collapsible section per repo in #git-changes-mount,
-// painted from one /api/git/status-all read: branch and ahead/behind, the
-// sync actions, the staged and unstaged file groups, and the commit box.
-// Repainted on filter input, after every press, and on tab activate.
-// ---------------------------------------------------------------------------
+// One collapsible section per repo in #git-changes-mount, painted from one /api/git/status-all read. Repainted on
+// filter input, after every press, and on tab activate.
 
 import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
@@ -48,8 +44,6 @@ import {
   type Refusal,
 } from "./git-changes-commit.js";
 
-// --- Wire types ---
-
 import type {
   GitFileEntry as FileEntry,
   GitPullResult,
@@ -70,19 +64,17 @@ interface StatusAllResponse {
   repos: RepoStatus[];
 }
 
-// --- State ---
-
 let inited = false;
 let lastStatusAll: RepoStatus[] = [];
-/** Whether `status-all` has ANSWERED. `lastStatusAll` initialises to `[]` and the
- *  empty-state row it paints is unkeyed, so nothing else distinguishes a clean
- *  worktree from one this client has never read. */
+/**
+ * Whether `status-all` has answered: the empty-state row is unkeyed, so nothing else tells a clean worktree from an
+ * unread one.
+ */
 let statusAnswered = false;
 let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
-/** Long-lived abort controller for the recent-commits log fetch — only
- *  aborted on tab teardown, NOT on every repaint. */
+/** Aborted only on tab teardown, never on a repaint. */
 const diffAbortCtrl = new AbortController();
 registerCleanup(() => {
   refreshAbort?.abort();
@@ -91,66 +83,46 @@ registerCleanup(() => {
   diffAbortCtrl.abort();
 });
 
-/** Repos that recently received a successful push. Used to surface a
- *  contextual "Open PR" hint in their section header for a few
- *  re-renders after the push. */
+/** Repos just pushed, for a transient "Open PR" hint in their section header. */
 const recentlyPushed = new Set<string>();
 const RECENTLY_PUSHED_TTL_MS = 60_000;
 
-// Bug 1: Preserve commit message textarea values across re-renders.
+// Typed commit messages, kept across repaints.
 const commitMessages = new Map<string, string>();
 
-/** The press each repository is running. Its git actions share one queue (the
- *  `git:<repo>` scope), so the section's other controls wait while it runs, and
- *  a repaint shows the press on the control that started it. */
+/**
+ * The press each repository runs. Its actions share one `git:<repo>` queue, so the section's other controls wait,
+ * and a repaint shows the press on the control that started it.
+ */
 const repoPresses = new Map<string, { key: string; done: Promise<void> }>();
 
-/** Repositories with a press waiting on its confirm: a second press meanwhile
- *  would confirm and send twice. */
+/** A second press while a confirm is open would confirm and send twice. */
 const confirmingRepos = new Set<string>();
 
-/** Why a repository's last press did not land, said at the top of its section
- *  until its next press. */
+/** Why a repository's last press did not land, said at the top of its section until its next press. */
 const pressNotes = new Map<string, Refusal>();
 
-// Bug 3: Track user-toggled collapse state (repos the user manually collapsed).
+// Repos the user collapsed by hand.
 const userCollapsedRepos = new Set<string>();
 const userExpandedRepos = new Set<string>();
 
-/** What the last Pull all could NOT do, per repo — the input to the mark on a
- *  repo's block. Only the two verdicts a reader has to act on are kept
- *  (`isPullHeld`); a pulled or skipped repo needs no mark.
- *
- *  An entry survives a refresh, because the statement it makes is about a pass
- *  that happened and a reader who walked away should still find it. It is
- *  dropped the moment the repo stops being behind: there is nothing left to pull
- *  then, so the flag has stopped describing anything. Replaced wholesale by the
- *  next pass. */
+/**
+ * What the last Pull all could not do, per repo (`isPullHeld` verdicts only). Survives a refresh so a reader who
+ * walked away still finds it; dropped once the repo stops being behind; replaced by the next pass.
+ */
 const pullFlags = new Map<string, GitPullResult>();
 
-// Deferred paint: set when paint bails due to focused textarea.
+// Set when paint bails on a focused commit box.
 let paintDeferred = false;
 
-/** Build the deps object for commit rendering functions. */
 function commitDeps(): CommitDeps {
   return { commitMessages, diffAbort: diffAbortCtrl, press: pressControl };
 }
 
-// --- Public API ---
-
-/** The tab's filter box.
- *
- *  A POPUP since the search-box audit. It was an `<input type="search">`
- *  hand-authored into index.html with its own magnifier SVG beside it — the one
- *  page-level search in the app that did not go through the shared shell, and the
- *  reason the toolbar's magnifier was a DEAD DOOR on the git view: `find-dispatch`
- *  had no branch for this tab, so Ctrl-F fell through to the transcript's handler,
- *  which declined because the chat view was hidden.
- *
- *  Its close CLEARS, which matters more here than on a permanent box: this filter
- *  also drives each repo section's expansion default, so a query left applied
- *  behind a closed box would leave the page both narrowed and expanded with
- *  nothing on screen explaining either. */
+/**
+ * The tab's filter popup. Its close clears: the filter also drives each section's expansion default, so a query left
+ * behind a closed box would leave the page narrowed and expanded with nothing explaining either.
+ */
 export const changesFind: SearchPopup = createSearchPopup<null>({
   id: "git-changes-filter",
   kind: "filter",
@@ -166,16 +138,13 @@ export const changesFind: SearchPopup = createSearchPopup<null>({
   },
 });
 
-/** Initialise the Changes tab. Wires the global refresh button and the SSE
- *  forge-changed event. Idempotent. */
+/** Initialise the Changes tab: the refresh button and the SSE refresh triggers. Idempotent. */
 export function initChangesTab(): void {
   if (inited) {
     return;
   }
   inited = true;
-  // Fire deferred paint when commit textarea loses focus.
-  // Scoped to the mount container so the listener is tied to the tab's
-  // DOM lifetime. focusout bubbles, so it reaches the container.
+  // Fires the deferred paint when the commit box loses focus; focusout bubbles to the mount.
   const changesMount = document.getElementById("git-changes-mount");
   changesMount?.addEventListener(
     "focusout",
@@ -195,12 +164,7 @@ export function initChangesTab(): void {
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
-      // Default keepLabel=false: the icon is replaced by the
-      // spinner while the refresh is in flight (then ✓/✗). The
-      // button has no text label to keep, so this reads cleaner
-      // than the icon + spinner side-by-side variant.
-      // Explicit user refresh → opt into the server-side git fetch
-      // so ahead/behind reflects the real remote state (18-F3).
+      // An explicit refresh opts into the server-side git fetch, so ahead/behind reflects the remote.
       void withAsyncFeedback(refreshBtn, async () => {
         if (!(await refreshChanges(true))) {
           throw new Error("the status could not be read");
@@ -214,8 +178,7 @@ export function initChangesTab(): void {
     pullAllBtn.innerHTML = ICON_GIT_DOWN_ARROW;
     const status = el("span", { className: "git-tab-toolbar-error", role: "status" });
     pullAllBtn.before(status);
-    // The pass's refresh runs once the button settles, so the loading binding
-    // below and the button's own feedback end together.
+    // The pass's refresh runs once the button settles, so the loading binding and the button's feedback end together.
     pullAllBtn.addEventListener("click", () => {
       status.textContent = "";
       let moved: string[] = [];
@@ -223,17 +186,12 @@ export function initChangesTab(): void {
         moved = await runPullAll(status);
       }).then(() => refreshChanges(false, moved));
     });
-    // Bound once: the toolbar sits outside the repaint cycle. `git.pull` is in
-    // the set so a single repo's Pull disables this button too: they are the
-    // same operation at two scopes, and running both at once serializes on the
-    // server anyway.
+    // Bound once: the toolbar is outside the repaint cycle. `git.pull` is in the set because a single Pull and Pull all
+    // are one operation at two scopes.
     bindLoadingState(["git.pull_all", "git.pull"], pullAllBtn);
   }
 
-  // Refetch when the agent emits anything that touches files (it
-  // emits this after every turn that wrote something), and when forge
-  // accounts change (clones / removes ripple into the repo list).
-  // Debounced so SSE bursts coalesce into a single refresh.
+  // Refetch when the agent writes files or forge accounts change; debounced so bursts coalesce.
   let sseRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   const debouncedRefresh = (): void => {
     clearTimeout(sseRefreshTimer);
@@ -245,14 +203,11 @@ export function initChangesTab(): void {
   onSSE("forges_changed", debouncedRefresh);
 }
 
-/** Read /api/git/status-all and repaint; a newer call supersedes an older
- *  one. Answers false when the status could not be read. `doFetch` adds a
- *  per-repo `git fetch` (?fetch=1), reserved for explicit navigation (the
- *  Refresh-all button, git-tab activation): SSE and post-press refreshes
- *  stay fetch-free so agent turns never fan out N network fetches (18-F3).
- *  `moved` names repositories a press just changed: the server answers that
- *  read after rescanning them, where an unnamed read answers from its last
- *  scan, which predates the press. */
+/**
+ * Read /api/git/status-all and repaint; a newer call supersedes an older one. Answers false when the status could not
+ * be read. `doFetch` adds a per-repo `git fetch`, reserved for explicit navigation so agent turns never fan out N
+ * fetches. `moved` names repositories a press just changed, which the server rescans before answering.
+ */
 export async function refreshChanges(
   doFetch = false,
   moved: readonly string[] = [],
@@ -268,16 +223,14 @@ export async function refreshChanges(
       ? `/api/git/status-all?paths=${encodeURIComponent(moved.join(","))}`
       : "/api/git/status-all";
 
-  // Gated on NOT-YET-ANSWERED, not on the container being empty: `status-all` is
-  // polled, so an ungated skeleton would paint over real content several times a
-  // minute, and a CLEAN worktree is an answer rather than an absence.
+  // Gated on not-yet-answered, not on an empty container: `status-all` is polled, and a clean worktree is an answer.
   const skeleton = statusAnswered ? null : skeletonTiming(() => gitChangesSkeleton(), { signal });
 
   try {
     const data = await apiGet<StatusAllResponse>(url, signal);
     if (gen < refreshGeneration) {
       return true;
-    } // stale — a newer call supersedes
+    } // A newer call superseded this one.
     if (data === null) {
       if (ctrl.signal.aborted) {
         return true;
@@ -294,22 +247,19 @@ export async function refreshChanges(
   }
 }
 
-/** Placeholder sections while `status-all` is in flight. Returns the teardown
- *  `skeletonTiming` calls. */
+/** Returns the teardown `skeletonTiming` calls. */
 function gitChangesSkeleton(): () => void {
-  // No `label`: this tab issues ONE request, so a static line would be chrome
-  // that says nothing.
+  // No `label`: this tab issues one request.
   return paintPlaceholder(document.getElementById("git-changes-mount"), () =>
     gitRepoSkeleton({ widths: ["38%", "52%", "30%"] }),
   );
 }
 
-/** Pull every repo a fast-forward is safe for, recording the two verdicts a
- *  reader has to act on as marks on their repo blocks (the action's toast
- *  carries the summary; the pass judged what was safe). A refused pass rejects
- *  after `status` says why. The caller's refresh is fetch-free: the pass has
- *  just fetched every remote, so the refs on disk are already fresh. Answers
- *  the repositories the pass pulled or held, the ones whose status it moved. */
+/**
+ * Records the two verdicts a reader must act on as marks on their blocks; the toast carries the summary. A refused
+ * pass rejects after `status` says why. The caller's refresh is fetch-free: the pass just fetched every remote.
+ * Answers the repositories whose status it moved.
+ */
 async function runPullAll(status: HTMLElement): Promise<string[]> {
   const o = await pullAll.dispatch().outcome;
   if (o.status !== "success") {
@@ -326,7 +276,6 @@ async function runPullAll(status: HTMLElement): Promise<string[]> {
   return o.value.filter((r) => r.verdict !== "skipped").map((r) => r.repo);
 }
 
-/** `n` files, as a sentence counts them. */
 function files(n: number): string {
   return `${String(n)} file${n === 1 ? "" : "s"}`;
 }
@@ -337,8 +286,7 @@ function pressedSection(repo: string): HTMLElement | null {
   );
 }
 
-/** Hold `btn` while another press on its repository runs: disabled, and marked
- *  so the release gives it back. */
+/** Disabled, and marked so the release gives it back. */
 function hold(btn: HTMLButtonElement): void {
   if (!btn.disabled) {
     btn.disabled = true;
@@ -346,7 +294,6 @@ function hold(btn: HTMLButtonElement): void {
   }
 }
 
-/** End `repo`'s press: forget it and give its section's held controls back. */
 function release(repo: string): void {
   repoPresses.delete(repo);
   const held = pressedSection(repo)?.querySelectorAll<HTMLButtonElement>("[data-press-held]");
@@ -356,9 +303,7 @@ function release(repo: string): void {
   }
 }
 
-/** Wire `btn` as the control that runs `run` on `repo` under `key`. A control
- *  built while that press runs shows it; one built while another press on the
- *  repository runs waits for it. */
+/** A control built while that press runs shows it; one built while another press on the repository runs waits. */
 function pressControl(
   btn: HTMLButtonElement,
   repo: string,
@@ -380,9 +325,10 @@ function pressControl(
   return btn;
 }
 
-/** One press: its confirm, then its request with the button busy and the
- *  section's other controls held, then the section read again, with a refusal
- *  said at its top. */
+/**
+ * The confirm, then the request with the button busy and the section's other controls held, then a re-read, with a
+ * refusal said at the section's top.
+ */
 async function press(
   btn: HTMLButtonElement,
   repo: string,
@@ -415,8 +361,7 @@ async function press(
       hold(b);
     }
   }
-  // Registered and holding before the request starts, so a repaint the request
-  // causes shows it.
+  // Registered and holding before the request starts, so a repaint the request causes shows it.
   record.done = settlePress(repo, run, opts);
   await withAsyncFeedback(btn, () => record.done, { keepLabel: true });
 }
@@ -441,8 +386,6 @@ async function settlePress(repo: string, run: PressRun, opts: PressOpts): Promis
   }
 }
 
-// --- Render ---
-
 function paint(): void {
   preserveGitScroll(paintInner);
 }
@@ -453,8 +396,7 @@ function paintInner(): void {
     return;
   }
 
-  // Bug 1: Skip re-render entirely if a commit textarea is focused
-  // to avoid destroying user input mid-typing.
+  // A repaint while a commit box is focused would destroy the user's typing.
   const focused = document.activeElement;
   if (focused instanceof HTMLTextAreaElement && focused.classList.contains("git-commit-input")) {
     paintDeferred = true;
@@ -462,7 +404,7 @@ function paintInner(): void {
   }
   paintDeferred = false;
 
-  // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
+  // Prune module-level state to repos still present.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
   for (const k of userCollapsedRepos) {
     if (!activeRepos.has(k)) {
@@ -484,11 +426,8 @@ function paintInner(): void {
       pressNotes.delete(k);
     }
   }
-  // A pull flag reports what the last pass could not do, so it expires when the
-  // repo stops being behind — nothing is left to pull, so the mark describes
-  // nothing — and when the repo goes away. Keyed on `behind` rather than on the
-  // hazard itself: resolving a conflict does not pull the repo, and the mark
-  // should stand until something does.
+  // A pull flag expires when the repo stops being behind or goes away. Keyed on `behind`, not on the hazard: resolving a
+  // conflict does not pull the repo.
   for (const k of pullFlags.keys()) {
     const repo = lastStatusAll.find((r) => r.repo === k);
     if (repo === undefined || repo.behind === 0) {
@@ -496,7 +435,7 @@ function paintInner(): void {
     }
   }
 
-  // Bug 1: Capture current commit messages before destroying DOM.
+  // Capture typed commit messages before the DOM is replaced.
   for (const ta of root.querySelectorAll<HTMLTextAreaElement>(".git-commit-input[data-repo]")) {
     const repo = ta.dataset["repo"];
     if (repo) {
@@ -513,29 +452,17 @@ function paintInner(): void {
     return;
   }
 
-  // Which repos survive the filter, and which of their files. ONE predicate,
-  // read here to build the reconcile list and again in renderRepoSection to
-  // build the rows — it used to be written twice, and the two copies disagreed:
-  // this one kept a repo whose NAME matched, that one then applied the path
-  // filter regardless and emptied it.
+  // One predicate, read here for the reconcile list and in renderRepoSection for the rows.
   const visibleRepos = lastStatusAll.filter((r) => filteredFilesFor(r) !== null);
 
-  // Drop any prior non-keyed empty-state placeholder before reconciling.
   for (const child of [...root.children]) {
     if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
       child.remove();
     }
   }
 
-  // Every repo dropped, which can ONLY be the filter: filteredFilesFor returns
-  // the file array rather than null whenever filterText is empty, so an
-  // unfiltered paint always has one section per repo.
-  //
-  // There is deliberately no aggregate "everything is quiet" state beside this
-  // one. It would replace the repo list on a workspace whose repos are merely
-  // behind origin, ahead of it, or holding a stash, hiding both their sync
-  // buttons and their branch chip — the only door to the branch switcher. That
-  // a workspace has nothing pending anywhere is the sidebar git badge's fact.
+  // Every repo dropped can only be the filter: unfiltered, there is one section per repo. No aggregate "all quiet"
+  // state: it would hide a behind repo's sync buttons and its branch chip; that fact is the sidebar badge's.
   if (visibleRepos.length === 0) {
     reconcile(root, [] as RepoStatus[], {
       key: (r) => r.repo,
@@ -549,9 +476,7 @@ function paintInner(): void {
     return;
   }
 
-  // Outer reconcile: keep section identity (and inline textareas /
-  // commit-message drafts inside) across paints. Body content is
-  // rebuilt fresh on update via renderRepoSection.
+  // Keeps section identity (and commit drafts inside) across paints; the body is rebuilt on update.
   reconcile(root, visibleRepos, {
     key: (r: RepoStatus) => r.repo,
     mount: (r: RepoStatus) => {
@@ -568,8 +493,6 @@ function paintInner(): void {
     },
   });
 }
-
-// --- Empty-state markup helpers ---
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -589,20 +512,10 @@ function paintError(msg: string): void {
   root.replaceChildren(el("div", { className: "git-multirepo-error" }, msg));
 }
 
-/** The files of `r` the current filter admits, or null when the filter
- *  excludes the repo entirely.
- *
- *  The whole filter rule, in one place, because it has two readers: paint
- *  builds the reconcile list from it and renderRepoSection builds the rows.
- *
- *  A REPO-NAME match admits every file in it. Naming a repo is a request to
- *  see that repo, and applying the path filter underneath it emptied the
- *  section instead: a repo whose changed paths did not happen to repeat the
- *  repo name rendered "No paths match the filter." under its own heading.
- *
- *  An admitted repo always yields a non-empty file list OR has nothing
- *  uncommitted, which is what makes "no paths match" unreachable and lets
- *  renderRepoSection's empty case be the honest one. */
+/**
+ * The files of `r` the filter admits, or null when it excludes the repo. A repo-name match admits every file. An
+ * admitted repo always yields files or has nothing uncommitted, so "no paths match" is unreachable.
+ */
 function filteredFilesFor(r: RepoStatus): FileEntry[] | null {
   if (filterText === "" || r.repo.toLowerCase().includes(filterText)) {
     return r.files;
@@ -616,18 +529,10 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   if (filteredFiles === null) {
     return null;
   }
-  // Hide clean repos by default.
-  //
-  // A repo the last Pull all marked needs no clause here: the pass only judges a
-  // repo that is BEHIND, and the mark is pruned the moment it stops being
-  // (paintInner), so `r.behind > 0` already opens every marked section and the
-  // reason in its body is read without a click. One was written, and the red
-  // check showed nothing could make it matter.
+  // Hide clean repos by default. A Pull all mark only lands on a behind repo, so `r.behind > 0` already opens it.
   const dataDefault = r.has_dirty || r.ahead > 0 || r.behind > 0;
-  // A filter OUTRANKS the reader's latch: every section it admits holds a row it
-  // selected, and a selected row inside a collapsed region is one the reader
-  // cannot see and nothing on screen says exists. The latch is the resting
-  // arrangement and is read again once the box is empty.
+  // A filter outranks the reader's latch: a selected row inside a collapsed region is invisible and unannounced. The
+  // latch is read again once the box is empty.
   let expandedDefault: boolean;
   if (filterText !== "") {
     expandedDefault = true;
@@ -641,25 +546,20 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
 
   const section = el("section", { className: "git-repo-section", "data-repo": r.repo });
 
-  // Header — the disclosure trigger. A native <button>, so createDisclosure
-  // handles Enter/Space through the native click; no extra keydown wiring.
+  // A native <button>, so createDisclosure handles Enter/Space through the native click.
   const header = el("button", {
     type: "button",
     className: "git-repo-section-header",
   });
   header.innerHTML = renderHeaderHTML(r);
-  // The chevron is prepended as an ELEMENT rather than written into the template
-  // above, so `chevronEl()` stays the app's one construction of it. Safe against
-  // being wiped: `renderHeaderHTML` has exactly this one call site.
+  // `chevronEl()` stays the app's one construction of the chevron; `renderHeaderHTML` has this one call site, so it is
+  // not wiped.
   const chevron = chevronEl();
   chevron.classList.add("git-repo-section-chevron");
   header.prepend(chevron);
 
-  // Preserve the branch-chip interception: a click on the branch chip must open
-  // the branch switcher, NOT toggle the section. createDisclosure adds its own
-  // (bubble-phase) click listener to the trigger, so a dedicated listener on the
-  // chip that stops propagation makes the chip win — the disclosure's click
-  // never fires for chip clicks.
+  // A chip click must open the branch switcher, not toggle the section: the chip's own listener stops propagation
+  // before the disclosure's bubble-phase listener.
   const branchChip = header.querySelector<HTMLElement>("[data-branch-trigger]");
   if (branchChip !== null) {
     branchChip.addEventListener("click", (ev) => {
@@ -676,16 +576,12 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   }
   section.appendChild(header);
 
-  // Body — the collapsing disclosure region. createDisclosure owns the collapse
-  // (inline height 0<->auto, the .uip-disclosure-region clip, aria-hidden/inert);
-  // the visual padding + flex layout live on the inner wrapper so they collapse
-  // with the height (no residual sliver when closed).
+  // createDisclosure owns the collapse; padding and layout live on the inner wrapper so they collapse with the height.
   const body = el("div", { className: "git-repo-section-body" });
   const inner = el("div", { className: "git-repo-section-body-inner" });
   body.appendChild(inner);
 
-  // onToggle persists the user's explicit toggle so re-renders respect it —
-  // exactly the bookkeeping the old click handler did.
+  // onToggle persists the user's explicit toggle so repaints respect it.
   createDisclosure(header, body, {
     open: expandedDefault,
     onToggle: (open) => {
@@ -705,26 +601,19 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     return section;
   }
 
-  // Action bar — omitted entirely when the repo state services no action.
-  // Every button in it is state-gated (see renderActionBar), so a clean,
-  // in-sync, stash-free repo produced an EMPTY bar: a zero-height flex child
-  // that still consumes the column's `gap: var(--sp-3)`, which read as 12px of
-  // dead space above "Clean." with nothing to account for it.
+  // Omitted when no action applies: an empty bar still takes the column's gap.
   const actionBar = renderActionBar(r);
   if (actionBar.childElementCount > 0) {
     inner.appendChild(actionBar);
   }
 
-  // Why the last Pull all left this repo alone, ABOVE the action bar: the bar
-  // holds the Pull button this note explains the absence of, so the reason
-  // wants to be read first.
+  // Above the action bar: it explains the absent Pull button there.
   const flag = pullFlags.get(r.repo);
   if (flag !== undefined) {
     const lead = flag.verdict === "failed" ? "Pull failed." : "Not pulled.";
     inner.insertBefore(renderRepoNote(flag.verdict, lead, flag.detail ?? ""), inner.firstChild);
   }
-  // Why the last press did not land, above everything: it is the newest thing
-  // that happened to this repository.
+  // Above everything: the newest thing that happened to this repository.
   const refusal = pressNotes.get(r.repo);
   if (refusal !== undefined) {
     const note = renderRepoNote("failed", refusal.lead, refusal.detail);
@@ -732,38 +621,24 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     inner.insertBefore(note, inner.firstChild);
   }
 
-  // Open-PR hint after a successful push (transient).
   if (recentlyPushed.has(r.repo) && isFeatureBranch(r.branch)) {
     inner.appendChild(renderOpenPRHint(r));
   }
 
-  // The file list, in one group per side of the index.
-  //
-  // An empty list here means nothing is uncommitted, never "the filter hid
-  // everything": filteredFilesFor returns null rather than an empty array in
-  // that case, and paint drops the section before it gets here.
-  //
-  // The sentence names the WORKING TREE and not the repo, because this row
-  // renders directly under the sync actions: a repo behind origin, ahead of it,
-  // or holding a stash reaches it with Pull, Push or Pop right above, and
-  // "Clean." read as a verdict on those too. Scoped, it also earns its place
-  // beside Pull, which cannot conflict with local edits there are none of.
+  // Empty here means nothing is uncommitted, never filtered out (paint drops that section). The sentence names the
+  // working tree, since Pull, Push or Pop may sit right above it.
   if (filteredFiles.length === 0) {
     inner.appendChild(el("div", { className: "git-repo-row-clean" }, "No uncommitted changes."));
   } else {
     inner.appendChild(renderFileList(r, filteredFiles));
   }
 
-  // Commit area, only when something is staged — the index IS the
-  // selection, so with nothing staged there is nothing to compose a
-  // message for. It gets the staged FILE count (not the entry count) so
-  // its button can name what it will commit.
+  // Only when something is staged: the index is the selection. Gets the staged file count so the button names it.
   const stagedCount = changedPathCount(r.files.filter((f) => f.staged));
   if (stagedCount > 0) {
     inner.appendChild(renderCommitArea(r, commitDeps(), stagedCount));
   }
 
-  // Recent commits sub-section (collapsed by default; expand → fetch).
   inner.appendChild(renderRecentCommits(r, commitDeps()));
 
   section.appendChild(body);
@@ -780,11 +655,7 @@ function renderHeaderHTML(r: RepoStatus): string {
     r.stashes > 0
       ? ` <span class="git-repo-stashes" title="${r.stashes} stash${r.stashes === 1 ? "" : "es"}">📦${r.stashes}</span>`
       : "";
-  // The Pull-all mark. In the HEADER because a collapsed section is all a reader
-  // scanning fifty repos sees, and carrying the warn glyph as well as a hue so
-  // the state never rests on colour alone. The tooltip is omitted rather than
-  // emptied when there is no detail: an empty one is a tooltip that opens onto
-  // nothing.
+  // In the header, since a collapsed section is all a scanning reader sees; glyph plus hue. No detail means no tooltip.
   const flag = pullFlags.get(r.repo);
   let held = "";
   if (flag !== undefined) {
@@ -795,11 +666,7 @@ function renderHeaderHTML(r: RepoStatus): string {
       `${ICON_WARN}${escapeHTML(pullHeldWord(flag))}</span>`;
   }
   const branch = escapeHTML(r.branch || "(detached)");
-  // The branch chip is a span (not a nested button — buttons can't
-  // be inside a button per HTML spec); a dedicated click listener on
-  // the chip (wired in renderRepoSection) stops propagation and routes
-  // to openBranchSwitcher, so the disclosure trigger's click never fires
-  // for chip clicks.
+  // The chip is a span (no button inside a button); its own listener stops propagation so the disclosure never fires.
   return `
     <span class="git-repo-section-name">${escapeHTML(r.repo)}</span>${dirty}
     <span class="git-repo-section-meta">
@@ -808,10 +675,10 @@ function renderHeaderHTML(r: RepoStatus): string {
   `;
 }
 
-/** A note inside a repo section saying what did not happen to it: why the last
- *  Pull all left it alone (the header has room for a word, the reason needs a
- *  sentence), or why its last press was refused. The detail is the server's,
- *  the side that knows what it found. */
+/**
+ * Says what did not happen to the repo: why the last Pull all left it alone, or why its last press was refused. The
+ * detail is the server's.
+ */
 function renderRepoNote(verdict: string, lead: string, detail: string): HTMLElement {
   const box = el("div", { className: "git-repo-note", "data-verdict": verdict });
   const icon = el("span", { className: "git-repo-note-icon", "aria-hidden": "true" });
@@ -828,19 +695,10 @@ function renderRepoNote(verdict: string, lead: string, detail: string): HTMLElem
   return box;
 }
 
-/** The repo's SYNC actions: pull, push, stash, pop.
- *
- *  Stage all and Discard all used to lead this bar and have moved onto
- *  the file groups they act on (renderFileGroup), which is what lets
- *  their counts be checked against a heading the reader can see. That
- *  also retired the separator this function inserted between the two
- *  clusters: with one cluster left there is nothing to separate, so the
- *  insert, the trailing-separator cleanup and the `.action-bar-sep` rule
- *  in 14-tools.css are all gone.
- *
- *  Every button stays state-gated (18-F2): an action the repo state
- *  cannot service does not render, so there are no confirm-then-noop
- *  paths and no "Already up to date" pulls. */
+/**
+ * The repo's sync actions: pull, push, stash, pop. Every button is state-gated: one the repo state cannot service
+ * does not render, so there are no confirm-then-noop paths.
+ */
 function renderActionBar(r: RepoStatus): HTMLElement {
   const bar = el("div", { className: "git-repo-action-bar" });
 
@@ -872,7 +730,6 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       pressControl(pushBtn, r.repo, "push", async () => {
         const refusal = refusalOf(await push.dispatch({ repo: r.repo }).outcome, "push");
         if (refusal === null) {
-          // Mark for "Open PR" hint surfacing on next renders.
           recentlyPushed.add(r.repo);
           setTimeout(() => {
             recentlyPushed.delete(r.repo);
@@ -884,12 +741,8 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     );
   }
 
-  // `git stash push` runs WITHOUT `-u`, so an untracked file is not stashable
-  // even though the status parse reports it — `stashableCount` (git-types.ts)
-  // carries that rule and why the two counts differ. Gating on `dirtyCount`
-  // would still offer Stash on a tree whose only changes are new files, and git
-  // would answer "No local changes to save": exactly the confirm-then-noop this
-  // bar's rule exists to prevent.
+  // `git stash push` runs without `-u`, so untracked files are not stashable; `stashableCount` (git-types.ts) owns the
+  // rule. Gating on `dirtyCount` would offer a Stash that answers "No local changes to save".
   const stashable = stashableCount(r.files);
 
   if (stashable > 0) {
@@ -913,26 +766,10 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   return bar;
 }
 
-/** The file list, split into a Staged group and a Changes group.
- *
- *  It used to be ONE flat list, sorted staged-first, whose only marker of
- *  staged-ness was a 6% teal wash on the row: 1.09:1 against its own
- *  background in dark and 1.03:1 in light, under the 1.25:1 floor
- *  01-tokens.css declares for a step on its own ramp and well under
- *  WCAG 1.4.11's 3:1 for a state boundary. With the status cell reading
- *  "Modified" either way and the Unstage button hidden until hover, a
- *  staged row and an unstaged one were indistinguishable at rest, and the
- *  only dependable signal that anything was staged at all was the commit
- *  box appearing further down the section.
- *
- *  So staged-ness moves to a HEADER, where it is a count and a word. Each
- *  group also owns the bulk action that acts on exactly what its header
- *  counts, which is what makes those counts checkable: "Discard all" on
- *  the Changes header discards what "Changes (7)" names, and nothing
- *  else. The repo action bar keeps the sync operations.
- *
- *  A group renders only when it has members, so an all-staged tree shows
- *  one group rather than an empty second heading. */
+/**
+ * Split into Staged and Changes groups, each owning the bulk action for exactly what its header counts. A group
+ * renders only with members.
+ */
 function renderFileList(r: RepoStatus, files: FileEntry[]): HTMLElement {
   const wrap = el("div", { className: "git-file-groups" });
   const partial = partiallyStagedPaths(files);
@@ -948,8 +785,6 @@ function renderFileList(r: RepoStatus, files: FileEntry[]): HTMLElement {
   return wrap;
 }
 
-/** One group: a header stating what it holds and how many, its own bulk
- *  actions, then its rows alphabetically. */
 function renderFileGroup(
   r: RepoStatus,
   kind: "staged" | "unstaged",
@@ -979,12 +814,7 @@ function renderFileGroup(
   head.appendChild(actions);
   group.appendChild(head);
 
-  // The heading is a sibling <div>, so nothing connects it to the list for a
-  // screen reader: a row's own status cell reads "Status: Modified" on both
-  // sides of the index, so without this label the group is a purely visual
-  // distinction and staged-ness stays unannounced — which is the defect this
-  // whole rework is about, just for a different reader. The count rides the
-  // label so entering the list says how big it is.
+  // The heading is a sibling <div>, so the label carries the group and its count for a screen reader.
   const heading = `${label}, ${String(count)} file${count === 1 ? "" : "s"}`;
   const list = el("ul", { className: "git-file-list", "aria-label": heading });
   const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
@@ -995,7 +825,6 @@ function renderFileGroup(
   return group;
 }
 
-/** Build one group-header button. */
 function groupBtn(label: string, title: string, danger = false): HTMLButtonElement {
   return el(
     "button",
@@ -1008,11 +837,6 @@ function groupBtn(label: string, title: string, danger = false): HTMLButtonEleme
   ) as HTMLButtonElement;
 }
 
-/** The Staged group's bulk action: Unstage all.
- *
- *  New capability. Staging every file was one click ("Stage all") and
- *  reversing it was N, one per row, with each row's Unstage button
- *  hidden until hovered. */
 function stagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonElement[] {
   const paths = distinctPaths(entries);
   const b = groupBtn("Unstage all", "Move every staged change out of the index");
@@ -1026,16 +850,7 @@ function stagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonElem
   ];
 }
 
-/** The Changes group's bulk actions: Stage all, then Discard all.
- *
- *  Both are scoped to THIS group, and that scope is the fix. Discard all
- *  used to sit in the repo action bar and take every entry including the
- *  staged ones, counted as `files.length` — so one file edited on both
- *  sides of the index made a destructive confirm offer to discard "2
- *  uncommitted changes", and that path went out twice in the payload.
- *  A bulk action whose scope is invisible is one nobody can check before
- *  pressing it. Discarding staged work too is Unstage all followed by
- *  this, which is two clicks and shows its work. */
+/** Both scoped to this group, so the confirm's count is the payload. Discarding staged work too is Unstage all first. */
 function unstagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonElement[] {
   const paths = distinctPaths(entries);
   const count = paths.length;
@@ -1063,9 +878,7 @@ function unstagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonEl
         `discard ${files(count)}`,
       ),
     {
-      // The scope is stated rather than implied. A reader who expects a clean
-      // tree afterwards has to be told the index is untouched, and this is the
-      // last moment to tell them.
+      // The scope is stated: the index is untouched, and this is the last moment to say so.
       confirm: () => {
         const stagedCount = changedPathCount(r.files.filter((f) => f.staged));
         const keeps =
@@ -1087,21 +900,11 @@ function unstagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonEl
 function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): HTMLElement {
   const li = el("li", { className: "git-file-row" });
 
-  // Top row: status + path + actions. Clicking it opens the file's diff in its
-  // own editor tab.
+  // Status, path and actions. A click opens the file's diff in its own editor tab.
   const top = el("div", { className: "git-file-row-top" });
 
-  // A fixed-width COLOURED LETTER, not the status word this cell used to
-  // print. Two reasons, and the first is measurable: "Untracked" is nine
-  // characters against "Modified"'s eight and "M"'s one, and the cell
-  // sized to its content, so every row's filename started at a different
-  // x and a twenty-file list had a ragged left edge where the reader
-  // scans. The second is that the app already HAS a per-letter palette
-  // (`git-st-*`, 14-tools.css) which the file browser emits and this
-  // panel did not, so the same change on the same file was a coloured
-  // letter in one view and a grey word in the other. The word is not
-  // lost: it is the tooltip and the accessible name, and `display` is
-  // preferred over the local table because the server owns the mapping.
+  // A fixed-width coloured letter (`git-st-*`, as the file browser): a status word left filenames at ragged x. The word
+  // is the tooltip and accessible name; `display` is preferred because the server owns the mapping.
   const letter = statusLetter(f.status);
   const word = f.display || describeStatus(f.status);
   const status = el(
@@ -1115,22 +918,9 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
   );
   top.appendChild(status);
 
-  // The filename IS the link to its own diff, which is the convention every
-  // other changed-file affordance in the app already follows (navigate.ts
-  // openChange, reached here and from a turn's ledger row, a tool card's
-  // filename and the file browser's status letter).
-  //
-  // A real <button> rather than a role on the row, which is what the inline
-  // drawer's disclosure trigger used to be: `role="button"` is
-  // Children-Presentational, so it flattened the Stage and Discard buttons
-  // beside it out of the accessibility tree. The row keeps a mouse handler
-  // below, so the wide click target survives without that cost.
-  // The label is a SPAN so the tooltip has ink to point at: the button is `flex: 1`
-  // (it is what pushes the row's actions to the trailing edge), so its box is the
-  // row's slack and a tooltip anchored at that box's centre landed 243px right of
-  // the name — measured over 320 rows. No class, because it needs no rule: an
-  // inline span inherits the button's mono type, and the ellipsis is the button's
-  // own (`overflow: hidden` on the block box clips whatever is inside it).
+  // The filename opens its own diff, as every changed-file affordance does. A real <button>, not a role on the row:
+  // `role="button"` is Children-Presentational and would hide Stage and Discard. The label is a span so the tooltip
+  // anchors on ink; the `flex: 1` button's centre is far from the name.
   const label = el("span", { "data-tooltip-anchor": "" }, f.path);
   const path = el(
     "button",
@@ -1148,10 +938,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
   });
   top.appendChild(path);
 
-  // Where a rename or copy came FROM. The server parsed this field and
-  // threw it away, so a moved file rendered as "Renamed  path/to/new.ts"
-  // with no way to tell what had moved — the one status whose whole
-  // meaning is the pair of paths.
+  // Where a rename or copy came from: its meaning is the pair of paths.
   const orig = f.orig_path ?? "";
   if (orig !== "") {
     top.appendChild(
@@ -1166,8 +953,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
     );
   }
 
-  // Why this path appears twice. Both of its rows carry the mark, so it
-  // reads as one file in two states rather than as a duplicate.
+  // Both rows carry the mark, so it reads as one file in two states.
   if (partiallyStaged) {
     top.appendChild(
       el(
@@ -1245,9 +1031,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
   top.appendChild(actions);
   li.appendChild(top);
 
-  // The whole row stays a mouse target, exactly as the drawer's trigger was.
-  // Keyboard users reach the same action through the filename button above, and
-  // the Stage/Discard buttons already stopPropagation.
+  // The whole row stays a mouse target; the filename button serves the keyboard, and Stage/Discard stopPropagation.
   top.addEventListener("click", () => {
     openFileDiff(r, f);
   });
@@ -1255,41 +1039,23 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
   return li;
 }
 
-/** Open one changed file's diff against HEAD, in its own editor tab.
- *
- *  The inline drawer this replaced rendered the raw unified-diff TEXT in a
- *  `<pre>` inside the file list, so a line wider than that column was simply
- *  clipped, in a surface with no room to scroll it: no line numbers, no
- *  highlighting, and a hard 26rem ceiling. The editor's diff tab is the app's
- *  existing answer for a changed file, and it was already the surface every
- *  other changed-file click reached; the git panel was the one outlier.
- *
- *  Two conversions happen here and only here. The Changes tab holds REPO-relative
- *  paths with one repo per section, while `openChange` takes the
- *  workspace-relative form every other caller has, so the repo name is joined
- *  back on — the workspace-root repo is named "." and owns paths with no prefix.
- *  The repo is then deliberately NOT passed onward: the diff loader resolves the
- *  owning repository from a workspace-relative path (internal/git `ownerOf`), so
- *  one spelling serves both sides of its fetch. */
+/**
+ * Open one changed file's diff against HEAD in its own editor tab. Paths here are repo-relative, so the repo name is
+ * joined back on (the root repo is "." and has no prefix). The repo is not passed on: the diff loader resolves the
+ * owner from the workspace-relative path.
+ */
 function openFileDiff(r: RepoStatus, f: FileEntry): void {
   openChange(r.repo === "." ? f.path : `${r.repo}/${f.path}`);
 }
 
-// --- Helpers ---
-
 const DEFAULT_BRANCHES = new Set(["main", "master", "develop", "trunk"]);
 
-/** Heuristic: branches named "main", "master", "develop", "trunk"
- *  aren't feature branches and shouldn't trigger the post-push
- *  "Open PR" hint. Anything else is treated as a feature branch
- *  candidate. */
+/** Default branches do not trigger the post-push "Open PR" hint. */
 function isFeatureBranch(branch: string): boolean {
   return branch !== "" && !DEFAULT_BRANCHES.has(branch.toLowerCase());
 }
 
-/** Banner shown briefly after a successful push: invites the user to
- *  open a PR for the just-pushed branch. Click switches to the PRs
- *  tab and opens the new-PR dialog with source_branch pre-filled. */
+/** Click opens the PRs tab and the new-PR dialog with source_branch prefilled. */
 function renderOpenPRHint(r: RepoStatus): HTMLElement {
   const hint = el("div", { className: "git-open-pr-hint" });
   hint.append(

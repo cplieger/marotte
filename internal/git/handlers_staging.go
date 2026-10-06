@@ -24,11 +24,9 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, st)
 }
 
-// collectStatus answers one repository's status. doFetch=false skips the network
-// fetch, for the dashboard where fetching N repos in parallel is costly.
-//
-// Order is load-bearing: the fetch runs BEFORE the status call, so ahead/behind is
-// measured against the refreshed remote ref.
+// collectStatus answers one repository's status; doFetch=false skips the network fetch for the
+// dashboard. The fetch runs BEFORE status, so ahead/behind is measured against the refreshed remote
+// ref.
 func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
 	if !IsRepo(ctx, dir) {
 		return gitStatusResp{IsRepo: false, Files: []gitFile{}}

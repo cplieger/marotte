@@ -1,17 +1,9 @@
-// The workflow run card's state vocabulary.
-//
-// Two changes are pinned here, and they are one change: the pip row that used to
-// sit under the head is gone, so the per-step GLYPH is the only signal left for
-// what a step is doing — which means every state a step can be in has to reach it.
-// A `paused` step used to render the running spinner, and an unanswered ask
-// reached the card at all.
+// The run card's state vocabulary: the per-step GLYPH is the only signal for what a step is
+// doing, so every step state has to reach it.
 import { vi, describe, it, expect } from "vitest";
 
-// scroll.ts is a self-initialising singleton over a real `#messages`; the canonical
-// mock is what every other suite in this graph uses, and its compensation helpers run
-// their mutation, so a fold still reaches the DOM. It is also what makes the
-// compensation itself observable — see "routes the fold through the scroll
-// compensator".
+// scroll.ts is a singleton over a real `#messages`; the canonical mock runs its compensation
+// helpers' mutation, which also makes the compensation observable.
 vi.mock("../scroll.js", () =>
   import("../__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
 );
@@ -50,10 +42,8 @@ function rowStates(root: HTMLElement): string[] {
   return [...root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["status"] ?? "");
 }
 
-/** Each step's mark, described: `"icon"` for a state that paints a silhouette,
- *  otherwise the character it paints (`""` for a CSS ring). The three settled
- *  outcomes are SVGs now, so reading textContent alone would report every one of
- *  them as empty. */
+/** Each step's mark: `"icon"` for an SVG silhouette (the settled outcomes), else the character
+ *  it paints (`""` for a CSS ring). */
 function glyphs(root: HTMLElement): string[] {
   return [...root.querySelectorAll<HTMLElement>(".run-step-glyph")].map((e) =>
     e.querySelector("svg") === null ? (e.textContent ?? "") : "icon",
@@ -65,10 +55,8 @@ function iconMarkup(root: HTMLElement): string[] {
   return [...root.querySelectorAll<HTMLElement>(".run-step-glyph svg")].map((e) => e.outerHTML);
 }
 
-/** The word the head says for this state. Its `aria-label` is where the head states
- *  it: the row itself shows the run's name and its step counter, and the visible word
- *  is the FOOT's (see `ledger`), which is the whole reason the head stopped carrying
- *  a `.run-state` span of its own. */
+/** The word the head's `aria-label` states for this state; the visible word is the FOOT's
+ *  (see `ledger`). */
 function statusWord(root: HTMLElement): string {
   const label = root.querySelector(".run-head")?.getAttribute("aria-label") ?? "";
   return label.slice(label.lastIndexOf(", ") + 2);
@@ -87,8 +75,7 @@ describe("the deleted pip row", () => {
   it("builds no spine region at all", () => {
     const c = card();
     c.render(runOf("running", step("a", "running"), step("b", "pending")));
-    // Not `.hidden`: a region kept in the DOM is a region that can come back with
-    // one CSS rule, and the pips were deleted rather than suppressed.
+    // Absent, not `.hidden`: a region kept in the DOM can come back with one CSS rule.
     expect(c.root.querySelector(".run-spine")).toBeNull();
     expect(c.root.querySelector(".run-pip")).toBeNull();
   });
@@ -125,8 +112,7 @@ describe("a step's own state", () => {
   it("separates a paused step from a running one", () => {
     const c = card();
     c.render(runOf("paused", step("a", "running"), step("b", "paused")));
-    // `paused` used to fold onto `running`, so both rows carried the spinner and the
-    // card claimed progress on a step where nothing was moving.
+    // Folding `paused` onto `running` would claim progress on a step where nothing moves.
     expect(rowStates(c.root)).toEqual(["running", "waiting"]);
     // Neither carries a badge character: CSS draws the ring for both, and MOTION is
     // what separates them.
@@ -253,6 +239,22 @@ describe("an unanswered ask", () => {
     expect(c.root.dataset["asking"]).toBe("true");
   });
 
+  it("says the user paused it, and that a requested pause has not landed yet", () => {
+    const paused: RunState = { ...runOf("paused", step("a", "paused")), stopInitiator: "user" };
+    expect(alertText(buildAndRender(paused, NO_ASKS))).toBe("Paused by you");
+    const closed: RunState = {
+      ...runOf("aborted", step("a", "aborted")),
+      stopInitiator: "user",
+      stopReason: "tab closed",
+    };
+    expect(alertText(buildAndRender(closed, NO_ASKS))).toBe("Stopped by you: tab closed");
+    const pending: RunState = {
+      ...runOf("running", step("a", "running")),
+      pausePending: { initiator: "user" },
+    };
+    expect(alertText(buildAndRender(pending, NO_ASKS))).toBe("Pausing after the current step");
+  });
+
   it("outranks a pause, which is the state a click cannot resolve", () => {
     const state: RunState = {
       ...runOf("paused", step("a", "paused")),
@@ -265,11 +267,8 @@ describe("an unanswered ask", () => {
   });
 });
 
-// A pause reason is KAS's own prose and reaches the reader verbatim, EXCEPT for
-// the two literals that mean a person owes an answer. Those name a tool and a
-// mechanism where the reader needs to know somebody is waiting on them, and this
-// arm is the case where the question itself never arrived — a restart lost the
-// text, or this client has not been handed it yet.
+// A pause reason is KAS's prose shown verbatim, EXCEPT the two literals meaning a person owes an
+// answer; this arm covers the question text never having arrived.
 describe("a pause that means a step is waiting on a person", () => {
   function pausedWith(reason: string): string {
     return alertText(
@@ -344,10 +343,8 @@ describe("a pause that means a step is waiting on a person", () => {
     );
   });
 
-  // Upstream 2.21.1 gave `pauseDetail.class` a second member, and until then both
-  // render sites hardcoded the transient label. An exhausted continuation budget
-  // is not a transient failure, and `pauseReason` already carries upstream's own
-  // sentence, so the class states its code and claims nothing.
+  // An exhausted continuation budget (`pauseDetail.class`, upstream 2.21.1) is not transient;
+  // `pauseReason` carries upstream's sentence, so the class states its code only.
   it("does not call an exhausted continuation budget a transient error", () => {
     const text = alertText(
       buildAndRender(
@@ -373,18 +370,9 @@ function buildAndRender(state: RunState, a: RunAsks): HTMLElement {
   return c.root;
 }
 
-// ---------------------------------------------------------------------------
-// THE DOOR'S KEY. A step row is a door into `/run/<id>` with that node selected,
-// so the path the row hands over has to be the path the exec view addresses that
-// node by — otherwise the click lands on nothing and the page silently
-// auto-follows. Two producers, two modules: `render` builds a row per state-tree
-// leaf through `nodePathOf`, and `run-exec-source.ts` builds an `ExecNode.path`
-// through `nodePathSegment`. Nothing pinned that they agree.
-//
-// It is the same key defect one surface along: KAS spells a repeat's iteration
-// container `<repeatId>#<n>` in the state tree and `iter-<n>` in a frame path,
-// which is what used to give every loop-body step TWO rows in this card.
-// ---------------------------------------------------------------------------
+// A step row is a door into `/run/<id>` with that node selected, so `render`'s `nodePathOf` and
+// `run-exec-source.ts`'s `nodePathSegment` must agree, or the click lands on nothing. KAS spells a
+// repeat iteration `<repeatId>#<n>` in the state tree and `iter-<n>` in a frame path.
 describe("a step row's key is the exec view's own node path", () => {
   // The shape a real completed loop run has: the iteration container carries its
   // own generated id AND its `iteration`, which is what the segment rule reads.
@@ -441,7 +429,7 @@ describe("a step row's key is the exec view's own node path", () => {
     const row = c.root.querySelector<HTMLElement>(`.run-step[data-node="${CODE_PATH}"]`);
     expect(row?.querySelector(".run-step-name")?.textContent).toBe("code");
     expect(row?.dataset["status"]).toBe("ok");
-    // A settled ok step's mark is the outcome SVG silhouette, not the old ✓ glyph.
+    // A settled ok step's mark is the outcome SVG silhouette, not a ✓ glyph.
     expect(row?.querySelector(".run-step-glyph svg")).not.toBeNull();
   });
 
@@ -477,13 +465,8 @@ describe("a step row's key is the exec view's own node path", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A ROW IS A DOOR, NOT A DISCLOSURE. It used to open a per-row body hosting that
-// step's own live blocks, which made the transcript BUILD every tool card and
-// reasoning trace of every step of every run — `content-visibility` skips layout
-// and paint on a closed row, not construction. The body is gone; the row opens
-// `/run/<id>` at that node instead.
-// ---------------------------------------------------------------------------
+// A ROW IS A DOOR, NOT A DISCLOSURE: it opens `/run/<id>` at that node, so the transcript never
+// builds every step's blocks (`content-visibility` skips paint, not construction).
 describe("a step row is a door into the run tab", () => {
   const opened: [string, string, string | undefined][] = [];
 
@@ -501,10 +484,8 @@ describe("a step row is a door into the run tab", () => {
   }
 
   it("makes the row head a real anchor at that STEP's route", () => {
-    // Real, so middle-click and copy-link work — and the route carries the node as
-    // a FRAGMENT, so a copied row link lands on the step rather than on the run's
-    // auto-followed default. A fragment rather than a segment because a node path
-    // contains `/` and the tab's identity must stay `(run, workflowId)`.
+    // A real link (middle-click, copy-link); the node rides as a FRAGMENT because a node path contains
+    // `/` and the tab's identity stays `(run, workflowId)`.
     const h = head(doorCard());
     expect(h.tagName).toBe("A");
     expect(h.getAttribute("href")).toBe("/run/wf_1#node=wf_1%2Fbuild");
@@ -520,12 +501,8 @@ describe("a step row is a door into the run tab", () => {
   });
 
   it("gives two iterations of one loop body DIFFERENT hrefs", () => {
-    // What proves the href is per ROW rather than per card: these two rows share a
-    // nodeId, so only the node path separates them.
-    //
-    // Its own card rather than `doorCard`'s: a row is inserted once and never
-    // removed, so re-rendering a different plan into that card would leave its
-    // `build` row in the DOM beside these two.
+    // These rows share a nodeId, so only the node path separates them. Own card: rows are never
+    // removed, so re-rendering `doorCard` would keep its `build` row.
     const c = card();
     c.render({
       workflowId: "wf_1",
@@ -560,8 +537,8 @@ describe("a step row is a door into the run tab", () => {
   });
 
   it("hosts no step body and carries no disclosure chevron", () => {
-    // Not `.hidden` and not `content-visibility`: the body was DELETED, and a
-    // region kept in the DOM is a region that still costs its construction.
+    // Absent, not `.hidden` or `content-visibility`: a region kept in the DOM still costs
+    // its construction.
     const c = doorCard();
     expect(c.root.querySelector(".run-step-body")).toBeNull();
     expect(c.root.querySelector(".run-step-toggle")).toBeNull();
@@ -607,15 +584,9 @@ describe("a step row is a door into the run tab", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE CARD RENDERS EXPANDED WHILE IT IS THE NEWEST TOP-LEVEL ELEMENT and folds when
-// the next element is posted after it — the positional rule, at card scope, pushed in
-// through `setSuperseded` because only the dispatcher knows where the card sits.
-//
-// Every fixture here supplies a `disclosure`, because that is the only way a caller
-// can state either half (the reader's own recorded state, and this pass's verdict); a
-// card built without one keeps the `?? true` floor, which the cases above rely on.
-// ---------------------------------------------------------------------------
+// The newest top-level run card renders expanded and folds once superseded (`setSuperseded`,
+// since only the dispatcher knows its position). Each fixture supplies a `disclosure`; without
+// one the card keeps the `?? true` floor.
 describe("the newest run card is expanded, and being superseded folds it", () => {
   const clean = (): RunState => runOf("completed", step("build", "completed"));
 
@@ -690,10 +661,8 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
   });
 
   it("leaves a run card open while it holds an unanswered ask", () => {
-    // The one refusal no status can express: the head reads "needs input" whatever the
-    // run reports, so a fold would hide the steps behind a card that says it is
-    // waiting on a person. Over a SETTLED CLEAN run deliberately — that is the only
-    // shape the other refusals let through, so it is what makes this one falsifiable.
+    // The head reads "needs input" whatever the run reports, so a fold would hide the waiting steps.
+    // Over a SETTLED CLEAN run: the only shape the other refusals let through.
     const { c } = wired();
     c.render(clean(), asks(1, ["build"], "which branch?"));
     c.setSuperseded(true);
@@ -704,14 +673,9 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
   });
 
   it("folds a run the reader stopped, because nobody is waiting on one", () => {
-    // The carve-outs are the reference's three plus the ask, and no wider. `stateOf`
-    // maps both of these to `warn`, so a "settled clean means only `completed`" reading
-    // would exempt a cancelled run from ever folding — an element sitting expanded
-    // above every later one for the rest of the session over a run the reader
-    // themselves stopped.
-    // Over a run whose STEPS all completed, deliberately: an `aborted` STEP counts as
-    // failed in `runCounters`, so a stopped step is the failure carve-out and it is the
-    // run's own stopped status this admits.
+    // No wider than the four refusals: `stateOf` maps these to `warn`, and a "completed only" reading
+    // would keep a run the reader stopped expanded forever. The steps all completed, since an
+    // `aborted` STEP counts as failed in `runCounters`.
     for (const status of ["cancelled", "aborted"] as const) {
       const { c } = wired();
       c.render(runOf(status, step("build", "completed")));
@@ -745,14 +709,9 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
   });
 
   it("routes the fold through the scroll compensator", () => {
-    // `scroll.ts` calls `preserveReadingPosition` THE ONE ENTRY POINT for a transcript
-    // height change, and an auto fold removes height ABOVE the reader — this body is one
-    // row per leaf plus a capture preview, taller than the tool-group case the helper
-    // was made mandatory for. `autoCollapseGroup` wraps its own fold for exactly this.
-    //
-    // Withholding the wrapped mutation is what makes the wrapping falsifiable: a
-    // `ctl.close()` sitting OUTSIDE the wrapper folds the card regardless, so the last
-    // two assertions go red the moment the compensation is dropped.
+    // An auto fold removes height ABOVE the reader, so it must go through `preserveReadingPosition`.
+    // Withholding the wrapped mutation makes that falsifiable: an unwrapped `ctl.close()` would fold
+    // anyway.
     const { c } = wired();
     c.render(clean());
     scrollMock.preserveReadingPosition.mockImplementation(() => undefined);

@@ -1,8 +1,3 @@
-// ---------------------------------------------------------------------------
-// Repo-row rendering and batch clone/delete actions for the forge panel.
-// Extracted from forge-auth.ts.
-// ---------------------------------------------------------------------------
-
 import { el } from "@cplieger/reactive";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -29,10 +24,10 @@ export interface RepoListing {
   stale: boolean;
 }
 
-/** The listing a first-page read leaves; `page` is null when the read failed,
- *  which keeps what was held and marks it stale. Pages loaded past the first
- *  stay while the first page still names the cursor they continued from, so a
- *  re-read of an unchanged list keeps what the reader loaded. */
+/**
+ * The listing a first-page read leaves; null `page` (a failed read) keeps what was held and marks it stale. Later
+ * pages stay while the first page still names their cursor, so re-reading an unchanged list keeps them.
+ */
 export function readFirstPage(prev: RepoListing | undefined, page: RepoList | null): RepoListing {
   if (page === null) {
     if (prev === undefined || prev.unread) {
@@ -99,7 +94,6 @@ export interface RepoDeps {
   running: (key: string) => Promise<void> | undefined;
 }
 
-/** What each repository row says about its last press, until its next one. */
 const rowNotes = new Map<string, string>();
 
 /** A row's identity across accounts: its clone URL names the host. */
@@ -111,8 +105,7 @@ function cloneKey(repo: Repo): string {
   return `clone ${rowKey(repo)}`;
 }
 
-/** A local copy is a directory named for the repository, so one removal serves
- *  every row of that name. */
+/** A local copy is a directory named for the repository, so one removal serves every row of that name. */
 function removeKey(repo: Repo): string {
   return `remove ${repo.name}`;
 }
@@ -187,7 +180,6 @@ export function renderRepoState(cloned: boolean): HTMLElement {
   return state;
 }
 
-/** Start the row request `key` from `btn`, which shows it. */
 function pressRow(
   btn: HTMLButtonElement,
   key: string,
@@ -299,8 +291,10 @@ async function confirmRemoval(repo: Repo, btn: HTMLButtonElement, deps: RepoDeps
   }
 }
 
-/** Delete the workspace copy of one repository. The row keeps its copy until the
- *  delete lands; a refusal rejects after the row says why. */
+/**
+ * Delete the workspace copy of one repository. The row keeps its copy until the delete lands; a refusal rejects
+ * after the row says why.
+ */
 async function removeLocalRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   setRowNote(repo, "", deps);
   const o = await deleteLocalAction.dispatch({ repoName: repo.name }).outcome;
@@ -316,9 +310,10 @@ async function removeLocalRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   deps.bumpState();
 }
 
-/** Run `each` over `candidates` in turn, each as its row's own request, so the
- *  row shows it and a row press already running is awaited rather than doubled.
- *  Answers the full names of the ones that fell short. */
+/**
+ * Run `each` over `candidates` in turn as each row's own request, so a row press already running is awaited, not
+ * doubled. Answers the full names of the ones that fell short.
+ */
 async function eachRow(
   candidates: readonly Repo[],
   key: (repo: Repo) => string,
@@ -350,8 +345,7 @@ export async function cloneAllForAccount(
     (repo, i) => {
       const position = `Cloning ${String(i + 1)}/${String(candidates.length)}`;
       btn.textContent = `${position}…`;
-      // git's own progress stream, throttled server-side; the percent is
-      // what tells a reader a large repo is downloading rather than hung.
+      // git's progress stream, throttled server-side; the percent tells a reader a large repo is downloading, not hung.
       return cloneRepo(repo, deps, (line) => {
         const pct = /(\d{1,3})%/.exec(line)?.[1];
         btn.textContent = pct === undefined ? `${position}…` : `${position} (${pct}%)…`;
@@ -381,9 +375,10 @@ export async function deleteAllForAccount(
   return batchFailure("remove the local copy of", failed, candidates.length);
 }
 
-/** The list's sentence for a batch that fell short, NAMING the repositories: a
- *  bare count ("1 of 63 failed") leaves the reader diffing 63 directories to
- *  find which. Up to three names in full, the rest as a count; "" for none. */
+/**
+ * The list's sentence for a batch that fell short, naming the repositories: a bare count leaves the reader diffing
+ * directories to find which. Up to three names in full, the rest as a count; "" for none.
+ */
 export function batchFailure(verb: string, failedNames: readonly string[], total: number): string {
   if (failedNames.length === 0) {
     return "";

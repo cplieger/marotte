@@ -1,7 +1,5 @@
-// The attachment pill: one component for the composer's staged row and a sent
-// turn's header. The two assertions that matter are that the body OPENS and the
-// `×` does not, in both directions — the pill is the only place in the app where
-// two different verbs share one small target.
+// The attachment pill, for the composer's staged row and a sent turn's header: the body
+// OPENS and the `×` does not, in both directions.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   buildAttachmentPill,
@@ -37,9 +35,8 @@ describe("buildAttachmentPill", () => {
     expect(pill.querySelector(".attachment-icon")?.textContent).not.toBe("");
   });
 
-  // A button cannot contain a button, so the body could never have wrapped the
-  // `×`. Siblinghood is what makes the two verbs independent, and it is a
-  // structural guarantee rather than a stopPropagation call a later edit can drop.
+  // A button cannot contain a button, so siblinghood makes the two verbs structurally
+  // independent.
   it("puts the body and the × side by side, never nested", () => {
     const pill = buildAttachmentPill(
       { path: "a/b.txt", name: "b.txt" },
@@ -77,9 +74,8 @@ describe("buildAttachmentPill", () => {
     expect(opened).toEqual([]);
   });
 
-  // A sent attachment cannot be un-sent, so the header's pill has no `×` at all
-  // rather than a hidden one — a display:none button is still a button in the
-  // accessibility tree.
+  // A sent attachment cannot be un-sent, so there is no `×` at all; a hidden button is still
+  // in the accessibility tree.
   it("builds no × when no remover is supplied", () => {
     const pill = buildAttachmentPill({ path: "a/b.txt", name: "b.txt" });
     expect(pill.querySelector(".attachment-close")).toBeNull();

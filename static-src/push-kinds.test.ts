@@ -1,10 +1,6 @@
-// D101 / D104, client side.
-//
-// Three things are pinned here, and the first is a CROSS-LANGUAGE contract with no
-// codegen behind it: the PR subject prefix is spelled in Go (marotte.PRSubjectPrefix)
-// and once in TypeScript (push-subject.ts, which is DOM-free, so the worker and the
-// page both take it from there). Two copies of one literal is what the read below
-// turns into a test rather than a hope.
+// Three things are pinned here, and the first is a CROSS-LANGUAGE contract with no codegen behind
+// it: the PR subject prefix is spelled in Go (marotte.PRSubjectPrefix) and once in TypeScript
+// (push-subject.ts, which is DOM-free, so the worker and the page both take it from there).
 import { describe, it, expect, beforeEach } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import pushTypesGo from "../internal/marotte/push_types.go?raw";
@@ -18,8 +14,8 @@ const tsCopies: Record<string, string> = {
   "static-src/push-subject.ts": pushSubjectSrc,
 };
 
-/** Each subject-key prefix, by the Go constant that declares it and the TypeScript
- *  constant the copy has to spell. */
+/** Each subject-key prefix, by the Go constant that declares it and the TypeScript constant the
+ *  copy has to spell. */
 const prefixes = [
   { goConst: "PRSubjectPrefix", tsConst: "PR_SUBJECT_PREFIX" },
   { goConst: "RunSubjectPrefix", tsConst: "RUN_SUBJECT_PREFIX" },
@@ -41,13 +37,13 @@ describe("subject prefixes", () => {
   }
 });
 
-// The keyed-kind table drives both the settings rows and the per-kind state, so
-// it has to agree with the server's registry.
+// The keyed-kind table drives both the settings rows and the per-kind state, so it has to agree
+// with the server's registry.
 describe("keyed push kinds", () => {
   it("names every kind the server registry gives a settings key, and no other", async () => {
     const { KEYED_PUSH_KINDS } = await import("./notify.js");
-    // Each keyed entry reads {marotte.PushKind<Name>, settings.Key<Name>, <default>};
-    // the floor is the one entry whose key is the empty string.
+    // Each keyed entry reads {marotte.PushKind<Name>, settings.Key<Name>, <default>}; the floor is
+    // the one entry whose key is the empty string.
     const entries = [
       ...pushServiceGo.matchAll(/\{marotte\.PushKind(\w+),\s*(settings\.Key\w+|""),/g),
     ];
@@ -62,9 +58,8 @@ describe("keyed push kinds", () => {
     }
   });
 
-  // The declared table, read as values: the three polarities are NOT uniform, and a
-  // client default that disagrees with the server's is the drift class this repo has
-  // already paid for once.
+  // The declared table, read as values: the three polarities are NOT uniform, and a client default
+  // that disagrees with the server's is the drift class this repo has already paid for once.
   it("declares pr_status OFF while its two siblings are ON", async () => {
     const { KEYED_PUSH_DEFAULTS } = await import("./notify.js");
     expect(KEYED_PUSH_DEFAULTS).toEqual({
@@ -74,12 +69,8 @@ describe("keyed push kinds", () => {
     });
   });
 
-  // The seed, which is the half a table alone does not state: a client that has not
-  // loaded /api/settings yet answers the table rather than "on" for everything.
-  //
-  // ORDERING PREMISE: this case reads state no earlier case in this file has written
-  // to — the module instance is shared across the file, so a state write above it
-  // would make it read that write instead of the seed.
+  // The seed, which is the half a table alone does not state: a client that has not loaded
+  // /api/settings yet answers the table rather than "on" for everything.
   it("seeds the in-memory state from that table on a fresh client", async () => {
     const { KEYED_PUSH_DEFAULTS, isKindEnabled } = await import("./notify.js");
     for (const [kind, want] of Object.entries(KEYED_PUSH_DEFAULTS)) {
@@ -87,11 +78,10 @@ describe("keyed push kinds", () => {
     }
   });
 
-  // Two tables key on the same kind set and neither is the server's, so a kind
-  // added there with no entry in one of them degrades silently: a missing DEFAULT
-  // makes `enableEverything` fall through to `?? true`, ignoring whatever polarity
-  // the server declared, and a missing INPUT ID makes `kindRows` skip the row
-  // altogether, so the kind ships with no switch and no failing test.
+  // Two tables key on the same kind set and neither is the server's, so a kind added there with no
+  // entry in one of them degrades silently: a missing DEFAULT makes `enableEverything` fall through
+  // to `?? true`, ignoring whatever polarity the server declared, and a missing INPUT ID makes
+  // `kindRows` skip the row altogether, so the kind ships with no switch and no failing test.
   it("declares a default for every keyed kind, and no other", async () => {
     const { KEYED_PUSH_KINDS, KEYED_PUSH_DEFAULTS } = await import("./notify.js");
     expect(Object.keys(KEYED_PUSH_DEFAULTS).sort()).toEqual(Object.keys(KEYED_PUSH_KINDS).sort());
@@ -106,32 +96,29 @@ describe("keyed push kinds", () => {
   it("does not give the permission floor an off switch", async () => {
     const { KEYED_PUSH_KINDS, setKindEnabled, isKindEnabled } = await import("./notify.js");
     expect(Object.keys(KEYED_PUSH_KINDS)).not.toContain("permission");
-    // Nothing can create one by passing the name: an ask blocks the turn and has
-    // no per-tab marker, so a channel that could go dark on its own would stall
-    // every later turn with nothing on screen to say why.
+    // Nothing can create one by passing the name: an ask blocks the turn and has no per-tab marker,
+    // so a channel that could go dark on its own would stall every later turn with nothing on
+    // screen to say why.
     setKindEnabled("permission", false);
     expect(isKindEnabled("permission")).toBe(true);
   });
 });
 
-/** Each keyed kind against the Go constant that declares its polarity. The Go name
- *  is spelled rather than derived from the settings key: any snake-to-Pascal rule
- *  yields `NotifyPrStatus` where the server declares `NotifyPRStatus`. */
+/** Each keyed kind against the Go constant that declares its polarity. The Go name is spelled
+ *  rather than derived from the settings key: any snake-to-Pascal rule yields `NotifyPrStatus`
+ *  where the server declares `NotifyPRStatus`. */
 const polarities = [
   { kind: "agent_finished", goConst: "DefaultNotifyAgentFinished" },
   { kind: "pr_status", goConst: "DefaultNotifyPRStatus" },
   { kind: "run_outcome", goConst: "DefaultNotifyRunOutcome" },
 ] as const;
 
-// The client half of the polarity contract. `internal/push/kind_defaults_test.go`
-// pins the send gate against the same constants; this pins the TS twin, so a flip
-// on either side of the language boundary fails one case rather than shipping a
-// client whose pre-fetch answer disagrees with what the server delivers.
+// The client half of the polarity contract.
 describe("KEYED_PUSH_DEFAULTS against the Go constants", () => {
   it.each(polarities)("$kind carries settings.$goConst's value", async ({ kind, goConst }) => {
-    // Anchored to a whole declaration line, and required to match exactly once: an
-    // unanchored first-match would let a REFERENCE to the constant answer for its
-    // declaration, and a second declaration would be read as agreement with the first.
+    // Anchored to a whole declaration line, and required to match exactly once: an unanchored
+    // first-match would let a REFERENCE to the constant answer for its declaration, and a second
+    // declaration would be read as agreement with the first.
     const decl = new RegExp(`^\\s*${goConst}\\s*=\\s*(true|false)\\s*$`, "gm");
     const hits = [...settingsEffectiveGo.matchAll(decl)];
     expect(
@@ -164,9 +151,9 @@ describe("restoreNotifications", () => {
     expect(notify.isKindEnabled("pr_status")).toBe(true);
   });
 
-  // Every field of the effective payload is REQUIRED, so "absent" means absent from
-  // config.json: the server resolved it to settings.Default* before answering, and
-  // these two cases are the two polarities that resolution can carry.
+  // Every field of the effective payload is REQUIRED, so "absent" means absent from config.json:
+  // the server resolved it to settings.Default* before answering, and these two cases are the two
+  // polarities that resolution can carry.
   it("takes agent_finished's resolved default, which is ON", async () => {
     const notify = await import("./notify.js");
     notify.restoreNotifications(settingsPayload({ notifications_enabled: true }));
@@ -175,8 +162,8 @@ describe("restoreNotifications", () => {
 
   it("takes pr_status's resolved default, which is OFF", async () => {
     const notify = await import("./notify.js");
-    // A pull request's CI verdict is already on the forge and in the PRs tab, so this
-    // is the one keyed kind a fresh install does not deliver.
+    // A pull request's CI verdict is already on the forge and in the PRs tab, so this is the one
+    // keyed kind a fresh install does not deliver.
     notify.restoreNotifications(settingsPayload({ notifications_enabled: true }));
     expect(notify.isKindEnabled("pr_status")).toBe(false);
   });

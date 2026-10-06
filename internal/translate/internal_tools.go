@@ -1,9 +1,7 @@
 package translate
 
-// Internal engine bookkeeping announced as tool calls. KAS emits these through
-// its deterministicToolCalls channel during session machinery, not as agent
-// work, and its own TUI never renders them. The create frame is dropped before
-// it can open a turn; an update without an open turn is dropped by lookup.
+// isInternalTool reports engine bookkeeping KAS announces as tool calls (its TUI never renders
+// them). The create frame is dropped before it can open a turn.
 func isInternalTool(toolID string) bool {
 	return toolID == "fetch_cloud_config"
 }

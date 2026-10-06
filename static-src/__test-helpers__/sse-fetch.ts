@@ -1,8 +1,5 @@
-// A scripted `fetch` for the SSE adapter's tests: every `/api/events` GET becomes a
-// stream the test writes frames into, and every other request is answered by a
-// handler the test installs. Installed with `vi.stubGlobal("fetch", scripted.fetch)`,
-// which the standard `unstubGlobals` reverses; the library and `@cplieger/fetch` both
-// read `globalThis.fetch` at call time, so nothing needs injecting.
+// A scripted `fetch`: each `/api/events` GET is a stream the test writes frames into, every other
+// request goes to an installed handler. Install with `vi.stubGlobal("fetch", scripted.fetch)`.
 
 /** One open `/api/events` connection, driven frame by frame. */
 interface SSEConnection {
@@ -161,8 +158,6 @@ export function createScriptedFetch(): ScriptedFetch {
     const headers = requestHeaders(input, init);
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-    // The stream is the GET on the events path; the acknowledgement POST beneath it
-    // (/api/events/alive) is an ordinary recorded request.
     if (method === "GET" && url.split("?")[0] === "/api/events") {
       return openStream(url, headers, signal);
     }
@@ -193,12 +188,9 @@ export function createScriptedFetch(): ScriptedFetch {
   };
 }
 
-/** Yield to the event loop until `predicate` holds or `tries` macrotasks have passed.
- *  Stream bytes cross a `ReadableStream` reader and a `TextDecoder`, so a written frame
- *  reaches `onFrame` a few ticks later; a poll on the product's own output keeps the
- *  test free of a sleep. The budget is wall-clock, not a tick count: under a loaded
- *  host a macrotask tick can take long enough that 200 of them pass before the
- *  stream's own microtasks drain, which read as a failed predicate. */
+/** Yield until `predicate` holds or `timeoutMs` passes. A written frame reaches `onFrame` a few
+ *  ticks later (ReadableStream + TextDecoder); the budget is wall-clock because on a loaded host
+ *  a tick count runs out before the stream's own microtasks drain. */
 export async function until(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const deadline = performance.now() + timeoutMs;
   while (!predicate()) {

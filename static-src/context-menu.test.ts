@@ -1,6 +1,4 @@
-// A disabled menu item: still in the menu and its roving focus (the WAI-ARIA menu
-// pattern), announced as unavailable, and inert to a click, which leaves the menu
-// open rather than dismissing it for nothing.
+// A disabled item stays in the menu and its roving focus (WAI-ARIA menu pattern), and a click on it keeps the menu open.
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 import { showContextMenu } from "./context-menu.js";

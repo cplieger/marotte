@@ -1,8 +1,4 @@
-// ---------------------------------------------------------------------------
-// A connection's owner scopes: the owners whose pull requests are read beside
-// the account's own. Every add or remove sends the whole list, one write at a
-// time, each built from the list the last one stored.
-// ---------------------------------------------------------------------------
+// Every add or remove sends the whole list, one write at a time, each built from the list the last one stored.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";

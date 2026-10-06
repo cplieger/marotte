@@ -29,10 +29,8 @@ func specWorkspace(t *testing.T) string {
 	return dir
 }
 
-// specMux registers the route the way ListenAndServe does, so PathValue is
-// the real mux's unescaped segment. The canonical-path gate is left off so the
-// table below exercises the HANDLER's own refusals; the gate's earlier 400 on a
-// traversal spelling has its own test.
+// specMux registers the route as ListenAndServe does (the real mux's unescaped PathValue),
+// without the canonical-path gate, so the table exercises the handler's own refusals.
 func specMux(workDir string) http.Handler {
 	s := &Server{workDir: workDir}
 	mux := http.NewServeMux()
@@ -49,9 +47,8 @@ func getSpec(t *testing.T, h http.Handler, target string, hdr http.Header) *http
 	return rec
 }
 
-// The handler is called with the dir already set on the request, the way the
-// mux hands it over, so the table exercises its own validation and not the
-// mux's cleaning redirect (which answers ".." before any handler runs).
+// TestHandleSpec_RefusesEverythingButASpecDirectory calls the handler with dir already set,
+// as the mux hands it over.
 func TestHandleSpec_RefusesEverythingButASpecDirectory(t *testing.T) {
 	s := &Server{workDir: specWorkspace(t)}
 	cases := []struct {
@@ -82,9 +79,8 @@ func TestHandleSpec_RefusesEverythingButASpecDirectory(t *testing.T) {
 	}
 }
 
-// The API surface's canonical-path gate runs before the mux, so a traversal
-// spelling never reaches the handler: it is 400 there, and the handler's own
-// 404 above is the second line.
+// TestHandleSpec_TraversalIsRefusedByTheCanonicalPathGate pins the gate's 400 ahead of the
+// handler's own 404.
 func TestHandleSpec_TraversalIsRefusedByTheCanonicalPathGate(t *testing.T) {
 	h := canonicalAPIPath(specMux(specWorkspace(t)))
 	for _, dir := range []string{"..", ".kiro/specs/..", "%2e%2e/.kiro/specs/feat"} {
@@ -95,9 +91,8 @@ func TestHandleSpec_TraversalIsRefusedByTheCanonicalPathGate(t *testing.T) {
 	}
 }
 
-// One spelling reaches the handler: the once-encoded segment. The unencoded
-// path has three segments and matches no pattern, and the twice-encoded one
-// hands the handler a dir holding literal %2F, which no root spells.
+// TestHandleSpec_OnlyTheOnceEncodedSpellingResolves pins the once-encoded segment as the one
+// resolving spelling.
 func TestHandleSpec_OnlyTheOnceEncodedSpellingResolves(t *testing.T) {
 	h := canonicalAPIPath(specMux(specWorkspace(t)))
 	cases := []struct {
@@ -215,10 +210,8 @@ func TestHandleSpec_ETagRoundTripAnswers304(t *testing.T) {
 	}
 }
 
-// The three shapes a hash-only digest could not see, plus the separator that
-// keeps two fields from running together. An over-size doc carries an EMPTY
-// hash (spec.Load lists it with TooLarge and no content), so over hashes alone
-// a rename and an over-size doc arriving or leaving are all invisible.
+// TestSpecETag_MovesOnTheDocSetAndNotOnHashesAlone pins a rename and an over-size doc
+// arriving or leaving (empty hashes), plus the field separator.
 func TestSpecETag_MovesOnTheDocSetAndNotOnHashesAlone(t *testing.T) {
 	doc := func(file, hash string) marotte.SpecDoc {
 		return marotte.SpecDoc{File: file, Hash: hash}
@@ -256,8 +249,7 @@ func TestSpecETag_MovesOnTheDocSetAndNotOnHashesAlone(t *testing.T) {
 			a:    []marotte.SpecDoc{doc("ab", "cd")},
 			b:    []marotte.SpecDoc{doc("a", "bcd")},
 		},
-		// An approval is part of this endpoint's answer, so a 304 over the docs
-		// alone would serve a stale badge.
+		// An approval is part of the answer.
 		{
 			name: "an approval arrives",
 			a:    []marotte.SpecDoc{doc("design.md", "aa")},
@@ -271,9 +263,7 @@ func TestSpecETag_MovesOnTheDocSetAndNotOnHashesAlone(t *testing.T) {
 			b:    []marotte.SpecDoc{doc("design.md", "aa")},
 			appB: approved("design", "aa", false),
 		},
-		// The derived Stale is in the digest because a document DISAPPEARING
-		// removes its own contribution while flipping Stale, so without it the
-		// two changes could cancel.
+		// Stale: a doc disappearing would otherwise cancel its own change.
 		{
 			name: "the approved document goes away",
 			a:    []marotte.SpecDoc{doc("design.md", "aa")},
@@ -288,8 +278,7 @@ func TestSpecETag_MovesOnTheDocSetAndNotOnHashesAlone(t *testing.T) {
 			b:    []marotte.SpecDoc{doc("design.md", "aa")},
 			appB: approved("tasks", "aa", true),
 		},
-		// The badge renders WHEN a phase was approved, so re-approving the
-		// version already approved moves nothing else in the digest.
+		// Re-approving moves only the timestamp.
 		{
 			name: "the same version is re-approved later",
 			a:    []marotte.SpecDoc{doc("design.md", "aa")},
@@ -311,9 +300,7 @@ func TestSpecETag_MovesOnTheDocSetAndNotOnHashesAlone(t *testing.T) {
 	if got, other := specETag(same, sameApp), specETag(same, sameApp); got != other {
 		t.Errorf("specETag(%v) = %s then %s, want one digest", same, got, other)
 	}
-	// A map's iteration order is random, so a digest built by ranging it would
-	// move between two calls over the same input. Several phases is what makes
-	// that observable at all.
+	// Several phases make random map order observable.
 	several := map[string]marotte.SpecApproval{
 		"requirements": {Hash: "r1"},
 		"design":       {Hash: "d1"},

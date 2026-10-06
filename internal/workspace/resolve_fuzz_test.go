@@ -9,19 +9,8 @@ import (
 	"github.com/cplieger/pathinside/v2"
 )
 
-// FuzzResolveInsideAbs fuzzes the production resolver against its three
-// invariants: an accepted result is absolute, clean, and inside absWork.
-//
-// It used to have a sibling, FuzzResolveInside, whose subject was a 35-line COPY
-// of this function living in resolve_helpers_test.go — kept, by its own comment,
-// only because that fuzz target was its lone caller. Two implementations of one
-// containment rule is the trap, not the duplication: a fix applied to the
-// production resolver leaves the copy asserting the old shape still passes, in
-// the one predicate where that matters most. The copy and its target are deleted;
-// every seed unique to it is promoted below, and the coverage it had that this
-// target lacked — a workDir that really exists, so EvalSymlinks SUCCEEDS instead
-// of falling through to the parent branch — is now seeded here explicitly,
-// including a real in-tree symlink and a real escaping one.
+// FuzzResolveInsideAbs fuzzes the production resolver against its three invariants: an
+// accepted result is absolute, clean, and inside absWork.
 func FuzzResolveInsideAbs(f *testing.F) {
 	f.Add("/workspace", "file.txt")
 	f.Add("/workspace", "../escape")
@@ -31,7 +20,6 @@ func FuzzResolveInsideAbs(f *testing.F) {
 	f.Add("/workspace", "a/../../../etc/passwd")
 	f.Add("/tmp", "\x00inject")
 	f.Add("", "sub/file")
-	// Promoted from the retired FuzzResolveInside.
 	f.Add("/workspace", "..")
 	f.Add("/workspace", "../../../etc/passwd")
 	f.Add("/workspace", "foo/../../../bar")
@@ -43,10 +31,8 @@ func FuzzResolveInsideAbs(f *testing.F) {
 	f.Add("/workspace", "../../etc")
 	f.Add("/workspace", "inside/path")
 
-	// A workDir that exists, so the EvalSymlinks-succeeds branch is reachable at
-	// all. Every seed above names a directory that does not exist in a test
-	// container, which sends all of them down the parent-directory fallback and
-	// leaves the branch that actually resolves a symlink unexercised.
+	// A workDir that exists, so the EvalSymlinks-succeeds branch is reachable; the seeds
+	// above all take the parent-directory fallback.
 	work := realWorkDir(f)
 	f.Add(work, ".")
 	f.Add(work, "plain.txt")
@@ -78,10 +64,9 @@ func FuzzResolveInsideAbs(f *testing.F) {
 	})
 }
 
-// realWorkDir builds a workspace on disk holding the shapes the resolver
-// branches on: a plain file, a nested one, a symlink that stays inside, and a
-// symlink that leaves. Returned symlink-resolved, because an unresolved base
-// makes the containment check compare two spellings of the same directory.
+// realWorkDir builds a workspace holding the shapes the resolver branches on: a plain
+// file, a nested one, an inside symlink and a leaving one. Symlink-resolved, so the
+// containment check does not compare two spellings of one directory.
 func realWorkDir(f *testing.F) string {
 	f.Helper()
 	work, err := filepath.EvalSymlinks(f.TempDir())

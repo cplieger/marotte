@@ -1,32 +1,16 @@
 package marotte
 
-// EffectiveSettings is what GET /api/settings answers: the value in force for
-// every marotte-owned preference the client renders, resolved against the stored
-// config.json rather than echoed from it.
-//
-// NO FIELD CARRIES omitempty, and that is the contract rather than a style
-// choice. wiregen emits a REQUIRED TypeScript field for a Go field without
-// omitempty and an optional one for a field with it, so this struct generates an
-// interface whose every member is present. That is what lets the client delete
-// its own copies of these defaults: a reader cannot supply a fallback for a field
-// the type says is always there, so the drift class stops being representable
-// instead of being tested for.
-//
-// It is a STRUCT rather than the map the handler used to emit, for two reasons.
-// A struct cannot omit a field, so completeness is a property of the type instead
-// of a property of whichever builder ran; and a struct is what wiregen can carry
-// into TypeScript, which is what stops the client's copy being hand-maintained.
-// The cost is that an unknown key in config.json does not reach the client — see
-// the handler for why that loses nothing.
-//
-// The PATCH body is the PARTIAL of this type. Full shape to read, partial to
-// write, which is exactly what the two verbs mean.
-//
-// FIELD ORDER IS ALIGNMENT-DRIVEN, not narrative: the strings precede the slice
-// (a slice's pointer is its first word, its len and cap are not) and both precede
-// every non-pointer field, which is what govet's fieldalignment demands. Grouping
-// these by topic instead costs 16 bytes of GC scan prefix and fails the gate.
+// EffectiveSettings is what GET /api/settings answers: every marotte-owned preference the client
+// renders, resolved against config.json rather than echoed from it. The PATCH body is its partial.
+// NO FIELD CARRIES omitempty: wiregen then emits a REQUIRED TypeScript field, so the client cannot
+// keep a fallback default of its own. Field order is fieldalignment's (strings, then the slice,
+// then non-pointers), not topical.
 type EffectiveSettings struct {
+	// LastEffortByModel maps a model id to the reasoning-effort level last picked
+	// under it, so the seed applies to a chat running THAT model and to no other.
+	// One level for the whole app cannot express that: a pick on any chat retracts
+	// every other model's remembered level (settings.KeyLastEffortByModel).
+	LastEffortByModel map[string]string `json:"last_effort_by_model"`
 	// Theme is "", "dark", "light" or "system". The empty string is a REAL value
 	// meaning nothing has been chosen, which the client resolves to the OS
 	// preference; it is deliberately not normalised to "system" here, because the
@@ -38,15 +22,21 @@ type EffectiveSettings struct {
 	// LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
 	// memory: the value in force for an existing chat lives on that chat's record.
 	LastModel string `json:"last_model"`
-	// LastEffortByModel maps a model id to the reasoning-effort level last picked
-	// under it, so the seed applies to a chat running THAT model and to no other.
-	// One level for the whole app cannot express that: a pick on any chat retracts
-	// every other model's remembered level (settings.KeyLastEffortByModel).
-	LastEffortByModel map[string]string `json:"last_effort_by_model"`
 	// LastMergeMethod is the PR merge method picked last, in the forge's own
 	// spelling, the merge dialog's default where the repository offers it. Empty
 	// means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
+	// MemoryMode is the Memory dropdown's value (settings.MemoryOff and its three
+	// siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
+	MemoryMode string `json:"memory_mode"`
+	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
+	SpecPlanning string `json:"spec_planning"`
+	// WorkValidation and CloudFormationSafetyCheck are "", "on" or "off". The
+	// empty string is a real value: marotte sends nothing and kiro-cli decides.
+	WorkValidation            string `json:"work_validation"`
+	CloudFormationSafetyCheck string `json:"cloudformation_safety_check"`
+	// OutputStyle is "default" or "concise".
+	OutputStyle string `json:"output_style"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
 	// which is what enforces it; marotte runs no matcher of its own. The default is
 	// EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
@@ -57,15 +47,31 @@ type EffectiveSettings struct {
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.
 	ChatRetentionDays int `json:"chat_retention_days"`
+	// AutoCompactPct is 50..90 in steps of 5; any other stored value reads as
+	// settings.DefaultAutoCompactPct (80).
+	AutoCompactPct int `json:"auto_compact_pct"`
+	// TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
+	// unset (kiro-cli's 120 s).
+	TerminalCommandTimeoutMs int `json:"terminal_command_timeout_ms"`
+	// AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
+	// until the reader presses Compact.
+	AutoCompactionEnabled bool `json:"auto_compaction_enabled"`
 	// KnowledgeEnabled defaults TRUE, so it is the other key whose zero value is
 	// the wrong answer: the index, its REST surface and its UI all predate the
 	// switch, so an absent key read as false takes the knowledge tool away from
 	// every existing install.
 	KnowledgeEnabled bool `json:"knowledge_enabled"`
-	// ToolSearchEnabled and MemoryEnabled both default off, matching kiro-cli and
-	// the standing memory veto respectively.
+	// ContentCollection is the stored content-collection choice, default off. An
+	// organization's lock overrides what marotte sends, not this value.
+	ContentCollection bool `json:"content_collection_enabled"`
+	// GuardPayloadLinks defaults to settings.DefaultGuardPayloadLinks; no server path
+	// reads it.
+	GuardPayloadLinks bool `json:"guard_payload_links"`
+	// ToolSearchEnabled defaults off, matching kiro-cli.
 	ToolSearchEnabled bool `json:"tool_search_enabled"`
-	MemoryEnabled     bool `json:"memory_enabled"`
+	// MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
+	// a prompt waits for the servers to settle. Default off.
+	MCPWaitForReady bool `json:"mcp_wait_for_ready"`
 	// NotificationsEnabled is the push master switch, default off. The three per-kind
 	// switches below take their defaults from settings.Default*, and those are not
 	// uniform either — pr_status is OFF where its two siblings are ON. So there are
@@ -78,6 +84,13 @@ type EffectiveSettings struct {
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and is fail-closed by
 	// decision. DebugLogs raises the log level. All three default off.
+	// SpecPlanningAskFirst, InlineAgents and SteeringReminders default off,
+	// matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the
+	// TUI's default is off).
+	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
+	InlineAgents         bool `json:"inline_agents_enabled"`
+	SteeringReminders    bool `json:"steering_reminders_enabled"`
+	WorkflowsEnabled     bool `json:"workflows_enabled"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`

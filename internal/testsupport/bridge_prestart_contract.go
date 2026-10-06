@@ -6,11 +6,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// ACPPreStartBridge is the subject of ACPBridgePreStartContractTest: the 5
-// methods of a kiro-cli ACP bridge that this suite reads. There is no shared
-// ACPBridge interface any more — internal/agent declares the contract at seven
-// widths, up to 15 methods — and a contract suite has no business naming a
-// method it does not exercise.
+// ACPPreStartBridge is the subject of ACPBridgePreStartContractTest: the 5 bridge methods
+// this suite reads.
 type ACPPreStartBridge interface {
 	NotifCh() <-chan marotte.Notification
 	Stop()
@@ -19,17 +16,9 @@ type ACPPreStartBridge interface {
 	Models() []marotte.SessionModel
 }
 
-// ACPBridgePreStartContractTest verifies behavioral contracts that any ACP
-// bridge implementation must satisfy without a real kiro-cli subprocess. Run
-// against both the real Bridge and test fakes to catch drift at the lifecycle
-// level.
-//
-// Assertions are limited to properties that hold universally (before Start is
-// called), so fakes that pre-populate SessionID/ModelID for convenience are not
-// penalized.
-//
-// It lives here rather than in internal/bridge so no production package has to
-// import "testing".
+// ACPBridgePreStartContractTest verifies contracts any ACP bridge must satisfy before Start,
+// without a real kiro-cli subprocess. Run against the real Bridge and the fakes. It lives here
+// so no production package imports "testing".
 func ACPBridgePreStartContractTest(t *testing.T, newBridge func() ACPPreStartBridge) {
 	t.Helper()
 

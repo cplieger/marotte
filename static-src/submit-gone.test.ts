@@ -1,10 +1,5 @@
-// Tests for submit.ts on the FOURTH 409 class: reason "chat_not_found". The chat was
-// deleted underneath the send (a tombstoned record), so there is no turn to steer into
-// and no record to prompt; the primitive answers "gone" and submit.ts must treat it as a
-// refusal with the text handed back, never fall through to "sent" and never steer.
-//
-// Same module boundary as submit.test.ts: the real store, the send primitive and the
-// steer action mocked.
+// The FOURTH 409 class, "chat_not_found": a tombstoned chat answers "gone", a refusal with the text
+// handed back; never "sent", never a steer. Real store; send primitive and steer action mocked.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -15,9 +10,11 @@ const {
   mockAddAttachmentTo,
   mockAttachmentGeneration,
   mockTypedCommand,
+  mockInvokesCatalog,
   mockClearAgentDown,
   mockReportSendRefused,
   mockRestoreFailedSend,
+  mockChatNotice,
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
   mockSteer: vi.fn(),
@@ -25,16 +22,25 @@ const {
   mockAddAttachmentTo: vi.fn(),
   mockAttachmentGeneration: vi.fn(() => 0),
   mockTypedCommand: vi.fn(() => false),
+  mockInvokesCatalog: vi.fn(() => false),
   mockClearAgentDown: vi.fn(),
   mockReportSendRefused: vi.fn(),
   mockRestoreFailedSend: vi.fn(),
+  mockChatNotice: vi.fn(),
 }));
 
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
-vi.mock("./actions/chat.js", () => ({ steerChat: { dispatch: mockSteer } }));
+vi.mock("./notice-subject.js", () => ({ chatNotice: mockChatNotice }));
+vi.mock("./actions/chat.js", () => ({
+  steerChat: { dispatch: mockSteer },
+  // Present-but-undefined so real-ESM linking succeeds; no case here is in Queue mode.
+  queuePrompt: undefined,
+}));
 vi.mock("./typed-commands.js", () => ({ handleTypedCommand: mockTypedCommand }));
+vi.mock("./slash-menu.js", () => ({ invokesCatalogCommand: mockInvokesCatalog }));
 vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,
+  hasAttachments: vi.fn(() => false),
   addAttachmentTo: mockAddAttachmentTo,
   attachmentGeneration: mockAttachmentGeneration,
 }));

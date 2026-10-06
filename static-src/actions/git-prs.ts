@@ -1,8 +1,4 @@
-// Actions for the Git PRs tab: create, merge, close, refresh, and the reads the
-// row's controls follow (capabilities, affordances, a merge's state).
-// generate() (AI PR-description) stays INLINE (error surfaces in the
-// dialog) and is intentionally excluded.
-// ---------------------------------------------------------------------------
+// Git PRs tab actions. generate() (AI PR description) stays inline: its error surfaces in the dialog.
 
 import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type { ApiErrorInfo } from "./index.js";
@@ -27,8 +23,6 @@ import type {
   RepoAffordances,
 } from "../wire/types.gen.js";
 
-// --- Types ---
-
 export interface PRArgs {
   forge_id: string;
   /** The repository's id: the segment the route takes. */
@@ -39,16 +33,14 @@ export interface PRArgs {
   pr_number: number;
 }
 
-/** Args for a PR action pinned to the head commit the row was rendered
- *  from, so the forge refuses when the branch moved since. Shared by merge,
- *  auto-merge and re-run, because the row's check chip is the folded state of
- *  that one commit. An empty pin leaves a re-run unpinned; a merge refuses it. */
+/** Args pinned to the head commit the row was rendered from, so the forge refuses a moved branch;
+ *  the check chip is that commit's folded state. An empty pin leaves a re-run unpinned; a merge
+ *  refuses it. */
 interface PinnedPRArgs extends PRArgs {
   head_sha: string;
 }
 
-/** Args for a merge-shaped action: the head pin plus the merge strategy the
- *  user chose in the dialog, one of the repository's own spellings, and the forge
+/** The head pin plus the dialog's merge strategy (the repository's own spelling) and the forge
  *  kind, which decides how that choice is sent. */
 interface MergePRArgs extends PinnedPRArgs {
   forge_kind: ForgeKind;
@@ -70,7 +62,6 @@ function mergeChoice(args: MergePRArgs): Record<string, string> {
   return { intent: args.strategy === "squash" ? "squash" : "no_squash" };
 }
 
-/** Build the API path for a PR action (merge/close/reopen/rerun). */
 function prPath(args: PRArgs, action: string): string {
   return `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.repo_id)}/prs/${args.pr_number}/${action}`;
 }
@@ -82,12 +73,8 @@ function pinnedQuery(args: PinnedPRArgs): string {
     : "?" + new URLSearchParams({ head_sha: args.head_sha }).toString();
 }
 
-// --- Actions ---
-
-/** Merge a pull request with the chosen method, pinned to the head commit
- *  the row read, answering the outcome. No optimistic removal: an accepted
- *  merge is still open, so the caller decides from the outcome whether the
- *  row goes. No toast: the row renders the refusal in the server's words. */
+/** Merge a pull request with the chosen method, pinned to the row's head commit. No optimistic
+ *  removal (an accepted merge is still open) and no toast (the row renders the refusal). */
 export const mergePR = apiAction<MergePRArgs, MergeResult>({
   name: "git.merge_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
@@ -100,16 +87,12 @@ export const mergePR = apiAction<MergePRArgs, MergeResult>({
   decode: (data) => decodeMergeResult(data),
   decodeError: keepMovedBody,
   error: false,
-  // Not retryable: a timed-out merge may have succeeded server-side. The
-  // head pin makes a retry SAFER (a second attempt against a moved head
-  // fails closed rather than merging the wrong commit) but not safe.
+  // Not retryable: a timed-out merge may have succeeded. The head pin makes a retry fail closed
+  // against a moved head, but not safe.
 });
 
-/** Arm the forge's own auto-merge: it merges once its requirements are
- *  met. Carries the merge method for the same reason mergePR does.
- *  Deliberately NOT an optimistic remove: arming does not merge, so
- *  the row must stay and re-render as armed once the server confirms.
- *  No toast: the row renders the refusal. */
+/** Arm the forge's own auto-merge, with the merge method as mergePR. Not optimistic: arming does
+ *  not merge, so the row stays and re-renders as armed. No toast. */
 export const armAutoMerge = apiAction<MergePRArgs, MergeResult>({
   name: "git.arm_auto_merge",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
@@ -150,10 +133,8 @@ export function sendCloseOnUnload(args: PRArgs): void {
   }).catch(() => undefined);
 }
 
-/** Reopen a closed pull request. No optimistic step: the PRs tab lists
- *  open PRs, so a reopened one is not in a group to mutate, and the cycle
- *  the server asks for after the mutation brings it. No toast: the row
- *  renders the refusal. */
+/** Reopen a closed pull request. No optimistic step (the tab lists open PRs; the requested cycle
+ *  brings it back) and no toast. */
 export const reopenPR = apiAction<PRArgs>({
   name: "git.reopen_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
@@ -166,12 +147,9 @@ export const reopenPR = apiAction<PRArgs>({
   retry: RETRY_STANDARD,
 });
 
-/** Re-run the failed CI of a pull request's head, pinned to the commit whose
- *  red chip the row shows: the server refuses when the branch moved since, and
- *  unpinned (no head SHA reported) re-runs the live head's failure. No
- *  optimistic step: the chip flips only once the forge says so. No toast: the
- *  row renders the refusal, and an instance that cannot re-run answers
- *  `capability_unsupported` with the evidence that becomes its message. */
+/** Re-run the failed CI of the head the row's red chip shows; the server refuses a moved branch,
+ *  and unpinned re-runs the live head. Not optimistic, no toast: an instance that cannot re-run
+ *  answers `capability_unsupported` with the evidence that becomes its message. */
 export const rerunChecks = apiAction<PinnedPRArgs>({
   name: "git.rerun_checks",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
@@ -267,7 +245,6 @@ export const readMergeStatus = apiAction<PRArgs, MergeStatus>({
   error: false,
 });
 
-/** Args for opening a new pull request. */
 interface CreatePRArgs {
   forge_id: string;
   repo_id: string;
@@ -280,10 +257,8 @@ interface CreatePRArgs {
   draft: boolean;
 }
 
-/** Open a new pull request; the answer is its row. The create dialog says the
- *  outcome in its own status line, so `error: false` (no toast). NOT retryable:
- *  a timed-out create may have opened the PR server-side, so a retry could open
- *  a duplicate (same rationale as mergePR). */
+/** Open a new pull request; the answer is its row. `error: false`: the dialog says the outcome.
+ *  NOT retryable: a timed-out create may have opened it, so a retry could duplicate. */
 export const createPR = apiAction<CreatePRArgs, PR>({
   name: "git.create_pr",
   scope: (args) =>

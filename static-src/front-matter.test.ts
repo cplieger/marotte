@@ -47,10 +47,7 @@ describe("splitFrontMatter fence detection", () => {
     expect(r.body).toBe(doc);
   });
 
-  // The closing fence has to be a line that is exactly `---`. A prefix search
-  // accepted any line STARTING with three dashes, so an unterminated header
-  // reached down the document for the next horizontal rule and everything in
-  // between silently left the rendered body.
+  // The closing fence must be a line exactly `---`, or an unterminated header swallows text up to the next rule.
   it.each([
     { desc: "a longer rule", fence: "----" },
     { desc: "a suffixed fence", fence: "---draft" },
@@ -62,8 +59,7 @@ describe("splitFrontMatter fence detection", () => {
     expect(r.body).toBe(doc);
   });
 
-  // The other direction: a rule-looking line INSIDE a header must not end the
-  // search either, or the fix would lose a real block.
+  // A rule-looking line inside a header must not end the search either.
   it("keeps looking past a rule-looking line for the real fence", () => {
     const r = splitFrontMatter("---\ninclusion: always\n----\nname: x\n---\n# Title\n");
     expect(r.present).toBe(true);
@@ -71,8 +67,7 @@ describe("splitFrontMatter fence detection", () => {
     expect(keys("---\ninclusion: always\n----\nname: x\n---\n")).toEqual(["inclusion", "name"]);
   });
 
-  // An editor leaves trailing whitespace behind invisibly; the author still
-  // wrote a fence.
+  // An editor leaves trailing whitespace behind invisibly.
   it("tolerates trailing whitespace on the closing fence", () => {
     const r = splitFrontMatter("---\nname: x\n---  \n# Title\n");
     expect(r.present).toBe(true);
@@ -87,8 +82,7 @@ describe("splitFrontMatter fence detection", () => {
     expect(r.body).toBe("# Title\n");
   });
 
-  // Found the same way the Go parser's fuzz target found it: a lone CR would
-  // otherwise make the whole header one line, so the fence check fails.
+  // A lone CR would make the whole header one line, so the fence check fails (found by the Go parser's fuzz target).
   it("folds a lone carriage return", () => {
     const r = splitFrontMatter("---\rname: x\r---\rbody\r");
     expect(r.present).toBe(true);
@@ -104,8 +98,7 @@ describe("splitFrontMatter field parsing", () => {
     expect(valueOf(doc, "name")).toBe("kiro");
   });
 
-  // The whole reason this is not a per-line split(":"): every agent spec in the
-  // repo uses `description: >`, and a per-line reader returns the INDICATOR.
+  // Every agent spec uses `description: >`, and a per-line reader returns the indicator.
   it("folds a `>` block scalar into one line", () => {
     const doc = "---\ndescription: >\n  First line\n  second line\nmodel: opus\n---\n";
     expect(valueOf(doc, "description")).toBe("First line second line");
@@ -117,7 +110,6 @@ describe("splitFrontMatter field parsing", () => {
     expect(valueOf("---\ndescription: >2\n  a\n  b\n---\n", "description")).toBe("a b");
   });
 
-  // `>foo` is a scalar whose text starts with a greater-than sign.
   it("does not treat `>foo` as a block scalar header", () => {
     expect(valueOf("---\ndescription: >foo\n---\n", "description")).toBe(">foo");
   });
@@ -133,8 +125,7 @@ describe("splitFrontMatter field parsing", () => {
   it("reads a block sequence", () => {
     const doc = "---\ntools:\n  - read\n  - write\nmodel: sonnet\n---\n";
     expect(itemsOf(doc, "tools")).toEqual(["read", "write"]);
-    // The key after the sequence must still be seen: the sequence reader has to
-    // hand the cursor back at the right line.
+    // The sequence reader must hand the cursor back at the right line.
     expect(valueOf(doc, "model")).toBe("sonnet");
   });
 
@@ -149,9 +140,7 @@ describe("splitFrontMatter field parsing", () => {
     expect(keys(doc)).toEqual(["inclusion"]);
   });
 
-  // The editor shows one file's own header, so it must not invent a default the
-  // file did not declare. Badging a skill "always" was a false claim about
-  // token cost when the server-side parser did it.
+  // The editor shows one file's own header, so it invents no default the file did not declare.
   it("defaults nothing: an undeclared inclusion is simply absent", () => {
     expect(keys("---\nname: skill\n---\n")).toEqual(["name"]);
   });

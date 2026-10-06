@@ -12,8 +12,8 @@ export function clampShellH(h: number): number {
   return Math.min(Math.max(h, SHELL_MIN_H), shellMaxH());
 }
 
-/** The panel height in whole px; one rounding for the drag and the pre-paint
- *  state, so the hand-over between them paints the same height. */
+/** The panel height in whole px; one rounding for the drag and the pre-paint state, so the
+ *  hand-over between them paints the same height. */
 export function shellPanelPx(h: number): number {
   return Math.round(clampShellH(h));
 }
@@ -21,9 +21,8 @@ export function shellPanelPx(h: number): number {
 const ATTR = "data-shell-open";
 const VAR = "--shell-h";
 
-/** Paint a stored-open panel before the shell module loads: a root attribute the
- *  CSS turns into "visible at --shell-h, no transition". Released by
- *  `releaseStoredShellPanel`. */
+/** Paint a stored-open panel before the shell module loads: a root attribute the CSS turns into
+ *  "visible at --shell-h, no transition". Released by `releaseStoredShellPanel`. */
 export function applyStoredShellPanel(): void {
   if (!shellOpen()) {
     return;
@@ -43,8 +42,8 @@ export function releaseStoredShellPanel(): void {
   root.style.removeProperty(VAR);
 }
 
-/** End the pre-paint state with the panel shut at once, for a boot that will not
- *  restore it: the base rule would otherwise animate it closed at page load. */
+/** End the pre-paint state with the panel shut at once, for a boot that will not restore it: the
+ *  base rule would otherwise animate it closed at page load. */
 export function dropStoredShellPanel(panel: HTMLElement): void {
   if (!document.documentElement.hasAttribute(ATTR)) {
     return;

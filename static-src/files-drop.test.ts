@@ -1,7 +1,4 @@
-// Tests for the composer's upload target and pre-flight. What matters here is
-// the ARGUMENTS initChatAttach hands the upload action: the target directory
-// (which was wrong in production, see the dir="." case below) and the file set
-// (which is now filtered before any bytes leave).
+// The composer's upload target and pre-flight: the arguments initChatAttach hands the upload action.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MAX_UPLOAD_FILES, MAX_UPLOAD_TOTAL_BYTES, UPLOADS_DIR } from "./upload-policy.js";
@@ -27,7 +24,6 @@ vi.mock("./actions/files.js", () => ({
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
 
-/** The minimum composer DOM initChatAttach touches. */
 function mountComposer(): HTMLDivElement {
   document.body.innerHTML = `
     <div id="chat-view"></div>
@@ -36,7 +32,6 @@ function mountComposer(): HTMLDivElement {
   return document.getElementById("chat-view") as HTMLDivElement;
 }
 
-/** A File of a given size without allocating the bytes. */
 function sized(name: string, size: number): File {
   const f = new File(["x"], name, { type: "text/plain" });
   Object.defineProperty(f, "size", { value: size });
@@ -51,7 +46,6 @@ function fileList(files: File[]): FileList {
   return dt.files;
 }
 
-/** Drop files on the chat view and return the args the action received. */
 async function drop(files: File[]): Promise<{ files: FileList; targetDir: string } | undefined> {
   const chatView = mountComposer();
   const { initChatAttach } = await import("./files-drop.js");
@@ -67,11 +61,7 @@ describe("the composer's upload target", () => {
     vi.clearAllMocks();
   });
 
-  // The regression this packet fixed. The chat view uploaded with "." for both
-  // drop and paste; the server cleans "." to "/", and "/" is inside no granted
-  // mount, so every chat-view drop and every pasted screenshot answered 403
-  // with a red "Upload failed" toast. Nothing covered the target argument, so
-  // the shape shipped.
+  // The server cleans "." to "/", which is inside no granted mount, so a "." target answered 403.
   it("is the uploads folder, never the root-collapsing '.'", async () => {
     const args = await drop([sized("a.txt", 10)]);
     expect(args?.targetDir).toBe(UPLOADS_DIR);
@@ -86,9 +76,7 @@ describe("the composer's upload target", () => {
       onSuccess: (paths: string[]) => void;
     };
     opts.onSuccess([`${UPLOADS_DIR}/a.txt`, `${UPLOADS_DIR}/b.txt`]);
-    // ONE call carrying the batch, not one per path: the ensure-a-chat step has to
-    // happen once, or a drop onto an empty workspace creates a chat per file (see
-    // chat.ts attachPathsToActiveChat).
+    // One call for the batch, or a drop onto an empty workspace creates a chat per file.
     expect(attachPathsToActiveChat).toHaveBeenCalledTimes(1);
     expect(attachPathsToActiveChat).toHaveBeenCalledWith([
       `${UPLOADS_DIR}/a.txt`,
@@ -96,9 +84,7 @@ describe("the composer's upload target", () => {
     ]);
   });
 
-  // D98: a partially-failed batch is not rolled back, so the files that landed
-  // are still attachable. Discarding them would lose good uploads the user
-  // would then have to repeat.
+  // A partially failed batch is not rolled back, so what landed is attached.
   it("attaches the partial batch when the upload failed partway", async () => {
     await drop([sized("a.txt", 10)]);
     const opts = dispatch.mock.calls.at(-1)?.[1] as {
@@ -142,10 +128,7 @@ describe("the composer's upload pre-flight", () => {
     expect(toastError).toHaveBeenCalledOnce();
   });
 
-  // The batch that used to pass pre-flight and then 413 as a whole: the server
-  // limit is on the multipart request, not on each file inside it. Sized from
-  // the const rather than a literal, so raising the cap cannot turn this into a
-  // batch that fits and stop exercising the total.
+  // The server limit is on the multipart request, not each file. Sized from the const.
   it("drops the file that would take the request over the total", async () => {
     const each = Math.floor(MAX_UPLOAD_TOTAL_BYTES * 0.6);
     const args = await drop([sized("a.bin", each), sized("b.bin", each)]);
@@ -168,8 +151,3 @@ describe("the composer's upload pre-flight", () => {
     expect(toastError).toHaveBeenCalledOnce();
   });
 });
-
-// The upload-limit hint's test moved to chat-options.test.ts with the control it
-// annotates: the standalone attach pill is gone, and the explicit attach door is
-// now a row in the chat-actions menu. Drop and paste, which this file covers,
-// carry the limit on the drop overlay instead.

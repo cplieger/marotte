@@ -1,10 +1,5 @@
 package command
 
-// The ledger is the ONLY evidence anywhere that a mid-turn steer carries the
-// user's own words, so what these tests pin is the shape of its answers: total,
-// keyed by the id KAS returned, and biased toward the agent whenever it does not
-// know.
-
 import (
 	"slices"
 	"testing"
@@ -117,13 +112,11 @@ func TestSteerLedger_BoundedByEvictingTheOldest(t *testing.T) {
 	now := time.Now()
 	l.now = func() time.Time { return now }
 
-	// Distinct expiries, so "closest to expiry" is well defined.
 	for i, id := range []string{"a", "b", "c", "d", "e", "f"} {
 		l.ttl = steerTTL + time.Duration(i)*time.Minute
 		l.RecordUserSteer("c1", id, nil)
 	}
 
-	// The sweep runs before the insert, so the bound is an inclusive ceiling.
 	if n := len(l.sent); n > l.maxN {
 		t.Errorf("held %d entries with maxN %d", n, l.maxN)
 	}

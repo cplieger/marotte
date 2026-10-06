@@ -1,12 +1,8 @@
 package translate
 
-// A steer a DELEGATE read. KAS emits steering_injected only for the execution
-// marotte owns, and a sub-agent's injection runs under a nested controller whose
-// publishAgentEvent is a no-op, so that frame never arrives for it. What does arrive
-// is the delegate's own `[STEERING <id>: …]` marker, and believing it is what stops a
-// steer the delegate applied being recorded dropped at the next boundary clear —
-// which is the reported defect: one message sent three times, two of them because the
-// first was reported unread two minutes after it had been acted on.
+// A steer a DELEGATE read: KAS emits no steering_injected for a sub-agent's injection, so the
+// delegate's `[STEERING <id>: …]` marker is the evidence; without it the steer would be
+// reported dropped at the next boundary and resent.
 
 import (
 	"testing"
@@ -41,9 +37,8 @@ func laneSteerRows(t *testing.T, deps *baseDeps, chatID marotte.ChatID) []laneSt
 	return out
 }
 
-// The ack is the evidence, so the steer is recorded READ in the lane that read it,
-// above the agent's statement about it — and the boundary clear that follows finds
-// nothing waiting, so it writes no second row calling the same steer dropped.
+// TestDelegateAck_RecordsTheSteerReadInItsLaneAndTheClearWritesNothing pins the steer READ in
+// the delegate's lane, and no dropped row from the following clear.
 func TestDelegateAck_RecordsTheSteerReadInItsLaneAndTheClearWritesNothing(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-d": true}
@@ -55,8 +50,7 @@ func TestDelegateAck_RecordsTheSteerReadInItsLaneAndTheClearWritesNothing(t *tes
 		}), FrameAttribution{})
 	*events = nil
 
-	// Two deltas, which is the shape KAS sends: a marker closing a response arrives
-	// as its own chunk, so the prose ahead of it is already open and the ack seals it.
+	// Two deltas, as KAS sends them: the marker arrives as its own chunk.
 	feedLaneChunk(t, tr, "c1", "sub-7", "on it")
 	feedLaneChunk(t, tr, "c1", "sub-7", "[STEERING steer-d: reran the suite]")
 

@@ -9,21 +9,18 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// newWithholdHub is a runtime whose push service HAS a subscriber, so a withheld
-// notification is the only thing that can keep the channel empty.
+// newWithholdHub is a runtime whose push service has a subscriber, so only a withhold keeps the channel empty.
 func newWithholdHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	t.Helper()
 	cs := newTestChatStore()
 	fp := newRunOutcomePush()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, fp
 }
 
-// seedRunLease records a lease exactly as grantLease would for an agent's own run:
-// bounded (so it is the ordinary executing case) and parented on chatID.
+// seedRunLease records a bounded lease parented on chatID, as grantLease does for an agent's own run.
 func seedRunLease(t *testing.T, h *Runtime, workflowID, chatID string) {
 	t.Helper()
 	l := runlease.Lease{
@@ -39,9 +36,7 @@ func seedRunLease(t *testing.T, h *Runtime, workflowID, chatID string) {
 	}
 }
 
-// awaitNoPush is the withheld assertion. A push fans out on the lifecycle's inflight
-// group, so the read follows a join of that group: an empty read then means no push
-// was scheduled, rather than that one had not arrived yet.
+// awaitNoPush joins the lifecycle's inflight group before reading, so an empty read means no push was scheduled.
 func awaitNoPush(t *testing.T, h *Runtime, fp *runOutcomePush, why string) {
 	t.Helper()
 	joinInflight(t, h)
@@ -52,14 +47,8 @@ func awaitNoPush(t *testing.T, h *Runtime, fp *runOutcomePush, why string) {
 	}
 }
 
-// THE REPORTED DEFECT, on the server's side. `run_workflow` returns as soon as the run
-// is created, so the launching turn concludes cleanly while the run carries on — and
-// for a reader who is not looking at the page this push is the only channel, so
-// sending it says the work is done when it is not.
-//
-// The four cases are the whole severity partition plus the run's own state, because
-// the withhold sits AHEAD of that switch: a clean turn and a broken one are the same
-// class of claim while a run is live, and a cancel earns no push either way.
+// run_workflow returns once the run is created, so the launching turn ends cleanly while the run continues; a push
+// then claims the work is done. The withhold sits ahead of the severity switch, so all four cases are covered.
 func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 	tests := map[string]struct {
 		stop     marotte.StopReason
@@ -119,9 +108,7 @@ func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 	}
 }
 
-// A run ANOTHER chat launched must not silence this chat's notification: the whole
-// value of keying on the lease's ChatID is that one busy conversation does not mute
-// the rest of the workspace.
+// Another chat's run must not mute this chat: the withhold is keyed on the lease's ChatID.
 func TestPushTurnOutcome_AnotherChatsRunDoesNotWithhold(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "c2")
@@ -138,8 +125,7 @@ func TestPushTurnOutcome_AnotherChatsRunDoesNotWithhold(t *testing.T) {
 	}
 }
 
-// A PARENTLESS run — a manual or scheduled launch — has no chat, so its lease may
-// not withhold anyone's notification. Its own outcome travels on `run_outcome`.
+// A parentless run (manual or scheduled) withholds nothing; its outcome travels on run_outcome.
 func TestPushTurnOutcome_AParentlessRunDoesNotWithhold(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "")
@@ -153,10 +139,7 @@ func TestPushTurnOutcome_AParentlessRunDoesNotWithhold(t *testing.T) {
 	}
 }
 
-// A nil chatHasLiveRun is the documented pre-fix behaviour, which is what makes a
-// BridgeCoordinator built without the runtime wiring safe to reason about: it asks
-// nothing and withholds nothing, rather than silently claiming nothing is outstanding
-// and reading as a working withhold.
+// A nil chatHasLiveRun withholds nothing, so a coordinator built without the runtime wiring behaves as before.
 func TestPushTurnOutcome_NilPredicateWithholdsNothing(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "c1")
@@ -171,9 +154,7 @@ func TestPushTurnOutcome_NilPredicateWithholdsNothing(t *testing.T) {
 	}
 }
 
-// A cancel is what the reader asked for, so it earns no notification whether or not a
-// run is live. Asserted from both sides so the withhold cannot be credited for the
-// silence a STOPPED severity already produces.
+// A cancel earns no push either way, so the withhold cannot take credit for the silence a stopped severity gives.
 func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 	for name, live := range map[string]bool{"with a live run": true, "with no live run": false} {
 		t.Run(name, func(t *testing.T) {

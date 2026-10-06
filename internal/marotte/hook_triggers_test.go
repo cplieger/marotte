@@ -25,10 +25,12 @@ func TestNormalizeHookTrigger(t *testing.T) {
 		// Case-insensitive + trimmed.
 		{"POSTFILESAVE", "PostFileSave"},
 		{"  fileEdited  ", "PostFileSave"},
-		// The three aliases KAS accepts that this map used to be missing.
+		// KAS aliases.
 		{"agentSpawn", "SessionStart"},
-		{"SessionEnd", "Stop"},
 		{"AfterFileEdit", "PostFileSave"},
+		// SessionEnd is canonical, never an alias of the per-turn Stop.
+		{"SessionEnd", "SessionEnd"},
+		{"sessionEnd", "SessionEnd"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -43,11 +45,9 @@ func TestNormalizeHookTrigger(t *testing.T) {
 	}
 }
 
-// TestNormalizeHookTrigger_RejectsUnknown is the inverted case, and the inversion
-// is the point. This used to pass an unknown trigger through trimmed, which read
-// as leniency and behaved as silence: KAS's parseHookDocument DROPS a hook whose
-// trigger it does not recognise, so create_hook answered 200 with a file path for
-// a hook that loads nowhere, never fires and never appears in /api/hooks.
+// TestNormalizeHookTrigger_RejectsUnknown — KAS's parseHookDocument DROPS a hook
+// whose trigger it does not recognise, so passing an unknown one through would let
+// create_hook answer 200 for a hook that loads nowhere and never fires.
 func TestNormalizeHookTrigger_RejectsUnknown(t *testing.T) {
 	for _, in := range []string{"someFutureTrigger", "  x  ", "", "PostFileSaved!"} {
 		if got, ok := NormalizeHookTrigger(in); ok {
@@ -62,7 +62,7 @@ func TestNormalizeHookTrigger_RejectsUnknown(t *testing.T) {
 // the guessing from the server to the user.
 func TestKnownHookTriggers_NamesTheAcceptedSet(t *testing.T) {
 	got := KnownHookTriggers()
-	for _, want := range []string{"SessionStart", "Stop", "PreToolUse", "PostToolUse", "Manual"} {
+	for _, want := range []string{"SessionStart", "SessionEnd", "Stop", "PreToolUse", "PostToolUse", "Manual"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("KnownHookTriggers() = %q, missing %q", got, want)
 		}
@@ -89,6 +89,7 @@ func TestEveryCanonicalTriggerHasASubject(t *testing.T) {
 		"PostFileSave":     HookMatcherSubjectFilePath,
 		"PostFileDelete":   HookMatcherSubjectFilePath,
 		"SessionStart":     HookMatcherSubjectNone,
+		"SessionEnd":       HookMatcherSubjectNone,
 		"Stop":             HookMatcherSubjectNone,
 		"UserPromptSubmit": HookMatcherSubjectNone,
 		"PreTaskExec":      HookMatcherSubjectNone,
@@ -134,6 +135,7 @@ func TestClassifyHookMatcher(t *testing.T) {
 		{"session start with a matcher", "SessionStart", `\.go$`, HookMatcherIneffective},
 		{"stop with a matcher", "Stop", "anything", HookMatcherIneffective},
 		{"manual with a matcher", "Manual", "x", HookMatcherIneffective},
+		{"session end with a matcher", "SessionEnd", "x", HookMatcherIneffective},
 		// The alias spelling has to reach the same verdict, or the check is
 		// bypassable by writing the trigger differently.
 		{"an alias reaches the same verdict", "userTriggered", "x", HookMatcherIneffective},
@@ -160,5 +162,15 @@ func TestClassifyHookMatcher(t *testing.T) {
 				t.Errorf("ClassifyHookMatcher(%q, %q) = %q, want %q", tc.trigger, tc.matcher, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestOnlySessionEndIsCommandOnly pins the flag to exactly one trigger, so a later
+// row cannot inherit or lose it silently.
+func TestOnlySessionEndIsCommandOnly(t *testing.T) {
+	for alias, meta := range hookTriggers {
+		if want := meta.Name == triggerSessionEnd; meta.CommandOnly != want {
+			t.Errorf("hookTriggers[%q].CommandOnly = %v, want %v", alias, meta.CommandOnly, want)
+		}
 	}
 }

@@ -12,10 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// withinBudget runs fn on its own goroutine and fails the test if it has not returned
-// inside budget: the defect these tests pin HANGS rather than failing, because os.Open on a
-// FIFO blocks in open(2) until a writer appears and no context deadline can rescue it. The
-// goroutine is abandoned on expiry — it is parked in the kernel and nothing can reclaim it.
+// withinBudget runs fn on its own goroutine and fails if it has not returned within budget: os.Open on a FIFO blocks
+// in open(2) rather than failing. On expiry the goroutine is abandoned in the kernel.
 func withinBudget(t *testing.T, budget time.Duration, fn func() error) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -48,8 +46,8 @@ func mkfifoChat(t *testing.T, dir string) marotte.ChatID {
 	return id
 }
 
-// A FIFO at <chats>/<valid-chat-id>/chat.json is a one-command permanent wedge of every chat
-// read, and the /config volume is reachable both by the operator and by the agent's shell.
+// A FIFO at <chats>/<id>/chat.json would wedge every chat read, and both the operator and the agent's shell can
+// reach /config.
 func TestGet_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	s, _ := newTestStore(t)
 	id := mkfifoChat(t, s.dir)
@@ -61,7 +59,7 @@ func TestGet_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	if !errors.Is(err, atomicfile.ErrNotRegular) {
 		t.Errorf("load over a FIFO = %v, want atomicfile.ErrNotRegular", err)
 	}
-	// And the public read reports absence rather than propagating the wedge.
+	// The public read reports absence rather than wedging.
 	if _, ok := withinBudgetGet(t, s, id); ok {
 		t.Error("Get returned ok for a FIFO planted at a chat file name")
 	}
@@ -87,9 +85,8 @@ func withinBudgetGet(t *testing.T, s *Store, id marotte.ChatID) (*marotte.Chat, 
 	}
 }
 
-// List reads with 8 workers inside one singleflight slot, so a blocking open wedges every
-// concurrent GET /api/chats behind it, and the completeness flag is what makes the session
-// sweep fail closed over the file it could not read.
+// List reads with 8 workers in one singleflight slot, so a blocking open wedges every GET /api/chats; the
+// completeness flag makes the session sweep fail closed.
 func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	s, _ := newTestStore(t)
 	if _, err := s.Mutate(t.Context(), "good", func(c *marotte.Chat, _ bool) bool {
@@ -123,8 +120,7 @@ func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	}
 }
 
-// A link at <chats>/<id>/chat.json makes another file's bytes reachable through the
-// chat read, the header projection and both search paths.
+// A link at <chats>/<id>/chat.json would expose another file through the chat read, the header projection and search.
 func TestOpenChatFile_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.json")

@@ -1,31 +1,15 @@
-// THE CARD'S AUTH ROW AND ITS SEPARATOR ARE ONE FACT, and a refused logout restores
-// the VERDICT rather than the address.
-//
-// Two changes meet here. The row became an ERROR row: "signed in" said what the
-// address on the trigger already says, so the `signed_in` arm renders EMPTY and the
-// row hides — and the two arms left are exactly the ones that leave that address
-// blank, so this row is what explains the blank. And the row's SEPARATOR now hides
-// with it, because a hidden row above a visible rule leaves the card pointing at
-// nothing; `setAuthLine` writes both, so no caller can forget one.
-//
-// The rollback arm is the one worth the most: `signed_out` and `unavailable` BOTH
-// render an empty address, so an op carrying the address could not tell them apart
-// and a refused logout from `unavailable` wrote "not signed in" where "unknown" had
-// been. Carrying the whole verdict is what makes all three arms restorable.
-//
-// `settings.ts` is imported for real here — that is the module under test — so this
-// file mocks the heavy side of its graph rather than the writer it is about.
+// The card's auth row and its separator are ONE fact, and a refused logout restores the
+// VERDICT. The row is an ERROR row: `signed_in` renders empty and hides, and the two
+// remaining arms explain the blank address. `setAuthLine` writes row and separator
+// together. `signed_out` and `unavailable` both blank the address, so only the whole
+// verdict is restorable. `settings.ts` is real here; its heavy graph is mocked.
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 
-// Everything `settings.ts` reaches that touches the network, the shell, the file
-// browser or the chat view. None of it is this file's subject, and one of them
-// resolves `#messages` at module scope.
+// Everything `settings.ts` reaches that touches network, shell, file browser or chat view.
 vi.mock("./modals.js", () => ({ initAllModals: vi.fn(), showLoginModal: vi.fn() }));
-// The COMPLETE tabs mock, spread. Browser Mode links ESM for real, so every name ANY
-// module in this graph reaches has to exist — a partial factory works until the graph
-// widens and then fails without naming what went wrong (see
-// __test-helpers__/tabs-mock.ts).
+// The COMPLETE tabs mock: Browser Mode links ESM for real, so a partial factory fails once
+// the graph widens (see __test-helpers__/tabs-mock.ts).
 vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
 }));
@@ -48,6 +32,12 @@ vi.mock("./settings-steering.js", () => ({
 }));
 vi.mock("./settings-notifications.js", () => ({ initNotificationToggles: vi.fn() }));
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(async () => null), apiPost: vi.fn() }));
+vi.mock("./governance.js", () => ({
+  paintSettingLocks: vi.fn(),
+  writeSwitch: (input: HTMLInputElement, value: boolean) => {
+    input.checked = value;
+  },
+}));
 vi.mock("./actions/tools.js", () => ({ runDiagnostics: vi.fn() }));
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
@@ -57,9 +47,10 @@ const mockFetch = vi.fn();
 const { renderIdentity, currentIdentity } = await import("./settings.js");
 const { logout } = await import("./actions/settings.js");
 
-/** The card's three rows as `static/index.html` authors them. `#st-auth-sep` is the
- *  fixture element THIS file needs and `status-versions.test.ts` does not: `status.ts`
- *  never reaches `setAuthLine`, whose only callers are in `settings.ts`. */
+/**
+ * The card's three rows as `static/index.html` authors them, including `#st-auth-sep`,
+ * which only `setAuthLine` in `settings.ts` reaches.
+ */
 function seedCard(): { row: HTMLElement; sep: HTMLElement; addr: HTMLElement } {
   document.body.innerHTML = `
     <button type="button" id="account-btn">
@@ -80,9 +71,7 @@ function seedCard(): { row: HTMLElement; sep: HTMLElement; addr: HTMLElement } {
 }
 
 beforeEach(() => {
-  // The action framework holds module state (the registry, in-flight ops), so it is
-  // reset per case the way every other action test does — otherwise a dedupe or an
-  // in-flight entry from an earlier case decides the next one.
+  // The action framework holds module state, so it is reset per case.
   resetActionFramework();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
@@ -112,9 +101,7 @@ describe("the row and its separator are one fact", () => {
   });
 
   it("never leaves one visible without the other, across every transition", () => {
-    // The invariant `setAuthLine` exists to hold, driven over every ordered pair of
-    // arms rather than over one sequence: a second writer reintroduces this defect by
-    // forgetting one element on ONE path.
+    // Every ordered pair of arms: a second writer would forget one element on ONE path.
     const { row, sep } = seedCard();
     const arms = [
       { state: "signed_in", email: "a@b.invalid" },
@@ -136,10 +123,8 @@ describe("the row and its separator are one fact", () => {
 
 describe("currentIdentity", () => {
   it("answers what renderIdentity last rendered", () => {
-    // The export exists for the logout action's rollback, which receives the VALUE.
-    // Nothing else retains the verdict: `boot.ts` and `app.ts` both call
-    // `renderIdentity` and drop it, so before this the only record was the address
-    // string in the DOM.
+    // The export exists for the logout rollback, which receives the VALUE; nothing else
+    // retains the verdict.
     seedCard();
     const v = { state: "signed_in", email: "someone@example.invalid" } as const;
     renderIdentity(v);
@@ -165,10 +150,8 @@ describe("logout through the REAL action", () => {
   });
 
   it("restores UNKNOWN, not 'not signed in', when a logout from unavailable is refused", async () => {
-    // THE ARM THE ADDRESS-CARRYING OP COULD NOT EXPRESS. `signed_out` and
-    // `unavailable` both render an empty address, so an op holding
-    // `emailEl.textContent` restored `""` for either and the old rollback then guessed
-    // "not signed in" from it — writing that where "unknown" had been.
+    // `signed_out` and `unavailable` both render an empty address, so restoring an address
+    // could not tell which to restore.
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nope" }), { status: 500 }));
     const { row, sep } = seedCard();
     renderIdentity({ state: "unavailable", reason: "whoami unreachable" });

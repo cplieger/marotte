@@ -1,8 +1,5 @@
 package agent
 
-// Tests for bridge_fs.go: fs/read_text_file + fs/write_text_file
-// handlers and the shared resolveInsideWorkDir boundary check.
-
 import (
 	"bytes"
 	"context"
@@ -20,14 +17,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// --- respondRecorder: captures Respond calls from the fakeBridge ---
-
 type respondingBridge struct {
 	*fakeBridge
 
 	done chan struct{}
-	// respondErr makes the write itself fail, which is the case a bridge that
-	// died mid-turn produces: the reply is composed and then goes nowhere.
+	// respondErr fails the write itself, as a bridge that died mid-turn does.
 	respondErr error
 	response   struct {
 		result any
@@ -58,8 +52,7 @@ func (b *respondingBridge) Respond(_ context.Context, id int64, result any, err 
 	return writeErr
 }
 
-// hubForFSTest returns a runtime wired with a respondingBridge so the fs
-// handlers can complete through h.inbound.respondBridge.
+// hubForFSTest returns a runtime wired with a respondingBridge.
 func hubForFSTest(t *testing.T, workDir string) (*Runtime, *respondingBridge) {
 	t.Helper()
 	cs := newTestChatStore()
@@ -78,8 +71,6 @@ func hubForFSTest(t *testing.T, workDir string) (*Runtime, *respondingBridge) {
 	h.bridge.mgr.mu.Unlock()
 	return h, br
 }
-
-// --- resolveInsideWorkDir ---
 
 func TestResolveInsideWorkDir(t *testing.T) {
 	t.Parallel()
@@ -187,8 +178,6 @@ func TestResolveInsideWorkDir(t *testing.T) {
 	}
 }
 
-// --- Read handler ---
-
 func TestRespondFSRead_Success(t *testing.T) {
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "hello.txt"), []byte("hi\nworld\n"), 0o644); err != nil {
@@ -263,17 +252,13 @@ func TestRespondFSRead_SizeCapRejects(t *testing.T) {
 	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
-	// The sentinel, not a substring of the message: errCapExceeded is what
-	// respondFSError classifies as a routine denial, so matching on it is what
-	// pins the log level too.
+	// The sentinel: respondFSError classifies it as routine, so this also pins the log level.
 	if !errors.Is(br.response.err, errCapExceeded) {
 		t.Errorf("respondFSWrite(%d bytes) response.err = %v, want %v", fsWriteCap+1, br.response.err, errCapExceeded)
 	}
 }
 
-// The cap is the largest write ACCEPTED, not the first one refused. A file
-// exactly at the limit is an ordinary write the agent has no way to shrink, so
-// shaving a byte off the boundary refuses work that should have gone to disk.
+// The cap is the largest write accepted, not the first refused.
 func TestRespondFSWrite_AcceptsAWriteExactlyAtTheCap(t *testing.T) {
 	work := t.TempDir()
 	h, br := hubForFSTest(t, work)
@@ -304,8 +289,6 @@ func TestRespondFSWrite_AcceptsAWriteExactlyAtTheCap(t *testing.T) {
 		t.Errorf("wrote %d bytes, want %d", len(data), fsWriteCap)
 	}
 }
-
-// --- Write handler ---
 
 func TestRespondFSWrite_Success(t *testing.T) {
 	work := t.TempDir()
@@ -406,8 +389,6 @@ func TestRespondFSWrite_CapRejects(t *testing.T) {
 	}
 }
 
-// --- Dispatch ---
-
 func TestHandleFSRequest_ReturnsFalseForNonFSMethod(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(9)
@@ -438,10 +419,7 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 	}
 }
 
-// --- Folded mutant-killing coverage (read/write boundary + respond) ---
-
-// A read of a missing file must respond with a graceful not-found error
-// rather than dereferencing the nil FileInfo from the failed stat.
+// A missing file gets a graceful not-found error.
 func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(901)
@@ -457,8 +435,7 @@ func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 	}
 }
 
-// A file of exactly fsReadCap bytes reads successfully: the size guard
-// is a strict `>`, so size==cap is allowed.
+// Exactly fsReadCap bytes reads successfully.
 func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
 	work := t.TempDir()
 	data := bytes.Repeat([]byte("a"), fsReadCap)
@@ -487,9 +464,7 @@ func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
 	}
 }
 
-// respondFSWrite reports the write error when the target can't be
-// written (a directory at the target path) and otherwise responds with
-// the success result map.
+// respondFSWrite reports a write error (a directory at the target) and otherwise answers success.
 func TestRespondFSWrite_ErrCheck(t *testing.T) {
 	t.Run("write_failure_reports_error", func(t *testing.T) {
 		work := t.TempDir()
@@ -549,7 +524,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 	})
 }
 
-// respondBridge stays log-silent when the bridge Respond succeeds.
+// respondBridge stays log-silent on success.
 func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(903)
@@ -562,8 +537,7 @@ func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
 	}
 }
 
-// droppingBridge refuses every Respond, standing in for a bridge whose stdin
-// has already gone away.
+// droppingBridge refuses every Respond, like a bridge whose stdin is gone.
 type droppingBridge struct {
 	*fakeBridge
 }
@@ -572,13 +546,8 @@ func (b *droppingBridge) Respond(_ context.Context, _ int64, _ any, _ error) err
 	return errors.New("bridge stdin closed")
 }
 
-// TestRespondHelpersReportADroppedWrite pins the diagnostic on the two ACP
-// response helpers the terminal handlers answer through. A response the bridge
-// refused leaves the agent waiting until its own Call times out, and this log
-// line is the only place that is visible — so it has to be emitted when the
-// write fails, and stay absent when it succeeds.
-//
-// No t.Parallel: captureLogs swaps the process-global slog default.
+// TestRespondHelpersReportADroppedWrite pins the log line for a refused response, the only
+// visible trace. No t.Parallel: captureLogs swaps the slog default.
 func TestRespondHelpersReportADroppedWrite(t *testing.T) {
 	id := int64(904)
 	msg := &marotte.RPCResponse{ID: &id, Method: methodTermOutput}
@@ -644,8 +613,7 @@ func TestRespondFSError_BoundsAndNormalizesTheLogAttribute(t *testing.T) {
 	if strings.ContainsRune(got, '\u202e') {
 		t.Errorf("fs failure log error attribute contains a bidi override: %q", got)
 	}
-	// logsafe.Field carries runesafe's "..." marker OUTSIDE the cap (settled
-	// library contract), so a truncated attribute is MaxFieldBytes+3 bytes.
+	// logsafe.Field adds runesafe's "..." outside the cap, so a truncated attribute is MaxFieldBytes+3 bytes.
 	if maxLen := logsafe.MaxFieldBytes + len("..."); len(got) > maxLen {
 		t.Errorf("fs failure log error attribute length = %d, want at most %d bytes", len(got), maxLen)
 	}

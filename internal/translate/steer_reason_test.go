@@ -1,15 +1,8 @@
 package translate
 
-// WHY a steer went unread is the reason field, and the boundary drop is the value
-// marotte itself writes. KAS clears its buffer at every turn boundary, so a steer
-// the model never reached is dropped BY that boundary — which is a different fact
-// from the `restart` the replay merge stamps on a steer the record never held, and
-// a dropped row carrying no reason at all leaves the note's label saying only that
-// the words were not read, with nothing about what ended the turn first.
-//
-// Both constructions in steeringCleared write it: the HELD agent rows (the ones
-// the buffer still carried, so the note's text is in reach) and the TEXT-LESS
-// agent note.
+// A dropped steer's reason: `boundary` is what marotte writes when KAS's turn-boundary clear
+// drops an unread steer (distinct from the merge's `restart`), at both the held and the
+// text-less agent rows.
 
 import (
 	"testing"

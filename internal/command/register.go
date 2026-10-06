@@ -15,27 +15,26 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Tabs:     r.Tabs,
 		Bus:      r.Bus,
 		Teardown: r.Teardown,
-		// The chat-tab teardown, composed from the three roles it needs.
 		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
-			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Teardown, chatID)
+			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID)
 		},
 		// The delete grade, for a chat the close already erased: everything
 		// travels on the captured chain, since the record is gone by now.
 		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
-			deleteChatTeardown(ctx, r.Bridges, r.Perms, r.Teardown, chatID, sessionChain)
+			deleteChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, sessionChain)
 		},
 		// Fails toward KEEPING — deliberately not the purge's reader, whose
 		// 0-sentinel points the other way.
 		Retention: func(ctx context.Context) bool {
 			return settings.RetentionEnabled(ctx, r.Workspace.ConfigDir)
 		},
-		// The SAME reader prompt.go's auto-create branch uses, so the two seed
-		// sites cannot disagree about what the setting says. Fails closed to
-		// false.
+		// The same reader prompt.go's auto-create uses, so the two seed sites agree; fails closed
+		// to false.
 		SupervisedDefault: func(ctx context.Context) bool {
 			return supervisedDefaultSetting(ctx, r.Workspace.ConfigDir)
 		},
-		Runs: r.Runs,
+		Runs:     r.Runs,
+		Sessions: r.Sessions,
 	})
 
 	d.Register(marotte.CmdCreateChat, bind1(mem, CmdCreateChat))
@@ -60,11 +59,16 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdUserInputResponse, bind2(r.Bridges, r.Perms, CmdUserInputResponse))
 	d.Register(marotte.CmdRewindChat, bind5(r.Bridges, r.Chats, r.Admission, r.RunCutter, r.Bus, CmdRewindChat))
 	d.Register(marotte.CmdSetEffort, bind5(r.Bridges, r.Chats, r.Bus, r.Workspace, r.Effort, CmdSetEffort))
+	d.Register(marotte.CmdSetThinking, bind2(r.Bridges, r.Chats, CmdSetThinking))
 	d.Register(marotte.CmdSetMode, bind4(r.Bridges, r.Chats, r.Bus, r.Modes, CmdSetMode))
 	d.Register(marotte.CmdSetSupervisedMode, bind2(r.Bridges, r.Chats, CmdSetSupervisedMode))
 
-	d.Register(marotte.CmdCancel, bind4(r.Bridges, r.Perms, r.Terminals, r.SteerQueue, CmdCancel))
+	d.Register(marotte.CmdCancel, bind5(r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, CmdCancel))
 	d.Register(marotte.CmdForkChat, bind4(r.Bridges, r.Chats, r.Workspace, mem, CmdForkChat))
+
+	d.Register(marotte.CmdQueuePrompt, bind1(r.Queue, CmdQueuePrompt))
+	d.Register(marotte.CmdSetInterruptMode, bind1[chatMutator](r.Chats, CmdSetInterruptMode))
+	d.Register(marotte.CmdRenameChat, bind3(r.Bridges, r.Chats, r.Renamer, CmdRenameChat))
 
 	prompt := &promptRoles{
 		bridges:     r.Bridges,
@@ -72,15 +76,18 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		bus:         r.Bus,
 		workspace:   r.Workspace,
 		lifecycle:   r.Lifecycle,
-		mcp:         r.MCP,
 		admission:   r.Admission,
 		turnOutcome: r.TurnOutcome,
 		steers:      r.Steers,
 		queue:       r.SteerQueue,
 		jobs:        r.SteerJobs,
+		followups:   r.Queue,
+		compactor:   r.Compactor,
 		auth:        r.AuthReadiness,
 	}
+	d.prompts = prompt
 	d.Register(marotte.CmdPrompt, bind1(prompt, CmdPrompt))
+	d.Register(marotte.CmdUnqueuePrompt, bind1(prompt, CmdUnqueuePrompt))
 	d.Register(marotte.CmdSteer, bind1(prompt, CmdSteer))
 	d.Register(marotte.CmdSteerClear, bind1(prompt, CmdSteerClear))
 	d.Register(marotte.CmdSteerRemove, bind1(prompt, CmdSteerRemove))

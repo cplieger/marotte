@@ -13,30 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// delegateDotFixture is the envelope of testdata/delegate_dot.json: every ToolStatus the
-// server can stamp on a delegate's invocation call, the words the three client surfaces
-// say for it, and whether the status is terminal.
-//
-// The status set is SCANNED from the producers rather than listed, for the reason the
-// steer-label scan is: a listed producer set goes stale silently. The scan reads every
-// non-test .go file under internal/, finds every reference to a ToolStatus constant, and
-// classifies each by the POSITION it sits in — a `Status:` field of a composite literal,
-// an assignment to a `.Status`, a return, a map key, a comparison, or none of those. A
-// comparison is a READER and is excluded; everything else stamps a status somewhere, so
-// the producible set is the union of the rest. That discrimination is what stops the scan
-// being a restatement of "every constant the tree mentions": `Terminal`'s own body and
-// four arms of the translator compare these constants without producing one.
-//
-// The WORDS are this side's statement of the contract, not a derivation: the server
-// cannot ask the client for words. delegate-dot-contract.test.ts answers with the real
-// subagentStatusFor, the real stateWord (through a card it builds in chromium) and the
-// real toolState, so a status one of the three has no answer for fails THERE, and a
-// status the server stamps with no contract words fails HERE.
-//
-// `terminal` is the one DERIVED column: it is marotte.ToolStatus.Terminal(), the
-// predicate entrylog.go and turnlog.go settle a turn's calls by, and the client half
-// asserts its own isToolDone/isToolActive against it. So the two languages' answers to
-// "is this call over" are pinned against each other rather than each being restated.
+// delegateDotFixture is testdata/delegate_dot.json: every ToolStatus a delegate's invocation can carry, each
+// surface's words for it, and whether it is terminal. The status set is scanned from producers: every reference to a
+// ToolStatus constant under internal/ is classified by position, and only comparisons count as readers. The words are
+// this side's contract; delegate-dot-contract.test.ts answers with the real client functions. `terminal` is derived
+// from marotte.ToolStatus.Terminal(), pinning both languages' "is this call over".
 type delegateDotFixture struct {
 	Comment  []string           `json:"_comment"`
 	Statuses []string           `json:"statuses"`
@@ -46,12 +27,8 @@ type delegateDotFixture struct {
 	Readers  []delegateDotReads `json:"readers"`
 }
 
-// delegateDotStale is the one row the status alone cannot answer: an invocation the log
-// still reads as in flight inside a chat that holds no live turn of its own. The server
-// settles such a call at the turn's close (Turn.Close and synthesizeCloseLocked both append
-// tool_result{status: aborted}), so the client folds it onto that same status the moment its
-// chat's liveness says the turn is over, and every surface then says what it already says
-// for an aborted call. FoldsTo is what makes that claim checkable from either side.
+// delegateDotStale is an invocation still in flight in a chat with no live turn. The server settles it at the turn's
+// close as aborted, so the client folds it onto that status; FoldsTo makes that checkable from either side.
 type delegateDotStale struct {
 	Status    string `json:"status"`
 	TurnLive  bool   `json:"turn_live"`
@@ -73,34 +50,28 @@ type delegateDotRow struct {
 	Sites     []string `json:"sites"`
 }
 
-// delegateDotSite is one reference to a ToolStatus constant, at the path a failure should
-// name, with the position that decided whether it produces or reads.
+// delegateDotSite is one reference to a ToolStatus constant, at the path a failure should name, with its position.
 type delegateDotSite struct {
 	Site   string `json:"site"`
 	Form   string `json:"form"`
 	Status string `json:"status"`
 }
 
-// delegateDotReads names one client reader and the column it answers, so a failure in the
-// TypeScript half names the function rather than a JSON key.
+// delegateDotReads names one client reader and the column it answers, so a TypeScript failure names the function.
 type delegateDotReads struct {
 	Column string `json:"column"`
 	Reader string `json:"reader"`
 }
 
-// The classification of one reference to a ToolStatus constant. Every form but
-// formCompare stamps a status somewhere.
+// How one reference to a ToolStatus constant is classified; every form but formCompare stamps a status.
 const (
 	formStatusField  = "status_field"
 	formStatusAssign = "status_assign"
 	formReturn       = "return"
 	formMapKey       = "map_key"
 	formCompare      = "compare"
-	// formOther is the conservative default: a status constant sitting somewhere this
-	// classifier does not name (an argument, a slice element) is counted as a PRODUCER, so
-	// an unclassified position can only widen the producible set and make the words and
-	// totality assertions stricter. A comparison is the one position read as a reader, and
-	// it is recognised rather than assumed.
+	// formOther is the conservative default: an unclassified position counts as a producer, which can only widen the set
+	// and tighten the assertions.
 	formOther = "other"
 )
 
@@ -133,8 +104,7 @@ var delegateDotFixtureComment = []string{
 	"column here; the card and the page are.",
 }
 
-// delegateDotWordset is the contract for one status: the tab dot state, the card's
-// announced word, and the page's state with the word it is announced as.
+// delegateDotWordset is one status's contract: the tab dot state, the card's word, and the page's state and word.
 type delegateDotWordset struct {
 	Dot       string
 	CardWord  string
@@ -142,9 +112,8 @@ type delegateDotWordset struct {
 	PageWord  string
 }
 
-// delegateDotWords is the contract the client keeps, TOTAL over the ToolStatus enum. A
-// produced status with no entry fails the test rather than defaulting, because a delegate
-// rendering with no word is the silent failure this fixture exists to catch.
+// delegateDotWords is the client's contract, total over ToolStatus: a produced status with no entry fails rather
+// than rendering wordless.
 var delegateDotWords = map[marotte.ToolStatus]delegateDotWordset{
 	marotte.ToolPending:    {Dot: "working", CardWord: "running", PageState: "pending", PageWord: "not started"},
 	marotte.ToolInProgress: {Dot: "working", CardWord: "running", PageState: "running", PageWord: "running"},
@@ -153,8 +122,7 @@ var delegateDotWords = map[marotte.ToolStatus]delegateDotWordset{
 	marotte.ToolAborted:    {Dot: "done", CardWord: "cancelled", PageState: "warn", PageWord: "stopped"},
 }
 
-// delegateDotReaders is the map from a fixture column to the production function that
-// answers it, carried in the golden so a client-side failure names the function.
+// delegateDotReaders maps a fixture column to its production function, so a client failure names it.
 var delegateDotReaders = []delegateDotReads{
 	{Column: "dot", Reader: "store.ts subagentStatusFor"},
 	{Column: "card_word", Reader: "fundamentals/subagent-block.ts stateWord, through buildSubagentCard"},
@@ -164,10 +132,8 @@ var delegateDotReaders = []delegateDotReads{
 	{Column: "stale.folds_to", Reader: "store.ts delegateStatusFor"},
 }
 
-// delegateDotConsts reads internal/marotte's chat-domain declarations and answers every
-// string constant by name with the type it was declared under. Its own reader rather than
-// the steer contract's: that one names the two files a steer's fields are declared in, and
-// ToolStatus is declared in a third.
+// delegateDotConsts reads internal/marotte's chat-domain declarations and returns every string constant by name with
+// its type. ToolStatus lives in a file the steer contract's reader does not read.
 func delegateDotConsts(t *testing.T) map[string]steerConst {
 	t.Helper()
 	out := map[string]steerConst{}
@@ -267,15 +233,8 @@ func TestDelegateDotContract(t *testing.T) {
 	pinGolden(t, "testdata/delegate_dot.json", fx, "TestDelegateDotContract", "delegate-dot-contract.test.ts")
 }
 
-// delegateDotStaleRows states the stale-spinner contract: an in-flight invocation whose
-// chat holds no live turn of its own reads as the status the turn's close WOULD have
-// settled it to, so the three surfaces say what they already say for that status and no
-// surface gains a word of its own.
-//
-// It asserts rather than assumes the two facts that make the row non-vacuous: the stale
-// status has to be one a producer can stamp (a fold from a status nothing produces pins
-// nothing), and the folded status's words have to DIFFER from it on every surface (a fold
-// onto identical words is a fold no reader can see).
+// delegateDotStaleRows states the stale-spinner contract: such an invocation reads as the status the turn's close
+// would have given it. It asserts the stale status is producible and that the folded words differ on every surface.
 func delegateDotStaleRows(t *testing.T, produced map[string][]string) []delegateDotStale {
 	t.Helper()
 	const (
@@ -304,10 +263,8 @@ func delegateDotStaleRows(t *testing.T, produced map[string][]string) []delegate
 	}}
 }
 
-// delegateDotAssertNonTautological refuses a fixture a constant reader could satisfy:
-// each of the three vocabularies has to discriminate, both terminal answers have to
-// occur, the deliberate three-words divergence has to be present, and the two
-// structurally different producer forms have to have been found.
+// delegateDotAssertNonTautological refuses a fixture a constant reader could satisfy: every vocabulary
+// discriminates, both terminal answers occur, the three-word divergence is present, and both producer forms were found.
 func delegateDotAssertNonTautological(t *testing.T, rows []delegateDotRow, forms map[string]int) {
 	t.Helper()
 	dots, cards, pages := map[string]bool{}, map[string]bool{}, map[string]bool{}
@@ -345,9 +302,8 @@ func delegateDotAssertNonTautological(t *testing.T, rows []delegateDotRow, forms
 	delegateDotAssertDivergence(t, rows)
 }
 
-// delegateDotAssertDivergence pins the deliberate one-value-three-words divergence and
-// the fold that goes with it: the card does not say the wire's word, the page does not
-// say the card's, and the dot folds an abort onto a completion.
+// delegateDotAssertDivergence pins the deliberate one-value-three-words divergence and its fold: card and wire,
+// page and card differ, and the dot folds an abort onto a completion.
 func delegateDotAssertDivergence(t *testing.T, rows []delegateDotRow) {
 	t.Helper()
 	byStatus := map[string]delegateDotRow{}
@@ -371,8 +327,7 @@ func delegateDotAssertDivergence(t *testing.T, rows []delegateDotRow) {
 	}
 }
 
-// delegateDotSites scans every non-test Go file under internal/ for a reference to a
-// ToolStatus constant and answers what each one does with it.
+// delegateDotSites scans every non-test Go file under internal/ for ToolStatus references and classifies each.
 func delegateDotSites(t *testing.T, consts map[string]steerConst) []delegateDotSite {
 	t.Helper()
 	var out []delegateDotSite
@@ -408,10 +363,8 @@ func delegateDotSites(t *testing.T, consts map[string]steerConst) []delegateDotS
 	return out
 }
 
-// delegateDotSitesInFile is the per-file half: classify by POSITION in two passes, so a
-// constant inside a comparison is never read as the thing a return or an assignment
-// stamps. Pass one records the form of every constant a classifying node directly holds;
-// pass two answers for every constant reference, defaulting to formOther.
+// delegateDotSitesInFile classifies one file's references by position in two passes, so a constant in a comparison
+// is never read as stamped; unmatched references default to formOther.
 func delegateDotSitesInFile(t *testing.T, consts map[string]steerConst, path string) []delegateDotSite {
 	t.Helper()
 	file, fset := steerParse(t, path)
@@ -434,8 +387,7 @@ func delegateDotSitesInFile(t *testing.T, consts map[string]steerConst, path str
 				if !ok {
 					continue
 				}
-				// A ToolStatus as a KEY declares a set: knownToolStatuses is what the
-				// translator's settle path stamps whatever the wire carried.
+				// A ToolStatus as a map key declares a set: knownToolStatuses is what the settle path stamps.
 				mark(kv.Key, formMapKey)
 				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Status" {
 					mark(kv.Value, formStatusField)
@@ -486,13 +438,8 @@ func delegateDotSitesInFile(t *testing.T, consts map[string]steerConst, path str
 	return out
 }
 
-// delegateDotStatus answers the value of a ToolStatus constant reference.
-//
-// The QUALIFIED form only (marotte.ToolAborted). A bare ToolAborted is the spelling inside
-// internal/marotte itself, where the enum is declared and compared and nothing stamps a
-// status on an entry; accepting it also double-counted every qualified reference, because a
-// SelectorExpr's own Sel is an Ident at a different position, so each site arrived once
-// classified and once as formOther.
+// delegateDotStatus answers the value of a qualified ToolStatus reference (marotte.ToolAborted). A bare ident is
+// internal/marotte's own spelling, which stamps nothing, and accepting it double-counted each selector's Sel.
 func delegateDotStatus(consts map[string]steerConst, e ast.Expr) (string, bool) {
 	sel, ok := e.(*ast.SelectorExpr)
 	if !ok {

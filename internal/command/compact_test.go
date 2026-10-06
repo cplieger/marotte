@@ -12,15 +12,8 @@ func compactReq(chatID marotte.ChatID) *marotte.ClientCommand {
 	return &marotte.ClientCommand{Type: marotte.CmdCompact, ChatID: chatID}
 }
 
-// TestCmdCompact_ReportsAcceptanceNotCompaction pins the one thing this handler
-// can honestly claim.
-//
-// `{success: true}` covers five outcomes and nothing on the wire separates them:
-// committed and notified, committed with the frame withheld because the session
-// advanced during the durable commit, committed with the notify swallowed, and
-// three skips that compacted nothing. An operator diagnosing "/compact did
-// nothing" reads this line first, so a line saying the chat WAS compacted tells
-// them the opposite of what they need.
+// TestCmdCompact_ReportsAcceptanceNotCompaction asserts that `{success: true}` covers five outcomes, three of
+// which compact nothing, so the log line must not claim the chat was compacted.
 func TestCmdCompact_ReportsAcceptanceNotCompaction(t *testing.T) {
 	buf := captureLogs(t)
 	b := &recordingBridge{result: map[string]any{"success": true}, sessionID: "sess-1"}
@@ -34,17 +27,10 @@ func TestCmdCompact_ReportsAcceptanceNotCompaction(t *testing.T) {
 	}
 }
 
-// There is deliberately NO test asserting this handler records and broadcasts
-// nothing. Its `bridges BridgeAccess` parameter exposes only bridge operations —
-// no chat store, no broadcaster — so a synthesized boundary, watermark or event
-// is not expressible here, and the narrow parameter type is a better guard than
-// a test: it fails at compile time and it cannot be satisfied by accident. Such
-// a test could only go red if someone WIDENED that parameter, which is a design
-// change reviewed on its own merits, so it would be a change detector rather
-// than a bug catcher. Keep the parameter narrow; that IS the assertion.
+// No test asserts this handler records nothing: its BridgeAccess parameter exposes no store or
+// broadcaster, so the narrow type is the assertion.
 
-// TestCmdCompact_SendsTheSessionsWire pins the verb and its params. The handler
-// had no test at all before this file, so the wire contract was unpinned.
+// TestCmdCompact_SendsTheSessionsWire pins the verb and its params.
 func TestCmdCompact_SendsTheSessionsWire(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{"success": true}, sessionID: "sess-1"}
 

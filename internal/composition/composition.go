@@ -29,7 +29,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
-	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/powers"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -80,22 +80,20 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// The app's lifetime: Build's ctx is context.Background() in production, so every
 	// component whose work must not outlive the process is parented on appCtx.
 	appCtx, stopApp := context.WithCancel(ctx)
-	// A boot that returns no App has no Shutdown to call, so the lifetime ends here.
 	built := false
 	defer cancelUnless(&built, stopApp)
 
 	logctl.Install(ctx, cfg.ConfigDir)
 
-	// The three paths a boot's blast radius derives from, on one line; otherwise a boot
-	// pointed at the wrong one is diagnosable only by reading which envs marotte consults.
-	// KIRO_HOME decides whose KAS session trees a sweep may delete and does NOT follow the
-	// config dir. AFTER Install, or it bypasses logfmt.
+	// The three paths a boot's blast radius derives from, on one line. KIRO_HOME decides whose KAS
+	// session trees a sweep may delete and does not follow the config dir. After Install, or it
+	// bypasses logfmt.
 	slog.Info("boot paths resolved",
 		"config_dir", cfg.ConfigDir, "work_dir", cfg.WorkDir, "kiro_home", workspace.KiroHome())
+	logBridgeEnvPosture(cfg)
 
-	// Backgrounded on purpose: the listener binds first and only readiness waits, so a
-	// first-boot download is an unready verdict rather than a missing server. BELOW
-	// Install because its two early returns log synchronously and would bypass logfmt.
+	// Backgrounded: the listener binds first, so a first-boot download is an unready verdict rather
+	// than a missing server. Below Install because its early returns log synchronously.
 	kiro := startKiroCLI(ctx, cfg)
 
 	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
@@ -109,9 +107,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	sweepStaleTemps(ctx, cfg.ConfigDir, cfg.WorkDir)
 
-	// One registry for every digest subject: the chat store mints `chat` and
-	// `chats` into it, the agent runtime mints the workspace subjects and reads
-	// all of them for the digest and the REST envelopes.
 	versions := &subject.Versions{}
 	chatStore, err := chat.NewStore(filepath.Join(cfg.ConfigDir, "chats"), chat.WithVersions(versions))
 	if err != nil {
@@ -125,30 +120,28 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
 	}
 
-	// The third reader of KeySecurityProfile, and the composition root is where it
-	// belongs: internal/mcp renders a file and holds none of the policy vocabulary,
-	// so the rung table and the unknown-id fallback stay in policyfile and only the
-	// wire between them is here. Read per render rather than captured, so a profile
-	// change reaches the file — see mcp.WithAutoApprove.
 	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil,
-		mcp.WithAutoApprove(func(ctx context.Context) bool {
-			return honoursAutoApproveFor(ctx, cfg.ConfigDir)
+		mcp.WithWaitForReady(func(ctx context.Context) bool {
+			v, ok := settings.Field[bool](ctx, cfg.ConfigDir, settings.KeyMCPWaitForReady)
+			return ok && v
 		}))
 	if err != nil {
 		return nil, err
 	}
 
+	powersMgr := powers.NewManager(
+		powers.NewCatalog(&http.Client{Timeout: 30 * time.Second}, powers.RegistryURL),
+		mcpStore, kiro.cliPath, kiro.env,
+		filepath.Join(workspace.KiroHome(), "powers", "installed"),
+	)
+
 	scheduleStore := openScheduleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
 
-	// One presence table, two readers: the hub's connect/disconnect feed and the
-	// alive route write it through the runtime, the send filter reads it.
 	presence := push.NewPresence()
 	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub, push.WithPresence(presence))
 
-	// The second argument is WHO this reaper answers for and must be the workspace root:
-	// a candidate's recorded cwd is compared against it, and any other value widens or
-	// empties what the sweep may delete rather than failing.
+	// The second argument is whom this reaper answers for; only the workspace root is correct.
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"), cfg.WorkDir)
 	// Closed by the server once its listener has bound; the destructive session sweep
 	// waits on it. Created here because the runtime is built before the server.
@@ -156,10 +149,12 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	tabStore := openTabStore(cfg.ConfigDir)
 	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
 	authReadiness := new(command.AuthReadiness)
+	lockedSettings := new(lateLockSink)
 	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
 		agent.WithPresence(presence),
 		agent.WithACPArgs(cfg.ACPArgs),
+		agent.WithPowers(powersMgr),
 		agent.WithAuthReadiness(authReadiness),
 		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
 		agent.WithSessionSweepGate(listenerBound),
@@ -167,12 +162,14 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		agent.WithRunLeases(leaseStore),
 		agent.WithTabs(tabStore),
 		agent.WithSpecApprovals(approvalStore),
-		agent.WithVersions(versions))
+		agent.WithVersions(versions),
+		agent.WithGovernanceLocksHook(lockedSettings.run))
 	chat.WithBroadcaster(h)(chatStore)
-	// The two chat GET envelopes stamp the hub's epoch beside their version, and
-	// the hub exists only once the runtime does.
 	chat.WithEpoch(h.Epoch)(chatStore)
 	pruneTabs(ctx, tabStore, chatStore)
+	// Once at boot, so a Power installed from a shell before this start gets its
+	// servers with no tab open; the runtime renders it again on every lock change.
+	h.SyncPowers(ctx)
 
 	// BEFORE anything can launch: relying on the scheduler's first tick would make
 	// correctness a property of the tick interval. On the APP's lifetime, never Build's,
@@ -202,15 +199,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	})
 	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
 	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
+	h.SetChatSteering(steer.ChatDocs)
 
-	// Before the tools engine, whose GitHub requests carry the github.com connection's token.
 	forgesManager := forges.NewManager(cfg.ConfigDir)
 	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
-		// Non-fatal: the manager serves an empty list until the next refresh.
 		_ = refreshErr
 	}
 
-	// The engine owns the manifest, the install tree and the queue; this root owns wiring.
 	toolsEngine, err := wireToolsEngine(appCtx, cfg, h, githubTokenFor(forgesManager))
 	if err != nil {
 		return nil, err
@@ -224,6 +219,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	fileHandler.AllowToolOutputs(filepath.Join(workspace.KiroHome(), "sessions"))
 	identity := auth.NewIdentity(kiro.cliPath, kiro.env, func() {
 		h.RetireBridges("account identity changed")
 	})
@@ -232,8 +228,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies),
 		auth.WithIdentity(identity))
-	// Off the boot path: Run primes and refreshes the identity /api/whoami answers from,
-	// and every read it makes is what feeds the registrar above.
+	// Off the boot path: Run primes and refreshes the identity /api/whoami answers from.
 	go authHandler.Run(appCtx)
 	forgesHTTP := forges.NewHTTPHandler(forgesManager, h)
 
@@ -259,22 +254,25 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	retention := func() time.Duration { return chatRetention(ctx, cfg.ConfigDir) }
-	purgeScheduler := chat.NewPurgeScheduler(chatStore, retention)
-	// The purge scans the SAME directory live chats live in, so this predicate is what
-	// keeps an old-but-open conversation out of it.
+	purgeScheduler := chat.NewPurgeScheduler(chatStore, retention, func(pctx context.Context) archive.PurgeResult {
+		window, purge := runRetention(pctx, cfg.ConfigDir)
+		if !purge {
+			return archive.PurgeResult{}
+		}
+		r := h.PurgeParentlessRuns(pctx, window)
+		return archive.PurgeResult{NextDeadline: r.NextDeadline, Purged: r.Purged, Kept: r.Kept, Errors: r.Errors}
+	})
+	// The purge scans the directory live chats live in, so this predicate keeps an old-but-open
+	// conversation out of it.
 	chat.WithLive(h.HasLiveBridge)(chatStore)
-	// A chat someone has OPEN is not abandoned work, bridge or draft or neither. That
-	// makes retention opt-out for a chat left open forever, which is accepted.
 	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
-	// Not retention predicates: the transcript GET reads both, the registry's liveness
-	// verdict and the open turns' in-memory tails. Injected post-construction for
-	// WithLive's reason — the store cannot import the agent.
+	// Not retention predicates: the transcript GET reads both. Injected post-construction because
+	// the store cannot import the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
 	chat.WithOnPurge(func(id marotte.ChatID, sessionChain []string) {
-		// After the per-chat record lock is released: it keeps the lock order acyclic.
-		// RetentionClose reaps the chain itself, through the same reaper wired above, so
-		// a loop here would be a second reap site for one purge.
+		// After the per-chat record lock is released, keeping the lock order acyclic.
+		// RetentionClose reaps the chain itself, so no second reap here.
 		h.Membership().RetentionClose(appCtx, id, sessionChain)
 	})(chatStore)
 	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
@@ -305,11 +303,12 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
 		server.WithPolicy(h.Config()),
+		server.WithGovernanceLocks(h.Config()),
 		// The recycle a security-profile change needs, or the policy view describes the
 		// profile that was in force before it.
 		server.WithPolicyReload(h),
-		// The re-render the same change needs, or the outgoing rung's MCP auto-approve
-		// posture stands on every live chat until the next MCP mutation.
+		// The re-render an MCP wait setting change needs, or open chats keep the
+		// previous setting until the next MCP mutation.
 		server.WithMCPRenderer(mcpStore),
 		server.WithStaticFS(static),
 		server.WithKiroCLI(kiro.cliPath, kiro.env),
@@ -326,6 +325,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// ListenAndServe is callable twice and a second close panics.
 		server.WithOnListen(sync.OnceFunc(func() { close(listenerBound) })),
 	)
+	lockedSettings.bind(appCtx, srv.ApplyGovernanceLocks)
 
 	built = true
 	return &App{
@@ -356,11 +356,10 @@ func (a *App) Run() error {
 	return err
 }
 
-// Shutdown stops background services in reverse order. Every member is treated as
-// optional — one genuinely is (tools is nil on the degraded boot) — because a panic on a
-// service that was never started takes the teardown of the ones that WERE down with it.
+// Shutdown stops background services in reverse order. Every member is treated as optional (tools
+// is nil on the degraded boot): a panic on a service never started would abort the teardown of the
+// rest.
 func (a *App) Shutdown() {
-	// First: the poller consults the push service the Runtime owns.
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the utility bridge
@@ -382,9 +381,8 @@ func (a *App) Shutdown() {
 	a.shutdownHub()
 }
 
-// hubStopGrace bounds the runtime teardown App.Shutdown owns. Invented rather than
-// inherited because the signal context is already cancelled on both paths that reach
-// here, so a derived budget would be zero. 10s is the runtime's PTY teardown ceiling.
+// hubStopGrace bounds the runtime teardown App.Shutdown owns: the signal context is already
+// cancelled here, so a derived budget would be zero. 10s is the runtime's PTY teardown ceiling.
 const hubStopGrace = 10 * time.Second
 
 // shutdownHub tears the runtime down on that budget and LOGS an expiry: both callers are
@@ -416,11 +414,10 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 	}
 }
 
-// chatRetention resolves the purge window, read on every pass. <= 0 is "no purge": 0 =
-// off, -1 = forever, N > 0 = purge after N days. FieldStrict, so a config.json that is
-// PRESENT and unreadable answers 0 rather than the default: folding the two would let a
-// malformed file override a stored -1. An ABSENT key or file keeps the default, which must
-// stay lenient — a fresh install has no config.json.
+// chatRetention resolves the purge window on every pass: 0 = off, -1 = forever, N > 0 = purge after
+// N days. FieldStrict, so a PRESENT but unreadable config.json answers 0 rather than the default,
+// which a malformed file could otherwise use to override a stored -1; an absent key or file keeps
+// the default.
 func chatRetention(ctx context.Context, configDir string) time.Duration {
 	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
 	if err != nil {
@@ -438,35 +435,27 @@ func chatRetention(ctx context.Context, configDir string) time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// honoursAutoApproveFor is the one production line joining the rung in force to
-// what reaches KAS's MCP config: it reads the setting and asks the ladder whether
-// that rung lets a server's own auto_approve list through.
-//
-// Package-level rather than a closure at the mcp.New call because it is otherwise
-// addressable by nothing: the ladder is tested per rung and the render per bool,
-// both against injected values, so inverting this line leaves composition, mcp,
-// policyfile and server all green. composition_autoapprove_test.go tables it.
-func honoursAutoApproveFor(ctx context.Context, configDir string) bool {
-	return policyfile.HonoursAutoApprove(securityProfileID(ctx, configDir))
+// runRetention resolves how the purge treats a finished parentless run: purge is
+// false for keep-forever and for a config.json that is present and unreadable, a
+// zero window purges once no tab shows the run, and N days purges N days after
+// its last update. An absent key takes the default, as chatRetention does.
+func runRetention(ctx context.Context, configDir string) (window time.Duration, purge bool) {
+	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
+	if err != nil {
+		return 0, false
+	}
+	if !ok {
+		days = settings.DefaultChatRetentionDays
+	}
+	if days < 0 {
+		return 0, false
+	}
+	return time.Duration(days) * 24 * time.Hour, true
 }
 
-// securityProfileID reads the persisted security-profile id, empty when unset or
-// unreadable. Resolving the empty case is policyfile.HonoursAutoApprove's job, so this
-// stays a plain read and the unknown-id rule keeps one owner.
-//
-// FieldInto rather than FieldStrict, matching agent.securityPresets: the two readers must
-// agree about the posture in force, and an unreadable file is the same "no opinion" as an
-// absent key for a value whose fallback is the ladder's own default rung.
-func securityProfileID(ctx context.Context, configDir string) string {
-	var id string
-	settings.FieldInto(ctx, configDir, settings.KeySecurityProfile, &id)
-	return id
-}
-
-// sweepStaleTemps removes orphan temps left by SIGKILL between CreateTemp and Rename,
-// sparing anything under an hour old. configDir is swept RECURSIVELY, so a new atomic
-// writer needs no entry on a hand-kept list; workDir is FLAT, since temps only land at its
-// top level. Failed and Unreadable are reported APART: they are different problems.
+// sweepStaleTemps removes orphan temps left by SIGKILL between CreateTemp and Rename, sparing
+// anything under an hour old. configDir is swept recursively (no hand-kept writer list), workDir
+// flat. Failed and Unreadable are reported apart.
 func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 	const tempMaxAge = time.Hour
 	for _, sweep := range []struct {
@@ -493,15 +482,13 @@ func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 	}
 }
 
-// forgeSnapshotTTL bounds how stale the cached forge snapshot may get before a read kicks
-// a background revalidation. Connections and repo lists change rarely, so five minutes
-// keeps the forge section honest with no forge request near the session-start path.
+// forgeSnapshotTTL bounds how stale the cached forge snapshot may get before a read kicks a
+// background revalidation.
 const forgeSnapshotTTL = 5 * time.Minute
 
-// forgeSnapshotCache is a stale-while-revalidate cache around forgeSnapshot. snapshot()
-// NEVER blocks on a forge request: it returns the current cache (zero-value before the boot
-// prime lands) and kicks an async refresh when stale. refresh() rebuilds in the calling
-// goroutine and regenerates the steering file only on a change.
+// forgeSnapshotCache is a stale-while-revalidate cache around forgeSnapshot: snapshot() never
+// blocks on a forge request (zero value before the boot prime), refresh() rebuilds in the caller
+// and regenerates the steering file only on a change.
 type forgeSnapshotCache struct {
 	// appCtx is the app's lifetime, required at construction: both entry points are
 	// context-free callbacks, and both reach rebuild, which must not outlive the process.
@@ -512,7 +499,7 @@ type forgeSnapshotCache struct {
 	snap   steering.ForgeSnapshot
 	mu     sync.Mutex
 	busy   bool
-	dirty  bool // a refresh request arrived mid-rebuild; go again
+	dirty  bool
 }
 
 // newForgeSnapshotCache wires a cache around build that regenerates steer on a change.
@@ -535,10 +522,9 @@ func (c *forgeSnapshotCache) snapshot() steering.ForgeSnapshot {
 	return c.snap
 }
 
-// refresh rebuilds the snapshot now, then regenerates the steering file if the data
-// changed. A request arriving mid-rebuild is COALESCED rather than dropped: that rebuild
-// may have read the connections before the change, so dropping it would strand a fresh
-// connect until the TTL. Callers run refresh in their own goroutine.
+// refresh rebuilds the snapshot, then regenerates the steering file if the data changed. A request
+// arriving mid-rebuild is coalesced, not dropped: that rebuild may predate the change. Callers run
+// refresh in their own goroutine.
 func (c *forgeSnapshotCache) refresh() {
 	c.mu.Lock()
 	if c.busy {
@@ -623,11 +609,10 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	return toolsEngine, nil
 }
 
-// buildToolsEngine constructs the shared toolbelt engine with marotte's SSE adapters and
-// enqueues the boot jobs, reconcile first; a failed enqueue is logged rather than fatal
-// because installed tools persist on the volume. (nil, nil) is the root-integrity DEGRADED
-// verdict, not an omission; every other New failure still stops the boot. githubToken is
-// the engine's only GitHub credential and nil sends every GitHub request anonymously.
+// buildToolsEngine constructs the shared toolbelt engine with marotte's SSE adapters and enqueues
+// the boot jobs, reconcile first; a failed enqueue only logs, since installed tools persist on the
+// volume. (nil, nil) is the root-integrity DEGRADED verdict; any other New failure stops the boot.
+// githubToken is the engine's only GitHub credential.
 func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolbelt.Engine, error) {
@@ -666,8 +651,6 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 		},
 	})
 	if err != nil {
-		// Both answers travel in the error: nil from the classifier IS the degraded
-		// verdict, so this one return yields (nil, nil) or (nil, wrapped).
 		return nil, toolsEngineFailure(err)
 	}
 	// The gate agent/code_intel.go consults; the boot fire below covers a volume that
@@ -710,7 +693,6 @@ func warnIfGitHubRateLimited(j *toolbelt.Job) {
 	if j == nil || j.State != toolbelt.JobFailed || j.ErrorCode != toolbelt.ErrorCodeGitHubRateLimited || j.RateLimit == nil {
 		return
 	}
-	// An account raises only the hourly quota, not the secondary limit.
 	var hint string
 	switch {
 	case j.RateLimit.Secondary:
@@ -729,10 +711,9 @@ func warnIfGitHubRateLimited(j *toolbelt.Job) {
 		"secondary", j.RateLimit.Secondary, "resets_at", resets, "hint", hint)
 }
 
-// toolsEngineFailure decides what a toolbelt.New failure costs marotte. A nil return is
-// the DEGRADED verdict and only the root-integrity refusal earns it; every other failure
-// stays fatal. Degraded rather than fatal because an unfit root is persistent-volume state
-// this process cannot repair, and refusing to boot removes the only way in (invariant 6).
+// toolsEngineFailure decides what a toolbelt.New failure costs: nil (degraded) only for the
+// root-integrity refusal, because an unfit root is volume state this process cannot repair and
+// refusing to boot removes the way in; every other failure stays fatal.
 func toolsEngineFailure(err error) error {
 	if !errors.Is(err, toolbelt.ErrRootIntegrity) {
 		return fmt.Errorf("tools engine: %w", err)
@@ -741,10 +722,9 @@ func toolsEngineFailure(err error) error {
 	return nil
 }
 
-// logRootIntegrityRefusal reports a refusal one line per offending path, then states the
-// consequence; a path is what an operator can grep and act on. Deliberately does NOT touch
-// /api/health: that verdict is the install manager's, and this condition never self-heals,
-// so wiring it in would report the container unready forever with no repair path.
+// logRootIntegrityRefusal reports a refusal one line per offending path, then the consequence. It
+// does not touch /api/health: the condition never self-heals, so readiness would stay red with no
+// repair path.
 func logRootIntegrityRefusal(err error) {
 	refusal, ok := errors.AsType[*toolbelt.RootIntegrityError](err)
 	if !ok {
@@ -791,20 +771,9 @@ func openScheduleStore(dir string) *schedule.Store {
 	return st
 }
 
-// ensureUploadDir creates the composer's upload target so the file handler can
-// open a mount over it, and WARNS rather than failing when it cannot.
-//
-// It exists because the directory stopped being created on demand when it became
-// a mount rather than a path inside one: filebrowse's per-upload MkdirAll runs
-// INSIDE the matched mount's os.Root, and openMounts SKIPS a root it cannot open.
-// So an absent directory means the mount is silently missing and every composer
-// upload answers 403 for the container's life, with nothing on the upload path
-// able to repair it.
-//
-// Warn-and-continue, never fatal: this is a dev-box container whose /uploads may
-// be a bind mount the operator owns, and aborting boot over it would leave no way
-// IN to fix it (invariant 6). The image creates the directory at build time for
-// the non-root case, so this covers a local `go run` and a volume mounted empty.
+// ensureUploadDir creates the composer's upload target so the file handler can mount it, warning
+// rather than failing. Needed because filebrowse's per-upload MkdirAll runs inside the mount's
+// os.Root, and openMounts skips a root it cannot open.
 func ensureUploadDir() {
 	if err := os.MkdirAll(marotte.DefaultUploadDir, 0o755); err != nil {
 		slog.Warn("composer uploads will be refused until this directory exists",
@@ -812,9 +781,8 @@ func ensureUploadDir() {
 	}
 }
 
-// openTabStore opens the open-tab set, ALWAYS returning a store: an arrangement is
-// re-derivable by opening the tabs again (invariant 6), and no store would take the four
-// tab commands down with it, so nothing could reopen anything.
+// openTabStore opens the open-tab set, ALWAYS returning a store: the arrangement is re-derivable,
+// and no store would take the four tab commands down.
 func openTabStore(dir string) *tabs.Store {
 	st, err := tabs.NewStore(dir)
 	if err != nil {
@@ -823,10 +791,8 @@ func openTabStore(dir string) *tabs.Store {
 	return st
 }
 
-// openSpecApprovalStore opens the spec-phase approval record, ALWAYS returning a
-// store: an approval is re-creatable by approving again (invariant 6), and no
-// store would take the approve command down with it while leaving the badge with
-// nothing to show.
+// openSpecApprovalStore opens the spec-phase approval record, ALWAYS returning a store: an approval
+// is re-creatable, and no store would take the approve command down.
 func openSpecApprovalStore(dir string) *specapproval.Store {
 	st, err := specapproval.NewStore(dir)
 	if err != nil {
@@ -835,10 +801,9 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 	return st
 }
 
-// pruneTabs is the tab set's LOAD-TIME crash recovery, running exactly ONCE: the membership
-// coordinator is the live mechanism, so this covers only a crash between its two writes.
-// Per KIND — a CHAT tab is checked against the chat store, while EDITOR, RUN and SINGLETON
-// tabs are left alone, since a missing file is no reason to close the tab naming it.
+// pruneTabs is the tab set's one-shot LOAD-TIME crash recovery for a crash between the
+// coordinator's two writes. Only CHAT tabs are checked against the chat store; a missing file is no
+// reason to close an editor, run or singleton tab.
 func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 	if st == nil {
 		return
@@ -898,11 +863,9 @@ func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Lau
 	go schedule.NewRunner(st, l).Run(ctx)
 }
 
-// newPRStatusPoller builds the CI-flip notifier that fills the pull-request
-// inventory. The origins are what this root hands across: git answers which repos are
-// checked out and where their origins point, forges joins them to its connections, and
-// neither package reaches into the other. The lookup runs per SWEEP, so a clone or a
-// connection added after boot is watched without a restart.
+// newPRStatusPoller builds the CI-flip notifier that fills the pull-request inventory. git answers
+// which repos are checked out and their origins, forges joins them to connections; the lookup runs
+// per sweep, so a later clone or connection is watched without a restart.
 func newPRStatusPoller(mgr *forges.Manager,
 	gitHandler *git.Handler, notifier forges.PRNotifier, gate func() forges.Gate, opts ...forges.PollerOption,
 ) *forges.PRStatusPoller {
@@ -927,15 +890,13 @@ func prPollGate(presence *push.Presence, svc *push.Service) func() forges.Gate {
 	}
 }
 
-// backgroundStopGrace bounds how long a stop function waits for its goroutine. The WAIT is
-// the point: an unwaited cancel lets a sweep already inside a forge subprocess keep going
-// after Shutdown returned. The BOUND is the counterweight — cancellation reaches the
-// subprocess through its context, so anything slower is a bug to log, not a hang to take.
+// backgroundStopGrace bounds how long a stop function waits for its goroutine. The wait stops a
+// sweep inside a forge subprocess outliving Shutdown; cancellation reaches the subprocess through
+// its context, so anything slower is a bug to log.
 const backgroundStopGrace = 5 * time.Second
 
-// runBackground starts fn on a cancellable child of ctx and returns the stop function.
-// Exists because "shutdown is context cancellation" needs someone to HOLD the cancel:
-// production passes context.Background() into Build, so a loop given it has no owner.
+// runBackground starts fn on a cancellable child of ctx and returns the stop function that holds
+// the cancel, since Build's context.Background() has no owner.
 func runBackground(ctx context.Context, name string, fn func(context.Context)) (stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -952,4 +913,29 @@ func runBackground(ctx context.Context, name string, fn func(context.Context)) (
 				"loop", name, "grace", backgroundStopGrace)
 		}
 	}
+}
+
+// lateLockSink carries governance lock changes to a writer bound after the runtime
+// that publishes them is built.
+type lateLockSink struct {
+	apply func(context.Context)
+	mu    sync.Mutex
+}
+
+func (l *lateLockSink) run(ctx context.Context) {
+	l.mu.Lock()
+	apply := l.apply
+	l.mu.Unlock()
+	if apply != nil {
+		apply(ctx)
+	}
+}
+
+// bind installs the writer and applies the locks in force once, because a change
+// published before the bind reached no writer.
+func (l *lateLockSink) bind(ctx context.Context, apply func(context.Context)) {
+	l.mu.Lock()
+	l.apply = apply
+	l.mu.Unlock()
+	apply(ctx)
 }

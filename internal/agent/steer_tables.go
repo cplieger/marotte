@@ -1,8 +1,7 @@
 package agent
 
-// channelState is what the record knows of KAS's read cursor for the chat's own
-// turn. NONE is "no turn bound" (rec.turnID == ""), not "no own turn in the
-// registry": a prompt turn is own from StartTurn, before the bracket binds it.
+// channelState is what the record knows of KAS's read cursor for the chat's own turn. NONE means no turn bound,
+// not no own turn: a prompt turn is own from StartTurn, before its bracket.
 type channelState uint8
 
 const (
@@ -16,9 +15,8 @@ const (
 	nChannelStates
 )
 
-// rowState is one user row's state. rowRead and rowDone are terminal: a read row is
-// kept only while an op owns it, so the op can tell "read before my clear" from
-// "never there"; a done row (deleted, discarded, resent) leaves at the next prune.
+// rowState is one user row's state. rowRead and rowDone are terminal: a read row is kept while an op owns it,
+// to tell read-before-my-clear from never-there; a done row leaves at the next prune.
 type rowState uint8
 
 const (
@@ -93,8 +91,7 @@ const (
 	rDeleted
 	rDiscarded
 	rCollect
-	// rResubmit: the target is deleted (or read: 409 consumed); a kept row is read
-	// if the barrier shows it read, else it joins the new probe.
+	// rResubmit deletes the target (or consumes a read one, 409); a kept row is read if the barrier shows it, else joins the new probe.
 	rResubmit
 	rJoinProbe
 	rRoute
@@ -163,8 +160,7 @@ func rowRuleFor(s rowState, ev steerEvent) rowRule { //nolint:gocyclo // one fla
 	case evBind, evRevise:
 		return rKeep
 	case evSteer:
-		// A cleared row is routed again when a turn end re-routes it into a turn
-		// the user's prompt already holds; an unsent one goes by way of parked.
+		// A turn end re-routes a cleared row into a turn the prompt holds; an unsent one goes via parked.
 		return cell(s, rRoute, rKeep, rKeep, rRoute, rRoute, rKeep)
 	case evDeleteQueued:
 		return cell(s, rKeep, rResubmit, rResubmit, rJoinProbe, rJoinProbe, rKeep)
@@ -189,8 +185,7 @@ func rowRuleFor(s rowState, ev steerEvent) rowRule { //nolint:gocyclo // one fla
 	case evRefused:
 		return cell(s, rImpossible, rCleared, rCleared, rCleared, rKeep, rKeep)
 	case evPostLoadClear:
-		// A row the clear named was sent while the prompt waited for MCP; nothing
-		// bound could have made it a probe.
+		// Sent during the MCP wait; nothing bound could have made it a probe.
 		return cell(s, rKeep, rPark, rImpossible, rImpossible, rKeep, rKeep)
 	case evJobWake:
 		return cell(s, rKeep, rKeep, rKeep, rRoute, rKeep, rKeep)

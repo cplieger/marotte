@@ -1,9 +1,4 @@
 // `--shell-shortfall`: its arithmetic, its gate, and its lifecycle.
-//
-// The standalone gate is the function's own parameter (defaulting to the
-// platform's answer), so the tab case needs no module re-import. Chromium's own
-// `visualViewport` is replaced by a fake that carries the three numbers the module
-// reads and really adds and removes its listeners.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {

@@ -1,9 +1,4 @@
-// Unit tests for disclosure-row.ts — the header-row activation surface.
-//
-// Pure DOM, no mocks: the module imports nothing. The cases are the four ways a
-// row click must NOT reach the control, plus the two ways it must, plus the one
-// that would have been an infinite loop (the forwarded click bubbling back into
-// the listener that sent it).
+// The four ways a row click must not reach the control, the two it must, and the forwarded click that would loop.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { wireRowToggle } from "./disclosure-row.js";
 
@@ -14,7 +9,6 @@ interface Harness {
   nested: HTMLButtonElement;
   link: HTMLAnchorElement;
   prose: HTMLElement;
-  /** How many times the control's own click handler ran. */
   hits: () => number;
 }
 
@@ -54,8 +48,7 @@ function build(): Harness {
   return { row, control, plain, nested, link, prose, hits: () => n };
 }
 
-/** Click a descendant, so the event bubbles to the row the way a real one does.
- *  `HTMLElement.click()` sets `target` to the element it is called on. */
+/** `HTMLElement.click()` sets `target` to its element, so clicking a descendant bubbles like a real click. */
 function clickOn(el: HTMLElement): void {
   el.click();
 }
@@ -94,11 +87,8 @@ describe("wireRowToggle", () => {
   });
 
   it("activates exactly ONCE — the forwarded click does not re-enter", () => {
-    // The regression this guards: the row forwards by calling control.click(),
-    // and that synthetic click bubbles straight back into the row's own
-    // listener. It terminates because the control is a <button>, so the listener
-    // sees something that owns its click and stops. A count of 2 (or a stack
-    // overflow) is the failure.
+    // The forward calls control.click(), which bubbles back into the row; it stops because the control is a <button>.
+    // A count of 2 (or a stack overflow) is the failure.
     const h = build();
     wireRowToggle(h.row, h.control);
 
@@ -134,10 +124,7 @@ describe("wireRowToggle", () => {
   });
 
   it("a control taken out of the document is not activated", () => {
-    // A caller may REMOVE its control: a tool card detaches its chevron once it
-    // has nothing left to reveal. The listeners ride along on the detached
-    // element, so without the check the row would still activate a control the
-    // reader cannot see.
+    // A tool card detaches its chevron when it has nothing to reveal, and the detached control keeps its listeners.
     const h = build();
     wireRowToggle(h.row, h.control);
     h.control.remove();

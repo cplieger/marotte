@@ -1,10 +1,6 @@
-// The residency planner and the coordinate space it plans in: which ENTRIES a paint may
-// mount around the reader's own position, given an entry and tool-card budget. One `seq`
-// space serves the plan and the renderer, because a turn's entries are one flat list.
-//
-// In the NODE project deliberately, and that placement is its own assertion: this graph has
-// no DOM, so a DOM import anywhere in it throws at module load and this file fails loudly
-// instead of drifting. Pure, so every case states the whole input.
+// The residency planner and its `seq` space: which ENTRIES a paint may mount around the
+// reader's position, under an entry and tool-card budget. In the NODE project: a DOM
+// import in this graph throws at load. Pure, so every case states the whole input.
 
 import { describe, it, expect } from "vitest";
 import { toolResultID } from "./entry-ids.js";
@@ -31,12 +27,8 @@ import {
 import type { Turn } from "./turns.js";
 import type { Entry } from "./wire/types.gen.js";
 
-// --- Fixtures ---------------------------------------------------------------
-//
-// A `Turn` is built directly rather than projected, because this module reads only `id` and
-// `body` and a projection would put `turns.ts`'s rules between the case and its subject.
-// `body` is the turn's entries PAST the `turn_open`, and the invariant this space rests on is
-// `body[i].seq === i + 1`.
+// A `Turn` is built directly (this module reads `id` and `body` alone); `body` is the
+// entries past the `turn_open`, with `body[i].seq === i + 1`.
 
 function entry(
   seq: number,
@@ -181,9 +173,7 @@ describe("entryRenders", () => {
   it.each(["turn_open", "turn_close", "turn_bind", "tool_result", "reconciled"] as const)(
     "refuses a %s, which renders elsewhere",
     (kind) => {
-      // The header, the footer, nothing, and its call's own card. A budget that charged for
-      // one of these would disagree with the spacer that prices them, which is the whole
-      // reason this predicate is exported rather than spelled twice.
+      // Header, footer, nothing, and its call's own card: exported so budget and spacer agree.
       expect(entryRenders(entry(1, kind), "", -1)).toBe(false);
     },
   );
@@ -265,9 +255,7 @@ describe("effectiveRunID", () => {
 
 describe("runCardOwners", () => {
   it("names the FIRST call of a run and no other", () => {
-    // A later mention of one run (an `inspect_workflow`, an `update_workflow` echo) renders
-    // as an ordinary tool row; the two are indistinguishable on the wire, so POSITION is the
-    // rule and the client owns it outright.
+    // A later mention of one run is indistinguishable on the wire, so POSITION decides.
     const t = turn("t1", [
       call(1, { id: "launch", run: "w-1" }),
       call(2, { id: "inspect", run: "w-1" }),
@@ -329,9 +317,7 @@ describe("turnCost", () => {
   });
 
   it("charges nothing for an entry that renders elsewhere", () => {
-    // The `turn_close` feeds the footer and the `tool_result` its call's card, so a body of
-    // one text plus those two costs one entry. The span is 4 and the COST is 1: the two
-    // numbers are different questions, which is why `turnSpan` is its own function.
+    // The span is 4 and the COST is 1: two questions, hence `turnSpan`.
     const t = turn("t1", [text(1), entry(2, "tool_result"), entry(3, "turn_close")]);
     expect(turnCost(t)).toEqual({ entries: 1, toolCalls: 0 });
     expect(turnSpan(t)).toBe(4);
@@ -426,13 +412,8 @@ describe("proseRunAt", () => {
   });
 
   it("breaks a run at a turn_revert and steps over an entry that renders nothing", () => {
-    // The rewind boundary's second half of the fold contract. `entry_fold.json` pins that a
-    // turn_revert RENDERS in both languages, and a rendering entry ends a prose run, so text
-    // on either side of the cut is two paragraphs rather than one the boundary is drawn
-    // through. The fixture's own log cannot produce that shape — a revert record always lands
-    // at the file's tail, inside the newest surviving turn — so it is pinned here over a
-    // synthetic turn instead. No production edit backs this: `entryRenders` accepts the kind
-    // through its default, which is the right answer for it.
+    // A turn_revert RENDERS (`entry_fold.json`), so it ends a prose run: text on either side of
+    // the cut is two paragraphs. The log cannot produce this shape, so a synthetic turn pins it.
     const cut = turn("t1", [
       text(1),
       entry(2, "turn_revert", { from: "t-9", from_n: 9, through: "t-9", cause: "rewind" }),
@@ -441,9 +422,7 @@ describe("proseRunAt", () => {
     expect(proseRunAt(cut, 1, "", -1)).toEqual({ from: 1, to: 2 });
     expect(proseRunAt(cut, 3, "", -1)).toEqual({ from: 3, to: 4 });
 
-    // The control, because two runs is also what a walk breaking at EVERY entry answers: a
-    // turn_bind renders nothing, so the walk steps over it and the same two text entries stay
-    // ONE run.
+    // The control: a turn_bind renders nothing, so the walk steps over it and keeps ONE run.
     const bound = turn("t1", [
       text(1),
       entry(2, "turn_bind", { kas_message_id: "kas-1", session_id: "sess-1" }),
@@ -464,9 +443,8 @@ describe("planResidency", () => {
   });
 
   it("windows a single over-budget turn to its TAIL at the live edge", () => {
-    // A turn count could not reach this: there is one turn, and it is the one that has to be
-    // cut. Prose so the snap is exercised too, which is why the head is not exactly the
-    // budget.
+    // One turn that must be cut; prose so the snap is exercised (the head is not exactly the
+    // budget).
     const t = turn("t1", texts(RESIDENT_ENTRIES + 40));
     const plan = planResidency([t], undefined, "");
     const r = plan.get("t1") as EntryRange;
@@ -553,14 +531,9 @@ describe("planResidency", () => {
   });
 
   it("MOUNTS A TURN THAT IS ONE PROSE RUN WHOLE, over the budget", () => {
-    // The bound is the budget plus the two BOUNDARY RUNS, not a constant, and a turn of
-    // uninterrupted prose is one run — so the budget cannot cut it anywhere. That is the
-    // snap's own cost, stated where a reader will look for it rather than left to be
-    // discovered as a memory surprise: a run may not be mounted as two rows with two
-    // markdown streams, so the whole run is the smallest thing the window can hold.
-    // `from` is 1 rather than 0 because the run's own first member is seq 1: ordinal 0 is the
-    // `turn_open`, which is not prose, so the snap stops there — and the header renders
-    // whether or not the turn is resident, which is why `turnCost` charges nothing for it.
+    // The bound is the budget plus the two BOUNDARY RUNS: uninterrupted prose is one run and
+    // cannot be split into two markdown streams. `from` is 1 because ordinal 0 is the
+    // `turn_open`, which renders anyway and costs nothing.
     const t = turn("t1", texts(RESIDENT_ENTRIES + 200));
     const plan = planResidency([t], undefined, "");
     expect(plan.get("t1")).toEqual({ from: 1, to: turnSpan(t) });
@@ -575,9 +548,7 @@ describe("planResidency", () => {
   });
 
   it("charges a FREE ordinal nothing and takes it unconditionally", () => {
-    // An ordinal this view renders nothing at buys the reader nothing, so spending budget on
-    // one would cut the window short of what it can actually show. The span therefore
-    // exceeds the entry budget when the turn is padded with results.
+    // A non-rendering ordinal buys nothing, so the span exceeds the entry budget when padded.
     const body: Entry[] = [];
     for (let i = 0; i < 30; i++) {
       body.push(call(0, { id: `c${String(i)}` }), result(0, `c${String(i)}`));

@@ -1,6 +1,3 @@
-// Actions for git branch operations: checkout, create, name suggestion.
-// ---------------------------------------------------------------------------
-
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { decodeGitResult, type GitCmdResult } from "./git-changes.js";
 
@@ -12,11 +9,7 @@ interface CheckoutArgs {
   create: boolean;
 }
 
-// Note: optimistic UI updates (e.g. updating a branch label in the
-// switcher popover) are intentionally NOT in the action def. They
-// belong to the caller, which has the live DOM context. This keeps
-// args fully structuredClone-safe so retry can clone them without
-// fallback to a mutable reference.
+// Optimistic UI belongs to the caller, so args stay structuredClone-safe for retry.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const checkoutBranch = apiAction<CheckoutArgs, void>({
   name: "git.checkout_branch",
@@ -26,10 +19,7 @@ export const checkoutBranch = apiAction<CheckoutArgs, void>({
     path: "/api/git/checkout",
     body: { repo, branch, create },
   }),
-  // /api/git/checkout replies through writeCmdResult like every git
-  // mutation, so a failed checkout arrives as HTTP 200 + {"error": …}.
-  // Without this guard the error body resolved as success and the
-  // failure toast never fired.
+  // Like every git mutation, a failed checkout arrives as HTTP 200 + {"error": …} (writeCmdResult).
   decode: (data) => {
     decodeGitResult(data);
   },

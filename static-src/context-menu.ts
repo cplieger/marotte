@@ -1,22 +1,5 @@
-// ---------------------------------------------------------------------------
-// Context menu — adopted from @cplieger/ui-primitives (popover).
-//
-// The hand-rolled positioned popup was replaced by the library's
-// `createPopover` anchored at a viewport point via `pointAnchor(x, y)` — the
-// canonical way to express a right-click menu. The controller owns
-// dismiss-on-outside-click and Escape (Escape is isolated via stopPropagation,
-// so a menu opened inside a modal consumes the key rather than also closing the
-// modal), plus a real placement engine that flips/clamps the menu on-screen
-// (the old copy could overflow the viewport edge). We keep the WAI-ARIA menu
-// roles, the roving-tabindex arrow-key nav, and initial focus.
-//
-// Positioning is preserved: offset 0 + placement bottom/align start puts the
-// menu's top-left exactly at the click point (as the old position:absolute
-// left/top did), but via position:fixed against clientX/clientY — which is
-// also correct under page scroll. Visuals are unchanged: the panel keeps its
-// `.tab-context-menu` class (skinned in 12-tabs.css); the base adds only fixed
-// positioning + the z-index (mapped to 999 in 04-uip-skin.css).
-// ---------------------------------------------------------------------------
+// Right-click menu over `@cplieger/ui-primitives`' `createPopover` at `pointAnchor(x, y)`. The controller owns dismissal
+// and Escape (isolated, so a menu inside a modal does not close the modal) and on-screen placement.
 
 import { el } from "@cplieger/reactive";
 import { createPopover, pointAnchor } from "@cplieger/ui-primitives/popover";
@@ -25,8 +8,7 @@ import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 export interface ContextMenuItem {
   label: string;
   action: () => void;
-  /** A disabled item stays in the menu and in its roving focus (the WAI-ARIA menu
-   *  pattern), and a click on it does nothing and leaves the menu open. */
+  /** A disabled item stays in the menu and its roving focus (WAI-ARIA menu pattern); a click on it leaves the menu open. */
   disabled?: boolean;
 }
 
@@ -35,17 +17,14 @@ export interface ContextMenuPosition {
   y: number;
 }
 
-/** Show a context menu at the given viewport position. Dismisses on
- *  click-outside or Escape. Returns a function to programmatically dismiss. */
+/** Show a menu at a viewport point; dismisses on outside click or Escape. Returns a dismiss function. */
 export function showContextMenu(
   items: ContextMenuItem[],
   position: ContextMenuPosition,
 ): () => void {
   const menu = el("div", { className: "tab-context-menu", role: "menu" });
 
-  // The controller is created before the item handlers so they can close it.
-  // It hosts the (disconnected) menu into <body> on show(), positions it, and
-  // removes it from the DOM on close via onClose.
+  // Created before the item handlers so they can close it.
   const pop = createPopover(pointAnchor(position.x, position.y), menu, {
     placement: "bottom",
     align: "start",
@@ -70,15 +49,11 @@ export function showContextMenu(
     menu.appendChild(btn);
   }
 
-  // Roving-tabindex arrow-key navigation (Up/Down/Home/End, Enter/Space to
-  // activate) makes the menu fully keyboard-operable per the WAI-ARIA menu
-  // pattern; complements the initial focus below.
   rovingFocus(menu, ".tab-context-item");
 
   pop.show();
 
-  // Focus the first item for keyboard accessibility (the popover leaves focus
-  // to the caller by default).
+  // The popover leaves focus to the caller.
   menu.querySelector<HTMLButtonElement>("button")?.focus();
 
   return () => {

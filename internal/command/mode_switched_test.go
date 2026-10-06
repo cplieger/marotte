@@ -1,10 +1,5 @@
 package command
 
-// The durable ENTRY a mode switch leaves, which is what the transcript's banner is
-// drawn from. Its own file rather than cases in mode_test.go: that file's subject is
-// the command's own outcomes (the 404, the no-op, the auto-create), and this one's is
-// the record the switch appends beside them.
-
 import (
 	"context"
 	"testing"
@@ -45,8 +40,6 @@ func TestCmdSetMode_RecordsTheSwitchItApplied(t *testing.T) {
 	if len(spy.switches) != 2 {
 		t.Fatalf("two picks recorded %d switches, want 2: %+v", len(spy.switches), spy.switches)
 	}
-	// The chat had no mode before the first pick, so that entry names its destination
-	// alone; the second names the mode it left.
 	want := []marotte.EntryModeSwitched{
 		{From: "", To: "spec", Source: marotte.ModeSwitchSourceUser},
 		{From: "spec", To: "vibe", Source: marotte.ModeSwitchSourceUser},

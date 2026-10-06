@@ -1,16 +1,6 @@
-// The exec view's timeline: where the time went, and what waited on what.
-//
-// Every node carries `startedAt`/`endedAt`, so an execution's shape over time was
-// already on the wire and nothing had drawn it — a column shows order, not
-// concurrency, so two steps rendered as consecutive rows look identical whether
-// they ran sequentially or at once.
-//
-// LEAVES ONLY: a container's span is its children's, so drawing both
-// double-counts the time.
-//
-// A READOUT, not a chart library: no axes, no ticks, no zoom — one number for
-// scale, the rest is position. Selectable with the same `onSelect` and selected
-// path as the tree, so it is the same navigation surface from a different angle.
+// The exec view's timeline: where the time went and what ran concurrently (a column shows only
+// order). LEAVES ONLY, since a container's span is its children's. A readout: no axes, ticks or
+// zoom; selectable with the tree's `onSelect` and selected path.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
@@ -79,16 +69,9 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
     return { root, name, bar, dur };
   }
 
-  /** RECONCILED by path, not rebuilt, and the record that used to defend the rebuild
-   *  was wrong on its own premise: it said "a bar carries no state a reader can
-   *  change", and a lane carries two — `:hover`, and FOCUS, since every lane is a
-   *  `tabindex="0"` `role="button"`. Both live on the element, so replacing it drops
-   *  them. `tick` runs this on the 1s clock for a live run and every store bump runs it
-   *  again, so a keyboard reader lost focus and a pointer reader lost the hover fill
-   *  from under a stationary cursor several times a second — which is what reads as the
-   *  row flickering. `detail.ts` had already recorded the identical defect for its own
-   *  host seating. The geometry really is recomputed every pass, which is why the bar's
-   *  offsets are written on a REUSED element instead of a fresh one. */
+  /** RECONCILED by path, not rebuilt: each lane is a focusable `role="button"`, and replacing it on
+   *  the 1s tick drops focus and `:hover`. The geometry is recomputed every pass and written onto
+   *  the REUSED element. */
   function paint(nodes: readonly ExecNode[], selected: string, live: boolean): void {
     const ls = leaves(nodes).filter((n) => n.start !== undefined);
     const win = execWindow(nodes, live);

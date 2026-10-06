@@ -16,18 +16,14 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// Per-.kiro-directory scan caps, consistent with the environment.md
-// generator (internal/steering/discovery.go). They bound the JSON
-// response and memory when a workspace holds many repos, each with a
-// large .kiro tree.
+// Per-.kiro-directory scan caps, matching internal/steering/discovery.go, bounding the
+// response when a workspace holds many repos.
 const (
 	maxSteeringPerDir = 20
 	maxSkillsPerDir   = 20
 	maxAgentsPerDir   = 10
 
-	// steeringReadCap is steering.FrontMatterReadCap under a local name, kept
-	// only because the cap tests read it. The constant lives with the parser
-	// now; it used to be written out four times across two packages.
+	// steeringReadCap is steering.FrontMatterReadCap under a local name, for the cap tests.
 	steeringReadCap = steering.FrontMatterReadCap
 )
 
@@ -54,7 +50,6 @@ func (s *Server) collectKiroConfig(ctx context.Context) []kiroConfigItem {
 	workBase := strings.TrimPrefix(s.workDir, "/")
 	var items []kiroConfigItem
 
-	// Scan .kiro at workspace root
 	if info, err := os.Stat(filepath.Join(s.workDir, ".kiro")); err == nil && info.IsDir() {
 		items = append(items, scanKiroDir(ctx, filepath.Join(s.workDir, ".kiro"), workBase+"/.kiro")...)
 		if ctx.Err() != nil {
@@ -62,7 +57,6 @@ func (s *Server) collectKiroConfig(ctx context.Context) []kiroConfigItem {
 		}
 	}
 
-	// Scan .kiro inside each subdirectory (git repos)
 	entries, err := os.ReadDir(s.workDir)
 	if err != nil {
 		return items
@@ -82,15 +76,12 @@ func (s *Server) collectKiroConfig(ctx context.Context) []kiroConfigItem {
 	return items
 }
 
-// scanKiroDir scans a .kiro directory on the real filesystem.
-// It delegates to scanKiroDirFS with os.DirFS for testability.
+// scanKiroDir scans a .kiro directory on the real filesystem via scanKiroDirFS.
 func scanKiroDir(ctx context.Context, fsPath, prefix string) []kiroConfigItem {
 	return scanKiroDirFS(ctx, os.DirFS(fsPath), prefix)
 }
 
-// scanKiroDirFS scans a .kiro directory via the fs.FS interface, classifying
-// entries into steering docs, skills, and agents. It is unit-testable with
-// fstest.MapFS without touching the real filesystem.
+// scanKiroDirFS classifies a .kiro directory's entries into steering docs, skills and agents.
 func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	var items []kiroConfigItem
 	items = append(items, scanSteering(ctx, root, prefix)...)
@@ -119,9 +110,7 @@ func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigIt
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || strings.ContainsRune(e.Name(), 0) {
 			continue
 		}
-		// Read only the head of each file: front-matter is at the top,
-		// so an untrusted workspace repo can't OOM the container with a
-		// multi-GiB steering .md.
+		// Read only the head: an untrusted repo's multi-GiB steering .md cannot OOM the container.
 		data, err := readCappedFS(root, "steering/"+e.Name())
 		if err != nil {
 			slog.Warn("kiro config: read steering file",
@@ -145,12 +134,8 @@ func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigIt
 	return items
 }
 
-// readCappedFS reads at most steering.FrontMatterReadCap bytes of name from
-// root. Used for
-// untrusted workspace steering files so a crafted large file can't OOM
-// the container — only the front-matter head is needed. Mirrors
-// readCappedFile in internal/steering, but over the fs.FS interface so
-// scanKiroDirFS stays testable with fstest.MapFS.
+// readCappedFS reads at most steering.FrontMatterReadCap bytes of name from root (an
+// fs.FS twin of internal/steering's readCappedFile).
 func readCappedFS(root fs.FS, name string) ([]byte, error) {
 	f, err := root.Open(name)
 	if err != nil {
@@ -206,11 +191,8 @@ func scanAgents(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	return items
 }
 
-// parseSteeringInclusion returns the validated inclusion mode for a
-// steering doc. It delegates to steering.ParseInclusion so the REST scan
-// and the environment.md generator share one CRLF/BOM-tolerant,
-// validated front-matter parser rather than a divergent copy that
-// returned the raw value and broke on a CRLF- or BOM-authored file.
+// parseSteeringInclusion returns a steering doc's validated inclusion mode via
+// steering.ParseInclusion, the one front-matter parser.
 func parseSteeringInclusion(data []byte) string {
 	return steering.ParseInclusion(data)
 }

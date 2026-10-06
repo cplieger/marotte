@@ -1,12 +1,7 @@
 package agent
 
-// The read-loop sequence and the parked settle.
-//
-// Every test here drives frames through consumeFrame — Forward's body minus its
-// range loop — rather than through a live Forward goroutine, and that is what
-// makes them deterministic: holding the folder is not calling it, and filling the
-// pipe is queuing the frames the test will hand it. The frames, their sequences,
-// the deferred advance and the settle's wait are all the production ones.
+// These drive frames through consumeFrame (Forward's body minus its loop), which makes them deterministic with
+// production sequences, deferred advance and settle wait.
 
 import (
 	"slices"
@@ -38,13 +33,8 @@ func closedStops(t *testing.T, h *Runtime) []marotte.StopReason {
 	return out
 }
 
-// The headline ordering property, and the fault it closes: a settle taken on the
-// response alone decides the wire never closed the turn while the wire's own
-// turn_end is still unread, and the turn then ends carrying the prompt response's
-// outcome with the content that arrived behind the response missing.
-//
-// The discriminator is sharp in BOTH directions: the wire says `refusal`, the
-// response says `end_turn`, and the chunk arrives behind the response.
+// A settle taken on the response alone ends the turn with the response's outcome while turn_end and trailing content
+// are unread. The wire says refusal, the response end_turn, and the chunk arrives behind the response.
 func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -55,8 +45,6 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
-	// The pipe: the wire has already delivered the bracket and the reply, and the
-	// folder has consumed neither.
 	queued := []marotte.Notification{
 		{Msg: newTurnStartMsg(), Seq: 1},
 		{Msg: newChunkMsg("the whole reply"), Seq: 2},
@@ -100,11 +88,8 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	}
 }
 
-// A settle whose last delivered frame folds NOTHING still closes, which is why the
-// position advances for every frame CONSUMED. Measured: on a caught
-// publishTerminalEvent failure `turn_completion` is sent BEFORE the turn-end
-// broadcast, so bound to folds this settle parks forever and `thinking` never
-// clears — on the exact path the local fallback exists for.
+// A settle whose last frame folds nothing still closes. On a caught publishTerminalEvent failure turn_completion is
+// sent before the turn-end broadcast, so a fold-bound position parked here and thinking never cleared.
 func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -115,8 +100,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
-	// No turn_end: this is the fault path where the bracket never comes, and the
-	// trailing frame is metering.
+	// No turn_end: the fault path; the trailing frame is metering.
 	queued := []marotte.Notification{
 		{Msg: newChunkMsg("half an answer"), Seq: 1},
 		{Msg: newTurnCompletionMsg(), Seq: 2},
@@ -149,12 +133,8 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	}
 }
 
-// A closer armed for turn N, firing after turn N+1 opened, closes NOTHING.
-//
-// Epoch-scoped claiming is what makes a stale closer harmless. Before it, a
-// closer took whatever was open, so a settle that arrived late — a slow persist,
-// a re-ordered response — ended the NEXT turn and announced its own outcome for
-// it.
+// A closer armed for turn N, firing after N+1 opened, closes nothing; epoch-scoped claiming keeps a late settle off
+// the next turn.
 func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -181,19 +161,12 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 	}
 }
 
-// A bridge dying mid-prompt closes the turn ONCE, does not panic, and the parked
-// settle defers to the death closer.
-//
-// The deference is unconditional by design: the death actor names the process
-// that went away, where the settle could only report the prompt response's own
-// outcome for a turn whose cause was nothing of the kind. Forward seals the
-// position before that closer runs, so the settle has already given up by then.
+// A bridge dying mid-prompt closes the turn once and the parked settle defers: the death closer names the cause, and
+// Forward seals the position first.
 func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	// A turn mid-stream: content folded, no bracket yet, which is what "dying
-	// mid-prompt" looks like from the turn's side.
 	epoch, _ := streamingPromptTurn(t, h, chatID, "half an answer")
 	sb, _ := h.bridge.mgr.orInsert(chatID)
 	sb.bridge = br
@@ -212,7 +185,7 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 99)
 
-	// Stop WITHOUT removing the bridge: the process died on its own.
+	// Stop without removing the bridge: the process died on its own.
 	br.Stop()
 	<-forwardDone
 	<-settled
@@ -233,24 +206,15 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	}
 }
 
-// The wait does NOT stop at the awaited turn's own close, and this is what keeps
-// the empty-turn gate's structural clause sound.
-//
-// The gate re-prompts only when no LATER turn opened on the chat, read live — and
-// that read is only meaningful once the folder has consumed everything delivered
-// before the response. A wait that returned as soon as the awaited turn finalized
-// (the ordinary case, and by construction the mis-bind case) left that clause
-// racing the folder over frames already in the queue: the prompt goroutine's path
-// is three mutex acquisitions and the folder's is a JSON decode plus a persist, so
-// the gate could read false and re-send a prompt that had already been answered.
+// The wait does not stop at the awaited turn's close: the empty-turn gate's later-turn read is only sound once the
+// folder has consumed everything before the response, or it re-sends an answered prompt.
 func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
 	gen := r.attachForward(chatID)
 
-	// Opened at the registry alone: the store append OpenTurn performs is not the
-	// subject, so the record is placed directly under the lifecycle mutex.
+	// Opened at the registry alone; the store append is not the subject.
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	turn := lc.openLocked(chatID, &marotte.Entry{ID: "t-1"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-1", nil))
@@ -277,14 +241,8 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	}
 }
 
-// The settle returns only once the folder has caught up, so a LATER turn queued
-// behind the response is already visible to the empty-turn gate.
-//
-// The mis-bind chain end to end: a zero-content auto-wake binds the pre-open and
-// its bracket closes it with end_turn and EmittedNothing — the gate's first three
-// clauses, satisfied by a turn that was never the prompt's. What must save the
-// prompt is the fourth, and it can only answer honestly once the prompted turn's
-// own turn_start has been folded.
+// A zero-content auto-wake can bind the pre-open and close it with end_turn and nothing emitted, satisfying the gate's
+// first three clauses. Only the later-turn clause saves the prompt, once its own turn_start has folded.
 func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -295,8 +253,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	preOpen, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, preOpen)
 
-	// The auto-wake's bracket pair mis-binds and closes the pre-open; the prompted
-	// turn's own bracket is still queued behind the response.
+	// The auto-wake's brackets mis-bind and close the pre-open; the prompted turn's bracket is still queued.
 	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 1})
 	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
 

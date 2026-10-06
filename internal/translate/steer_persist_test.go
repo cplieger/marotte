@@ -1,11 +1,7 @@
 package translate
 
-// A steer's DURABLE entry: what a page reload rebuilds the note from.
-//
-// The dock rows and the transcript marks both die with the page, and a plain F5 on
-// a live bridge triggers no session/load, so before these the only writer of a
-// steer row was the REPLAY projection — a landed steer survived a container restart
-// and not a refresh.
+// A steer's DURABLE entry, what a reload rebuilds the note from (a refresh triggers no
+// session/load).
 
 import (
 	"testing"
@@ -50,8 +46,7 @@ func TestSteeringInjected_PersistsAReadSteerRow(t *testing.T) {
 		t.Fatalf("persisted %d steer entries, want 1 — a read steer must survive a reload", len(rows))
 	}
 	row := rows[0]
-	// The id is KAS's own steer id, which is also the id the replay projection
-	// stamps, so a later session/load pairs on it rather than doubling the note.
+	// KAS's own steer id, which the replay also stamps, so a session/load pairs rather than doubles.
 	if row.ID != "steer-1" {
 		t.Errorf("ID = %q, want the steer id", row.ID)
 	}
@@ -66,16 +61,13 @@ func TestSteeringInjected_PersistsAReadSteerRow(t *testing.T) {
 	}
 }
 
-// The half that matters most: an agent note nothing READ. Rendering it after a
-// reload as though it had landed is a false statement, which is worse than the
-// note being absent. A user row's undelivered entry is the host's, written at
-// the row's own terminal transition.
+// TestSteeringCleared_PersistsAnUndeliveredAgentNote pins an unread agent note persisted as
+// undelivered (a user row's entry is the host's).
 func TestSteeringCleared_PersistsAnUndeliveredAgentNote(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
-	// The queued frame is what puts the text in reach: the cleared frame carries
-	// ids and nothing else.
+	// The queued frame carries the text; the cleared frame carries ids alone.
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
 			"messageId": "notify-wf-1",
@@ -98,9 +90,8 @@ func TestSteeringCleared_PersistsAnUndeliveredAgentNote(t *testing.T) {
 	}
 }
 
-// KAS clears its buffer at EVERY turn boundary, so the cleared frame names ids the
-// model already read. That arrival is housekeeping, and reading it as a drop would
-// overwrite a delivered steer with "never read".
+// TestSteeringCleared_DoesNotOverwriteAReadSteer pins that a boundary clear naming read ids
+// overwrites nothing.
 func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -125,13 +116,9 @@ func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
 	}
 }
 
-// A steer this server sent whose ledger entry was missing at queue time is still
-// the USER's, because the id says so — so the clear writes nothing for it: a user
-// row's entry is the host's, and an agent verdict here would title the reader's own
-// words "Workflow result not delivered".
-//
-// The ledger is left empty deliberately: that is every one of its loss modes at
-// once (the queued-frame race, TTL expiry, cap eviction, chat teardown, restart).
+// TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers pins that a `steer-` id with no
+// ledger entry is still the user's, so the clear writes nothing (the empty ledger stands for
+// every loss mode).
 func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -156,9 +143,7 @@ func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
 	}
 }
 
-// An agent-origin steer keeps its own origin, or the note's title claims a
-// workflow's report is something the reader typed — the defect SteerOrigin exists
-// to prevent, which the durable row would otherwise reintroduce on every reload.
+// TestSteeringInjected_PersistsTheAgentOrigin pins an agent steer's origin on the durable row.
 func TestSteeringInjected_PersistsTheAgentOrigin(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -217,10 +202,8 @@ func TestSteeringInjected_WritesUnderTheSteerIDEveryTime(t *testing.T) {
 	}
 }
 
-// ADDENDUM 8 (a): a finished run's notice is read in whatever turn the reader
-// prompts next, and the entry must say WHICH run and WHEN it finished, or an
-// hours-old result reads as news. A step's mid-run note and a user steer carry
-// neither, and a notice with no recorded run is written without a guess.
+// TestSteeringInjected_ARunNoticeCarriesItsRunsProvenance pins WHICH run and WHEN on a
+// finished run's notice; others carry neither, and an unrecorded run is written without a guess.
 func TestSteeringInjected_ARunNoticeCarriesItsRunsProvenance(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-1": true}

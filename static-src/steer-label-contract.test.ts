@@ -1,19 +1,5 @@
-// The client half of the shared steer LABEL oracle: testdata/steer_label.json is the
-// contract and TestSteerLabelContract is the other reader. That one SCANS every producer
-// of marotte.EntrySteer under internal/ and states, per producible (origin, state, reason)
-// triple, the words this side has to render; this one renders each row through the real
-// buildSteerNote in chromium and asserts the label matches. A reason a producer writes and
-// this table has no wording for renders nothing, silently, and nothing else in the app
-// would see it.
-//
-// Browser placement, unlike the fold contract's node test: buildSteerNote returns an
-// HTMLElement, so the node project cannot call it, and the fixture arrives through the
-// `?raw` import Vite already allows for ../internal (vitest.config.ts's server.fs.allow),
-// exactly as sse-tag.test.ts reads a Go testdata golden.
-//
-// ONE DECLARED EDGE, in the fixture's own `_comment` and carried here as `compared: false`:
-// the replay projection leaves State unset and the merge stamps dropped/restart before any
-// reader is served, so that row names no render to pin.
+// The client half of the shared steer LABEL oracle: testdata/steer_label.json is the contract and
+// TestSteerLabelContract is the other reader.
 
 import { describe, it, expect } from "vitest";
 import goldenRaw from "../internal/chat/testdata/steer_label.json?raw";
@@ -41,14 +27,11 @@ interface LabelFixture {
 const fixture = JSON.parse(goldenRaw) as LabelFixture;
 
 /** The separator `buildSteerNote` joins a label's clauses with (`parts.join(" · ")` in
- *  fundamentals/steer-note.ts, and `steerLabelFor`'s own join on the Go side). It is
- *  spelled here rather than imported because the label under test is the FIXTURE's — the
- *  server's statement of what this side renders — so reading the client's own constant
- *  would make the assertion agree with itself. */
+ *  fundamentals/steer-note.ts, and `steerLabelFor`'s own join on the Go side). */
 const SEPARATOR = " \u00b7 ";
 
-/** The note the server's triple describes, built the way mountSteerNote builds one:
- *  `dropped` is `state === "dropped"` and `reason` is present only when the entry has one. */
+/** The note the server's triple describes, built the way mountSteerNote builds one: `dropped` is
+ *  `state === "dropped"` and `reason` is present only when the entry has one. */
 function noteFor(row: LabelRow): HTMLElement {
   const data: SteerNoteData = {
     text: "the words of the steer",
@@ -56,9 +39,9 @@ function noteFor(row: LabelRow): HTMLElement {
     dropped: row.state === "dropped",
   };
   if (row.reason !== "") {
-    // The fixture's row is a wire STRING (the JSON carries no enum), and the note's
-    // field is the enum, so this is the one cast the shared reader owes — the same
-    // one `origin` already takes two lines up.
+    // The fixture's row is a wire STRING (the JSON carries no enum), and the note's field is the
+    // enum, so this is the one cast the shared reader owes — the same one `origin` already takes
+    // two lines up.
     data.reason = row.reason as SteerReason;
   }
   return buildSteerNote(data);
@@ -91,11 +74,8 @@ describe("the steer label contract shared with the Go implementation", () => {
     }
   });
 
-  // EVERY dropped row carries a reason now, so there is no bare dropped row left to
-  // diff a clause against. What the wording table has to be is READ — a clause is
-  // appended after the label's own separator — and PER-REASON DISTINCT: two reasons on
-  // one (origin, state) collapsing onto one wording is the table not being total in
-  // the way it claims, which is the whole point of `SteerReason` being an enum.
+  // EVERY dropped row carries a reason now, so there is no bare dropped row left to diff a clause
+  // against.
   it("exercises the drop-reason clause, so the wording table is pinned rather than unread", () => {
     const reasoned = compared.filter((r) => r.reason !== "");
     expect(reasoned.length).toBeGreaterThan(0);

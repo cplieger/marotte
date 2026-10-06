@@ -1,11 +1,4 @@
-// Tests for linkify.ts — drives the REAL linkifyPaths() against a live DOM.
-//
-// Earlier revisions of this file re-declared a private copy of FILE_EXTS and
-// the PATH_RX regex and asserted the copy against itself, which exercised zero
-// production code (and had already drifted from the real extension list). These
-// tests instead build DOM subtrees, run linkifyPaths(), and assert on the
-// emitted <button class="inline-file-link"> elements — so any change to the
-// real pattern, extension list, or DOM walk is caught.
+// Drives the real linkifyPaths() against a live DOM, so a change to the pattern, extension list or walk is caught.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import fc from "fast-check";
@@ -13,15 +6,8 @@ import fc from "fast-check";
 import { linkifyPaths, initLinkifyCallbacks } from "./linkify.js";
 import { FILE_EXTS } from "./file-extensions.js";
 
-// The opener is INJECTED, so the click wiring is asserted against the handler the
-// app supplies rather than through the editor subsystem behind it. That also keeps
-// this graph light: linkify no longer imports `navigate.js`, which is what closed
-// the editor↔markdown ring, so the `editor-openers.js` mock this file used to carry
-// named a module it can no longer reach.
-//
-// Re-injected per test rather than once, and a plain closure rather than `vi.fn()`,
-// because `mockReset: true` resets implementations between tests — the same shape
-// `attachment-pill.test.ts` uses for this exact callback.
+// The opener is injected, so the wiring is asserted against the app's handler. A plain closure re-injected per test:
+// `mockReset: true` resets implementations between tests.
 const opened: [string, number | undefined][] = [];
 
 beforeEach(() => {
@@ -33,7 +19,6 @@ beforeEach(() => {
   });
 });
 
-/** Render text into a fresh detached <div> and linkify it. */
 function linkify(text: string): HTMLDivElement {
   const root = document.createElement("div");
   root.textContent = text;
@@ -41,7 +26,6 @@ function linkify(text: string): HTMLDivElement {
   return root;
 }
 
-/** Collect the generated file-link buttons. */
 function links(root: HTMLElement): HTMLButtonElement[] {
   return [...root.querySelectorAll<HTMLButtonElement>("button.inline-file-link")];
 }
@@ -90,8 +74,7 @@ describe("linkifyPaths: explicit cases (table-driven)", () => {
   });
 
   it("does not match a partial extension glued to trailing word chars", () => {
-    // 'ts' is valid but 'tsdoc' is not; the negative lookahead must reject the
-    // partial match rather than linkifying 'src/foo.ts' inside 'src/foo.tsdoc'.
+    // 'tsdoc' is not an extension: the lookahead rejects a partial 'src/foo.ts' match.
     expect(links(linkify("src/foo.tsdoc text"))).toHaveLength(0);
   });
 
@@ -178,8 +161,7 @@ describe("linkifyPaths: skip zones", () => {
     expect(links(root)).toHaveLength(0);
   });
 
-  // A streamed link wraps its label in a per-chunk span, so the text's parent is
-  // that span and the anchor sits one level above it.
+  // A streamed link wraps its label in a per-chunk span, so the anchor sits one level above the text's parent.
   it("leaves a path wrapped in a span inside an <a> untouched", () => {
     const root = document.createElement("div");
     root.innerHTML = `<a href="#"><span data-vk-chunk-enter="">src/foo.ts</span></a>`;
@@ -194,11 +176,7 @@ describe("linkifyPaths: skip zones", () => {
     expect(links(root)).toHaveLength(0);
   });
 
-  // The two ROOT cases have a killing mutation the descendant cases above do
-  // not: a rewrite that walks the ancestors STRICTLY ABOVE the root — the
-  // obvious shape of a "the root itself is not tested" change — turns both red,
-  // because the filter tests the text node's immediate parent and for a direct
-  // child of the root that parent IS the root.
+  // The root cases kill a mutation that walks only strictly above the root: for a direct child, the parent is the root.
   it("skips a <pre> ROOT, not only a <pre> descendant", () => {
     const pre = document.createElement("pre");
     pre.textContent = "src/foo.ts";
@@ -230,11 +208,7 @@ describe("linkifyPaths: click wiring", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Property-based: any path built from real extensions, embedded with safe
-// boundary characters, is captured exactly once with the right title. This
-// drives the real regex + the real FILE_EXTS list (imported, not copied).
-// ---------------------------------------------------------------------------
+// Any path built from real extensions, safely bounded, is captured once with the right title (real regex and FILE_EXTS).
 
 describe("linkifyPaths property-based", () => {
   const segment = fc
@@ -259,7 +233,7 @@ describe("linkifyPaths property-based", () => {
       .map(([l, c]) => ({ suffix: `:${String(l)}:${String(c)}`, line: l })),
   );
 
-  // Boundary chars that are NOT in [\w/.-], so the lookbehind/lookahead pass.
+  // Boundary chars outside [\w/.-], so the lookbehind and lookahead pass.
   const before = fc.constantFrom(" ", "\n", "\t", "(", '"', "'", ",", ";", "[", "{");
   const after = fc.constantFrom(" ", "\n", "\t", ")", '"', "'", ",", ";", "]", "}");
 
@@ -279,7 +253,7 @@ describe("linkifyPaths property-based", () => {
   it("never throws and never linkifies an extension-less segment", () => {
     fc.assert(
       fc.property(fc.array(segment, { minLength: 1, maxLength: 4 }), (segs) => {
-        // A slash-joined path with no '.ext' must never produce a link.
+        // A slash-joined path with no '.ext' never links.
         const root = linkify(` ${segs.join("/")} `);
         expect(links(root)).toHaveLength(0);
       }),

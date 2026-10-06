@@ -1,30 +1,9 @@
-// ---------------------------------------------------------------------------
-// The tab projection END TO END: a gesture, the mutation it dispatches, the frame
-// the server answers with, and the row that appears.
-//
-// `tabs-sync.test.ts` pins the version rules against a Set and
-// `actions/tabs-actions.test.ts` pins the four mutations against a transport spy.
-// Neither can see what this file is for: the JOIN. The rules are only correct if
-// the thing they drive is a real projection holding real rows, and the mutations
-// are only correct if the caller that awaits them gets a row it can activate.
-//
-// THE INTERLEAVING IS THE SUBJECT of the first block, and it is the one property
-// no unit test reaches. An open has two answers on two channels — the command's
-// response carries the COMMITTED SUBJECT, the `tabs_changed` frame carries the
-// same mutation for every other device — and they race. Both orders are real
-// traffic:
-//
-//   - RESPONSE-FIRST is the common case, and the response is now what PAINTS:
-//     the row is adopted from the reply and the caller's continuation runs
-//     against a row that exists, with no frame in the gesture's path at all.
-//   - EVENT-FIRST happens whenever the frame beats the POST's own round trip.
-//     The adoption then finds the row already there and upserts idempotently —
-//     one code path with the frame apply, which is what makes the echo harmless.
-//
-// Both are driven for every subject kind a door opens: a chat, an editor, a
-// singleton, and both run forms — an owned run and a review, which share one
-// `(kind, ref)` and differ only in `owns`.
-// ---------------------------------------------------------------------------
+// The projection END TO END: gesture, mutation, server frame, row (`tabs-sync.test.ts` and
+// `actions/tabs-actions.test.ts` cover the halves). First subject: the INTERLEAVING of the
+// response (the committed subject) and the `tabs_changed` frame.
+//   - RESPONSE-FIRST (common): the reply's adoption paints the row; no frame in the gesture's path.
+//   - EVENT-FIRST: the adoption finds the row and upserts idempotently.
+// Driven for each kind a door opens, including an owned run and a review (same `(kind, ref)`).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -87,13 +66,8 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
-  // `byId` is reached through this graph by page-title.ts. ESM links for real, so
-  // a name any module in the graph imports must exist on the mock or the whole
-  // FILE fails at link time, naming the export rather than the test. Inlined
-  // rather than shared because a `vi.mock` factory is hoisted above every
-  // top-level import, so it cannot reach a helper module. Resolve-or-create,
-  // because the real `byId` throws and a suite mocking `dom.js` stages only what
-  // its own subject needs.
+  // `byId` (via page-title.ts) must exist for real ESM linking. Inlined: a hoisted `vi.mock` factory
+  // cannot reach a helper. Resolve-or-create, since the real one throws.
   byId: (id: string): HTMLElement => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -250,15 +224,8 @@ function registerOpeners(): void {
   });
 }
 
-/** Assert the tab's activation hook ran, AND that it ran against a row the
- *  projection already holds — which is the property the open's continuation buys
- *  and the one a response-continuation could not give.
- *
- *  Two channels because the factory has two: three kinds take an injected opener,
- *  and the five singletons reach their loader through a lazy import. For the
- *  settings kind that loader is its REFRESH — the tab carries no `onShow` at all,
- *  its whole activation having been the data half — so the dispatcher's gate is
- *  what runs it. */
+/** Assert the activation hook ran against a row the projection already holds. Two channels:
+ *  injected openers, or the singletons' lazy loaders (for settings, its REFRESH via the gate). */
 async function expectActivated(kind: TabKind, ref: string): Promise<void> {
   if (kind === "chat" || kind === "editor" || kind === "run") {
     expect(shown.at(-1)).toEqual({ kind, ref, rowPresent: true });
@@ -411,10 +378,8 @@ describe("response-first: the response beats the frame (response-adopted opens)"
     tabServer.setMode("manual");
     await openTab({ kind: "chat", ref: "c-1" });
 
-    // The GET was already in the air when the open committed: it answers the
-    // EMPTY collection at the pre-commit version. Adopting it verbatim would
-    // unpaint the row this device just committed; the pending adopt merges it
-    // back until the watermark catches up.
+    // The GET left before the open committed and answers the pre-commit empty set; the pending adopt
+    // merges the row back until the watermark catches up.
     tabServer.queueList({ tabs: [], version: 0 });
     await listTabs();
     expect(hasTab("chat", "c-1")).toBe(true);
@@ -453,10 +418,8 @@ describe("an idempotent open", () => {
     expect(getActiveTabId()).toBe(tabIdFor("chat", "c-1"));
   });
 
-  // The one case where `created: false` arrives for a row that is NOT here yet: a
-  // tab another mutation opened whose frame is still in flight (a `create_chat`
-  // that opened its own chat tab server-side). The response carries the committed
-  // subject, so the adoption paints it on the spot — no wait, no frame needed.
+  // `created: false` for a row not here yet (another mutation opened it, frame in flight): the
+  // response's subject paints it at once.
   it("paints the row from a created:false response when its frame is still in flight", async () => {
     expect.assertions(4);
     tabServer.setMode("manual");
@@ -487,11 +450,8 @@ describe("an idempotent open", () => {
 // 3. A snapshot that is behind us.
 // ---------------------------------------------------------------------------
 
-// A re-list can lose a race with a local open: the GET goes out, an open commits
-// v+1, and the answer describes v. Adopting it would close a tab this device just
-// opened — which is the 2026-08-25 defect (a tab closing because its id was absent
-// from an incoming list) in new clothes. The guard is a comparison, and this is the
-// case that shows what it protects: a ROW, not a Set entry.
+// A re-list answer older than a local open would close the tab just opened; the version guard
+// protects the ROW.
 describe("a stale GET /api/tabs", () => {
   it("does not take away a tab a committed open already gave us", async () => {
     expect.assertions(4);
@@ -512,10 +472,8 @@ describe("a stale GET /api/tabs", () => {
     expect(tabServer.listCalls()).toBe(1);
   });
 
-  // The other side of the same comparison: a snapshot AT or ABOVE the local
-  // version is authoritative, and a tab absent from it really is closed. That is a
-  // different statement from a delta's `order`, which describes one mutation
-  // rather than the whole set.
+  // A snapshot AT or ABOVE the local version is authoritative: a tab it omits is closed (unlike a
+  // delta's `order`).
   it("adopts a snapshot at or above the local version, closing what it omits", async () => {
     expect.assertions(2);
     tabServer.setMode("event-first");
@@ -568,11 +526,8 @@ describe("a skipped version", () => {
 // 5. `order` is a permutation, never a membership statement.
 // ---------------------------------------------------------------------------
 
-// THE DEFECT THIS WHOLE REFACTOR EXISTS TO FIX. Membership used to arrive as a
-// whole-list document, so the client read "absent from the incoming list" as
-// "closed elsewhere" — and closed tabs nobody closed, on the live instance, on
-// 2026-08-25. Removal is now STATED per id in `removed_ids`, and an id an `order`
-// does not name keeps its relative position and sorts LAST.
+// Removal is STATED per id in `removed_ids`; an id an `order` omits keeps its relative position and
+// sorts LAST, never read as closed.
 describe("a tabs_changed whose order omits a tab we hold", () => {
   it("keeps that tab, at the END of the strip, and never closes it", async () => {
     expect.assertions(4);
@@ -626,10 +581,7 @@ describe("a tabs_changed whose order omits a tab we hold", () => {
 // 6. Coalescing pulls two ways at once.
 // ---------------------------------------------------------------------------
 
-// A DOUBLE GESTURE IS ONE MUTATION: two taps on one door open one tab. A REPEATED
-// GESTURE IS SEVERAL: pin -> unpin -> pin has to end pinned. An argument-composite
-// idempotency key breaks the second (it replays a cached success); a `dedupe` key
-// holding a unique id breaks the first (it collapses nothing).
+// A double gesture is ONE mutation; a repeated one (pin → unpin → pin) is several and must end pinned.
 describe("a double gesture on one door", () => {
   it("collapses two opens 0ms apart into ONE round trip", async () => {
     expect.assertions(3);
@@ -742,11 +694,8 @@ describe("a repeated gesture that must NOT collapse", () => {
     await openTab({ kind: "chat", ref: "b" });
     const listsBefore = tabServer.listCalls();
 
-    // ANOTHER DEVICE opened a tab and its frame has not reached us, so the
-    // collection holds three tabs while the strip holds two. Every order this
-    // device can compose is therefore a two-element set against a three-element
-    // collection: the exact-set check refuses it, which is what "the set moved
-    // under the drag" IS.
+    // Another device's tab has not reached us, so every order composed here fails the exact-set check:
+    // "the set moved under the drag".
     tabServer.openElsewhere({ kind: "chat", ref: "c" });
     commitDrop?.([tabIdFor("chat", "b"), tabIdFor("chat", "a")]);
     await settleTabs();
@@ -765,10 +714,7 @@ describe("a repeated gesture that must NOT collapse", () => {
 // 7. A refused mutation.
 // ---------------------------------------------------------------------------
 
-// NOTHING RENDERS OPTIMISTICALLY, which is what makes a refusal cheap: the strip
-// is exactly as it was, rather than half-drawn. The action framework has already
-// raised its toast, and there is no local state to roll back because none was
-// written.
+// NOTHING RENDERS OPTIMISTICALLY, so a refusal leaves the strip as it was; the framework toasts.
 describe("a failed mutation leaves the strip unchanged", () => {
   beforeEach(async () => {
     tabServer.setMode("event-first");

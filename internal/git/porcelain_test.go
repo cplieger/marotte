@@ -59,13 +59,9 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 		{"untracked", nul("? newfile.go"), []gitFile{
 			{Path: "newfile.go", Status: "?", Display: "Untracked"},
 		}},
-		// A rename's origin arrives as a second NUL record. Path is the CURRENT path,
-		// which is what stage, discard and diff need.
 		{"rename keeps new path, carries origin", nul(renamed("R.", "R100", "new.go", "old.go")), []gitFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old.go"},
 		}},
-		// The worktree half of a staged rename carries no origin: the move is the
-		// staged entry's fact, not this one's.
 		{"rename plus worktree modify emits two entries", nul(renamed("RM", "R096", "renamed.go", "orig.go")), []gitFile{
 			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "orig.go"},
 			{Path: "renamed.go", Status: "M", Display: "Modified", Staged: false},
@@ -76,34 +72,27 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 		{"unstaged rename carries origin", nul(renamed(".R", "R100", "new.go", "old.go")), []gitFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", OrigPath: "old.go"},
 		}},
-		// A truncated tail must not read past the record slice: the origin is
-		// simply unknown, and the entry still renders.
 		{"rename with a missing origin record", []byte(renamed("R.", "R100", "new.go", "")[:len(renamed("R.", "R100", "new.go", ""))-1]), []gitFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
 		}},
-		// 'T' (typechange), which git reports for `rm f && ln -s /tmp f`.
 		{"unstaged typechange", nul(changed(".T", "link.txt")), []gitFile{
 			{Path: "link.txt", Status: "T", Display: "Typechange"},
 		}},
 		{"staged typechange", nul(changed("T.", "link.txt")), []gitFile{
 			{Path: "link.txt", Status: "T", Display: "Typechange", Staged: true},
 		}},
-		// -z never quotes: non-ASCII bytes arrive verbatim as UTF-8.
 		{"non-ascii filename unquoted", nul(changed(".M", "café.txt")), []gitFile{
 			{Path: "café.txt", Status: "M", Display: "Modified"},
 		}},
 		{"staged non-ascii rename", nul(renamed("R.", "R100", "café-new.txt", "café-old.txt")), []gitFile{
 			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "café-old.txt"},
 		}},
-		// A path is the record's LAST field, so spaces survive and a literal " -> " is
-		// not a rename separator in this format.
 		{"spaced filename with arrow-like substring", nul(changed(".M", "foo -> bar.txt")), []gitFile{
 			{Path: "foo -> bar.txt", Status: "M", Display: "Modified"},
 		}},
 		{"rename of spaced paths", nul(renamed("R.", "R100", "new name.txt", "old name.txt")), []gitFile{
 			{Path: "new name.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old name.txt"},
 		}},
-		// An unmerged path is its own record type, and it still renders as a row.
 		{"unmerged both modified", nul(unmerged("UU", "shared.txt")), []gitFile{
 			{Path: "shared.txt", Status: "U", Display: "Unmerged", Staged: true},
 			{Path: "shared.txt", Status: "U", Display: "Unmerged", Staged: false},
@@ -111,8 +100,6 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 		{"directory entry skipped", nul("? somedir/", "? real.txt"), []gitFile{
 			{Path: "real.txt", Status: "?", Display: "Untracked"},
 		}},
-		// Skipped rather than failing the parse, which is also what makes git's own
-		// stderr harmless: CombinedOutput folds it into the same bytes.
 		{"malformed records skipped", nul("1 .M", "x", changed(".M", "file.go"), "warning: something"), []gitFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
@@ -156,14 +143,10 @@ func TestParsePorcelainV2_Headers(t *testing.T) {
 				"# branch.upstream origin/main", "# branch.ab +2 -3", "# stash 4"),
 			wantBranch: "main", wantAhead: 2, wantBehind: 3, wantStashes: 4,
 		},
-		// No upstream: git omits branch.upstream and branch.ab, so the counts stay 0 —
-		// the same answer being in sync gives, a distinction this shape does not make.
 		"no upstream leaves the counts at zero": {
 			in:         nul("# branch.head feature/x"),
 			wantBranch: "feature/x",
 		},
-		// A detached HEAD has no branch name to show, and git spells that
-		// "(detached)" rather than omitting the header.
 		"detached HEAD reports no branch": {
 			in: nul("# branch.oid "+oid, "# branch.head (detached)"),
 		},
@@ -171,8 +154,6 @@ func TestParsePorcelainV2_Headers(t *testing.T) {
 			in:         nul("# branch.head main", "# branch.ab +0 -0"),
 			wantBranch: "main",
 		},
-		// A branch name with a slash still parses: the header value is everything
-		// after the first space, and only the KEY is cut on it.
 		"malformed header values are ignored": {
 			in:         nul("# branch.head main", "# branch.ab garbage", "# stash notanumber"),
 			wantBranch: "main",
@@ -210,18 +191,15 @@ func TestParsePorcelainV2_ConflictedIsTheRecordType(t *testing.T) {
 	}
 }
 
-// The end-to-end proof, against real git output rather than a builder: everything
-// four separate subprocesses used to report has to come out of the one call.
+// Against real git output rather than a builder: branch, upstream, stash and file
+// state all come out of the one call.
 func TestReadStatus_ReadsTheWholeStatusFromOneInvocation(t *testing.T) {
 	skipNoGit(t)
-	work := behindRepo(t) // HEAD at C1, origin/main at C2 -> behind 1, ahead 0
-	// A stash, so the count comes from --show-stash rather than `stash list`.
+	work := behindRepo(t)
 	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("stash me\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, work, "stash")
-	// A staged add and an untracked file inside a NEW directory: the latter is
-	// what -uall is for, and it is invisible without it.
 	if err := os.WriteFile(filepath.Join(work, "staged.txt"), []byte("s\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +239,6 @@ func TestReadStatus_ReadsTheWholeStatusFromOneInvocation(t *testing.T) {
 			"without -uall git collapses it to the directory and the panel loses it", f, ok)
 	}
 
-	// A local commit on top leaves the tree both ahead and behind.
 	writeCommit(t, work, "local.txt", "local\n", "local commit")
 	after, err := readStatus(t.Context(), work)
 	if err != nil {
@@ -278,7 +255,7 @@ func TestReadStatus_ReadsTheWholeStatusFromOneInvocation(t *testing.T) {
 func TestReadStatus_UnquotesSpecialFilenames(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
-	initFixtureRepo(t, dir) // commits README.md on main
+	initFixtureRepo(t, dir)
 
 	const nonASCII = "café.txt"
 	const spaced = "with space.txt"
@@ -287,7 +264,6 @@ func TestReadStatus_UnquotesSpecialFilenames(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A staged rename to a non-ASCII + spaced name (git mv stages it).
 	const renamedTo = "rénamed doc.md"
 	runGit(t, dir, "mv", "README.md", renamedTo)
 
@@ -310,8 +286,6 @@ func TestReadStatus_UnquotesSpecialFilenames(t *testing.T) {
 	if _, ok := byPath[spaced]; !ok {
 		t.Errorf("spaced untracked file %q missing from %+v", spaced, st.Files)
 	}
-	// The rename's current path must be present, staged and unquoted whether git
-	// reports it as R (rename detected, origin record consumed) or A (add).
 	if f, ok := byPath[renamedTo]; !ok {
 		t.Errorf("renamed path %q missing from %+v", renamedTo, st.Files)
 	} else if !f.Staged {
@@ -339,7 +313,7 @@ func TestReadStatus_ReportsAFailureOnANonRepo(t *testing.T) {
 func TestReadStatus_AFailedReadStillAnswersTheBranch(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
-	initFixtureRepo(t, dir) // commits README.md on main
+	initFixtureRepo(t, dir)
 	index := filepath.Join(dir, gitDirName, "index")
 	if err := os.WriteFile(index, []byte("not an index"), 0o600); err != nil {
 		t.Fatalf("Setup: corrupt the index: %v", err)
@@ -431,8 +405,6 @@ func TestParseHeadRef(t *testing.T) {
 }
 
 func FuzzParsePorcelainV2(f *testing.F) {
-	// Seeds are the table's own records plus the degenerate shapes: a rename whose
-	// origin record is missing, a header with no value, and NUL-only input.
 	seeds := [][]byte{
 		nil,
 		[]byte(""),
@@ -456,8 +428,6 @@ func FuzzParsePorcelainV2(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		st := parsePorcelainV2(data)
-		// Beyond not panicking: every row carries a path and a label, and no row's path
-		// is a directory, which the panel would stage wholesale.
 		for _, file := range st.Files {
 			if file.Path == "" {
 				t.Fatalf("row with an empty path from %q: %+v", data, file)

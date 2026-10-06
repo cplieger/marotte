@@ -1,10 +1,7 @@
 package agent
 
-// The cancel's CARRIER, and the deadline's fate when that cancel is refused.
-//
-// One file rather than a share of run_bounds_test.go and run_control_test.go,
-// because the two halves are one defect: a cancel sent on the wrong session is
-// refused by KAS, and a refused cancel used to unbound its run permanently.
+// The cancel's carrier, and the deadline's fate when that cancel is refused: one defect, since KAS
+// refuses a cancel on the wrong session.
 
 import (
 	"encoding/json"
@@ -18,11 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// spawnRecorder hands out a DISTINCT fake per spawn and remembers them, which the
-// shared newTestHub cannot do: one instance serves the utility session and every
-// chat bridge there, so its call log answers "did the RPC go out" and never "on
-// which session". Routing is the whole subject here, so the fixture has to tell
-// two carriers apart.
+// spawnRecorder hands out a distinct fake per spawn, so a test can tell which session a call took.
 type spawnRecorder struct {
 	results map[string]json.RawMessage
 	errs    map[string]error
@@ -40,9 +33,7 @@ func (s *spawnRecorder) factory() ACPBridge {
 	return br
 }
 
-// sawCall reports how many of the spawned bridges took the method, and how many
-// times in total. Both numbers, because "the utility session was spared" and "the
-// cancel was not sent twice" are different claims.
+// sawCall reports how many bridges took the method and how many times in total.
 func (s *spawnRecorder) sawCall(method string) (bridges, calls int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -61,9 +52,7 @@ func (s *spawnRecorder) sawCall(method string) (bridges, calls int) {
 	return bridges, calls
 }
 
-// chatBridge is the fake the coordinator actually handed this chat, resolved
-// through the bridge map rather than by spawn order — the utility session starts
-// lazily on its first RPC, so which index it takes depends on the call sequence.
+// chatBridge is the fake the coordinator handed this chat, resolved through the map: the utility session starts lazily.
 func chatBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
 	t.Helper()
 	sb := h.runs.bridges.get(chatID)
@@ -77,16 +66,13 @@ func chatBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
 	return br
 }
 
-// agentLaunchedRun stages the population the defect lives in: a chat with a live
-// bridge, and one run KAS reports as parented on that chat's session. Returns the
-// recorder so a test can ask which carriers saw what.
+// agentLaunchedRun stages a chat with a live bridge and one run KAS parents on its session.
 func agentLaunchedRun(t *testing.T, results map[string]json.RawMessage, errs map[string]error) (*Runtime, *spawnRecorder) {
 	t.Helper()
 	rec := &spawnRecorder{results: results, errs: errs}
 	cs := newTestChatStore()
 	h := New(t.Context(), "/tmp/work", rec.factory, cs)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
@@ -109,12 +95,8 @@ func agentRunList(t *testing.T, status string) json.RawMessage {
 	})
 }
 
-// TestCancel_IsCarriedOnTheOWNINGChatsBridge asserts the CARRIER rather than the outcome. An
-// agent-launched run has no `run:<id>` bridge and never will — KAS parents it on the calling
-// chat's session — so a fall-through to the UTILITY session covers nearly the whole
-// population, and KAS refuses a cancel there while the owner lives (measured: 35 of 36
-// bound-driven cancels refused over 2026-08-20 → 09-05). Asserting only that the run stopped
-// would pass on the utility session too, because the fake answers every carrier identically.
+// TestCancel_IsCarriedOnTheOWNINGChatsBridge asserts the carrier: KAS refuses a cancel on the utility
+// session while the owner lives (35 of 36 bound-driven cancels, measured).
 func TestCancel_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
 		methodKiroWorkflowList:    agentRunList(t, "running"),
@@ -138,9 +120,7 @@ func TestCancel_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	}
 }
 
-// TestDelete_IsCarriedOnTheOWNINGChatsBridge: delete takes the same carrier for the
-// same reason. KAS's delete cancels a non-terminal run itself, so it meets the same
-// ownership check the cancel does.
+// TestDelete_IsCarriedOnTheOWNINGChatsBridge pins that KAS's delete cancels a live run and meets the same check.
 func TestDelete_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
 		methodKiroWorkflowList:   agentRunList(t, "paused"),
@@ -161,12 +141,8 @@ func TestDelete_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_ReadsTheRunInventoryOnce: the tab-close route enumerates the
-// inventory and then cancels per run, and through the plain Cancel each of those re-enters
-// `workflow/list` to recover the parent session the loop already holds — N+1 sequential trips
-// against the utility session during a teardown the user is watching. The TRIP COUNT is the
-// subject here. The chat's bridge is INSERTED rather than opened, because OpenBridge fires the
-// rehydrate hook, whose resumeInterruptedRuns reads the inventory on another goroutine.
+// TestCancelForSessions_ReadsTheRunInventoryOnce pins one `workflow/list` for a tab close, not N+1. The
+// bridge is inserted so OpenBridge's rehydrate hook does not read the inventory.
 func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -181,8 +157,7 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 			},
 		),
 		methodKiroWorkflowCancel: json.RawMessage(`{}`),
-		// Named for neither run, so releaseIfOver's identity check declines both and
-		// the leases stay put — nothing here turns on them.
+		// Named for neither run, so the leases stay put.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -196,7 +171,7 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	leased(t, h.runs, "wf_2")
 
-	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"})
+	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
 
 	if got := callsOf(br, methodKiroWorkflowCancel); got != 2 {
 		t.Errorf("the cancel went out %d times for 2 live runs, want 2", got)
@@ -207,18 +182,13 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED is the one door the routing did
-// not reach, asserted on the CARRIER for its sibling's reason. With retention off,
-// Membership.CloseTab deletes the doomed chat's record at its commit point and only then
-// dispatches the teardown that reaches here, so a record-matching resolver (a disk read with
-// no cache) resolves a NIL carrier for every row while the bridge sits in the map. The fixture
-// is that state exactly: a live bridge under "c1" and NO chat record.
+// TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED pins that with retention off the record is gone
+// before the teardown, so routing must come from the bridge map.
 func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
 	rec := &spawnRecorder{results: map[string]json.RawMessage{
 		methodKiroWorkflowList:   agentRunList(t, "running"),
 		methodKiroWorkflowCancel: json.RawMessage(`{}`),
-		// Named for no run here, so releaseIfOver's identity check declines and the
-		// lease stays put — nothing in this test turns on it.
+		// Named for no run here, so the lease stays put.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}}
 	cs := newTestChatStore()
@@ -234,7 +204,7 @@ func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
 	}
 	leased(t, h.runs, "wf_1")
 
-	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"})
+	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
 
 	if !slices.Contains(owner.callLog(), methodKiroWorkflowCancel) {
 		t.Error("the cancel did not reach the launching chat's bridge for a chat whose " +
@@ -247,14 +217,8 @@ func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_PrefersTheRunsOWNProcess pins the `run:<id>`-first half of the
-// preference at its SECOND composition site.
-//
-// The preference has one owner (runOwnBridge) because it is load-bearing rather than
-// tidy: a re-hosted run's registry entry lives in the process that re-hosted it, so
-// consulting the chat's bridge first sends the verb to a process that has forgotten
-// the run and KAS refuses it from the write helper. Reachable exactly here — a run
-// re-hosted while its chat's bridge was down, whose chat was then reopened.
+// TestCancelForSessions_PrefersTheRunsOWNProcess pins runOwnBridge's `run:<id>`-first preference: a
+// re-hosted run is registered only in the process that re-hosted it.
 func TestCancelForSessions_PrefersTheRunsOWNProcess(t *testing.T) {
 	rec := &spawnRecorder{results: map[string]json.RawMessage{
 		methodKiroWorkflowList:    agentRunList(t, "paused"),
@@ -272,12 +236,12 @@ func TestCancelForSessions_PrefersTheRunsOWNProcess(t *testing.T) {
 	if !ok {
 		t.Fatal("Setup: the recorder handed back something other than a fake")
 	}
-	// Both carriers live at once, which is what makes the ORDER observable.
+	// Both carriers live, so the order is observable.
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: chatBr, state: bridgeIdle})
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: runBr, state: bridgeIdle})
 	leased(t, h.runs, "wf_1")
 
-	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"})
+	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
 
 	if !slices.Contains(runBr.callLog(), methodKiroWorkflowCancel) {
 		t.Error("the cancel did not reach the run's own re-hosted process, which is the " +
@@ -289,13 +253,10 @@ func TestCancelForSessions_PrefersTheRunsOWNProcess(t *testing.T) {
 	}
 }
 
-// TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun keeps the fallback
-// honest, which is what makes the routing a preference rather than a requirement: a
-// run whose owner is gone has no carrier to prefer, and KAS's ownership check passes
-// on a stale stamp, so a tab-close cancel of such a run lands on the utility session.
+// TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun pins that with the owner gone, KAS's check passes on a stale stamp.
 func TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun(t *testing.T) {
 	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
-		// Parented on a session no open chat owns, so nothing here hosts it.
+		// Parented on a session no open chat owns.
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_stranger",
 		}),
@@ -317,11 +278,7 @@ func TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun(t *testing.T)
 	}
 }
 
-// TestFinishTermination_ARefusedCancelKEEPSTheDeadline: a disarm running BEFORE the cancel
-// leaves a refusal's run executing with `Bounded() == false`, and armDeadline's idempotence
-// check then has nothing to protect, so nothing ever re-arms it — each of the 35 measured
-// refusals unbounded its run for the rest of its life. The deadline is the record that marotte
-// is bounding a run, and a run whose cancel was refused is still one marotte is bounding.
+// TestFinishTermination_ARefusedCancelKEEPSTheDeadline pins that a refused cancel's run is still bounded.
 func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
@@ -341,16 +298,12 @@ func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
 	}
 }
 
-// TestFinishTermination_ALandedCancelRELEASESTheDeadline is the other half, and it
-// is what stops the fix above from simply never disarming: the deadline is a
-// statement about a run this process is bounding, so a run that has stopped must not
-// keep one.
+// TestFinishTermination_ALandedCancelRELEASESTheDeadline pins that a stopped run must not keep a deadline.
 func TestFinishTermination_ALandedCancelRELEASESTheDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel: json.RawMessage(`{}`),
-		// Still running, so releaseIfOver leaves the lease and `bounded` stays
-		// readable — the deadline's own fate is what this pins.
+		// Still running, so the lease stays and `bounded` is readable.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
 	leased(t, h.runs, "wf_1")
@@ -366,12 +319,7 @@ func TestFinishTermination_ALandedCancelRELEASESTheDeadline(t *testing.T) {
 	}
 }
 
-// TestRecordEnd_IsNotStampedOnARunThatDidNotStop.
-//
-// `endReason`'s one consumer is toWire, so a reason recorded before the cancel made a
-// parentless run's History row read `overran` while KAS reported it `running` — the
-// row claimed an outcome the run had not reached. The reason is what marotte DID, so
-// it is recorded when the stop lands and not when it is attempted.
+// TestRecordEnd_IsNotStampedOnARunThatDidNotStop pins that the reason is recorded when the stop lands, not when attempted.
 func TestRecordEnd_IsNotStampedOnARunThatDidNotStop(t *testing.T) {
 	t.Run("a refused ceiling cancel records nothing", func(t *testing.T) {
 		h, _, br := newTestHub()
@@ -403,22 +351,13 @@ func TestRecordEnd_IsNotStampedOnARunThatDidNotStop(t *testing.T) {
 	})
 }
 
-// setCancelRetryDelay points rs's re-attempt backoff at d, over the hour buildTestHub
-// parks it at: the production ladder is 5s, 10s, 20s, and a test that waited it out
-// would take 35 seconds.
-//
-// Set on the instance and never restored: the ladder's timers are untracked and can
-// outlive the test, so a restore in t.Cleanup would be a write racing their reads.
-// The value dies with the runtime. Call it before anything can start a ladder.
+// setCancelRetryDelay points the retry backoff at d (production: 5s, 10s, 20s). Never restored: the
+// ladder's untracked timers can outlive the test. Call before anything starts a ladder.
 func setCancelRetryDelay(rs *Runs, d time.Duration) {
 	rs.cancelRetryBase = d
 }
 
-// TestRetryTermination_IsBoundedAndDoesNotReFireForever. Keeping the deadline is what makes
-// this necessary: the timer that fired is spent and claimExpiredDeadline would pass again
-// against a lease this path did not change, so the next attempt is installed deliberately and
-// therefore bounded. The bound is on the RETRY and not on the deadline, which is what the
-// second assertion pins: the budget runs out and the run is STILL bounded.
+// TestRetryTermination_IsBoundedAndDoesNotReFireForever pins that the retry is bounded, and once spent the run is still bounded.
 func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
@@ -426,15 +365,12 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	// The first attempt is the caller's; every later one is a re-attempt this
-	// schedules for itself.
+	// The first attempt is the caller's.
 	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 
-	// One caller plus maxCancelRetries re-attempts. The ladder is 1ms, 2ms, 4ms, so
-	// it is spent well inside this poll — which fails CLOSED with a diagnostic rather
-	// than sleeping a fixed span and hoping.
+	// One plus maxCancelRetries; the poll fails closed.
 	want := 1 + maxCancelRetries
 	deadline := time.Now().Add(5 * time.Second)
 	for callsOf(br, methodKiroWorkflowCancel) < want {
@@ -446,8 +382,7 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	// And no more, however long the process lives. A settling window rather than an
-	// instant read: the last re-attempt's own timer can still be in flight.
+	// A settling window: the last retry's timer may still be in flight.
 	time.Sleep(100 * time.Millisecond)
 	if got := callsOf(br, methodKiroWorkflowCancel); got != want {
 		t.Errorf("the cancel was attempted %d times, want %d: an unbounded ladder "+
@@ -459,8 +394,7 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	}
 }
 
-// awaitCalls polls until br has taken method at least want times, failing CLOSED
-// with a diagnostic rather than sleeping a fixed span and hoping.
+// awaitCalls polls until br has taken method want times, failing closed.
 func awaitCalls(t *testing.T, br *fakeBridge, method string, want int, why string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -473,12 +407,8 @@ func awaitCalls(t *testing.T, br *fakeBridge, method string, want int, why strin
 	}
 }
 
-// TestHealProgress_RefillsTheCancelRetryBudget: the retry budget has TWO spenders, so a run's
-// own Cancel button can spend the ceiling's re-attempts. finishTermination's error path is
-// reached by cancelOn as well as cancelBounded, and with clearCancelRetries firing only on a
-// landed cancel, three refused presses left the ceiling firing hours later, refused once, and
-// logging logMsgCancelUnretried having never re-attempted. A refusal is evidence about a
-// MOMENT, so a completed node returns the budget, as it returns the heal budget beside it.
+// TestHealProgress_RefillsTheCancelRetryBudget pins that cancelOn and cancelBounded share the retry budget, so
+// refused button presses could starve the ceiling; a completed node refills it.
 func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
@@ -487,8 +417,7 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	// Spend the whole ladder on the USER's button: one press plus the re-attempts it
-	// schedules for itself.
+	// Spend the whole ladder on the user's button.
 	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
@@ -496,10 +425,8 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	awaitCalls(t, br, methodKiroWorkflowCancel, spent,
 		"the ladder is not re-installing itself, so the budget was never spent and "+
 			"this test cannot observe a refill")
-	// The fake logs the last call BEFORE that attempt's goroutine releases the
-	// termination claim and asks the spent budget for another rung. Wait for that ask's
-	// refusal, or the press below finds the claim held and no-ops, and the node below
-	// can refill the budget under the old ladder instead of the new one.
+	// The fake logs the call before the claim is released; wait for the spent budget's refusal, or the
+	// next press no-ops on a held claim.
 	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(logs.String(), logMsgCancelUnretried) {
 		if time.Now().After(deadline) {
@@ -508,13 +435,12 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	// The run completes a node: it has moved on, whatever our refusals said.
+	// The run completes a node.
 	h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
 		"workflowId": "wf_1", "nodeId": "n1", "status": "completed",
 	}))
 
-	// A later refused cancel now gets a FRESH ladder rather than one attempt and
-	// logMsgCancelUnretried.
+	// A later refused cancel gets a fresh ladder.
 	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
@@ -534,17 +460,12 @@ func callsOf(br *fakeBridge, method string) int {
 	return n
 }
 
-// TestRetryTermination_ARunNoLongerBoundedIsLeftAlone: the re-attempt re-reads
-// before it acts, which is what makes an untracked AfterFunc safe here (healPaused's
-// precedent). A pause parks the deadline and a terminal frame releases the lease;
-// in both cases marotte has stopped bounding the run, so it is not one this path may
-// cancel.
+// TestRetryTermination_ARunNoLongerBoundedIsLeftAlone pins that the retry re-reads before acting, so a parked or
+// released run is not cancelled.
 func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
-	// TWO ordering constraints on this base, and the test is vacuous if either breaks:
-	// the park below has to land inside it, and the settle after it has to OUTLAST it
-	// or the timer never fires and the guard is never exercised.
+	// The park must land inside the base and the settle must outlast it, or the guard is never exercised.
 	const base = 200 * time.Millisecond
 	setCancelRetryDelay(h.runs, base)
 	leased(t, h.runs, "wf_1")
@@ -565,18 +486,12 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	}
 }
 
-// TestResumeIfInterrupted_ArmsTheDeadline.
-//
-// This path calls `_kiro/workflow/resume` DIRECTLY on the chat's bridge rather than
-// through Runs.Resume, so it did not arm — it was saved only by the `run_start`
-// frame landing on that same live bridge and reaching observeStart. A frame lost
-// between the resume and the arm left the run executing with no ceiling and nothing
-// able to notice, which is Resume's own reason for arming explicitly.
+// TestResumeIfInterrupted_ArmsTheDeadline pins that this path calls `_kiro/workflow/resume` directly, so it must
+// arm itself rather than rely on the `run_start` frame.
 func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		// stalePauseReason is what a restart-reconciled run carries, and
-		// involuntarilyPaused reads the run's own state rather than the frame.
+		// stalePauseReason is a restart-reconciled run's reason; involuntarilyPaused reads the run's own state.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", stalePauseReason),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
@@ -590,8 +505,7 @@ func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// Leased and PARKED, which is the state a resume finds: the pause zeroed the
-	// deadline, so an arm here is a fresh budget rather than a remainder.
+	// Leased and parked, so the arm is a fresh budget.
 	leased(t, h.runs, "wf_1")
 	if h.runs.bounded("wf_1") {
 		t.Fatal("the fixture is already bounded, so an arm would be unobservable")
@@ -608,9 +522,7 @@ func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 	}
 }
 
-// TestResumeIfInterrupted_DoesNotArmARefusedResume: the arm follows the verb, like
-// Resume's own. A resume KAS refused re-drove nothing, so bounding it would start a
-// clock on a run that is still parked and cancel it while it waits.
+// TestResumeIfInterrupted_DoesNotArmARefusedResume pins that a refused resume re-drove nothing.
 func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -637,14 +549,8 @@ func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 	}
 }
 
-// TestCancelUnretriedMessage_IsGreppable pins the one line an operator has to act
-// on. It names no Loki rule, deliberately — no rule keys on it yet — but a run
-// nothing can stop is the condition worth alerting on, so the string is a constant
-// rather than an inline format.
-//
-// And it must claim nothing it has not verified: retryTermination fires for every
-// non-nil cancel error, so a transport fault and a workflow id KAS does not know both
-// reach this line, where neither "still executing" nor "holds its recipe" is known.
+// TestCancelUnretriedMessage_IsGreppable pins the one line an operator must act on, a constant so an
+// alert can key on it. It claims nothing unverified: any non-nil cancel error reaches it.
 func TestCancelUnretriedMessage_IsGreppable(t *testing.T) {
 	for _, unverified := range []string{"still executing", "holds its recipe"} {
 		if strings.Contains(logMsgCancelUnretried, unverified) {

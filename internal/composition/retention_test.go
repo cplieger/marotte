@@ -9,22 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// TestChatRetention_ThreeLegs walks one config.json through the three states the
-// retention read has to tell apart. All three legs are required, and each one
-// answers a different question:
-//
-//   - a stored -1 reads as no purge (the control: it proves the other two are
-//     about the READ channel and not about the value handling);
-//   - a config.json that is THERE and unparseable ALSO reads as no purge, while
-//     the default window is a positive number — this is the leg the fix exists
-//     for, and it is the one a folded read fails;
-//   - a config.json that is ABSENT reads as the default window, which is the leg
-//     that catches a split that fails CLOSED and leaves a fresh install with no
-//     retention at all.
-//
-// Legs 1 and 2 together are the whole point: without leg 1, leg 2 passes for any
-// implementation that never purges; without leg 2, leg 1 passes for the folding
-// read that deletes the user's chats.
+// TestChatRetention_ThreeLegs walks one config.json through the three states the retention read
+// must tell apart: a stored value, an absent key, and an unreadable file.
 func TestChatRetention_ThreeLegs(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -36,20 +22,17 @@ func TestChatRetention_ThreeLegs(t *testing.T) {
 	}
 	wantDefault := time.Duration(settings.DefaultChatRetentionDays) * 24 * time.Hour
 
-	// Leg 1: the Keep-forever checkbox as it is persisted.
 	writeConfig(t, path, `{"chat_retention_days":-1}`)
 	if got := chatRetention(ctx, dir); got != 0 {
 		t.Fatalf("chatRetention with a stored -1 = %v, want 0 (never purge)", got)
 	}
 
-	// Leg 2: the same directory, file present and unreadable.
 	writeConfig(t, path, `{`)
 	if got := chatRetention(ctx, dir); got != 0 {
 		t.Errorf("chatRetention with an unparseable config.json = %v, want 0; applying the default (%v) here purges the chats the user asked to keep",
 			got, wantDefault)
 	}
 
-	// Leg 3: no file at all, which is a fresh install and must still get a window.
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove %s: %v", path, err)
 	}
@@ -74,4 +57,36 @@ func writeConfig(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+// The run purge reads the same setting with a different zero: 0 purges a finished
+// parentless run at once, where for chats it purges nothing.
+func TestRunRetention_ReadsTheSharedSetting(t *testing.T) {
+	cases := []struct {
+		desc, config string
+		window       time.Duration
+		purge        bool
+	}{
+		{desc: "keep forever", config: `{"chat_retention_days":-1}`, purge: false},
+		{desc: "off", config: `{"chat_retention_days":0}`, window: 0, purge: true},
+		{desc: "days", config: `{"chat_retention_days":3}`, window: 3 * 24 * time.Hour, purge: true},
+		{desc: "unreadable", config: `{`, purge: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfig(t, filepath.Join(dir, settings.Filename), tc.config)
+			window, purge := runRetention(t.Context(), dir)
+			if purge != tc.purge || window != tc.window {
+				t.Errorf("runRetention(%s) = (%v, %v), want (%v, %v)", tc.config, window, purge, tc.window, tc.purge)
+			}
+		})
+	}
+	t.Run("absent", func(t *testing.T) {
+		window, purge := runRetention(t.Context(), t.TempDir())
+		want := time.Duration(settings.DefaultChatRetentionDays) * 24 * time.Hour
+		if !purge || window != want {
+			t.Errorf("runRetention(no config.json) = (%v, %v), want (%v, true)", window, purge, want)
+		}
+	})
 }

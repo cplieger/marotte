@@ -1,20 +1,7 @@
-// Does anything actually WRITE `data-severity`?
-//
-// `turn-outcome-css.test.ts` asserts the hue partition in the stylesheet, and it
-// cannot answer this: a CSS rule keyed on an attribute nothing writes paints
-// nothing and fails silently — no error, no missing element, just a mark in the
-// resting state that reads as a decision somebody made. So the two files are one
-// guard in two halves, and neither is meaningful alone. Cross-referenced from
-// there.
-//
-// The three writers are the three surfaces the partition covers:
-// `updateTurnFooter`, `updateTurnHeader` and `turn-rail.ts`'s marker + cluster.
-// Every one of them already wrote `data-outcome`, which is why the attribute the
-// stylesheet now keys on is the thing worth pinning.
-//
-// Driven through the REAL writers in a REAL DOM rather than by re-deriving the
-// value: an assertion against a second copy of `severityOf`'s table would pass
-// with every writer deleted.
+// Does anything WRITE `data-severity`? `turn-outcome-css.test.ts` pins the hue partition, but a rule
+// keyed on an unwritten attribute fails silently, so the two files are one guard. The writers are
+// `updateTurnFooter`, `updateTurnHeader` and `turn-rail.ts`'s marker + cluster, driven for real:
+// a second copy of `severityOf`'s table would pass with every writer deleted.
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 // The spread mocks below need the ORIGINAL module's type, and `import()` type
@@ -26,10 +13,8 @@ import type * as StoreLoad from "./store-load.js";
 type ApiClientModule = typeof ApiClient;
 type StoreLoadModule = typeof StoreLoad;
 
-// The rail imports scroll.ts, which self-initialises a singleton against
-// `#messages` at module load, and api-client for its session-wide index. Neither
-// is under test here. Both stubs go through `vi.hoisted` because the factories are
-// hoisted above these declarations.
+// The rail imports scroll.ts (a `#messages` singleton at load) and api-client; neither is under
+// test. Stubs go through `vi.hoisted`.
 const { scrollable } = vi.hoisted(() => ({
   scrollable: { by: 500 },
 }));
@@ -57,10 +42,7 @@ vi.mock("./scroll.js", () => ({
     getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
   }),
 }));
-// `apiGet` alone, with the rest of the module real: a replacing factory has to
-// satisfy every name ANY module in this file's import graph reaches, and the
-// header's own graph reaches `apiGetTyped`. Spreading the original keeps the mock
-// to the one function under stub.
+// `apiGet` alone, the rest real: the header's graph reaches `apiGetTyped`.
 vi.mock("./api-client.js", async (orig) => ({
   ...(await orig<ApiClientModule>()),
   apiGet: vi.fn(),
@@ -103,10 +85,7 @@ describe("the footer stamps its severity", () => {
   });
 
   it("defaults an ABSENT outcome to clean, matching the key it defaults", () => {
-    // A turn persisted before the field existed carries none, and the footer
-    // already defaults `data-outcome` to `completed`. The severity has to default
-    // the same way or a legacy transcript paints an outcome-less footer with a
-    // stopped wash.
+    // A legacy turn has no outcome and the footer defaults to `completed`; severity must default too.
     const footer = buildTurnFooter({ kindCounts: { execute: 1 } });
     expect(footer.dataset["outcome"]).toBe("completed");
     expect(footer.dataset["severity"]).toBe("clean");

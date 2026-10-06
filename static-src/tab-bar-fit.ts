@@ -1,27 +1,15 @@
-// ---------------------------------------------------------------------------
-// Tab-bar label fitting: the segmented pill bar (settings / git / docs) shows
-// an icon before every label, then hides EVERY label when one would truncate.
-// This replaces the mobile native <select>, which read as foreign chrome.
-//
-// The decision is MEASURED per bar, never a breakpoint: which labels fit
-// depends on the label set and the container. Truncation is detected per
-// segment (scrollWidth > clientWidth); one truncated label flips the whole
-// bar because mixed icon-plus-label and icon-only segments read as broken.
-// ---------------------------------------------------------------------------
+// The segmented pill bar (settings / git / docs) shows icon plus label, and hides EVERY label when
+// one would truncate. MEASURED per bar (scrollWidth > clientWidth), never a breakpoint; one
+// truncation flips the whole bar.
 
 /** Bars are measured in icon-plus-label mode, so the icon-only class comes
  *  off before reading. The remove + read + toggle runs synchronously inside
  *  one frame, so there is no visible flicker. */
 const ICONS_CLASS = "seg-bar-icons";
 
-/** Set while this bar is VISIBLE and showing its labels, i.e. while it names its
- *  own active section. 12-chat.css reads it to suppress the title bar's subtitle,
- *  which would otherwise print that same section name twice, twenty pixels apart.
- *
- *  Published here rather than derived in CSS because the derivation needs the
- *  bar's visibility as well as its label mode, and a `:has()` chain carrying both
- *  ran past stylelint's complexity ceiling — which was the right complaint: this
- *  module already measures, so it is the one place that knows. */
+/** Set while this bar is VISIBLE with labels, so 12-chat.css can suppress the title bar's duplicate
+ *  subtitle. Published here: a `:has()` chain for visibility plus label mode exceeds stylelint's
+ *  complexity ceiling, and this module already measures. */
 const NAMED_CLASS = "seg-bar-named";
 
 function measure(bar: HTMLElement): void {
@@ -38,10 +26,8 @@ function measure(bar: HTMLElement): void {
   }
   bar.classList.toggle(ICONS_CLASS, overflows);
 
-  // `offsetParent` is null under a `display: none` ancestor, which is how every
-  // inactive view's bar reports. A view switch changes this bar's width (to and
-  // from 0), so the ResizeObserver re-runs `measure` and the class follows the
-  // visible view with no extra wiring.
+  // `offsetParent` is null under a `display: none` ancestor (inactive views); a view switch resizes
+  // the bar, so the ResizeObserver re-runs `measure`.
   bar.classList.toggle(NAMED_CLASS, !overflows && bar.offsetParent !== null);
 }
 

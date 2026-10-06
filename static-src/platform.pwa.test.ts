@@ -1,50 +1,11 @@
-//
 // PLATFORM DETECTION AND THE TWO PWA-ONLY GESTURES.
-//
-// `platform.test.ts` covers `guardDuplicateActivation`, which is pure logic
-// over its event argument and injected clock. This file covers the other three
-// exports, all of which read the PLATFORM rather than their arguments: the
-// `isStandalone` / `isIOS` constants, the iOS keyboard
-// viewport fix, and the sidebar swipe gestures.
-//
-// Every test here loads the module DYNAMICALLY, after stubbing the globals it
-// wants. That is not a style choice: `isStandalone` and `isIOS` are computed
-// once at import time, and both gesture installers gate on `isStandalone`, so a
-// static import would freeze whatever the test environment happened to report
-// at collection time and no stub could reach it.
-//
-// The runner does not hand you the environment you need for any of this, so
-// three facts about it are worth stating:
-//
-//   * `matchMedia` answers `false` for "(display-mode: standalone)" — the page
-//     is a browser tab. It is stubbed here anyway, because a test that needs the
-//     query to answer `true` cannot get there otherwise.
-//   * `window.visualViewport` DOES exist in Chromium, so `fixIOSViewport` has a
-//     real object to read; the tests stub it to pin the numbers. (Under the DOM
-//     emulator this package used before Browser Mode it was absent entirely,
-//     which is why the stubs are unconditional.)
-//   * `navigator.userAgent` and its siblings are accessor-only with no setter,
-//     so `navigator` has to be replaced wholesale rather than patched.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-// Type-only: the module itself is always loaded through `await import()` below,
-// never statically, so the constants it computes at import time can be aimed at
-// a stubbed platform.
+// Type-only: the module itself is always loaded through `await import()` below, never statically,
+// so the constants it computes at import time can be aimed at a stubbed platform.
 import type * as Platform from "./platform.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
- */
+/** Cache-buster for the re-imports below. */
 let bootSeq = 0;
 
 const IPHONE_UA =
@@ -134,8 +95,8 @@ describe("isIOS", () => {
       expected: true,
     },
     {
-      // iPadOS 13+ ships a desktop Safari user agent, so the platform + touch
-      // pair is the only tell left.
+      // iPadOS 13+ ships a desktop Safari user agent, so the platform + touch pair is the only tell
+      // left.
       name: "an iPad masquerading as a Mac is iOS",
       env: { ua: MAC_UA, platform: "MacIntel", maxTouchPoints: 5 },
       expected: true,
@@ -146,8 +107,8 @@ describe("isIOS", () => {
       expected: false,
     },
     {
-      // The masquerade test needs MORE than one touch point: a Mac that reports
-      // exactly one is still a Mac.
+      // The masquerade test needs MORE than one touch point: a Mac that reports exactly one is
+      // still a Mac.
       name: "a Mac reporting a single touch point is not iOS",
       env: { ua: MAC_UA, platform: "MacIntel", maxTouchPoints: 1 },
       expected: false,
@@ -167,17 +128,13 @@ describe("isIOS", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
 // fixIOSViewport
-// ---------------------------------------------------------------------------
 
 type ViewportListener = () => void;
 
-/**
- * A stand-in for `window.visualViewport` that really adds and removes its
- * listeners, so "the disposer detached the listener" is a behaviour this file
- * can observe rather than a call it has to take on trust.
- */
+/** A stand-in for `window.visualViewport` that really adds and removes its listeners, so "the
+ *  disposer detached the listener" is a behaviour this file can observe rather than a call it
+ *  has to take on trust. */
 function fakeVisualViewport(): {
   addEventListener: (type: string, fn: ViewportListener) => void;
   removeEventListener: (type: string, fn: ViewportListener) => void;
@@ -247,10 +204,8 @@ describe("fixIOSViewport", () => {
   });
 
   it("reveals the input with the least scrolling instead of pinning it to the top", async () => {
-    // `block: "nearest"` against scrollIntoView's own default of "start": the
-    // default would yank a mid-screen input to the top of its scroller every
-    // time the keyboard opens. No DOM implementation exposes the resulting
-    // scroll offset, so the option is only observable where it is passed.
+    // `block: "nearest"` against scrollIntoView's own default of "start": the default would yank a
+    // mid-screen input to the top of its scroller every time the keyboard opens.
     const { viewport, scrollIntoView } = await install();
     viewport.resize();
     vi.advanceTimersByTime(SETTLE_MS);
@@ -291,13 +246,7 @@ describe("fixIOSViewport", () => {
   });
 
   it("works in a browser tab too, where the same keyboard shrinks the same viewport", async () => {
-    // DELIBERATELY INVERTED (item 15). This case used to assert `dispose` was
-    // undefined and no listener was attached, on the premise named in its own
-    // title: that a tab's keyboard does not resize the visual viewport. It does —
-    // the keyboard is the OS's and the shrink is identical in a tab and in an
-    // installed PWA — so the old gate withheld the fix from the MAJORITY case,
-    // because a shared URL opens a tab. `initSidebarSwipe` keeps its standalone
-    // gate below for a reason this one never had: a named gesture conflict with
+    // No standalone gate here: `initSidebarSwipe` keeps one only because its gesture conflicts with
     // Safari's own back-swipe.
     const { viewport, dispose } = await install({ standalone: false, displayMode: false });
     expect(dispose).toBeTypeOf("function");
@@ -313,9 +262,7 @@ describe("fixIOSViewport", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // initSidebarSwipe
-// ---------------------------------------------------------------------------
 
 function sendTouch(el: HTMLElement, type: "touchstart" | "touchmove", x: number, y: number): void {
   el.dispatchEvent(
@@ -479,9 +426,8 @@ describe("initSidebarSwipe", () => {
     });
 
     it("arms nothing when the sidebar is touched while closed", async () => {
-      // The two gestures share one tracking flag, so a touch that wrongly armed
-      // on a closed sidebar would let the NEXT drag anywhere open it — without
-      // ever starting at the screen edge.
+      // The two gestures share one tracking flag, so a touch that wrongly armed on a closed sidebar
+      // would let the NEXT drag anywhere open it — without ever starting at the screen edge.
       const { chatArea, sidebar } = await install();
       sendTouch(sidebar, "touchstart", 200, 100);
       sendTouch(chatArea, "touchmove", 300, 100);
@@ -498,10 +444,8 @@ describe("initSidebarSwipe", () => {
     });
 
     it("registers every touch listener passively so a gesture can never block scrolling", async () => {
-      // A non-passive touch listener makes the browser wait for JS before it
-      // scrolls; these handlers never call preventDefault, so passive is the
-      // whole point of them. Registration is the only place it is observable —
-      // no DOM implementation reports whether a scroll was blocked.
+      // A non-passive touch listener makes the browser wait for JS before it scrolls; these
+      // handlers never call preventDefault, so passive is the whole point of them.
       const { initSidebarSwipe } = await loadPlatform({ standalone: true });
       const chatArea = document.createElement("div");
       const sidebar = document.createElement("aside");

@@ -1,15 +1,8 @@
-// A registry search row has to say two things the payload now carries: that an
-// entry is deprecated (the registry still LISTS those, so without a badge a dead
-// entry reads exactly like a live one), and what installing it will ask for.
-//
-// The row is a COMPACT DISCLOSURE since 2026-09: one line while closed, with the
-// install buttons beside it rather than inside its `<summary>`. So two structural
-// properties are pinned here that the old flat card had no way to get wrong — the
-// row starts closed, and installing is reachable without opening it.
+// A registry row says that an entry is deprecated (the registry still lists them) and what installing will ask for.
+// It is a compact disclosure: it starts closed and installing is reachable without opening it.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// The configured list is the row's second input, so it is driven from here. Hoisted
-// because the factory below is lifted above module-level bindings.
+// The configured list is the row's second input; hoisted above module bindings for the mock factory.
 const state = vi.hoisted(() => ({ configured: [] as unknown[] }));
 
 vi.mock("./mcp-state.js", () => ({
@@ -22,8 +15,7 @@ vi.mock("./dom.js", () => ({
 }));
 vi.mock("./actions/mcp.js", () => ({
   searchRegistry: { cancel: () => undefined, dispatch: async () => null },
-  // Present-but-undefined so real-ESM linking succeeds: the module under test
-  // imports the name and nothing here reaches the error branch that reads it.
+  // Present-but-undefined for real-ESM linking; nothing here reaches its branch.
   registryFailureOf: undefined,
 }));
 vi.mock("./actions/index.js", () => ({
@@ -37,8 +29,7 @@ import { renderRegistryResult } from "./mcp-panels-search.js";
 import type { RegistryEntry as Entry } from "./wire/types.gen.js";
 import type { KeyPair, Server } from "./mcp-state.js";
 
-/** A configured record, with only the fields the row's match and satisfaction
- *  checks read spelled out per case. */
+/** Only the fields the row's match and satisfaction checks read are spelled out. */
 function server(patch: Partial<Server> & { name: string }): Server {
   return {
     id: `id-${patch.name}`,
@@ -52,7 +43,6 @@ function server(patch: Partial<Server> & { name: string }): Server {
 
 const pairs = (...names: string[]): KeyPair[] => names.map((name) => ({ name, value: "***" }));
 
-/** The one requirements label of a single-option row. */
 function label(row: HTMLElement): string {
   const p = row.querySelector(".mcp-requires-label");
   expect(p).not.toBeNull();
@@ -71,7 +61,6 @@ const liveRemote: Entry = {
   remotes: [{ type: "http", url: "https://live/mcp" }],
 };
 
-/** The row's one disclosure. */
 function disc(row: HTMLElement): HTMLDetailsElement {
   const d = row.querySelector<HTMLDetailsElement>(".mcp-result-disc");
   expect(d).not.toBeNull();
@@ -97,9 +86,7 @@ describe("deprecated flag on a registry row", () => {
   });
 
   it("keeps the badge on the collapsed line and the reason behind the disclosure", () => {
-    // The badge is the signal a reader must not have to click for, so it is in the
-    // summary; the publisher's sentence is detail and is in the body. Replaces the
-    // old card's "both are always visible", which is what a one-line row gives up.
+    // The badge must be readable without a click, so it is in the summary; the publisher's sentence is detail.
     const row = renderRegistryResult({
       ...liveRemote,
       status: "deprecated",
@@ -125,9 +112,7 @@ describe("deprecated flag on a registry row", () => {
 
 describe("the row as a disclosure", () => {
   it("starts closed, whatever the entry declares", () => {
-    // The design property that replaced the requirements preview's `open` flag:
-    // the ROW is the one thing that opens, and it opens on the reader's word. An
-    // entry with a required credential is the case that used to force itself open.
+    // The row is the one thing that opens, on the reader's word, even with a required credential.
     const required = renderRegistryResult({
       name: "ex/gh",
       packages: [
@@ -143,9 +128,7 @@ describe("the row as a disclosure", () => {
   });
 
   it("has exactly one disclosure and no nested one", () => {
-    // Replaces "stays closed when none are required": the requirements were a
-    // second <details> inside the card, so opening a row asked the reader to open
-    // something else inside it. There is one now, and the requirements are plain.
+    // One disclosure: the requirements are plain inside it, not a nested <details>.
     const row = renderRegistryResult({
       name: "ex/both",
       packages: [
@@ -158,9 +141,7 @@ describe("the row as a disclosure", () => {
   });
 
   it("puts the install buttons outside the summary", () => {
-    // Two reasons, and both are load-bearing. A <summary> maps to role=button, so
-    // a <button> inside one is axe's nested-interactive (serious). And a button
-    // outside the disclosure is what keeps installing reachable without expanding.
+    // A <summary> maps to role=button, so a <button> inside is axe nested-interactive; outside, installing needs no expand.
     const row = renderRegistryResult(liveRemote);
     const btn = row.querySelector<HTMLButtonElement>(".mcp-install-btn");
     expect(btn).not.toBeNull();
@@ -222,7 +203,7 @@ describe("install preview on a registry row", () => {
   it("shows no preview when the publisher declared nothing", () => {
     const row = renderRegistryResult(liveRemote);
     expect(row.querySelector(".mcp-requires")).toBeNull();
-    // The install button is still there: nothing to configure is a valid answer.
+    // Nothing to configure is a valid answer.
     expect(row.querySelector(".mcp-install-btn")).not.toBeNull();
   });
 
@@ -242,8 +223,7 @@ describe("install preview on a registry row", () => {
   });
 
   it("names the transport on the button and the identifier in its accessible name", () => {
-    // The identifier left the label so the row fits one line; dropping it outright
-    // would make two remotes of one kind two buttons reading the same two words.
+    // Without the identifier, two remotes of one kind would be two buttons reading the same words.
     const row = renderRegistryResult({
       name: "ex/both",
       packages: [{ registry_type: "npm", identifier: "@ex/both" }],
@@ -264,10 +244,7 @@ describe("install preview on a registry row", () => {
 });
 
 describe("a registry row whose server is already configured", () => {
-  // The defect: the preview is written for a reader about to install, and a
-  // reader who already owns the server was shown the same "Needs 1 of 2" — a
-  // demand for credentials that are already on disk. What they are asking is
-  // what is still MISSING, which is a different sentence and a different mark.
+  // A reader who already owns the server asks what is still missing, not what installing will ask for.
   const remote: Entry = {
     name: "ex/cf",
     remotes: [
@@ -285,8 +262,7 @@ describe("a registry row whose server is already configured", () => {
   });
 
   it("matches on the slug the install button would write", () => {
-    // `simplifyName("ex/cf")` is `cf`, so a row the reader installed under that
-    // name is the row this option would land on.
+    // `simplifyName("ex/cf")` is `cf`, the row this option would land on.
     state.configured = [server({ name: "cf", headers: pairs("Authorization") })];
     expect(label(renderRegistryResult(remote))).toBe(
       "Already configured. All required headers set",
@@ -294,8 +270,7 @@ describe("a registry row whose server is already configured", () => {
   });
 
   it("matches a remote on its URL under any name the reader chose", () => {
-    // The endpoint names one server whatever the row is called, and it is the
-    // only basis on which the satisfaction claim below is true.
+    // The endpoint names one server whatever the row is called; the satisfaction claim rests on it.
     state.configured = [
       server({ name: "my-own-name", url: "https://mcp.ex.com/mcp", headers: pairs("X-Tenant") }),
     ];
@@ -308,17 +283,16 @@ describe("a registry row whose server is already configured", () => {
     state.configured = [server({ name: "cf", headers: pairs("X-Tenant") })];
     const items = [...renderRegistryResult(remote).querySelectorAll(".mcp-requires-list > li")];
     expect(items).toHaveLength(2);
-    // Authorization is required and absent: Required, no Set.
+    // Required and absent: Required, no Set.
     expect(items[0]!.querySelector(".mcp-pair-mark-required")).not.toBeNull();
     expect(items[0]!.querySelector(".mcp-pair-mark-set")).toBeNull();
-    // X-Tenant is optional and present: Set, no Required.
+    // Optional and present: Set, no Required.
     expect(items[1]!.querySelector(".mcp-pair-mark-required")).toBeNull();
     expect(items[1]!.querySelector(".mcp-pair-mark-set")!.textContent).toBe("Set");
   });
 
   it("never marks a field on an unconfigured row", () => {
-    // There is no record, so nothing can be set: a Set mark here would be a
-    // claim about a server that does not exist.
+    // No record, so nothing can be set.
     expect(renderRegistryResult(remote).querySelectorAll(".mcp-pair-mark-set")).toHaveLength(0);
   });
 
@@ -332,8 +306,7 @@ describe("a registry row whose server is already configured", () => {
   });
 
   it("matches a header case-insensitively and an env var exactly", () => {
-    // HTTP says a header name is case-insensitive; the shell says an env var is
-    // not. Reading either the other way is a wrong answer about what is on disk.
+    // Header names fold case (HTTP); env names do not (the shell).
     state.configured = [
       server({ name: "case", headers: pairs("authorization"), env: pairs("github_token") }),
     ];
@@ -368,10 +341,7 @@ describe("a registry row whose server is already configured", () => {
   });
 
   it("never satisfies a declared header from an env var of the same name", () => {
-    // A hand-edited mcp.json can carry both; a header the transport reads is not
-    // interchangeable with a variable the process reads.
-    // Named to MATCH (slug `cf`), so the configured branch is genuinely taken and
-    // the assertion is about the satisfaction check rather than about the match.
+    // A header is not interchangeable with an env var. Named to match (slug `cf`), so the configured branch is taken.
     state.configured = [server({ name: "cf", env: pairs("Authorization") })];
     expect(label(renderRegistryResult(remote))).toBe(
       "Already configured. 1 of 1 required headers still missing",

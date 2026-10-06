@@ -36,12 +36,12 @@ func TestForgeSnapshotCache_SnapshotNeverBlocksOnBuild(t *testing.T) {
 	started := make(chan struct{}, 1)
 	c, _ := newCacheForTest(t, func(context.Context) steering.ForgeSnapshot {
 		started <- struct{}{}
-		<-release // simulate a slow forge repository listing
+		<-release
 		return steering.ForgeSnapshot{}
 	})
 
 	done := make(chan steering.ForgeSnapshot, 1)
-	go func() { done <- c.snapshot() }() // stale cache → kicks async rebuild
+	go func() { done <- c.snapshot() }()
 
 	select {
 	case snap := <-done:
@@ -80,7 +80,6 @@ func TestForgeSnapshotCache_RefreshRegeneratesOnChange(t *testing.T) {
 		t.Errorf("cached snapshot = %+v, want alice provider", got)
 	}
 
-	// Second refresh with identical data: file must not be rewritten.
 	old := time.Now().Add(-time.Hour)
 	if err := os.Chtimes(envPath, old, old); err != nil {
 		t.Fatal(err)
@@ -110,22 +109,21 @@ func TestForgeSnapshotCache_CoalescesConcurrentRefresh(t *testing.T) {
 		n := calls.Add(1)
 		if n == 1 {
 			close(firstBuild)
-			<-proceed // hold the first rebuild until the second refresh queues
+			<-proceed
 		}
 		return *current.Load()
 	})
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		c.refresh() // first rebuild: reads pre-change data
+		c.refresh()
 	})
 	<-firstBuild
 
-	// A login lands mid-rebuild: data changes, refresh is requested.
 	current.Store(&steering.ForgeSnapshot{Providers: []steering.ForgeProvider{
 		{Kind: "github", Host: "github.com", User: "bob"},
 	}})
-	c.refresh() // busy → coalesced into the in-flight rebuild
+	c.refresh()
 	close(proceed)
 	wg.Wait()
 

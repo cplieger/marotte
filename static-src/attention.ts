@@ -1,83 +1,29 @@
-// attention.ts — the unseen-cue set, rendered onto the surfaces that live OUTSIDE
-// this page: the browser tab title's count, the installed app's icon badge, and
-// the tab icon.
-//
-// Why they are needed at all: a chat holding a latched status paints a dot on its
-// sidebar row, and that dot is not reliably on screen. `#tab-list` scrolls, so a
-// long chat list puts the forgotten background chat below the fold; on mobile the
-// sidebar is a drawer parked off-viewport, so no row is visible at all; and a
-// hidden page shows no chrome of any kind. notify.ts covers the last case with a
-// browser Notification, but that API is absent on iOS Safari outside an installed
-// web app, which is where this UI spends much of its time.
-//
-// STATE, not events. A Notification fires once per occurrence and is deduped on a
-// timestamp (handlers/turn.ts `_lastNotifyMs`); everything here is a pure render
-// of what is currently true, so it is safe to recompute on every status write and
-// each sink no-ops when nothing changed. That split is why this module and
-// notify.ts stay separate, and why nothing here has a timer.
-//
-// PORTED from @cplieger/web-terminal-ui's features/tabs/attention.ts rather than
-// imported. 5.6.0's `exports` map publishes `./features/tabs` and nothing below
-// it, so `@cplieger/web-terminal-ui/features/tabs/attention` resolves to
-// ERR_PACKAGE_PATH_NOT_EXPORTED even though `files: ["src/"]` puts the file on
-// disk under node_modules. `features/tabs/model` (the cue vocabulary) is exported
-// at no subpath in any version. Three things also diverge on purpose and are
-// commented where they land: the cue set, the severity order, and the
-// acknowledgement rule.
-//
-// DOM-free and global-free above the binding line: every capability arrives
-// through an injected env, so the decisions are unit-testable with no document,
-// no navigator and no icon assets. Everything below "The browser binding" is the
-// one place that touches globals.
+// The unseen-cue set, rendered on the surfaces OUTSIDE this page: the tab title's count,
+// the installed app's badge and the tab icon. A latched sidebar dot is not reliably on
+// screen (a scrolled list, the mobile drawer, a hidden page), and Notification is absent
+// on iOS Safari outside an installed app. STATE, not events: a pure render of what is
+// true, so nothing here has a timer. Ported from web-terminal-ui's attention.ts, which its
+// `exports` map does not publish. DOM-free above "The browser binding".
 
 import { cueCandidates, getActiveTabId, subscribeTabCues, setOnTabClosed } from "./tabs.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { $ } from "./dom.js";
 
-// ---------------------------------------------------------------------------
-// The cue vocabulary
-// ---------------------------------------------------------------------------
-
-/** The dot states that raise an attention cue: the states that WANT the reader.
- *
- *  A chat blocked on a decision (`input`), one whose agent asked a question and
- *  is standing by (`waiting`), one whose turn failed (`failed`), and one whose
- *  turn finished (`done`).
- *
- *  `working` and `idle` are excluded because they are ongoing or absent: a count
- *  that ticked up while an agent worked would nag with nothing to act on.
- *  `dirty` is the editor's unsaved mark, which rides the same dot element and is
- *  not a chat state at all — it is excluded here AND by the candidate filter
- *  (tabs.ts `cueCandidates`), so it cannot reach the fold by either route.
- *
- *  `done` MEANS A TURN ENDED, not that it succeeded, so a turn the user cancelled
- *  and one whose stop reason marotte could not read raise this cue exactly like a
- *  turn that finished with an answer (user ratification, 2026-09-04). It follows
- *  from what these surfaces are FOR — the header above states it: a latched dot is
- *  not reliably on screen, so the cue is that dot carried off-page, and a cue that
- *  disagreed with the dot would be a second verdict on one chat. The case for
- *  declining was that a stop is the reader's own doing and wants nothing from
- *  them; it lost because a stop performed on ANOTHER device is news to this one,
- *  and because `unknown` is a turn nobody could grade. Do not add a per-outcome
- *  carve-out — the only place one could go is `cueCandidates`, and
- *  `tabs.test.ts` pins that projection as verbatim. */
+/**
+ * The dot states that raise an attention cue, the states that WANT the reader. `working`
+ * and `idle` are excluded (nothing to act on), `dirty` here and in `cueCandidates`. `done`
+ * MEANS A TURN ENDED, cancelled or unreadable included: the cue is the dot carried
+ * off-page, so it must not disagree with the dot. No per-outcome carve-out:
+ * `tabs.test.ts` pins `cueCandidates` as verbatim.
+ */
 export type CueStatus = "input" | "waiting" | "failed" | "done";
 
-/** Severity order over CueStatus, most severe first, AND the complete set: this
- *  array is what isCueStatus tests against, so the type and the runtime list
- *  cannot drift the way two hand-maintained four-way checks could.
- *
- *  Read by the one surface that can show a single state (the tab icon), which
- *  paints the most severe unseen cue. That is a total order and therefore a
- *  defensible rule, unlike picking a chat.
- *
- *  THIS ORDER DIVERGES FROM THE REFERENCE, deliberately. web-terminal-ui ranks
- *  `failed` above `input`; marotte ranks the pending ask first, because an ask
- *  BLOCKS the turn while a failure is a result the agent parked and will not
- *  revisit. That is the same reasoning `tabStatusFor` (store.ts) already used to
- *  put `input` ahead of everything, and the icon disagreeing with the tab dot
- *  about which chat matters most would be a real defect — so one order wins and
- *  it is this app's. */
+/**
+ * Severity order over CueStatus, most severe first, AND the complete set isCueStatus
+ * tests, so type and list cannot drift. The tab icon paints the most severe cue. `input`
+ * ranks above `failed` (unlike web-terminal-ui): an ask BLOCKS the turn, matching
+ * `tabStatusFor` in store.ts, so icon and tab dot agree.
+ */
 export const CUE_SEVERITY: readonly CueStatus[] = ["input", "failed", "waiting", "done"];
 
 /** isCueStatus narrows a raw dot state to a cue-worthy one. */
@@ -96,20 +42,12 @@ export function worseCue(a: CueStatus | "", b: CueStatus | ""): CueStatus | "" {
   return CUE_SEVERITY.indexOf(a) <= CUE_SEVERITY.indexOf(b) ? a : b;
 }
 
-/** The icon variant a cue paints, which is NOT one per cue.
- *
- *  `waiting` maps onto the `input` asset. On the tab DOT the two are deliberately
- *  distinct (hollow disc plus ring versus solid plus ring, css/12-tabs.css)
- *  because they are different kinds of wanting; a 16px favicon badge cannot carry
- *  that distinction — the whole badge is 5.5 units across in the generator's
- *  32-unit space — and both states mean "this chat wants you". So they share one
- *  asset rather than the icon claiming a fidelity it does not have. That also
- *  keeps the shipped set at three variants, which is what
- *  favicon-variants.test.ts pins.
- *
- *  A Record rather than a switch, so the map is exhaustive over CueStatus by type
- *  and a new cue cannot ship unmapped (the same reason tabs.ts's DOT_SUBJECT and
- *  NEUTRAL_PHRASE are). */
+/**
+ * The icon variant a cue paints, not one per cue: `waiting` shares the `input` asset,
+ * because a 16px badge cannot carry the dot's hollow-vs-solid distinction and both mean
+ * "wants you" (three variants, pinned by favicon-variants.test.ts). A Record, so a new
+ * cue cannot ship unmapped.
+ */
 const CUE_ICON: Readonly<Record<CueStatus, "input" | "done" | "alert">> = {
   input: "input",
   waiting: "input",
@@ -121,14 +59,11 @@ export function cueIconName(status: CueStatus): "input" | "done" | "alert" {
   return CUE_ICON[status];
 }
 
-/** isUnseenCue reports whether a chat's CURRENT dot state is a cue this reader
- *  has not acknowledged. The single predicate behind both the count and the
- *  icon, so the two surfaces cannot disagree about what is outstanding.
- *
- *  Note what it does NOT consider: whether the chat is the one on screen. A cue
- *  on a watched chat is acknowledged as it is observed (the refresh pass below),
- *  so it is already absent from the unseen set by the time anything folds over
- *  it, and no caller needs a special case. */
+/**
+ * isUnseenCue reports whether a chat's CURRENT dot state is a cue this reader has not
+ * acknowledged: the one predicate behind count and icon. A watched chat's cue is
+ * acknowledged on observation, so no caller special-cases the chat on screen.
+ */
 export function isUnseenCue(
   status: string,
   id: string,
@@ -136,10 +71,6 @@ export function isUnseenCue(
 ): status is CueStatus {
   return isCueStatus(status) && seen.get(id) !== status;
 }
-
-// ---------------------------------------------------------------------------
-// The fold
-// ---------------------------------------------------------------------------
 
 /** What the fold reads per chat tab. A structural type, so tabs.ts passes its own
  *  projection without this module knowing what else a TabViewSpec carries. */
@@ -158,19 +89,11 @@ export interface Attention {
 
 export const NO_ATTENTION: Attention = { count: 0, worst: "" };
 
-/** summarize folds the chat tabs and this reader's acknowledgements into the one
- *  value every surface renders.
- *
- *  A COUNT for the title and the badge, a single WORST for the icon. The split is
- *  deliberate: a count is set-valued, so it needs no rule for choosing among
- *  chats, and severity is a total order, so the icon's choice is not arbitrary
- *  either. Neither surface can name a chat, which is the standing constraint on
- *  anything written to a page-wide surface.
- *
- *  A FOLD over current state rather than incremental bookkeeping, which is what
- *  makes it impossible to leave stale: it holds no state of its own, so no path
- *  can forget to update it, and it is cheap enough to run on every dot write (a
- *  loop over a handful of tabs, then sinks that no-op when nothing changed). */
+/**
+ * summarize folds the chat tabs and this reader's acknowledgements into what every surface
+ * renders: a COUNT for title and badge, the single WORST for the icon, neither naming a
+ * chat. A stateless fold, so it cannot go stale and is cheap on every dot write.
+ */
 export function summarize(
   candidates: readonly CueCandidate[],
   seen: ReadonlyMap<string, CueStatus>,
@@ -187,33 +110,19 @@ export function summarize(
   return { count, worst };
 }
 
-// ---------------------------------------------------------------------------
-// The sinks
-// ---------------------------------------------------------------------------
-
-/** titlePrefixFor is the title text for a count, and the format is load-bearing
- *  enough to name: the count goes FIRST, because a browser tab strip truncates a
- *  title to its first few characters and a suffix would be the part that is cut.
- *  Parenthesised digits are also the convention every mail and chat client uses,
- *  so it needs no legend. Byte-identical to the format the retired `setBadge`
- *  wrote, so no reader has to relearn it. */
+/**
+ * titlePrefixFor is the title text for a count. The count goes FIRST, because a tab strip
+ * truncates the end of a title; parenthesised digits are the mail-client convention.
+ */
 export function titlePrefixFor(count: number): string {
   return count > 0 ? `(${String(count)}) ` : "";
 }
 
-/** The capabilities the sinks need, all injected, all optional except the title.
- *
- *  An absent capability is an absent sink and therefore a silent no-op, the same
- *  contract notify.ts uses for a missing Notification constructor: an unsupported
- *  surface is a normal state of the world, not an error to report.
- *
- *  Two of these can also fail INVISIBLY, and that is accepted rather than
- *  handled. `setBadge` resolves on Linux where the desktop paints no badge at
- *  all, and `setIcon` assigns an href Safari ignores because it caches the first
- *  icon it fetched. Neither is detectable. Do NOT arrange the three into a
- *  fallback ladder where the title appears only if the others are missing: on
- *  those platforms the detection reports success and the reader is left with
- *  nothing. The title is gated on no capability and is therefore the floor. */
+/**
+ * The capabilities the sinks need, all optional except the title; an absent one is a
+ * silent no-op. `setBadge` (Linux) and `setIcon` (Safari) can fail INVISIBLY, so never
+ * make the title a fallback for them: the title is gated on nothing and is the floor.
+ */
 export interface AttentionEnv {
   /** Set (or clear, with "") the document-title prefix. A COMPOSING writer: it
    *  owns the base title, so repeated calls cannot compound a prefix. */
@@ -231,9 +140,8 @@ export interface AttentionSurfaces {
 }
 
 export function createAttention(env: AttentionEnv): AttentionSurfaces {
-  // Last applied, so each sink is called only on a real change. This matters
-  // beyond cost: the document title doubles as the browser-tab label and the
-  // bookmark name, and re-assigning an icon href makes some browsers re-fetch it.
+  // Last applied, so each sink fires only on a real change: the title is also the bookmark
+  // name, and re-assigning an icon href makes some browsers re-fetch it.
   let applied: Attention = NO_ATTENTION;
   let first = true;
 
@@ -246,9 +154,7 @@ export function createAttention(env: AttentionEnv): AttentionSurfaces {
 
       if (countChanged) {
         env.titlePrefix(titlePrefixFor(next.count));
-        // The badge takes the SAME number as the title, which is the whole
-        // reason both read one fold: two surfaces disagreeing about how many
-        // things want you is worse than either being absent.
+        // The badge takes the SAME number as the title.
         env.setBadge?.(next.count);
       }
       if (worstChanged) {
@@ -258,13 +164,12 @@ export function createAttention(env: AttentionEnv): AttentionSurfaces {
   };
 }
 
-/** iconVariantHref rewrites an icon URL to its variant, by the convention the
- *  icon generator outside this repo writes: the `favicon` token of the filename
- *  gains `-<variant>`, so `/favicon.svg` becomes `/favicon-input.svg` and
- *  `/favicon-32x32.png` becomes `/favicon-input-32x32.png`. The extension is
- *  preserved, so no `type` attribute has to change. A URL whose filename does not
- *  start with `favicon` returns null, which leaves that link alone rather than
- *  pointing it at a 404. */
+/**
+ * iconVariantHref rewrites an icon URL to its variant, by the asset generator's
+ * convention: `favicon` gains `-<variant>` (`/favicon-32x32.png` becomes
+ * `/favicon-input-32x32.png`), extension kept. A filename not starting with `favicon`
+ * returns null rather than a 404.
+ */
 export function iconVariantHref(href: string, variant: string): string | null {
   const match = /(^|\/)favicon(?=[-.])/.exec(href);
   if (match === null) {
@@ -274,47 +179,25 @@ export function iconVariantHref(href: string, variant: string): string | null {
   return `${href.slice(0, at)}-${variant}${href.slice(at)}`;
 }
 
-// ---------------------------------------------------------------------------
-// The acknowledgement store
-// ---------------------------------------------------------------------------
-
-/** localStorage key for the cues this reader has already SEEN: chat id -> the
- *  dot state that was acknowledged.
- *
- *  Its own key rather than a field in the `marotte.ui-state` blob: that blob is
- *  the window's ARRANGEMENT (tab order, pins, panel sizes) written on structural
- *  change, and this is written whenever a cue is observed. Different cadence,
- *  different subject.
- *
- *  It HAS to be remembered, and the reason reaches marotte by a different route
- *  than the reference. Every input the dot reads is rebuilt from server state:
- *  `handlers/system.ts` refetches the active
- *  chat on `BUS_RECONCILE`, the connect handshake names every busy chat and
- *  re-pushes every unanswered decision (which is what makes `input` true again). Without this, a dismissed cue came
- *  back on the next page load — and, since the replay runs on every reconnect,
- *  on a phone simply returning to a backgrounded page.
- *
- *  Per device, like the tab arrangement and for the same reason: "I have seen
- *  this" is a property of the READER, not of the chat, so a phone acknowledging a
- *  finished turn must not blank the count on the desktop watching the same
- *  server. That is why it needs no server API.
- *
- *  Keyed per chat rather than as one latest-wins slot: several chats can hold a
- *  latched status at once (each has its own independent bridge, and
- *  `handlers/turn.ts` latches per chat id), so a single-slot acknowledgement
- *  would let every other one re-raise the count on the next load. */
+/**
+ * localStorage key for the cues this reader has SEEN: chat id -> the acknowledged dot
+ * state. Its own key, not `marotte.ui-state` (a different cadence). Remembered because
+ * every dot input is rebuilt from server state on reload and reconnect. Per device: seen
+ * is the READER's property. Keyed per chat, since several chats latch at once.
+ */
 export const CUE_SEEN_KEY = "marotte.cue-seen";
 
-/** Bound on the acknowledgement map. Every key is a chat with an open tab, so a
- *  real map is nowhere near this, and a corrupted or hostile stored value cannot
- *  make the restore path do unbounded work. */
+/**
+ * Bound on the acknowledgement map, so a corrupted or hostile stored value cannot make the
+ * restore path do unbounded work.
+ */
 export const MAX_PERSISTED_CUE_SEEN = 200;
 
-/** parseCueSeen reads stored acknowledgements into a clean map. Anything it
- *  cannot trust is dropped (or, for a broken document, all of it): a lost
- *  acknowledgement only re-lights a cue the reader can dismiss again, so
- *  degrading to "nothing acknowledged" is always safe. Pure, so it is testable
- *  without a storage backend; the caller owns the read and its try/catch. */
+/**
+ * parseCueSeen reads stored acknowledgements into a clean map, dropping anything it cannot
+ * trust (a lost acknowledgement only re-lights a dismissable cue). Pure; the caller owns
+ * the read and its try/catch.
+ */
 export function parseCueSeen(raw: string | null): Map<string, CueStatus> {
   const out = new Map<string, CueStatus>();
   if (raw === null || raw === "") {
@@ -342,10 +225,10 @@ export function parseCueSeen(raw: string | null): Map<string, CueStatus> {
   return out;
 }
 
-/** serializeCueSeen encodes acknowledgements for storage. The live map is kept
- *  within the cap by `mark` below, so this does not truncate: a silent truncation
- *  here would drop whichever entries the parser happened to read last, which is
- *  the opposite of what an eviction should discard. */
+/**
+ * serializeCueSeen encodes acknowledgements for storage without truncating: `mark` keeps
+ * the map within the cap.
+ */
 export function serializeCueSeen(seen: ReadonlyMap<string, CueStatus>): string {
   return JSON.stringify(Object.fromEntries(seen));
 }
@@ -376,12 +259,8 @@ export function createCueSeen(storage: CueSeenStorage): CueSeen {
         return;
       }
       seen.set(id, status);
-      // Evict oldest-first so the live map obeys the same cap the parser does.
-      // A chat closed while this page was open is pruned by the close hook, but
-      // one that vanished while the page was CLOSED leaves an entry nothing else
-      // collects; unbounded, that would eventually push the map past the cap and
-      // make the parser discard whatever it read last — dropping fresh
-      // acknowledgements to keep dead ones.
+      // Evict oldest-first so the live map obeys the parser's cap: a chat that vanished while the
+      // page was closed leaves an entry nothing else collects.
       while (seen.size > MAX_PERSISTED_CUE_SEEN) {
         const oldest = seen.keys().next().value;
         if (oldest === undefined) {
@@ -399,22 +278,14 @@ export function createCueSeen(storage: CueSeenStorage): CueSeen {
   };
 }
 
-// ---------------------------------------------------------------------------
-// The controller: every rule, still DOM-free
-// ---------------------------------------------------------------------------
-
 /** Everything the controller needs from outside itself. */
 export interface AttentionWiring {
   /** The chat tabs and their current dot states. */
   candidates: () => readonly CueCandidate[];
-  /** The TAB the reader is looking at, "" for none.
-   *
-   *  A tab id, like every other key here: `candidates` reports tab ids, the
-   *  rows-in-view scan reads `data-tab-id`, the switch acknowledgement reads the
-   *  bus event's `to`, and the forget hook reads a closed tab's id. It was wired
-   *  to the chat STORE's active id, which is a different string now that ids are
-   *  opaque and server-minted — so the watched-chat rule below could never match
-   *  and the chat on screen kept its cue. */
+  /**
+   * The TAB the reader is looking at, "" for none. A tab id like every key here, never the
+   * chat store's active id: the watched-chat rule could never match it.
+   */
   activeTabID: () => string;
   /** Whether the page is in front of the reader at all. */
   pageVisible: () => boolean;
@@ -441,43 +312,22 @@ export interface AttentionController {
 export function createAttentionController(wiring: AttentionWiring): AttentionController {
   const seen = createCueSeen(wiring.storage);
 
-  /** refresh is the RAISE rule, and it is two observations plus the fold.
-   *
-   *  A cue raises when the chat is NOT (active AND page-visible) and its state is
-   *  an unacknowledged cue. Both halves of that condition are required: keyed on
-   *  "is this the active chat" alone it swallows the cue of the very chat the
-   *  reader left running, which is the single-chat case — one chat is necessarily
-   *  the active one — and precisely the case these surfaces exist for. So a cue
-   *  latching on a HIDDEN page raises them, and is acknowledged when the reader
-   *  comes back.
-   *
-   *  Both rules are safe to run as a SWEEP rather than on a transition, which is
-   *  what lets this be the funnel: the un-acknowledge is idempotent, and
-   *  observing a watched chat's cue is a fact about the present, not an event.
-   *
-   *  Which branches this leaves: every cue is raised regardless of what the reader
-   *  is looking at — `done` and `failed` (the newest turn's own `turn_close.outcome`,
-   *  graded by `store.ts` `outcomeLatch`), `input` (an unanswered decision) and
-   *  `waiting` (`waiting_on_user`). So the acknowledgement path below is what keeps a
-   *  watched chat out of the count, and it is the ONLY thing that does. */
+  /**
+   * refresh is the RAISE rule: a cue raises when the chat is NOT (active AND page-visible)
+   * and its state is an unacknowledged cue. Both halves matter: "active" alone swallows the
+   * cue of the one chat left running on a hidden page. Safe as a SWEEP, so it is the funnel.
+   * The acknowledgement path is the ONLY thing keeping a watched chat out of the count.
+   */
   function refresh(): void {
     const watchedTab = wiring.pageVisible() ? wiring.activeTabID() : "";
     for (const candidate of wiring.candidates()) {
       if (candidate.status === "") {
-        // NO INFORMATION, not a state. `TabViewSpec.dotStatus` is absent on a tab
-        // whose dot has never been written (the tick between `openTab` and the
-        // store effect's first sweep), and `tabStatusFor` answers "" for a chat
-        // the store does not know. Neither is evidence that a cue ENDED, so
-        // neither may drop an acknowledgement — doing so re-lit a dismissed cue
-        // on every reload, because the restore opens the tab before the sweep
-        // paints it.
+        // No information, not a state: a never-painted dot or a chat the store does not know is no
+        // evidence a cue ENDED, and dropping the acknowledgement re-lit it on every reload.
         continue;
       }
       if (!isCueStatus(candidate.status)) {
-        // The state moved off a cue (a new turn started, a decision was
-        // answered, the chat went idle), so the acknowledgement has done its job
-        // and the NEXT cue must be fresh. Also what keeps the map from holding an
-        // entry per chat forever.
+        // The state moved off a cue, so the next cue must be fresh; this also bounds the map.
         seen.forget(candidate.id);
       } else if (candidate.id === watchedTab) {
         seen.mark(candidate.id, candidate.status);
@@ -499,23 +349,14 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
           seen.mark(candidate.id, candidate.status);
         }
       }
-      // The ACTIVE chat is acknowledged whether or not its row is in view — its
-      // transcript is what fills the screen, which is the case the mobile drawer
-      // hides the row for — and refresh's watched-chat rule is what does it, since
-      // this method has already established that the page is visible. Naming the
-      // active chat in the loop above as well was dead: it could only ever mark
-      // what the line below marks anyway.
+      // refresh's watched-chat rule acknowledges the ACTIVE chat, row in view or not (the page
+      // is visible here).
       refresh();
     },
 
     ackSwitch(tabID: string): void {
-      // Switching to a chat means looking at it. Gated on page visibility
-      // because the boot restore activates a tab too, and a page restored into a
-      // background browser tab must not have its cue swallowed by that.
-      //
-      // Not covered by refresh's watched-tab rule: the tab store announces the
-      // switch from inside its own emit, so `activeTabID()` can still name the
-      // outgoing tab at this moment.
+      // Switching to a chat means looking at it, gated on visibility: the boot restore activates
+      // a tab too. refresh cannot cover it: `activeTabID()` may still name the outgoing tab.
       if (wiring.pageVisible()) {
         const candidate = wiring.candidates().find((c) => c.id === tabID);
         if (candidate !== undefined) {
@@ -532,31 +373,22 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
   };
 }
 
-// ---------------------------------------------------------------------------
-// The browser binding — the only part of this file that touches globals
-// ---------------------------------------------------------------------------
+// The browser binding: the only part of this file that touches globals.
 
-/** Is the page in front of the reader? visibilityState is the only reliable
- *  test: document.hasFocus() is false for a visible-but-unfocused window, where
- *  the chat IS on screen. Same signal notify.ts reads, for the same decision.
- *
- *  There is no `isWatching(chatID)` beside it: a finished turn reads `done` whoever is
- *  watching, so `refresh` is the only reader of that condition and derives it from its
- *  own injected wiring. */
+/**
+ * Is the page in front of the reader? visibilityState is the reliable test:
+ * document.hasFocus() is false for a visible-but-unfocused window. Same signal notify.ts
+ * reads.
+ */
 export function pageVisible(): boolean {
   return document.visibilityState !== "hidden";
 }
 
-/** Whether an element is presented to the reader at all: not hidden by CSS, and
- *  somewhere inside the viewport.
- *
- *  Both tests, and the second is not a fallback for the first. checkVisibility()
- *  answers the CSS questions (display:none, visibility:hidden,
- *  content-visibility) and says nothing about geometry, so a drawer parked at
- *  `translateX(-100%)` is fully "visible" to it — and that drawer is the case
- *  that matters most here. Between them the closed drawer, the mobile breakpoint
- *  and any future desktop collapse are all covered without this code knowing that
- *  any of them exist. */
+/**
+ * Whether an element is presented: not hidden by CSS (checkVisibility()) AND inside the
+ * viewport. checkVisibility() ignores geometry, so the `translateX(-100%)` drawer needs the
+ * second test.
+ */
 function surfaceVisible(el: HTMLElement): boolean {
   const probe = (el as { checkVisibility?: () => boolean }).checkVisibility;
   if (typeof probe === "function" && !probe.call(el)) {
@@ -573,18 +405,11 @@ function surfaceVisible(el: HTMLElement): boolean {
   );
 }
 
-/** The chat ids whose sidebar row the reader can actually see: the sidebar itself
- *  presented, and the row's box FULLY inside `#tab-list`'s own box.
- *
- *  Fully, not partially, and the asymmetry is deliberate. A half-clipped row
- *  stays unacknowledged, so the count occasionally lingers over a row the reader
- *  could in fact read — the opposite error would blank a cue nobody ever saw,
- *  which is the one failure this whole feature exists to prevent. Lingering is
- *  dismissible; a lost cue is not recoverable.
- *
- *  The containment test is transform-invariant, which is what makes it correct
- *  while the mobile drawer is still animating in: the rows and the clip box sit
- *  in the same transformed subtree, so a translate moves both identically. */
+/**
+ * The chat ids whose sidebar row is FULLY inside `#tab-list`'s box, with the sidebar
+ * presented. Fully: a lingering count is dismissible, a cue blanked unseen is not. The test
+ * is transform-invariant, so it holds while the drawer animates.
+ */
 export function rowsInView(sidebar: HTMLElement, tabList: HTMLElement): string[] {
   if (!surfaceVisible(sidebar)) {
     return [];
@@ -629,14 +454,8 @@ function browserCueSeenStorage(): CueSeenStorage {
 /** browserAttentionEnv binds the three sinks to the real browser. Every
  *  capability decision is made HERE, once, so the core never probes for one. */
 export function browserAttentionEnv(): AttentionEnv {
-  // The base title is captured ONCE, from what the document was served with, so
-  // the sink composes prefix + base rather than asserting a constant over it.
-  // The retired `setBadge` hardcoded its own copy of the <title> literal with
-  // nothing pinning the two together, so editing static/index.html's title lost
-  // silently to the first count write. Capturing it deletes the second literal
-  // instead of adding a test to guard it. Reading document.title back on each
-  // write would be the bug this avoids: the current value already carries a
-  // prefix, so repeated writes would compound.
+  // The base title is captured ONCE, so the sink composes prefix + base without a second
+  // copy of the <title> literal. Reading document.title back would compound the prefix.
   const base = document.title;
   const env: AttentionEnv = {
     titlePrefix: (text: string): void => {
@@ -646,23 +465,15 @@ export function browserAttentionEnv(): AttentionEnv {
     },
   };
 
-  // The Badging API, read through `unknown` for the same reason notify.ts reads
-  // Notification that way: it is absent on most browsers and must degrade rather
-  // than be asserted. Installed apps only — a badge lives on an app icon, which
-  // exists only after the app is installed.
+  // The Badging API, read through `unknown` like notify.ts's Notification: absent on most
+  // browsers, and only for installed apps.
   const nav: unknown = globalThis.navigator;
   const setAppBadge = (nav as { setAppBadge?: unknown } | undefined)?.setAppBadge;
   const clearAppBadge = (nav as { clearAppBadge?: unknown } | undefined)?.clearAppBadge;
   if (typeof setAppBadge === "function") {
     env.setBadge = (count: number): void => {
-      // Always a NUMBER, never the spec's bare flag form: iOS renders nothing at
-      // all for `setAppBadge()` with no argument. Zero clears, via clearAppBadge
-      // where it exists (the documented way) and setAppBadge(0) otherwise.
-      //
-      // Both return promises that reject on an unsupported platform, so the
-      // rejection is swallowed: a badge the OS declines to paint is not an error
-      // this page can act on, and an unhandled rejection inside a status sweep
-      // surfaces as a page fault. A synchronous throw is the same non-event.
+      // Always a NUMBER: iOS renders nothing for a bare `setAppBadge()`. Zero clears. Rejections
+      // and throws are swallowed: an unhandled rejection in a status sweep is a page fault.
       try {
         const call =
           count > 0
@@ -679,11 +490,8 @@ export function browserAttentionEnv(): AttentionEnv {
     };
   }
 
-  // EVERY icon link, not one of them: which link a browser picks differs (Chrome
-  // prefers the SVG), so mutating a single element is unreliable.
-  // apple-touch-icon is deliberately NOT matched — `rel~="icon"` does not select
-  // it — because the OS caches that icon when the app is installed and a swap
-  // cannot reach it.
+  // EVERY icon link: browsers pick different ones. apple-touch-icon is NOT matched; the OS
+  // caches it at install.
   const links = [...document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]')];
   // Each original captured once, and every variant computed from the ORIGINAL
   // rather than from the current value, so repeated swaps cannot compound.
@@ -710,22 +518,12 @@ export function browserAttentionEnv(): AttentionEnv {
   return env;
 }
 
-/** initAttention wires the controller to the app and returns its disposer.
- *
- *  THE RECOMPUTE FUNNEL is `subscribeTabCues` (tabs.ts), which watches the two
- *  disjoint write paths that can change the fold's input: `stateVersion` for the
- *  chat-tab SET (every list mutation ends in emit()) and `dotVersion` for every
- *  dot write (setTabStatus / setTabDirty deliberately do not emit). Covering one
- *  and not the other is how the count goes stale after a chat is closed.
- *
- *  The acknowledgement gestures are keyed on WHAT THE READER CAN SEE, which is
- *  one rule where the reference has two. It has no horizontal tab strip to hide
- *  and no switcher tray to expand: the tab list is a VERTICAL list inside a
- *  sidebar that is persistent on desktop and a full-viewport drawer on mobile, so
- *  "returning to the page" and "opening the drawer" are the same gesture in two
- *  layouts. But `#tab-list` scrolls, and the forgotten background chat is
- *  precisely the one likely to be below the fold, so a wholesale clear on either
- *  gesture would blank a cue the reader never saw. */
+/**
+ * initAttention wires the controller to the app and returns its disposer. The recompute
+ * funnel is `subscribeTabCues`, watching `stateVersion` (the chat-tab SET) and
+ * `dotVersion` (every dot write); missing either leaves the count stale after a close.
+ * Acknowledgement keys on WHAT THE READER CAN SEE, so the scrolled-off chat keeps its cue.
+ */
 export function initAttention(): () => void {
   const surfaces = createAttention(browserAttentionEnv());
   const controller = createAttentionController({
@@ -747,9 +545,7 @@ export function initAttention(): () => void {
     }),
   );
 
-  // A chat that goes away takes its acknowledgement with it. closeTab is the only
-  // production path that removes a tab from the store, so one hook there is the
-  // whole coverage; a non-chat id is a no-op because the map has no entry for it.
+  // closeTab is the only production path removing a tab, so one hook drops its acknowledgement.
   setOnTabClosed(controller.forget);
 
   const onVisible = (): void => {
@@ -760,22 +556,9 @@ export function initAttention(): () => void {
     document.removeEventListener("visibilitychange", onVisible);
   });
 
-  // The drawer opening is a CLASS toggle, which is not an event, so it is watched
-  // rather than called: an observer on the attribute covers the menu button, the
-  // edge swipe (platform.ts) and any future gesture by construction, where a call
-  // at each toggle site would be a rule living in several places — there are two
-  // sites that open it today against five that close it, and the button's is a
-  // `toggle`, which would also need a did-it-end-open check.
-  //
-  // Paired with transitionend because the mutation lands BEFORE the transform
-  // animates: at that instant the drawer's rect is still off-viewport, so the
-  // geometric test correctly declines and the settled event is what acknowledges.
-  // The pair covers both directions honestly — on a CLOSE the mutation fires
-  // while the rows are still on screen (the reader was just looking at them, so
-  // acknowledging is right) and the settled event then finds nothing in view —
-  // and it covers a platform with the transition disabled, where the mutation's
-  // rect is already exact. Scoped to the sidebar itself: transitionend bubbles,
-  // and every tab row animates its own background on hover.
+  // The drawer opening is a CLASS toggle, so it is observed, covering every gesture by
+  // construction. Paired with transitionend: the mutation lands before the transform, so the
+  // settled event acknowledges. Scoped to the sidebar: transitionend bubbles from rows.
   const onSettled = (e: TransitionEvent): void => {
     if (e.target === $.sidebar) {
       controller.ackSeen();
@@ -794,27 +577,10 @@ export function initAttention(): () => void {
     drawer.disconnect();
   });
 
-  // Hand the page's own icon back before the page GOES AWAY, which is a different
-  // question from the page being hidden and needs a different event. A browser
-  // remembers ONE icon per URL and renders it for the bookmark, the history row
-  // and the new-tab tile, so a tab closed while a cue was lit leaves a status
-  // variant standing in for this app until the page is next loaded.
-  //
-  // `pagehide`, and deliberately NOT `freeze`. freeze fires for a background tab
-  // the browser is conserving resources on (Android after five minutes in the
-  // background; desktop for a collapsed tab group and, since Chrome 133, a
-  // CPU-heavy tab under Energy Saver), and that tab is STILL in the strip showing
-  // its icon — restoring there would blank the cue in exactly the case the cue
-  // exists for. pagehide fires on unload, tab close and bfcache entry, where no
-  // strip entry is left to render.
-  //
-  // Through apply() rather than env.setIcon(null), because the sinks are
-  // change-gated on the last applied value: writing behind that memo would leave
-  // it believing the variant is still up, and a page restored from the bfcache
-  // would then never repaint it. Which is what pageshow is for — a bfcache
-  // restore re-runs the fold, so the cue comes back for a page that did not
-  // actually go away. Best-effort on a real unload, where the icon write races
-  // the teardown, and a no-op when nothing was lit.
+  // Restore the page's own icon before the page GOES AWAY: a browser remembers one icon per
+  // URL for bookmarks and history. `pagehide`, NOT `freeze`, which fires for a background
+  // tab still showing its icon. Through apply() so the change gate stays true and a bfcache
+  // restore (pageshow) repaints.
   const onPageGone = (): void => {
     surfaces.apply(NO_ATTENTION);
   };

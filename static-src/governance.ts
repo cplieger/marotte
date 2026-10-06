@@ -1,28 +1,11 @@
-// ---------------------------------------------------------------------------
-// Organization / account governance policy (v3 _kiro/governance/state).
-//
-// KAS pushes an account/workspace feature-flag policy on every session; marotte
-// caches the latest server-side and serves a snapshot at GET /api/governance so
-// a fresh page load can read it with no chat open, then keeps it live via the
-// governance_state SSE. This module is the single client owner of that state:
-//
-//   - initGovernance()        fetch the snapshot on load + subscribe to the SSE
-//   - currentGovernance()     the latest known state (or null before first read)
-//   - featureDisabled(key)    true only when KNOWN and that feature is off
-//   - onGovernanceChange(fn)  subscribe (fires immediately if already known)
-//
-// It also renders the read-only "Organization policy" disclosure in
-// Settings → General (its own surface, like account-usage.ts owns the footer).
-// Consumers that gate their own affordances: mcp-ui.ts (MCP availability) and
-// code-refs.ts (the licensed-code attribution chip). Everything here is
-// read-only — the flags are org-controlled, never user-settable.
-// ---------------------------------------------------------------------------
+// The one client owner of the governance snapshot (GET /api/governance plus the governance_state SSE), the
+// org-policy disclosure and the setting locks.
 
 import { el } from "@cplieger/reactive";
 import { onSSE } from "./bus.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeGovernanceStatePayload } from "./wire/decoders.gen.js";
-import type { GovernanceStatePayload, GovernanceFeatures } from "./types.js";
+import type { GovernanceStatePayload, GovernanceFeatures, GovernanceLock } from "./types.js";
 
 let current: GovernanceStatePayload | null = null;
 const listeners = new Set<(g: GovernanceStatePayload) => void>();
@@ -32,16 +15,37 @@ export function currentGovernance(): GovernanceStatePayload | null {
   return current;
 }
 
-/** True only when governance is KNOWN and the named feature is off. Unknown
- *  governance → false: never imply a feature is disabled before the server has
- *  told us the real policy (the all-false zero value is "unknown", not "off"). */
+/** True only when governance is known and the feature is off. The all-false zero value means unknown, not off. */
 export function featureDisabled(key: keyof GovernanceFeatures): boolean {
   return current !== null && current.known && !current.features[key];
 }
 
-/** Subscribe to governance changes. Fires immediately with the current state
- *  when one is already known, then again on every update. No unsubscribe: the
- *  consumers (settings panels, mcp-ui) live for the app's lifetime. */
+/**
+ * The lock an administrator places on a setting, by the server's Lock* constants, or undefined. Not gated on
+ * `known`: the machine administrator's rules lock settings on any account.
+ */
+export function settingLock(key: string): GovernanceLock | undefined {
+  return current?.locks?.[key];
+}
+
+/**
+ * Why KAS's `disabledReason` says a feature is off. `admin`: the organization turned it off, or the reason is absent
+ * or unknown. `unavailable`: KAS failed closed reading the organization's settings, which must not read as an
+ * administrator decision. The raw token is never shown.
+ */
+export type GovernanceReasonKind = "admin" | "unavailable";
+
+export function governanceReasonKind(reason: string | undefined): GovernanceReasonKind {
+  return reason === "api_failure" || reason === "no_endpoint" ? "unavailable" : "admin";
+}
+
+/** The sentence an `unavailable` reason reads as. */
+export const GOVERNANCE_UNAVAILABLE = "Couldn't load your organization's settings.";
+
+/**
+ * Subscribe to governance changes. Fires immediately when a state is known, then on every update. No unsubscribe:
+ * the consumers live for the app's lifetime.
+ */
 export function onGovernanceChange(fn: (g: GovernanceStatePayload) => void): void {
   listeners.add(fn);
   if (current !== null) {
@@ -52,34 +56,91 @@ export function onGovernanceChange(fn: (g: GovernanceStatePayload) => void): voi
 function set(g: GovernanceStatePayload): void {
   current = g;
   renderOrgPolicy(g);
+  paintSettingLocks();
+  document
+    .getElementById("security-profile-admin")
+    ?.classList.toggle("hidden", g.admin_restricted !== true);
   for (const fn of listeners) {
     fn(g);
   }
 }
 
-/** Fetch the snapshot on load + subscribe to live updates. Call once from
- *  app.ts init. The snapshot may be Known=false (no bridge has started yet);
- *  the SSE fills it in once any session pushes the policy. */
+/**
+ * Fetch the snapshot and subscribe to live updates; call once from app.ts. The snapshot may be Known=false until a
+ * session pushes the policy over SSE.
+ */
 export function initGovernance(): void {
   onSSE("governance_state", (_chatID, p) => {
     set(p);
   });
   void apiGetTyped<GovernanceStatePayload>("/api/governance", decodeGovernanceStatePayload).then(
     (g) => {
-      // Only adopt a KNOWN snapshot; a cold Known=false read carries no real
-      // policy, so leave `current` null (featureDisabled stays permissive).
-      if (g?.known === true) {
+      // A cold Known=false snapshot still carries the locks; consumers gate on `known` themselves. An SSE frame that landed
+      // first is newer than this response.
+      if (g !== null && current === null) {
         set(g);
       }
     },
   );
 }
 
-// --- Settings → General: read-only "Organization policy" disclosure ---
+/** A locked switch shows the required value, cannot be flipped, and names who set it. */
+const lockableSwitches: readonly { key: string; inputID: string }[] = [
+  { key: "workflows_enabled", inputID: "flag-workflows" },
+  { key: "inline_agents_enabled", inputID: "flag-inline-agents" },
+  { key: "content_collection_enabled", inputID: "flag-content-collection" },
+  { key: "telemetry.enabled", inputID: "flag-telemetry" },
+];
 
-/** Rows shown in the disclosure. mcp_enabled is deliberately omitted — it has
- *  its own dedicated affordance in Settings → Tools. Privacy-relevant flags
- *  are grouped first, then capability flags that lack a dedicated surface. */
+/**
+ * Write a switch's stored value: the only writer besides the user's click. While a lock pins the switch the value is
+ * held on the element, and `paintSettingLocks` restores it on unlock; the attribute marks a switch painted locked.
+ */
+export function writeSwitch(input: HTMLInputElement, value: boolean): void {
+  if (input.dataset["heldValue"] !== undefined) {
+    input.dataset["heldValue"] = String(value);
+    return;
+  }
+  input.checked = value;
+}
+
+/**
+ * Paint every lockable switch from the current governance, on every change and after each load, so a lock always
+ * wins over a stored value.
+ */
+export function paintSettingLocks(): void {
+  for (const row of lockableSwitches) {
+    const input = document.getElementById(row.inputID) as HTMLInputElement | null;
+    const text = input?.closest(".section-option")?.querySelector<HTMLElement>(":scope > div");
+    if (input === null || text === null || text === undefined) {
+      continue;
+    }
+    const lock = settingLock(row.key);
+    const noteID = `${row.inputID}-lock`;
+    let note = document.getElementById(noteID);
+    input.disabled = lock !== undefined;
+    if (lock === undefined) {
+      const held = input.dataset["heldValue"];
+      if (held !== undefined) {
+        input.checked = held === "true";
+        delete input.dataset["heldValue"];
+      }
+      note?.remove();
+      input.removeAttribute("aria-describedby");
+      continue;
+    }
+    input.dataset["heldValue"] ??= String(input.checked);
+    input.checked = lock.value;
+    if (note === null) {
+      note = el("p", { className: "section-hint setting-lock", id: noteID });
+      text.appendChild(note);
+    }
+    note.textContent = lock.reason;
+    input.setAttribute("aria-describedby", noteID);
+  }
+}
+
+/** mcp_enabled has its own affordance in Settings → Tools. Privacy flags first, then capability flags with no surface. */
 const POLICY_ROWS: readonly { key: keyof GovernanceFeatures; label: string }[] = [
   { key: "prompt_logging", label: "Prompt logging" },
   { key: "usage_analytics", label: "Usage analytics" },
@@ -89,22 +150,20 @@ const POLICY_ROWS: readonly { key: keyof GovernanceFeatures; label: string }[] =
   { key: "code_reference_tracker", label: "Code-reference tracking" },
 ];
 
-/** Render (or hide) the read-only org-policy disclosure. Hidden until the real
- *  policy is known so the panel never shows an all-"Off" placeholder. */
+/** Shown only for a known enterprise policy: on a personal account no organization controls these flags. */
 function renderOrgPolicy(g: GovernanceStatePayload): void {
   const section = document.getElementById("general-governance-section");
   if (section === null) {
     return;
   }
-  if (!g.known) {
+  if (!g.known || g.is_enterprise !== true) {
     section.hidden = true;
+    section.replaceChildren();
     return;
   }
   section.hidden = false;
 
   const grid = el("dl", { className: "about-grid governance-grid" });
-  grid.appendChild(el("dt", {}, "Account"));
-  grid.appendChild(el("dd", {}, g.is_enterprise === true ? "Enterprise (managed)" : "Individual"));
   for (const row of POLICY_ROWS) {
     grid.appendChild(el("dt", {}, row.label));
     grid.appendChild(policyValue(g.features[row.key]));
@@ -119,14 +178,12 @@ function renderOrgPolicy(g: GovernanceStatePayload): void {
     ),
     grid,
   ];
-  const reason = (g.disabled_reason ?? "").trim();
-  if (reason !== "") {
-    children.push(el("p", { className: "governance-reason" }, reason));
+  if (governanceReasonKind(g.disabled_reason) === "unavailable") {
+    children.push(el("p", { className: "governance-reason" }, GOVERNANCE_UNAVAILABLE));
   }
   section.replaceChildren(...children);
 }
 
-/** A single On/Off value cell with a status class for styling. */
 function policyValue(on: boolean): HTMLElement {
   return el("dd", { className: on ? "governance-on" : "governance-off" }, on ? "On" : "Off");
 }

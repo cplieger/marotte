@@ -1,15 +1,6 @@
-// The boot: four reads in the first frame, three regions, one chat-list read.
-//
-// It was a five-`await` serial chain behind an opaque splash, and the whole app
-// waited on the slowest link — whoami, measured at p50 457 ms with three hard
-// 5-second timeouts in 88 reads. Nothing in that order was a data dependency, so
-// the shape under test here is: the reads are ISSUED TOGETHER, each answer is
-// adopted where it lands, and the identity verdict gates one sidebar row rather
-// than the app's existence.
-//
-// Every collaborator is mocked, because what is being tested is the ORDER the
-// boot issues its reads in and the branches it takes over their answers — none of
-// which involves what any of them does.
+// The boot: reads ISSUED TOGETHER in the first frame, each answer adopted where it lands,
+// and the identity verdict gating one sidebar row rather than the app. Every collaborator
+// is mocked: under test are the ORDER of reads and the branches over their answers.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as BootModule from "./boot.js";
@@ -32,17 +23,11 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
 }
 
 const m = vi.hoisted(() => {
-  // The router's suppression COUNT, modelled rather than left an unrelated spy.
-  // `pushRoute` and `replaceRoute` return early while the depth is above zero
-  // (router.ts, where the count's own semantics are pinned), so the depth a URL
-  // write is made AT is the whole question at each of the boot's two window
-  // boundaries — and while this was a bare `vi.fn()` both boundaries were wrong
-  // and the suite was green.
+  // The router's suppression COUNT, modelled: `pushRoute`/`replaceRoute` return early above
+  // zero (router.ts), so the depth a write is made AT is the question at each window edge.
   const suppression = { depth: 0 };
-  // The router's location CLAIM, modelled for the same reason the depth is: it is
-  // what decides whether a push to a DIFFERENT location lands (router.ts), so
-  // whether one stands at each boot-time write is the question, not that the
-  // function was called.
+  // The router's location CLAIM, modelled: it decides whether a push to a DIFFERENT location
+  // lands.
   const claim = { path: "" };
   /** The depth each URL-writing call was made at, in order. */
   const depths = {
@@ -78,9 +63,7 @@ const m = vi.hoisted(() => {
     initPostAuthUI: vi.fn(),
     showLoginModal: vi.fn(),
     createSession: vi.fn(),
-    // Records the depth because `activateTab`'s onShow ends in `pushRoute`
-    // (tabs.ts): what this call does to the URL is decided by the window it is
-    // made inside.
+    // Records the depth: `activateTab`'s onShow ends in `pushRoute`.
     activateRestoredTab: vi.fn(() => {
       depths.activate.push(suppression.depth);
     }),
@@ -96,10 +79,8 @@ const m = vi.hoisted(() => {
     getActiveId: vi.fn(),
     getActiveTabRoute: vi.fn(),
     setStatus: vi.fn(),
-    // Records the claim standing when the route is applied: the two lazily-imported
-    // arms of route-apply.ts's `applyRoute` open their view after the call returns, so the
-    // claim has to outlive the promise rather than the call. TYPED, because the
-    // origin cases below read the second argument back off `mock.calls`.
+    // Records the claim standing when the route is applied: two lazy arms open their view after
+    // the call returns, so the claim outlives the promise. Typed for the origin cases.
     applyRoute: vi.fn<(route: Route, origin?: RouteOrigin) => Promise<void>>(() => {
       claims.applyRoute.push(claim.path);
       return Promise.resolve();
@@ -206,9 +187,7 @@ vi.mock("./router.js", () => ({
   claimLocation: m.claimLocation,
   releaseLocation: m.releaseLocation,
 }));
-// `parseRoute` moved to the DOM-free half, so the stub follows it there. Spread the
-// original: this module carries `buildPath` too, and Browser Mode links for real, so a
-// partial factory would break every importer of the name it left out.
+// Spread the original: Browser Mode links for real, and `buildPath` lives here too.
 vi.mock("./route-path.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RoutePath>()),
   parseRoute: m.parseRoute,
@@ -222,9 +201,7 @@ vi.mock("./status.js", () => ({
 }));
 vi.mock("./versions.js", () => ({ loadVersions: m.loadVersions }));
 vi.mock("./retention.js", () => ({ refreshRetention: m.refreshRetention }));
-// `rebuildLiveRuns` is here for the case that asserts the boot never calls it: with the
-// export absent from the factory, re-adding that call would fail to LINK rather than fail
-// the assertion, which reports a different defect than the one that case is about.
+// Present so re-adding a boot call to it fails the assertion, not the LINK.
 vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: m.rebuildLiveRuns,
   registerRunStateDemand: m.registerRunStateDemand,
@@ -259,10 +236,10 @@ vi.mock("./reload-guard.js", () => ({
   noteBootAlive: m.noteBootAlive,
 }));
 
-/** A fresh module per test: `postAuthInitDone` and the connected latch are module
- *  state, and `vi.resetModules()` does not re-evaluate a module in Browser Mode —
- *  the module map is URL-keyed, so a busted specifier is what mints a new
- *  instance. The `.ts` extension is load-bearing for coverage attribution. */
+/**
+ * A fresh module per test: `vi.resetModules()` does not re-evaluate in Browser Mode, so a
+ * busted specifier mints one (`.ts` for coverage attribution).
+ */
 let bootSeq = 0;
 async function freshBoot(): Promise<typeof BootModule> {
   bootSeq++;
@@ -405,9 +382,7 @@ describe("the identity verdict gates one row", () => {
   });
 
   it("paints an EMPTY workspace's strip while whoami is still pending", async () => {
-    // The one boot that used to wait: a first run has no chats, and the starter
-    // chat needs the verdict — so the whole strip sat behind a read measured at a
-    // 5-second timeout.
+    // A first run has no chats and the starter chat needs the verdict; nothing else waits.
     const identity = deferred<IdentityVerdict>();
     m.resolveIdentity.mockReturnValue(identity.promise);
     m.getSessions.mockReturnValue([]);
@@ -441,9 +416,7 @@ describe("the identity verdict gates one row", () => {
     expect(m.createSession).not.toHaveBeenCalled();
     // No post-auth fetches on the login screen.
     expect(m.initPostAuthUI).not.toHaveBeenCalled();
-    // The held SSE frames are released anyway: nothing will hydrate the store
-    // behind a login modal, and leaving the gate shut stalls the stream until the
-    // watchdog fires.
+    // Held SSE frames are released anyway: nothing hydrates behind a login modal.
     expect(m.markHydrated).toHaveBeenCalled();
   });
 
@@ -477,9 +450,8 @@ describe("the identity verdict gates one row", () => {
 describe("the chat list is read once per cold boot", () => {
   it("does not re-read it on the connection the boot itself rides", async () => {
     const { startBoot, onTransportStatus } = await freshBoot();
-    // app.ts opens the transport BEFORE the boot runs, so this is the order a
-    // cold load produces. The hook used to fire `loadList` here as well, which is
-    // what made every boot fetch the whole chat list twice.
+    // app.ts opens the transport BEFORE the boot, so a cold load's first `connected` arrives
+    // mid-read and must not fetch the list a second time.
     onTransportStatus("connected");
     await startBoot({ applyRoute: m.applyRoute });
 
@@ -497,12 +469,8 @@ describe("the chat list is read once per cold boot", () => {
   });
 
   it("recovers a read that FAILED while the stream was already up", async () => {
-    // THE CASE NOTHING ELSE COVERS, and the reason the latch carries an answer
-    // rather than only "has it settled". The connection the boot rides arrives
-    // while the read is in flight, so the hook skips it; the read then fails; and
-    // the stream never dropped, so no later `connected` arrives to carry the fetch.
-    // The store kept whatever the snapshot painted until the user took the toast's
-    // Reload.
+    // The case the latch's ANSWER half exists for: the boot's connection is skipped, the read
+    // fails, and a stream that never dropped sends no later `connected`.
     m.loadList.mockResolvedValue(false);
     m.getSessions.mockReturnValue([]);
 
@@ -536,11 +504,8 @@ describe("the chat list is read once per cold boot", () => {
   });
 
   it("reads it on the FIRST connect when the boot's own read failed", async () => {
-    // An offline boot: every read fails and the EventSource never opens. The link
-    // comes up seconds later and the stream connects for the first time, carrying no
-    // Last-Event-ID — so nothing declares a gap, and the boot's own read answered
-    // nothing. This is the one connect that has to fetch, and a latch on "a
-    // connection happened" swallowed it, leaving the store empty behind a toast.
+    // An offline boot: the first connect, seconds later, carries no Last-Event-ID and the
+    // boot's read answered nothing, so this connect must fetch.
     m.loadList.mockResolvedValue(false);
     m.getSessions.mockReturnValue([]);
 
@@ -554,16 +519,11 @@ describe("the chat list is read once per cold boot", () => {
   });
 });
 
-// Two windows, and every boot-time URL write falls on one side or the other.
-// `pushRoute`/`replaceRoute` return early while the depth is above zero, so the
-// depth a call is made at IS whether it lands: the activation must not write, and
-// the canonicalization must.
+// Two windows: the activation must not write the URL, the canonicalization must.
 describe("the push-suppression window", () => {
   it("covers the resumed activation, so a deep-linked launch survives to be read", async () => {
-    // `activateRestoredTab` ends in `pushRoute` (tabs.ts). Unsuppressed it adds a
-    // history entry Back walks into, and rewrites location.pathname before
-    // `applyInitialRoute` parses it — resolving a launch at /chat/{id} to whatever
-    // tab the snapshot was last on.
+    // Unsuppressed, `activateRestoredTab`'s `pushRoute` adds a history entry and rewrites the
+    // path before `applyInitialRoute` reads it.
     m.paintBootSnapshot.mockReturnValue(true);
 
     const { startBoot } = await freshBoot();
@@ -580,10 +540,7 @@ describe("the push-suppression window", () => {
   });
 
   it("is CLOSED before the URL is canonicalized", async () => {
-    // A boot at "/" with a chat on screen. `applyInitialRoute`'s `replaceRoute` is
-    // the one write that makes the address bar agree with what is visible, and the
-    // restored tab's own boot-time push was suppressed — so suppressing this too
-    // leaves the URL naming nothing.
+    // At "/" with a chat on screen, `replaceRoute` is the one write making the URL agree.
     m.getActiveId.mockReturnValue("c1");
     m.getActive.mockReturnValue({ id: "c1" });
 
@@ -595,9 +552,7 @@ describe("the push-suppression window", () => {
   });
 
   it("is CLOSED before a share is delivered", async () => {
-    // A `?agent=planner` launch creates a chat and activates it; inside the window
-    // that activation's push AND the canonicalization that would name it are both
-    // no-ops, so the launch ends on a URL naming nothing.
+    // A `?agent=planner` launch's push and canonicalization must land outside the window.
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
@@ -605,9 +560,7 @@ describe("the push-suppression window", () => {
   });
 
   it("leaves the tab-set read OUTSIDE it, and the claim guards the deep link across it", async () => {
-    // A window spanning an await silences every push the shell makes while the
-    // request is out. What protects the deep link across these awaits is the
-    // location claim, not the window.
+    // A window spanning an await silences every shell push; the claim protects the deep link.
     const depthAtListTabs: number[] = [];
     m.listTabs.mockImplementation(() => {
       depthAtListTabs.push(m.suppression.depth);
@@ -623,9 +576,8 @@ describe("the push-suppression window", () => {
   });
 });
 
-// The location CLAIM. It replaces what the widened suppression window was doing
-// for a deep link, and it is what makes narrowing that window safe: a claim
-// silences only a push to a DIFFERENT location, so the claimed one still lands.
+// The location claim silences only a push to a DIFFERENT location, which makes the narrow
+// window safe.
 describe("the location claim", () => {
   it("claims the location the DOCUMENT loaded at, before anything can push", async () => {
     const { startBoot } = await freshBoot();
@@ -648,11 +600,8 @@ describe("the location claim", () => {
   });
 
   it("outlives an opener that resolves after applyRoute RETURNS", async () => {
-    // The measured defect: `/run/{id}` reaches its opener through a dynamic import,
-    // so the view is not open when the call returns. The claim must be released on
-    // the PROMISE, or the window it defends closes one tick too early.
-    // `undefined` rather than `void`: the boot only awaits the promise, and the
-    // linter forbids `void` as a type argument.
+    // `/run/{id}` opens through a dynamic import, so the claim is released on the PROMISE.
+    // `undefined`, not `void`: the linter forbids `void` as a type argument.
     const opened = deferred<undefined>();
     m.parseRoute.mockReturnValue({ kind: "run", id: "wf_1" });
     m.applyRoute.mockReturnValue(opened.promise);
@@ -680,10 +629,8 @@ describe("the location claim", () => {
   });
 
   it("is released when a throw lands BEFORE the workspace region exists", async () => {
-    // The region's own `finally` is the release on every other path, and it cannot
-    // cover this one: the throw is in the synchronous window between the claim and
-    // that region being constructed. An unreleased claim makes `pushRoute` refuse
-    // every navigation to a different pathname for the life of the page.
+    // A throw between the claim and its region's `finally` must still release it, or
+    // `pushRoute` refuses every other pathname for the page's life.
     m.bootMode.mockReturnValue("reduced");
     m.blur.mockImplementation(() => {
       throw new Error("no composer");
@@ -698,15 +645,12 @@ describe("the location claim", () => {
   });
 });
 
-// A resume paints what this screen was showing before the network answers. The
-// ordering is the whole property: the paint happens ahead of the chat fold, and
-// the boot's own activation is not run a second time over it.
+// A resume paints before the network answers: ahead of the chat fold, with no second
+// activation.
 describe("the local snapshot", () => {
   it("drops the hint when the chat list answers first", async () => {
-    // The interleaving a resume produces: a warm server against a cold IndexedDB
-    // open. `paintBootSnapshot` REPLACES the chat store, so painting here would
-    // substitute the hint for the answer it was supposed to be superseded by — and
-    // nothing on the boot path reads the list again.
+    // A warm server against a cold IndexedDB open: `paintBootSnapshot` REPLACES the store, so
+    // painting after the answer would substitute the hint for it.
     const snapshot = deferred<BootSnapshot | null>();
     m.readBootSnapshot.mockReturnValue(snapshot.promise);
 
@@ -727,21 +671,16 @@ describe("the local snapshot", () => {
   });
 
   it("paints the hint when the chat list FAILS to answer", async () => {
-    // The resume the snapshot exists for: an unreachable server. `loadList` resolves
-    // FALSE rather than rejecting and retries nothing, so it settles well ahead of a
-    // cold IndexedDB open — and counting that as an answer discarded the hint on the
-    // one boot with nothing else to show, then minted a starter chat over the empty
-    // store.
+    // An unreachable server: `loadList` resolves FALSE early, and counting that as an answer
+    // would discard the hint on the one boot with nothing else to show.
     const snapshot = deferred<BootSnapshot | null>();
     m.loadList.mockResolvedValue(false);
     m.readBootSnapshot.mockReturnValue(snapshot.promise);
     m.paintBootSnapshot.mockReturnValue(true);
 
     const { startBoot } = await freshBoot();
-    // A macrotask out, which is what makes the failed fetch the first to settle.
-    // Armed AFTER the import: the import spans macrotasks of its own, so a timer
-    // set before it fires inside it and both arms are already settled by the time
-    // the race is built — which is not the interleaving under test.
+    // A macrotask out, armed AFTER the import (which spans macrotasks), so the failed fetch
+    // settles first.
     setTimeout(() => {
       snapshot.resolve(SNAPSHOT);
     }, 0);
@@ -751,10 +690,8 @@ describe("the local snapshot", () => {
   });
 
   it("finishes the workspace when the hint's paint throws", async () => {
-    // A hint is best-effort: everything below it in `restoreWorkspace` is the
-    // authoritative restore, and a throw here used to skip the lot — no
-    // `markHydrated` (so every held SSE frame waits out the 20s timeout), no tab
-    // set, no route, and a tab strip shimmering forever.
+    // A throw in the best-effort hint must not skip the authoritative restore (hydration, tab
+    // set, route).
     m.paintBootSnapshot.mockImplementation(() => {
       throw new Error("a row would not build");
     });
@@ -772,9 +709,8 @@ describe("the local snapshot", () => {
   });
 
   it("falls back to the tab set's activation when the resumed one throws", async () => {
-    // A resume that got as far as its activation and failed there has NOT restored
-    // the workspace, so the tab set's own activation must still run — which is why
-    // `resumed` is only true once the whole hint path completed.
+    // A resume that failed at its activation did not restore, so the tab set's activation
+    // runs.
     m.paintBootSnapshot.mockReturnValue(true);
     m.activateRestoredTab.mockImplementationOnce(() => {
       throw new Error("onShow rejected");
@@ -788,9 +724,8 @@ describe("the local snapshot", () => {
   });
 
   it("stops capturing and drops the record when the user logs out", async () => {
-    // The door with a button. The page keeps running after a logout, so a live
-    // capture goes on writing a signed-out user's workspace to disk and the next
-    // boot paints it before whoami can say `signed_out`.
+    // After a logout the page keeps running; a live capture would write the signed-out
+    // workspace for the next boot to paint.
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
     expect(m.clearBootSnapshot).not.toHaveBeenCalled();
@@ -803,12 +738,8 @@ describe("the local snapshot", () => {
   });
 
   it("forgets every per-device record on a logout, not only the snapshot", async () => {
-    // FOUR RECORDS, THREE OWNERS. The snapshot is the one this phase added; the
-    // three localStorage blobs (the UI-state document, the turn folds, the
-    // dismissed banners) predate it and a sign-out left all three. Clearing the
-    // fold KEY alone forgets nothing either — `persist` rewrites the whole document
-    // out of the in-memory map, so the next fold would put the previous user's
-    // folds straight back.
+    // FOUR RECORDS, THREE OWNERS: the snapshot and three localStorage blobs. Clearing the fold
+    // KEY alone is not enough: `persist` rewrites it from the in-memory map.
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
@@ -831,10 +762,8 @@ describe("the local snapshot", () => {
   });
 
   it("restarts the capture on a login in the same page, after a logout stopped it", async () => {
-    // `initPostAuth` is latched, and the capture used to sit INSIDE the latch: a
-    // signed-in boot spent the latch, the logout disposed the capture, and
-    // `onLoginSuccess`'s call was then a no-op — so the record stayed absent for the
-    // rest of the page's life. The capture's lifetime is the SESSION, not the page.
+    // The capture's lifetime is the SESSION, not the page: it sits outside `initPostAuth`'s
+    // latch, so a login after a logout restarts it.
     const { startBoot, initPostAuth } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
     expect(m.startBootSnapshot).toHaveBeenCalledTimes(1);
@@ -951,15 +880,8 @@ describe("the tab strip's pending state", () => {
   });
 });
 
-// The tab set's own boot read. The boot CONNECTION runs no reconcile by design
-// (sse-adapter.ts: the first hello of a page load holds nothing to digest and
-// clears nothing), and `app.ts` answers a reconcile with `listTabs` — so a boot read
-// that never landed is the one hole neither mechanism covers, and it left the stale
-// IndexedDB paint standing with every tab that had been closed elsewhere still on
-// screen.
-//
-// Asserted by CALL COUNT throughout: a "nothing broke" assertion passes with the
-// recovery deleted.
+// The tab set's boot read: the boot connection runs no reconcile (sse-adapter.ts), so a
+// boot read that never landed is covered by nothing else. Asserted by CALL COUNT.
 describe("the tab set is re-read when the boot's own read failed", () => {
   /** The retry the tab-set notice offered. */
   function offeredTabRetry(): (() => void) | undefined {
@@ -968,9 +890,7 @@ describe("the tab set is re-read when the boot's own read failed", () => {
   }
 
   it("recovers a read that FAILED while the stream was already up", async () => {
-    // The case nothing else covers: the connection that would have carried a re-list
-    // arrived before the read settled, and a stream that never dropped delivers no
-    // later `connected`.
+    // The connection arrived before the read settled, and no later `connected` comes.
     m.listTabs.mockResolvedValue(false);
 
     const { startBoot, onTransportStatus } = await freshBoot();
@@ -1053,11 +973,9 @@ describe("the tab set is re-read when the boot's own read failed", () => {
   });
 });
 
-// The ORIGIN the boot's own location is applied under. A restored document load
-// names the tab this device was last on rather than one that still exists, so
-// applying it as a deep link RE-OPENED a tab closed on another device — server-side,
-// and broadcast back to every screen. `deep-link.ts` owns the decision; what is
-// under test here is that the boot states which kind of load this was.
+// The ORIGIN the boot's location is applied under: a restored load names the last tab
+// rather than one that still exists, and applying it as a deep link re-opens a tab closed
+// elsewhere. `deep-link.ts` decides; the boot states which kind of load this was.
 describe("the boot states where its location came from", () => {
   it("applies a restored document's location as a RESTORE", async () => {
     m.navigationOrigin.mockReturnValue("restore");
@@ -1085,9 +1003,8 @@ describe("the boot states where its location came from", () => {
   });
 });
 
-// The rapid-reload bound. `reload-guard.ts` owns the count and the threshold (and its
-// own suite pins them); what is under test here is what the boot WITHHOLDS once the
-// guard says reduced, and — just as load-bearing — that a full boot withholds nothing.
+// The rapid-reload bound (`reload-guard.ts` owns count and threshold): what a reduced boot
+// WITHHOLDS, and that a full boot withholds nothing.
 describe("a boot inside a reload loop", () => {
   it("paints no transcript, blurs the composer and says why", async () => {
     m.bootMode.mockReturnValue("reduced");
@@ -1129,9 +1046,7 @@ describe("a boot inside a reload loop", () => {
     // Capability, and a degraded runtime: what a reader in this state needs most.
     expect(m.initGovernance).toHaveBeenCalledTimes(1);
     expect(m.initRuntimeHealth).toHaveBeenCalledTimes(1);
-    // The live-runs inventory is not withheld and is not FETCHED either: the `connected`
-    // handshake states it, so a run tab's label, its `launchedBy` nesting and the eviction
-    // exemption are all seeded from that frame in every boot mode.
+    // The live-runs inventory is not fetched: the `connected` handshake states it.
     expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
   });
 
@@ -1146,8 +1061,8 @@ describe("a boot inside a reload loop", () => {
     expect(m.showBanner).not.toHaveBeenCalled();
     expect(m.fetchCatalog).toHaveBeenCalledTimes(1);
     expect(m.loadVersions).toHaveBeenCalledTimes(1);
-    // The boot fetch is GONE from every mode: `adoptConnectRuns` reads the handshake, and
-    // the gap door is the one place a per-run refetch is still wanted.
+    // No boot fetch in any mode: `adoptConnectRuns` reads the handshake, and the gap door
+    // is the one place a per-run refetch is wanted.
     expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
     // A page that stays up costs the next boot nothing, and only this call arms it.
     expect(m.noteBootAlive).toHaveBeenCalledTimes(1);
@@ -1159,10 +1074,7 @@ describe("the eviction exemption", () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    // The SET rather than one membership, because the question is which surfaces read a
-    // chat's resident window: a delegate's entries are in that log and its page renders
-    // them, while a step's are in the RUN's, so neither run-shaped predicate answers for
-    // a chat any more. An added exemption fails here whatever it is named.
+    // The SET of eviction exemptions: only the delegate page reads a chat's window.
     expect(m.registerEvictionExemption.mock.calls.flat()).toEqual([m.subagentTabProjectsChat]);
   });
 
@@ -1182,10 +1094,8 @@ describe("the turn-repair registration", () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    // By IDENTITY, like each registration beside it: the store owns hole DETECTION and
-    // `store-load.ts` owns every read, so the repair is injected rather than imported and
-    // the loader's one-way edge onto the store survives. Unregistered, a `seq` hole is
-    // detected and nothing repairs it.
+    // By IDENTITY: the store detects holes and `store-load.ts` reads, so the repair is
+    // injected; unregistered, nothing repairs a hole.
     expect(m.registerTurnRepair.mock.calls.flat()).toEqual([m.requestTurnRange]);
   });
 
@@ -1193,9 +1103,7 @@ describe("the turn-repair registration", () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    // A revert drops turns, and the reads already OUT for one of them are the loader's to
-    // cancel. Unregistered, such a read answers after the drop and `applyTurnRange` seats
-    // the turn again — the store's own seat refusal is the belt, not this.
+    // Unregistered, a read out during a revert would re-seat the dropped turn.
     expect(m.registerRevertReadAbort.mock.calls.flat()).toEqual([m.abortReadsForRevert]);
   });
 
@@ -1203,10 +1111,8 @@ describe("the turn-repair registration", () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    // The run store DETECTS a `seq` hole (`markRunHole`) and `run-turn-range.ts` owns the
-    // read, so the repair is injected here too. Unregistered, a hole on a run's log only
-    // marks itself for the pane's step GET and the range read is asked for by nobody — a
-    // state no other gate can see, since the export is well-typed and knip reads nothing.
+    // The run store's repair, injected likewise; unregistered, a run-log hole is asked of
+    // nobody, which no gate can see.
     expect(m.registerRunTurnRepair.mock.calls.flat()).toEqual([m.requestRunTurnRange]);
   });
 });
@@ -1221,8 +1127,7 @@ describe("the run-state demands", () => {
     // The fold's predicate travels by IDENTITY: `chat-run-dots.ts` owns the reader
     // whose demand it states, the way each eviction exemption above does.
     expect(demands).toContain(m.chatTabFoldsRun);
-    // The other is the run TAB's, which asks the tab SET rather than the store — the
-    // one demand the retired call-site guard did carry.
+    // The other is the run TAB's, which asks the tab SET rather than the store.
     const tabDemand = demands.find((fn) => fn !== m.chatTabFoldsRun);
     m.hasTab.mockReturnValue(true);
     expect(tabDemand?.("wf_1")).toBe(true);

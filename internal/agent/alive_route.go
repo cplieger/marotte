@@ -7,33 +7,25 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// presenceTable is the push presence table as the runtime feeds it: the hub's
-// connect/disconnect events and the client's keepalive acknowledgements.
-// *push.Presence satisfies it.
+// presenceTable is the push presence table: hub connect/disconnect events plus keepalive acks. *push.Presence satisfies it.
 type presenceTable interface {
 	Observe(ev *sse.PresenceEvent)
 	Alive(tag string)
 }
 
-// aliveInvalidCode is the error code POST /api/events/alive answers when the
-// SSE-Client header is absent or outside the tag grammar.
+// aliveInvalidCode is answered when the SSE-Client header is absent or outside the tag grammar.
 const aliveInvalidCode webhttp.ErrorCode = "alive_invalid"
 
-// forwardPresence is the hub's presence hook: it hands every event to the table
-// WithPresence wired, or drops it when none was. The hub delivers the event by
-// value (sse.WithPresence's signature); everything past this point takes it by
-// pointer.
+// forwardPresence hands every presence event to the table WithPresence wired, or drops it when none was.
 func (b *bus) forwardPresence(ev *sse.PresenceEvent) {
 	if b.presence != nil {
 		b.presence.Observe(ev)
 	}
 }
 
-// handleAlive is POST /api/events/alive: the client's receipt for one keepalive it
-// received, carrying its tag as SSE-Client. The tag is validated against the same
-// grammar the hub applies to WithClientTag, so a hostile header puts no bytes in
-// the table. An empty body and a 204: the response carries nothing the client
-// reads beyond ok.
+// handleAlive is POST /api/events/alive, the client's receipt for one keepalive, tagged by
+// SSE-Client. The tag is validated against the hub's WithClientTag grammar, so a hostile
+// header puts no bytes in the table. Answers 204.
 func (rt *Runtime) handleAlive(w http.ResponseWriter, r *http.Request) {
 	tag := r.Header.Get(clientTagHeader)
 	if !webhttp.ValidRequestID(tag) {

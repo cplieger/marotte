@@ -181,8 +181,7 @@ func TestImport_OneBadEntryInstallsNothing(t *testing.T) {
 func TestImport_UnknownKeyIsNamedNotDropped(t *testing.T) {
 	s, mux := newRoutedStore(t)
 
-	// The whole point: `comand` used to yield Command == "" and an error naming
-	// `command` as missing, which is not the thing that was wrong.
+	// The error must name `comand`, not report `command` as missing.
 	rec := postImport(t, mux,
 		`{"mcpServers":{"github":{"comand":"npx","args":["-y","pkg"]}}}`)
 	if rec.Code != http.StatusBadRequest {
@@ -221,8 +220,7 @@ func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
 	  "$schema": "https://example.com/schema.json",
 	  "mcpServers": {
 	    "github": {"command":"npx","args":["-y","pkg"],
-	               "cwd":"/tmp","timeout":60,"waitForReady":true,
-	               "description":"GitHub tools"}
+	               "cwd":"/tmp","description":"GitHub tools"}
 	  }
 	}`))
 
@@ -230,13 +228,44 @@ func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
 		t.Fatalf("results = %#v, want the server created anyway", got.Results)
 	}
 	joined := strings.Join(got.Notes, "\n")
-	for _, want := range []string{"cwd", "timeout", "waitForReady", "description", "$schema"} {
+	for _, want := range []string{"cwd", "description", "$schema"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("notes %q should name %q", joined, want)
 		}
 	}
 	if got := len(s.List(t.Context())); got != 1 {
 		t.Errorf("stored = %d, want 1", got)
+	}
+}
+
+func TestImport_ConsumesWaitForReadyAndTimeout(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"github": {"command":"npx","waitForReady":true,"timeout":120000}}
+	}`))
+
+	if len(got.Results) != 1 || got.Results[0].Outcome != ImportCreated {
+		t.Fatalf("results = %#v, want the server created", got.Results)
+	}
+	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "waitForReady") || strings.Contains(joined, "timeout") {
+		t.Errorf("notes = %q, want no ignored-key note for fields the record now carries", joined)
+	}
+	stored := s.List(t.Context())
+	if len(stored) != 1 || !stored[0].WaitForReady || stored[0].TimeoutMS != 120_000 {
+		t.Errorf("stored = %+v, want wait_for_ready true and timeout_ms 120000", stored)
+	}
+}
+
+func TestImport_OutOfRangeTimeoutIsRefusedNamingTheField(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	rec := postImport(t, mux, `{"mcpServers": {"github": {"command":"npx","timeout":600001}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "timeout_ms") {
+		t.Errorf("import = %d %s, want 400 naming timeout_ms", rec.Code, rec.Body.String())
+	}
+	if n := len(s.List(t.Context())); n != 0 {
+		t.Errorf("stored = %d, want nothing installed", n)
 	}
 }
 
@@ -367,33 +396,46 @@ func TestImport_OAuthObjectReachesTheRecord(t *testing.T) {
 
 	_ = decodeImport(t, postImport(t, mux, `{
 	  "mcpServers": {"slack": {"url":"https://mcp.slack.com/mcp",
-	    "oauth": {"clientId":"cid-1","clientSecret":"csecret-1"}}}
+	    "oauth": {"clientId":"cid-1"}}}
 	}`))
 	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("stored = %d", len(raw))
 	}
-	if raw[0].OAuthClientID != "cid-1" || raw[0].OAuthClientSecret != "csecret-1" {
+	if raw[0].OAuthClientID != "cid-1" {
 		t.Errorf("oauth not carried: %#v", raw[0])
-	}
-	// The secret must not come back to the browser.
-	if got := s.List(t.Context())[0].OAuthClientSecret; got != SecretMask {
-		t.Errorf("oauth_client_secret = %q on a public read, want the mask", got)
 	}
 }
 
-// TestImport_ClientMetadataURLInstallsWithANote is the OTHER half of the nested
-// classification pass, and the two are only correct together: a key the schema
-// carries and marotte cannot honour has to be accepted with a reason, or the pass
-// turns a correctly copied block into a 400 blaming a typo.
-//
-// clientMetadataUrl arrived in kiro-cli 2.19.2. marotte cannot honour it — the
-// hosted document declares a redirect URI, and KAS owns the loopback listener and
-// never tells the client which port it bound — so the field is dropped. What was
-// wrong before was the REFUSAL: the key reaches the raw-paste box straight out of
-// a publisher's README, and it earned a hard 400 with a "did you mean" that could
-// never match.
-func TestImport_ClientMetadataURLInstallsWithANote(t *testing.T) {
+func TestImport_ClientSecretIsRefusedByName(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	rec := postImport(t, mux, `{
+	  "mcpServers": {"slack": {"url":"https://mcp.slack.com/mcp",
+	    "oauth": {"clientId":"cid-1","clientSecret":"csecret-1"}}}
+	}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"slack", `\"clientSecret\" is not supported`, "public pre-registered clients only"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("error %q missing %q", body, want)
+		}
+	}
+	for _, unwanted := range []string{"unknown key", "did you mean", "csecret-1"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("error %q carries %q", body, unwanted)
+		}
+	}
+	if got := len(s.List(t.Context())); got != 0 {
+		t.Errorf("stored = %d, want 0", got)
+	}
+}
+
+// TestImport_ClientMetadataURLIsStored pins that a pasted clientMetadataUrl is
+// stored, not dropped with a note.
+func TestImport_ClientMetadataURLIsStored(t *testing.T) {
 	s, mux := newRoutedStore(t)
 
 	got := decodeImport(t, postImport(t, mux, `{
@@ -401,33 +443,34 @@ func TestImport_ClientMetadataURLInstallsWithANote(t *testing.T) {
 	    "oauth": {"clientId":"cid-1","clientMetadataUrl":"https://slack.test/oauth-client.json"}}}
 	}`))
 
-	// Installed, and the credential beside the ignored key still landed: an
-	// ignored member must not cost the object's real content.
 	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("stored = %d, want the server installed", len(raw))
 	}
-	if raw[0].OAuthClientID != "cid-1" {
-		t.Errorf("clientId = %q, want it carried past the ignored sibling", raw[0].OAuthClientID)
+	if raw[0].OAuthClientID != "cid-1" || raw[0].OAuthClientMetadataURL != "https://slack.test/oauth-client.json" {
+		t.Errorf("stored oauth = %q / %q, want both members", raw[0].OAuthClientID, raw[0].OAuthClientMetadataURL)
 	}
-
-	// The note names the key AND the reason. A note saying only "ignoring
-	// clientMetadataUrl" would leave the reader to guess whether marotte will
-	// support it later or is refusing it on purpose.
-	joined := strings.Join(got.Notes, "\n")
-	for _, want := range []string{"clientMetadataUrl", "redirect", "oauth"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("notes %q missing %q", joined, want)
-		}
+	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "ignoring") {
+		t.Errorf("notes = %q, want no ignoring note", joined)
 	}
 }
 
-// TestImport_ClientMetadataURLIsSuggestedForItsOwnTypo pins that the ignored set
-// joined the SUGGESTION candidates rather than only the accept list.
-//
-// Without it a near-miss on the new key would be reported with no "did you mean",
-// which is the same dead end the refusal was — the reader is told a key is
-// unknown and left to find the spelling themselves.
+// TestImport_RedirectURIIsStored: redirectUri is a KAS oauth member, so a block
+// carrying it installs instead of answering 400 "unknown key".
+func TestImport_RedirectURIIsStored(t *testing.T) {
+	s, mux := newRoutedStore(t)
+	decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"s": {"url":"https://mcp.example/mcp",
+	    "oauth": {"clientMetadataUrl":"https://example.com/c.json","redirectUri":"localhost:7778"}}}
+	}`))
+	raw := s.EnabledRaw(t.Context())
+	if len(raw) != 1 || raw[0].OAuthRedirectURI != "localhost:7778" {
+		t.Fatalf("stored = %#v, want redirect localhost:7778", raw)
+	}
+}
+
+// TestImport_ClientMetadataURLIsSuggestedForItsOwnTypo pins that a near-miss on
+// a consumed oauth key is named with a "did you mean".
 func TestImport_ClientMetadataURLIsSuggestedForItsOwnTypo(t *testing.T) {
 	body := `{"name":"x","url":"https://x.test/mcp","type":"http",` +
 		`"oauth":{"clientMetadataURL":"https://x.test/c.json"}}`
@@ -443,27 +486,26 @@ func TestImport_ClientMetadataURLIsSuggestedForItsOwnTypo(t *testing.T) {
 }
 
 // The nested object needs its own classification pass. The outer one only sees
-// that `oauth` is a key the translator consumes, so before this the object went
-// straight into json.Unmarshal, which drops an unmatched member: a misspelt
-// clientSecret installed a server with an EMPTY secret and said nothing.
+// that `oauth` is a key the translator consumes, so without it the object goes
+// straight into json.Unmarshal, which drops an unmatched member silently.
 func TestImport_UnknownOAuthKeyIsNamedNotDropped(t *testing.T) {
 	s, mux := newRoutedStore(t)
 
 	rec := postImport(t, mux, `{
 	  "mcpServers": {"slack": {"url":"https://mcp.slack.com/mcp",
-	    "oauth": {"clientId":"cid-1","clientSecrect":"csecret-1"}}}
+	    "oauth": {"clientIdd":"cid-1"}}}
 	}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"clientSecrect", "did you mean", "clientSecret", "slack"} {
+	for _, want := range []string{"clientIdd", "did you mean", `\"clientId\"`, "slack"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("error %q missing %q", body, want)
 		}
 	}
 	if got := len(s.List(t.Context())); got != 0 {
-		t.Errorf("stored = %d, want 0; a typoed secret must not install an empty one", got)
+		t.Errorf("stored = %d, want 0; a typoed client id must not install an empty one", got)
 	}
 }
 
@@ -734,18 +776,9 @@ func TestParseImportBody_Rejects(t *testing.T) {
 	}
 }
 
-// TestImport_OversizedRecordIsRefusedBeforeItIsBuilt is the anti-amplification
-// bound on the ordered-pair walk. The store's own maxEnvEntries would reject the
-// record anyway, but only after the whole slice exists: measured on go1.27.0, an
-// env object at webhttp's 1 MiB body cap decoded to 174,762 KeyPairs and 39.4 MB
-// of allocation, 37.6x the wire bytes, against a limit of 64. With the bound in
-// the loop the same body costs 27 KB.
-//
-// The boundary is asserted in both directions, because a cap that fires one
-// entry early would silently refuse a legal record: a record AT the cap is
-// accepted and its pairs survive in order, one PAST it is refused naming the
-// field. Env is the wider of the two fields the walk serves; headers ride the
-// same code with the same bound.
+// TestImport_OversizedRecordIsRefusedBeforeItIsBuilt is the anti-amplification bound on the
+// ordered-pair walk: the store's maxEnvEntries would refuse too, but only after the whole slice
+// exists.
 func TestImport_OversizedRecordIsRefusedBeforeItIsBuilt(t *testing.T) {
 	env := func(n int) string {
 		var b strings.Builder
@@ -800,7 +833,8 @@ func FuzzParseImportBody(f *testing.F) {
 	f.Add([]byte(`{"mcpServers":{"@a/b.c":{"command":"srv"}}}`))
 	f.Add([]byte(`{"name":"x","command":"srv"}`))
 	f.Add([]byte(`{"mcpServers":{"x":{"comand":"srv"}}}`))
-	f.Add([]byte(`{"mcpServers":{"x":{"url":"https://h/mcp","oauth":{"clientSecrect":"s"}}}}`))
+	f.Add([]byte(`{"mcpServers":{"x":{"url":"https://h/mcp","oauth":{"clientIdd":"s"}}}}`))
+	f.Add([]byte(`{"mcpServers":{"x":{"url":"https://h/mcp","oauth":{"clientSecret":"s"}}}}`))
 	f.Add([]byte(`{"mcpServers":{"x":{"url":"https://h/mcp","oauth":"nope"}}}`))
 	f.Add([]byte(`{"mcpServers":{"x":{"command":"srv","url":"https://h"}}}`))
 	f.Add([]byte(`{"mcpServers":{"x":{"command":"srv","env":{"A":3000}}}}`))
@@ -926,8 +960,7 @@ func TestImport_KeyCapIsInclusive(t *testing.T) {
 // reported without one, because a confidently wrong "did you mean" sends the
 // reader to rename a key that was never the problem.
 func TestImport_NoSuggestionBeyondTheEditThreshold(t *testing.T) {
-	// Three edits from "clientId" and further still from "clientSecret", so
-	// nothing in the oauth key set is within reach.
+	// Three edits from "clientId", so nothing in the oauth key set is within reach.
 	body := `{"name":"x","url":"https://x.test/mcp","type":"http","oauth":{"clientIdent":"z"}}`
 	_, err := parseImportBody([]byte(body))
 	if err == nil {

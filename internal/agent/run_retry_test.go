@@ -1,7 +1,5 @@
 package agent
 
-// Tests for retry: the verb, its addressing, and what the route answers.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -30,16 +28,14 @@ func retryReply(t *testing.T, workflowID, status string, nodes ...string) json.R
 	return raw
 }
 
-// retryReq builds POST /api/runs/{id}/retry with the path value the handler reads
-// instead of parsing the URL.
+// retryReq builds POST /api/runs/{id}/retry with the path value set.
 func retryReq(id string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+id+"/retry", bytes.NewReader(nil))
 	req.SetPathValue("id", id)
 	return req
 }
 
-// seedChatParentedRun stages one ABORTED run parented on a chat's session, that
-// chat's bridge optionally live here, and KAS ready to answer inspect, list, retry.
+// seedChatParentedRun stages one aborted run parented on a chat's session, the chat's bridge optionally live, KAS answering inspect, list and retry.
 func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub()
@@ -66,10 +62,7 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 	return h, br
 }
 
-// gateAnswer resolves the affordance the retry ROUTE's gate hands the verb, for
-// real rather than hand-built, checking BOTH threaded facts: a stand-in would keep
-// passing once the affordance stopped carrying either, and the verb would then
-// re-host a run whose own process is alive or re-arm a nameless lease.
+// gateAnswer resolves the retry route's real affordance and checks both threaded facts.
 func gateAnswer(t *testing.T, h *Runtime, workflowID string) *runAffordance {
 	t.Helper()
 	aff := h.runs.affordance(t.Context(), workflowID, "aborted")
@@ -82,9 +75,7 @@ func gateAnswer(t *testing.T, h *Runtime, workflowID string) *runAffordance {
 	return aff
 }
 
-// TestHandleRetry_AnswersTheOutcomeRatherThanOk: the reply IS the outcome report,
-// so it carries KAS's status and reset node ids. A content-free body makes a retry
-// that reset zero nodes and one that reset five the same result on the wire.
+// TestHandleRetry_AnswersTheOutcomeRatherThanOk pins that the reply carries KAS's status and reset node ids.
 func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 	for name, nodes := range map[string][]string{
 		"five nodes reset": {"phase-c-loop", "phase-d-loop", "final-verify", "plan", "setup"},
@@ -110,8 +101,7 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 					"a caller that cannot count the reset nodes cannot tell a retry from a no-op",
 					got.RetriedNodeIDs, nodes)
 			}
-			// A reply carrying `ok` as well would look correct while leaving the
-			// ambiguity in place for anything still reading it.
+			// An `ok` alongside would leave the ambiguity for old readers.
 			if strings.Contains(rec.Body.String(), `"ok"`) {
 				t.Errorf("the reply still carries `ok`: %s", rec.Body.String())
 			}
@@ -119,10 +109,7 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 	}
 }
 
-// TestRetry_AddressesTheRunsRealHost: a chat-parented run has no bridge under
-// `runChatID(workflowID)`, so keying on that alone re-hosts every one of them and
-// spawns a second engine for a run whose process is still alive. The fake hands out
-// one bridge, so a start is the tell.
+// TestRetry_AddressesTheRunsRealHost pins that keying on runChatID alone would spawn a second engine for a chat run whose process lives.
 func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	aff := gateAnswer(t, h, "wf_1")
@@ -148,10 +135,9 @@ func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	}
 }
 
-// TestRetry_ReachesAnUnhostedChatRunThroughItsChat: a chat-parented run nothing in
-// this process holds is retried on its launching chat's bridge.
+// TestRetry_ReachesAnUnhostedChatRunThroughItsChat pins that retried on the launching chat's bridge.
 func TestRetry_ReachesAnUnhostedChatRunThroughItsChat(t *testing.T) {
-	// No chat bridge and no run bridge: nothing in this process holds the run.
+	// Nothing here holds the run.
 	h, br := seedChatParentedRun(t, false, "phase-c-loop")
 
 	if _, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err != nil {
@@ -161,8 +147,7 @@ func TestRetry_ReachesAnUnhostedChatRunThroughItsChat(t *testing.T) {
 	if !slices.Contains(calls, methodKiroWorkflowRetry) {
 		t.Fatalf("the retry never reached KAS; calls were %v", calls)
 	}
-	// A chat-parented run is reached through its chat, whose session load carries the
-	// presets the steps are checked against, never through a second resident on it.
+	// Through the chat, whose session load carries the presets.
 	if h.bridge.mgr.get("c1") == nil {
 		t.Error("the launching chat's bridge was not opened, so its session is not live")
 	}
@@ -171,9 +156,7 @@ func TestRetry_ReachesAnUnhostedChatRunThroughItsChat(t *testing.T) {
 	}
 }
 
-// TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind: a bridge left registered
-// for a run that never re-drove holds a kiro-cli subprocess and a lease nothing
-// releases, and the chat's own bridge belongs to the conversation.
+// TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind pins that no stray subprocess or lease; the chat's bridge stays.
 func TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind(t *testing.T) {
 	h, br := seedChatParentedRun(t, false)
 	br.setCallRPCErr(methodKiroWorkflowRetry,
@@ -193,10 +176,7 @@ func TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// TestRetry_AnInBandRefusalIsAFailure: KAS refuses with a well-formed response
-// carrying an `error` member, so the transport succeeds and the reason travels in
-// band. Reading only the transport error answers 200 for a run never re-driven,
-// then re-arms its clock and clears its recorded termination.
+// TestRetry_AnInBandRefusalIsAFailure pins that KAS refuses in band, so the reply's `error` must fail the verb.
 func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
 	h, br := seedChatParentedRun(t, true)
 	br.setCallRPCErr(methodKiroWorkflowRetry,
@@ -212,9 +192,7 @@ func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
 	}
 }
 
-// TestHandleRetry_ForwardsKASsOwnSentence: httpreply.InternalError sends the
-// CONSTANT "internal error" and leaves the actionable sentence in the container log,
-// so a reader given it cannot tell a refusal from a fault.
+// TestHandleRetry_ForwardsKASsOwnSentence pins that a constant "internal error" hides the reason.
 func TestHandleRetry_ForwardsKASsOwnSentence(t *testing.T) {
 	h, br := seedChatParentedRun(t, true)
 	br.setCallRPCErr(methodKiroWorkflowRetry, &marotte.RPCError{
@@ -238,10 +216,8 @@ func TestHandleRetry_ForwardsKASsOwnSentence(t *testing.T) {
 	}
 }
 
-// TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow: the browser
-// aborts every apiAction at 30s, so the verb's budget must stay below the client's
-// or the CLIENT kills an in-flight retry, tearing down the bridge it just minted
-// with nobody watching. Inside the window the answer is a 503 the reader can act on.
+// TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow pins that the browser aborts at 30s, so the
+// verb answers 503 first rather than letting the client tear down its fresh bridge.
 func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *testing.T) {
 	if retryTimeout >= clientRequestBudget {
 		t.Errorf("retryTimeout = %v, want it below the client's %v request budget, or the "+
@@ -249,15 +225,11 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 
 	h, br := seedChatParentedRun(t, false)
-	// The utility bridge FIRST: the fake's factory hands out one bridge, so a gate
-	// armed before the utility session exists parks the status read instead of the
-	// retry's own spawn, and the test hangs rather than failing.
+	// Start the utility bridge first, or the gate parks the status read and the test hangs.
 	if _, err := h.runs.rawInspect(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Setup: warming the utility bridge: %s", err)
 	}
-	// A start that never returns is an engine unpacking a cold runtime tree: the gate
-	// is never closed, so Start parks until the verb's own budget expires.
-	// Milliseconds rather than the real 25s keep that inside a unit test's budget.
+	// A never-returning Start stands in for a cold runtime unpack.
 	br.setStartGate(make(chan struct{}))
 	prev := retryTimeout
 	retryTimeout = time.Millisecond
@@ -282,8 +254,7 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 }
 
-// TestHandleRetry_RefusesWhatTheAffordanceRefuses: the gate is server-side, because
-// a rule living in one client boolean accepts the request whatever the client drew.
+// TestHandleRetry_RefusesWhatTheAffordanceRefuses pins that the gate is server-side.
 func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 	t.Run("a completed run is refused, naming its status", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
@@ -301,8 +272,7 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 		}
 	})
 
-	// A gate that re-introduced the parentless-only rule server-side would leave an
-	// aborted chat-parented run unreachable in both products.
+	// An aborted chat-parented run must stay retryable.
 	t.Run("an aborted CHAT-PARENTED run is accepted", func(t *testing.T) {
 		h, _ := seedChatParentedRun(t, true, "phase-c-loop")
 		rec := httptest.NewRecorder()
@@ -313,7 +283,7 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 		}
 	})
 
-	// The two arms of a status the gate cannot use are DIFFERENT answers.
+	// The two unusable-status arms answer differently.
 	t.Run("a status read that FAILS is a 500", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallErr(methodKiroWorkflowInspect, errors.New("no such workflow"))
@@ -326,8 +296,7 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 
 	t.Run("a run KAS does not know is a 404", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
-		// The engine answers and has no workflow verb, so rr.status reports "" rather
-		// than an error: no status to gate on, not a fault.
+		// No workflow verb: "" status, not a fault.
 		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleRetry(rec, retryReq("wf_1"))
@@ -341,12 +310,10 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 	})
 }
 
-// TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry: KAS accepted the verb
-// and only its report is unusable, so this is its own class — reporting an ordinary
-// failure asks for work that may already be running, and releasing the lease or
-// closing the bridge abandons a run that just started. Both branches re-arm it.
+// TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry pins that KAS accepted the verb, so keep the lease and
+// bridge and re-arm.
 func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
-	// One reply per shape KAS can answer that carries no usable outcome.
+	// One reply per usable-outcome-free shape.
 	unreadable := map[string]json.RawMessage{
 		"a reply that is not an object": json.RawMessage(`"retried"`),
 		"a reply with no outcome":       json.RawMessage(``),
@@ -355,7 +322,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 
 	for name, reply := range unreadable {
 		t.Run(name+", on the run's own host", func(t *testing.T) {
-			// One fake bridge serves the whole runtime, so this is the chat's own.
+			// One fake serves the runtime, so this is the chat's own.
 			h, br := seedChatParentedRun(t, true)
 			h.runs.claimTermination("wf_1")
 			h.runs.recordEnd("wf_1", runEndOverran)
@@ -366,8 +333,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 				t.Fatalf("Retry = %v, want errRetryOutcomeUnreadable: the verb LANDED, so "+
 					"telling the reader to retry would ask for the work twice", err)
 			}
-			// The run may be executing, so leaving the recorded termination would keep
-			// the page saying aborted while the run advanced.
+			// The run may be executing, so the old termination must go.
 			if got := h.runs.endReason("wf_1"); got != "" {
 				t.Errorf("the run still reads %q, so its row renders as aborted while it may "+
 					"be running", got)
@@ -397,8 +363,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 	}
 }
 
-// TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh: the answer must not be
-// the 500 that says "this failed, try again".
+// The answer must not be a "try again" 500.
 func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowRetry, json.RawMessage(`"retried"`))
@@ -420,16 +385,13 @@ func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
 	}
 }
 
-// TestRetry_ReadsTheParentTheGateResolved: the verb consumes the gate's answer
-// instead of resolving the host again, because the two reads can DISAGREE — the
-// inventory here loses the run's parent session in between, so a verb that re-asks
-// re-hosts a run whose own process is alive. Asserted as a mechanism rather than a
-// call count: the runtime lists in the background, so round trips are not stable.
+// TestRetry_ReadsTheParentTheGateResolved pins that the verb uses the gate's answer, since a second read can lose
+// the parent and re-host a live run. Asserted as a mechanism: background listing makes counts unstable.
 func TestRetry_ReadsTheParentTheGateResolved(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
-	// Resolved while the inventory still carries the parent session.
+	// Resolved while the inventory carries the parent.
 	aff := gateAnswer(t, h, "wf_1")
-	// The inventory a LATER read gets: the same run, no parent session.
+	// A later read: same run, no parent session.
 	br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
 		"workflowId": "wf_1", "name": "publish", "status": "aborted",
 	}))

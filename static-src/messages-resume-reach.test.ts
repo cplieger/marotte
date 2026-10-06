@@ -1,32 +1,6 @@
-// ---------------------------------------------------------------------------
-// The resume control counts entries the reader can REACH.
-//
-// `messages.ts entryCount` is a walk over each turn's body asking
-// `entryRenders(e, "", firstPlan)` — the renderer's OWN predicate rather than a second
-// reading of it. Two populations answer false there, and a count including either
-// would promise a distance that does not exist: an entry in another LANE (delegate
-// content, which `placeEntry` drops in this view) and the kinds that render at no
-// position of their own (`turn_open` as the header, `turn_close` as the footer, a
-// `tool_result` on its call's card, a `turn_bind` nowhere). The reader resumes
-// expecting N new blocks and lands where they parked.
-//
-// The label's own word is still "block", which is production's wording and not this
-// file's to change.
-//
-// ONE ORACLE DROPPED OUT LOUD. A describe here asserted that a WORKFLOW STEP's blocks
-// are never reachable, over a `wf:<runID>:<node>` subtask id inside the launching
-// chat's own message. That is now unrepresentable rather than merely unused: a step's
-// entries are appended to the RUN's log (`runs/<workflowId>/entries.jsonl`), never to
-// a chat's, so no `wf:` lane exists in the input this walk reads and the dispatcher
-// needs no rule to filter one back out. Its surviving half — content this view does
-// not draw is not counted — is the delegate case below, over lanes.
-//
-// The flows are production's own order: park (baseline), the turn's entries land
-// through the store's own `openTurn`/`appendEntry`, and each of those bumps a `shape`
-// pass, which is where the count recomputes. The label is read through the scroll
-// mock's `setResumeLabel`, and the baseline is driven through the reading-state
-// callback `initFollowModel` registers — the same path the real scroller drives.
-// ---------------------------------------------------------------------------
+// The resume control counts entries the reader can reach, through the renderer's own `entryRenders`. Two populations
+// answer false: another lane's entries, and kinds with no position of their own (`turn_open`, `turn_close`,
+// `tool_result`, `turn_bind`). Flows run production's order: park, then entries land via `openTurn`/`appendEntry`.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
@@ -34,9 +8,7 @@ import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import type { ReadingState } from "./scroll.js";
 
-// messages.ts's graph reads the shared DOM registry at module scope / mount,
-// and `byId` throws on a missing element — so the hosts exist before any import
-// resolves (the composer pair for the send-state effect the graph wires).
+// The DOM registry throws on a missing element, so the hosts exist before any import resolves.
 for (const id of [
   "messages",
   "messages-wrap",
@@ -51,21 +23,15 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-// The SHARED scroll mock, not a copy of it. A hand-rolled one here drifts
-// silently: messages.ts imports ./turn-rail.js, which imports `scrollableBy` from
-// ./scroll.js, and a factory namespace missing that name produces "[vitest] There
-// was an error when mocking a module" with no file, no export and no import chain
-// — visible only in a FULL-suite run while this file stays green in isolation.
-// __test-helpers__/scroll-mock.test.ts guards the helper's totality; it cannot
-// guard an inline copy, which is exactly how the copy this replaced went stale.
+// The shared scroll mock, not a copy: an inline factory missing `scrollableBy` fails only in a full-suite run, with
+// no file named.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 import { scrollMock } from "./__test-helpers__/scroll-mock.js";
 
 const store = await import("./store.js");
 const messages = await import("./messages.js");
 
-/** The reading-state listener messages.ts registered at mount. Captured once —
- *  `mountChatView` is idempotent, so it registers exactly one. */
+/** Captured once: `mountChatView` is idempotent. */
 let onReading: (s: ReadingState) => void;
 
 messages.mountChatView();
@@ -95,31 +61,26 @@ function sealed(
   } as Entry;
 }
 
-/** One sealed `text` entry, optionally in a DELEGATE's lane. A lane is what replaced
- *  the per-block `agent_subtask_id`: position is intrinsic, so a delegate's entries sit
- *  in the same `seq` space and are told apart by lane alone. */
+/** Optionally in a delegate's lane; lane alone tells a delegate's entries apart in the shared `seq` space. */
 function text(turnID: string, at: number, body: string, lane?: string): Entry {
   return sealed(turnID, at, "text", { text: body }, lane);
 }
 
-/** Chat ids are minted per flow so every mount is a fresh chat switch. */
+/** Minted per flow, so every mount is a fresh chat switch. */
 let chatSeq = 0;
 
 function session(id: string): Session {
   return makeSession({ id, name: id });
 }
 
-/** Park the reader on an empty chat (zero baseline), then land ONE turn whose body is
- *  `body` — through the store's own operations, so the entries arrive exactly as a
- *  frame lands them and each append recounts on its own `shape` pass. Returns the
- *  chat id. */
+/** Park on an empty chat, then land one turn through the store's own operations, so each append recounts. */
 function parkThenLand(body: (turnID: string) => Entry[]): string {
   const chat = `c-${String(++chatSeq)}`;
   const turnID = `t-${String(chatSeq)}`;
   store.setSessions([session(chat)]);
   store.setActive(chat);
   scrollMock.readingState.mockReturnValue("reading");
-  onReading("reading"); // baseline: nothing reachable yet
+  onReading("reading"); // Baseline: nothing reachable yet.
   store.openTurn(
     chat,
     sealed(turnID, 0, "turn_open", {
@@ -134,7 +95,7 @@ function parkThenLand(body: (turnID: string) => Entry[]): string {
   return chat;
 }
 
-/** The label after the LAST full pass. */
+/** The label after the last full pass. */
 function lastLabel(): string {
   const call = scrollMock.setResumeLabel.mock.calls.at(-1);
   return call === undefined ? "<no label>" : (call[0] as string);
@@ -153,25 +114,18 @@ describe("the resume label counts only entries the reader can reach", () => {
       text(t, 4, "delegate b", "sa-1"),
       text(t, 5, "delegate c", "sa-1"),
     ]);
-    // The transcript renders none of the three: `placeEntry` drops an entry whose lane
-    // is not the view's root, in any fold state — a delegate's card carries no body at
-    // all now, and its content is its own page's. So the reader's distance is the two
-    // parent entries, against the five a naive body count would promise.
+    // The view draws no entry outside its root lane, so the distance is the two parent entries, not five.
     expect(lastLabel()).toBe("2 new blocks");
   });
 
   it("counts parent-lane entries whatever else the turn carries", () => {
     parkThenLand((t) => [text(t, 1, "only parent"), text(t, 2, "delegate", "sa-1")]);
-    // Also the singular, which is a different branch of the label.
+    // The singular, a different branch of the label.
     expect(lastLabel()).toBe("1 new block");
   });
 
-  // The OTHER population `entryRenders` answers false for, which the lane cases cannot
-  // reach: a kind that renders at no position of its own. A settled tool call is ONE
-  // reachable entry — the card — and its `tool_result` folds onto that same card by id,
-  // so counting the pair would promise a row that does not exist. `turn_open` and
-  // `turn_close` are in the same population and are asserted here by their absence from
-  // the total: the turn carries both and neither is counted.
+  // A settled tool call is one reachable entry: its `tool_result` folds onto the card, and `turn_open`/`turn_close` are
+  // not counted.
   it("counts a settled tool call once, not once per entry", () => {
     parkThenLand((t) => [
       text(t, 1, "prose"),

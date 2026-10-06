@@ -1,52 +1,19 @@
-// ---------------------------------------------------------------------------
-// banner-stack regression tests.
-//
-// The stack is a single bindList over a computed active-chat view, so every
-// add / remove / chat-switch flows through ONE reactive render source. These
-// tests lock that contract in:
-//   1. desync repro — a banner is visible only for its own active chat, hides
-//      on switch-away, and a cleared banner never resurrects on switch-back.
-//   2. identity — A -> B -> A reuses the SAME entry-owned DOM node.
-//   3. idempotency — calling ensureBound() twice does not double-bind.
-//   4. single live region — the stack container is the only aria-live region;
-//      individual banners carry no role/aria-live (no nested live regions).
-//
-// `./store.js` is mocked so `activeSession` is a writable signal we control;
-// `./ui-state.js` load/save back a plain dismissals array; `$.bannerStack` is
-// stubbed with a bare container.
-//
-// INSTANCE ALIGNMENT: each test does `vi.resetModules()` so banner-stack gets
-// fresh module-level state. That also re-imports `@cplieger/reactive`, so the
-// signal driving the test (`activeSig`) MUST come from that same post-reset
-// instance — otherwise the computed view tracks a foreign signal (no
-// subscription crosses instances) and never re-derives on switch. So setup()
-// imports reactive fresh and builds `activeSig` from it.
-//
-// There is no drain call here and none is needed: a write flushes before the
-// assignment returns, so `activeSig.value = …` has already re-run the bindList
-// effect. (This used to also return the module's `flushSync`, on the belief that
-// the barrier had to come from the aligned instance too. The instance reasoning
-// is right about the signal and was moot for the barrier, which did nothing on
-// either instance.)
-// ---------------------------------------------------------------------------
+// banner-stack is one bindList over a computed active-chat view. Pinned: a banner shows
+// only for its own active chat and a cleared one never resurrects; A -> B -> A reuses the
+// SAME node; ensureBound() is idempotent; the stack container is the only aria-live
+// region. `./store.js` is mocked to a writable `activeSession` signal and `$.bannerStack`
+// to a bare container. A signal write flushes before it returns, so no drain is needed.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import type * as BannerStack from "./banner-stack.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
+/**
+ * Cache-buster for the re-imports below. `vi.resetModules()` does not re-evaluate a module
+ * in Browser Mode (the map is URL-keyed), so busting the specifier mints a fresh instance.
+ * The `.ts` extension matters for coverage attribution. Only the module under test is
+ * busted, so `vi.mock` still intercepts its dependencies.
  */
 let bootSeq = 0;
 
@@ -54,35 +21,24 @@ interface MiniSession {
   readonly id: string;
 }
 
-// ONE signal for the whole file, reset per test rather than replaced. The mocks
-// below are registered once at module scope and their factories run once, so a
-// re-created signal would leave every banner-stack instance after the first
-// subscribed to a dead one. (A getter does not help: the mocked module's exports
-// are read out of the factory result once, when that module is evaluated.)
+// ONE signal for the file, reset per test: the mocks' factories run once, so a re-created
+// signal would leave later instances subscribed to a dead one.
 const activeSig = signal<MiniSession | undefined>(undefined);
 let container: HTMLDivElement;
 
-// The three mocks are registered ONCE, at module scope, and reach the per-test
-// values through this file's module state rather than closing over per-test
-// values. A mocked module is evaluated the first time it is imported and then
-// cached, so a per-test `vi.doMock` re-registers a factory that never runs again:
-// the second test's banner-stack instance kept reading the FIRST test's signal
-// and container. `$` stays a getter because a property read on the exported
-// object IS live.
+// Registered ONCE at module scope, reaching per-test values through module state: a
+// mocked module is evaluated once, so a per-test `vi.doMock` never runs again. `$` stays
+// a getter because a property read on the exported object is live.
 vi.mock("./store.js", () => ({ activeSession: activeSig }));
-// No ui-state mock: the dismissals are per-chat localStorage now, which jsdom
-// provides for real. That is worth having rather than faking — the shape under
-// test IS the stored document, and a fake of it could not catch a chat key
-// colliding with another chat's.
+// No ui-state mock: dismissals are per-chat localStorage, which jsdom provides, and the
+// stored document is the shape under test.
 vi.mock("./dom.js", () => ({
   $: {
     get bannerStack(): HTMLDivElement {
       return container;
     },
   },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds; no case calls them.
   get: vi.fn(() => undefined),
   getActive: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
@@ -95,11 +51,7 @@ async function setup(): Promise<{
 }> {
   vi.resetModules();
   bootSeq++;
-  // One reactive instance exists for the whole run now — nothing re-evaluates it
-  // — so the signal driving the test and the one the module subscribes to are
-  // necessarily the same. (This used to be delicate: under a runner where
-  // resetModules re-evaluated the graph, a signal built before the reset tracked
-  // a foreign instance and never re-derived.)
+  // One reactive instance exists for the run, so the test's signal is the module's.
   activeSig.value = undefined;
   localStorage.clear();
   container = document.createElement("div");
@@ -164,10 +116,7 @@ describe("banner-stack: active-chat scoping", () => {
 });
 
 describe("banner-stack: composite key (keyenc)", () => {
-  // The dismissals are stored per CHAT, so a chat id can no longer be part of a
-  // composite storage key and the forging question does not arise for the
-  // persisted half at all. Asserted through the public API: a dismissal recorded
-  // for one chat suppresses that chat's banner and no other's.
+  // Dismissals are stored per CHAT, asserted through the public API.
   it("suppresses a banner this reader dismissed, per chat", async () => {
     const { container, mod } = await setup();
     localStorage.setItem(
@@ -186,10 +135,7 @@ describe("banner-stack: composite key (keyenc)", () => {
     expect(container.querySelectorAll(".banner")).toHaveLength(1);
   });
 
-  // The whole reason these moved out of the shared arrangement: an
-  // acknowledgement is the VIEWER's, so it must not leave this device. Pinned as
-  // a storage-key assertion because that is the only observable difference
-  // between a per-device store and the server-owned document it replaced.
+  // A dismissal is the VIEWER's, so it lives in this device's storage, not the arrangement.
   it("records a dismissal in this device's own storage, not the arrangement", async () => {
     const { container, mod } = await setup();
 
@@ -206,10 +152,7 @@ describe("banner-stack: composite key (keyenc)", () => {
   });
 
   it("does not let one field's content forge the other's boundary", async () => {
-    // Both fields are colon-free today; this pins the property the join adds,
-    // so a future loosening of either field can't silently collide two
-    // banners into one collection slot. Under the old template ("a:b" + "c")
-    // and ("a" + "b:c") were the same key.
+    // Pins the join's separation, so ("a:b" + "c") and ("a" + "b:c") never share a slot.
     const { container, mod } = await setup();
 
     activeSig.value = { id: "a:b" };
@@ -228,11 +171,8 @@ describe("banner-stack: composite key (keyenc)", () => {
   });
 
   it("clearBannersForChat prefix scan: chat \u201cabc\u201d does not clear chat \u201cabcd\u201d", async () => {
-    // clearBannersForChat keeps a `${chatID}:` prefix scan over the COLLECTION's
-    // keys (keyenc exports no prefix primitive). The trailing ":" is what bounds
-    // it — this is the regression test named in that function's comment. It no
-    // longer touches localStorage at all: the persisted half went with the global
-    // list, so the sweep is in-memory only.
+    // clearBannersForChat's `${chatID}:` prefix scan over the collection's keys: the trailing
+    // ":" bounds it. In-memory only.
     const { container, mod } = await setup();
 
     activeSig.value = { id: "abc" };
@@ -280,19 +220,9 @@ describe("banner-stack: single live region", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The severity's non-colour channel.
-//
-// Before the glyph, a banner's level lived in exactly two places —
-// `border-left-color` and `color` — both of them colour, which is WCAG 1.4.1 for
-// the same reason a bare coloured dot is. It was also the reason the left border
-// could not simply be deleted with the other state-carrying edges: a border is
-// the only one of the two channels that survives `forced-colors: active` (a
-// background-color is flattened there, a border still renders), and
-// `40-a11y.css`'s forced-colors block covers `.uip-modal-dialog`, `.popup`,
-// `.tool-call` and `.subagent-block` — not banners. So the shape had to land
-// before the edge could go, and these cases are what say it did.
-// ---------------------------------------------------------------------------
+// A banner's level must carry a shape, not colour alone (WCAG 1.4.1). The left border is
+// the one colour channel surviving `forced-colors: active`, and 40-a11y.css's
+// forced-colors block does not cover banners, so the glyph is what carries it.
 
 describe("banner-stack: severity carries a shape, not colour alone", () => {
   it("gives every level its own conventional character", async () => {
@@ -309,12 +239,8 @@ describe("banner-stack: severity carries a shape, not colour alone", () => {
         `.banner-${code === "e" ? "error" : code === "w" ? "warning" : "info"} .banner-glyph`,
       )?.textContent ?? "";
 
-    // A banner is a TEXT notice with its own accessible text, so its levels keep
-    // characters. It no longer mirrors the transcript's outcome table — that
-    // vocabulary is SVG road-sign silhouettes now (icons.ts outcomeIcon), and a
-    // banner has no glyph slot to host one. These three are pinned literally
-    // because the values are the whole contract; what makes them a real channel
-    // is their distinctness, asserted next.
+    // A banner is a text notice, so its levels are characters, pinned literally; their
+    // distinctness is asserted next.
     expect(glyphFor("e")).toBe("\u2717");
     expect(glyphFor("w")).toBe("\u26A0");
     expect(glyphFor("i")).toBe("\u2139");
@@ -345,9 +271,7 @@ describe("banner-stack: severity carries a shape, not colour alone", () => {
 
     const glyph = container.querySelector(".banner-glyph");
     expect(glyph?.getAttribute("aria-hidden")).toBe("true");
-    // The glyph is a restatement for the eye. The stack's own live region
-    // announces the message text once; a glyph in that name would read as a
-    // character before every notice.
+    // The glyph is for the eye: the live region announces the message text alone.
     expect(container.querySelector(".banner-msg")?.textContent).toBe("boom");
   });
 
@@ -368,18 +292,9 @@ describe("banner-stack: severity carries a shape, not colour alone", () => {
 });
 
 describe("banner-stack: the CTA is the app's shared button, not a text-link skin", () => {
-  // THE DEFECT, and it is the one nothing pinned: `buildBannerLink` was written when it
-  // only ever emitted an `<a>`, so `.banner-link` was authored as an underlined text
-  // link. The `onClick` branch added later emits a `<button>` under the same class, and
-  // that skin resets none of a button's UA chrome — so `02-reset.css`'s `* { padding: 0 }`
-  // (author origin, which beats the UA sheet) gave it ZERO padding on all three of its
-  // live producers, the kiro-cli install banner's "Run diagnostics" among them. Reported
-  // as the install banner's button having no padding. `.btn-small` carries the padding
-  // now, and `.banner-link` is layout only — but no test named either half, so a later
-  // edit could take the class off again and the whole suite would stay green.
-  //
-  // Both element kinds, because the class is what carries the skin and only one of them
-  // was broken: an `<a>` with no padding looked deliberate.
+  // `.banner-link`'s `onClick` branch emits a `<button>`, and 02-reset.css's
+  // `* { padding: 0 }` beats the UA sheet, so the padding must come from `.btn-small` while
+  // `.banner-link` is layout only. Both element kinds share the class.
   for (const [kind, link] of [
     ["button", { label: "Run diagnostics", onClick: () => undefined }],
     ["anchor", { label: "Open docs", href: "https://example.invalid/" }],

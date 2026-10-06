@@ -1,37 +1,15 @@
-// The hourglass glyph's geometry, derived from the shipped string rather than
-// snapshotted.
-//
-// The drawing this pins replaced one that was not an hourglass. Its single closed
-// outline ran `a6 6 0 01-3 5.2` twice, and those arcs bulge OUTWARD, so the shape
-// rendered as two stacked lozenges: a 12-unit-wide body pinching only to 6 at the
-// waist, with a flat SQUARE top (`h12v3`) against a 3-unit ROUNDED bottom
-// (`a3 3 0 01-3 3`). At 13.6px, where this renders in the steer dock, that is a
-// blob with a bar near the top.
-//
-// Neither half of that is visible in review at 13.6px, which is what the
-// assertions below are for: an asymmetry of half a unit is 0.28 CSS px, and it is
-// cumulative across edits. So the invariants are the two mirror axes, the cap
-// overhang that separates an hourglass from an X, and the margin — never "there
-// are two triangles".
-//
-// Absolute commands only is a REQUIREMENT of this file, not a style preference: a
-// relative form hides a drift inside its deltas, and reading symmetry off it means
-// re-implementing a path parser that tracks arcs.
+// The hourglass glyph's geometry, derived from the shipped string. A half-unit asymmetry is 0.28 CSS px at 13.6px,
+// invisible in review and cumulative, so the invariants are the two mirror axes, the cap overhang and the margin.
+// Absolute commands only: a relative form hides drift in its deltas.
 
 import { describe, it, expect } from "vitest";
 import { ICON_HOURGLASS } from "./icons.js";
 
-/** The size tier's grid, and the size the steer dock renders it at. `--icon-ui`
- *  is 16 on a fine pointer, but 26-dock.css overrides it to 0.85rem, which is the
- *  smallest size this glyph ships at and therefore the one the floors below are
- *  evaluated against. */
+/** The steer dock renders it at 0.85rem (26-dock.css), the smallest size it ships at, so the floors use that. */
 const VIEWBOX = 24;
 const SMALLEST_PX = 13.6;
 
-/** 4.9 + 19.1 is 24.000000000000004 in float64, so an exact mirror check on
- *  authored decimals needs a tolerance. One part in a billion is far below the
- *  0.28 CSS px that half a unit is worth at 13.6px, so nothing real hides under
- *  it. */
+/** 4.9 + 19.1 is 24.000000000000004 in float64; one part in a billion is far below anything visible. */
 const EPS = 1e-9;
 
 interface Point {
@@ -39,10 +17,7 @@ interface Point {
   readonly y: number;
 }
 
-/** Every point the path visits, from a parser that accepts ONLY the absolute
- *  commands this glyph is authored with. A relative or arc command is a failure
- *  rather than something to interpret: the whole reason the coordinates are
- *  absolute is so this file does not need to compute them. */
+/** Accepts only absolute commands: a relative or arc command fails rather than being interpreted. */
 function points(svg: string): Point[] {
   const d = /<path d="([^"]+)"/g;
   const out: Point[] = [];
@@ -75,9 +50,7 @@ function points(svg: string): Point[] {
   return out;
 }
 
-/** Whether a multiset of coordinates is its own mirror image about `axis`. Sorted
- *  and walked from both ends, so a value repeated an odd number of times off the
- *  axis fails rather than pairing with itself. */
+/** Sorted and walked from both ends, so a value repeated an odd number of times off the axis fails. */
 function mirrored(values: readonly number[], axis: number): boolean {
   const sorted = [...values].sort((a, b) => a - b);
   for (let i = 0, j = sorted.length - 1; i <= j; i += 1, j -= 1) {
@@ -90,10 +63,7 @@ function mirrored(values: readonly number[], axis: number): boolean {
 
 describe("the hourglass glyph", () => {
   it("mirrors about both axes of the grid", () => {
-    // The defect this replaces was asymmetric on the vertical axis only — square
-    // top, rounded bottom — so the y check is the one that would have caught it.
-    // The x check comes free from the same coordinates and guards the other
-    // direction.
+    // The y check catches a square top over a rounded bottom; the x check guards the other direction.
     const p = points(ICON_HOURGLASS);
     const centre = VIEWBOX / 2;
 
@@ -118,9 +88,7 @@ describe("the hourglass glyph", () => {
   });
 
   it("pinches to a single point on the centre line", () => {
-    // Both chambers must terminate at one shared point, and it has to be the
-    // grid's centre: that point IS the waist, and an hourglass whose halves meet
-    // off-centre or across a segment is a bowtie.
+    // Both chambers meet at the grid's centre, or it is a bowtie.
     const p = points(ICON_HOURGLASS);
     const centre = VIEWBOX / 2;
     const waist = p.filter((q) => Math.abs(q.y - centre) < EPS);
@@ -132,10 +100,7 @@ describe("the hourglass glyph", () => {
   });
 
   it("gives the caps an overhang wide enough to survive 13.6px", () => {
-    // The caps are what make this read as an hourglass rather than an X: they are
-    // the widest thing in the glyph, and the chambers hang inside them. An
-    // overhang under half a CSS pixel quantises away at DPR 1, which would leave
-    // a bar the same width as the chamber it caps.
+    // The caps are the widest thing, which separates an hourglass from an X; under half a CSS px they quantise away.
     const p = points(ICON_HOURGLASS);
     const centre = VIEWBOX / 2;
     const halfWidthAt = (y: number): number =>
@@ -156,9 +121,7 @@ describe("the hourglass glyph", () => {
   });
 
   it("keeps the artwork inside the grid's 2-unit margin", () => {
-    // The house margin for this icon set, so the glyph's optical size matches its
-    // neighbours in the same row. A coordinate outside it also risks the stroke's
-    // outward half being clipped by the viewBox.
+    // The icon set's margin, so optical size matches neighbours and the stroke is not clipped by the viewBox.
     const p = points(ICON_HOURGLASS);
     for (const q of p) {
       for (const [axis, v] of [

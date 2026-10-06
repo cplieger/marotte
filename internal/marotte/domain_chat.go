@@ -6,6 +6,7 @@ package marotte
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 )
 
 // ToolKind identifies the category of a tool invocation, assigned by kiro-cli and
@@ -69,11 +70,10 @@ const (
 	ACPUpdateToolUpdate   ACPUpdateKind = "tool_call_update"
 	ACPUpdatePlan         ACPUpdateKind = "plan"
 	ACPUpdateModeChange   ACPUpdateKind = "current_mode_update"
-	// ACPUpdateSessionInfo and the two below are v3 (KAS) sub-kinds.
-	// available_commands_update arrives too and is deliberately NOT decoded: an
-	// unhandled sub-kind falls through handleSessionUpdate silently, and the
-	// slash-command catalog has no consumer.
+	// ACPUpdateSessionInfo and the three below are v3 (KAS) sub-kinds.
 	ACPUpdateSessionInfo ACPUpdateKind = "session_info_update"
+	// ACPUpdateAvailableCommands carries KAS's slash-command catalog.
+	ACPUpdateAvailableCommands ACPUpdateKind = "available_commands_update"
 	// ACPUpdateConfigOption carries the live model/mode/effort catalog;
 	// ACPUpdateUsage carries context-window usage. Both v3-only.
 	ACPUpdateConfigOption ACPUpdateKind = "config_option_update"
@@ -102,6 +102,11 @@ type ToolCall struct {
 	// the ACP type:"terminal" content block. It makes the CARD the terminal's
 	// rendering surface. Empty on every tool call that spawned no process.
 	TerminalID string `json:"terminal_id,omitempty"`
+	// SourcePath is the workspace-relative file that DEFINES the call, which a
+	// click on the card opens: a hook card's hook file. Not in Locations, whose
+	// readers treat a path as one the call touched. Empty when unknown or outside
+	// the workspace (a global hook, which the file browser refuses).
+	SourcePath string `json:"source_path,omitempty"`
 	// Checkpoint is KAS's snapshot mapping for a tool call that wrote a file, from
 	// _meta.kiro.checkpoint; nil when it touched no file. Ahead of the slices below
 	// for govet fieldalignment: a trailing pointer would extend the GC scan region.
@@ -114,6 +119,10 @@ type ToolCall struct {
 	// _meta.kiro.policyDenial. Present so a refusal reads as a refusal rather than a
 	// tool failure, and names the rule, since the user owns the policy.
 	Denial *ToolDenial `json:"denial,omitempty"`
+	// Offload is set once KAS offloaded the full output to a file; one-way.
+	Offload *ToolOffload `json:"offload,omitempty"`
+	// Interaction is how the call's approval or question was answered; one-way.
+	Interaction *ToolInteraction `json:"interaction,omitempty"`
 	// Truncated is what the STORE dropped to bound this call on disk, nil on every
 	// call that fitted. Grouped with the pointers above for govet fieldalignment.
 	Truncated *ToolTruncation `json:"truncated,omitempty"`
@@ -204,6 +213,27 @@ type ToolDisclosed struct {
 	Type        string `json:"type"`
 	DisplayName string `json:"display_name"`
 	URI         string `json:"uri"`
+}
+
+// ToolOffload is where KAS wrote a tool's full output when it was too large for
+// the model's context (`_meta.kiro.outputTransformation`, kind "offloaded"); the
+// call's Output is then KAS's preview. Path is absolute, under the session's
+// tool-outputs directory.
+type ToolOffload struct {
+	Path       string `json:"path"`
+	TotalChars int    `json:"total_chars"`
+}
+
+// ToolInteraction is how the ask a tool call raised was answered, from KAS's
+// interaction_resolved. Type is KAS's interactionType (`tool_approval`,
+// `user_input`) and Outcome its outcome (`selected`, `answered`, `dismissed`).
+// Choice is the chosen option's KIND for an approval (`allow_once`,
+// `allow_always`, `reject_once`, `reject_always`) and the answer text for a
+// question; empty when the outcome carries none.
+type ToolInteraction struct {
+	Type    string `json:"type"`
+	Outcome string `json:"outcome"`
+	Choice  string `json:"choice,omitempty"`
 }
 
 // ToolDenial is the policy verdict that refused a tool call. Rule is the
@@ -307,15 +337,14 @@ type PlanEntry struct {
 	Status   PlanStatus `json:"status"`
 }
 
-// Usage is a chat's last-known context and billing snapshot, plus the percentages at
-// which the SESSION summarizes and truncates its own context. Both thresholds are
-// omitempty because 0 means UNKNOWN — a chat that has never resumed receives neither,
-// and the client applies its own fallback.
+// Usage is a chat's last-known context and billing snapshot, plus the percentage at
+// which the SESSION summarizes its own context. The threshold is omitempty because 0
+// means UNKNOWN: a chat that has never resumed receives none, and the client applies
+// its own fallback.
 type Usage struct {
 	MeteringItems             []MeteringItem `json:"metering_items,omitempty"`
 	ContextPct                float64        `json:"context_pct"`
 	SummarizationThresholdPct float64        `json:"summarization_threshold_pct,omitempty"`
-	TruncationThresholdPct    float64        `json:"truncation_threshold_pct,omitempty"`
 	ContextSize               int            `json:"context_size"`
 	Credits                   float64        `json:"credits"`
 	LastTurnMs                float64        `json:"last_turn_ms"`
@@ -363,6 +392,12 @@ type SessionModel struct {
 	// silently drops a level sent to one. Chat.EffortLevels answers the same
 	// question from the other side.
 	HasEffort bool `json:"has_effort,omitempty"`
+	// ThinkingToggleable reports whether thinking can be turned off for this
+	// model (`_meta.kiro.thinkingToggleable`); the effort slider then offers Off.
+	// ThinkingDefaultOff is set when the model's own default is thinking off.
+	// Plain bools so the catalog compares by value.
+	ThinkingToggleable bool `json:"thinking_toggleable,omitempty"`
+	ThinkingDefaultOff bool `json:"thinking_default_off,omitempty"`
 }
 
 // ModelChoiceMeta is the `_meta` block KAS stamps on one CHOICE of the `model`
@@ -382,6 +417,8 @@ type SessionModel struct {
 // `kiro` off the choice's own top level and decode nothing.
 type ModelChoiceMeta struct {
 	Kiro struct {
+		// DefaultThinkingEnabled is the model's thinking default; absent means on.
+		DefaultThinkingEnabled *bool `json:"defaultThinkingEnabled"`
 		// DefaultEffortLevel is the tier this MODEL defaults to.
 		DefaultEffortLevel string `json:"defaultEffortLevel"`
 		// RateMultiplier is the model's credit cost relative to the cheapest one.
@@ -389,7 +426,14 @@ type ModelChoiceMeta struct {
 		RateMultiplier float64 `json:"rateMultiplier"`
 		// HasEffort reports whether the model offers reasoning-effort tiers.
 		HasEffort bool `json:"hasEffort"`
+		// ThinkingToggleable reports whether thinking can be turned off.
+		ThinkingToggleable bool `json:"thinkingToggleable"`
 	} `json:"kiro"`
+}
+
+// ThinkingDefaultOff reads a choice's defaultThinkingEnabled, absent meaning on.
+func (m *ModelChoiceMeta) ThinkingDefaultOff() bool {
+	return m.Kiro.DefaultThinkingEnabled != nil && !*m.Kiro.DefaultThinkingEnabled
 }
 
 // SessionEffortLevel is one reasoning-effort tier the running session offers,
@@ -514,6 +558,12 @@ type Chat struct {
 	// `currentValue`. Distinct from Effort, which is what this chat CHOSE: a chat
 	// that never picked has an empty Effort and still runs at a level.
 	EffortActive string `json:"effort_active,omitempty"`
+	// Thinking is the chat's thinking CHOICE: ThinkingOn, ThinkingOff, or empty for
+	// the model's default. Applied at session start and live by CmdSetThinking;
+	// inert on a model that is not toggleable. ThinkingActive is what the session
+	// last reported, empty when the model offers no thinking option.
+	Thinking       string `json:"thinking,omitempty"`
+	ThinkingActive string `json:"thinking_active,omitempty"`
 	// LastTurnOutcome is how the newest finished turn ended, written by the closer
 	// that appends a turn_close in the same header rewrite as TurnCount.
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
@@ -527,13 +577,77 @@ type Chat struct {
 	// CHAIN. Never trimmed: an entry here is a directory the reaper must spare.
 	// Maintained by RecordSession.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	Usage              Usage    `json:"usage"`
-	CreatedAt          int64    `json:"created_at"`
-	UpdatedAt          int64    `json:"updated_at"`
+	// InterruptMode is what Send does while a turn runs: join it (steer) or wait
+	// for it (queue). Empty reads as steer.
+	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
+	// QueuedPrompts are follow-ups held for the end of the running turn, oldest
+	// first, carried rows ahead of user rows. The server sends them, at most one
+	// per close; command's drainAfterClose owns which row a close may send.
+	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
+	Usage         Usage          `json:"usage"`
+	CreatedAt     int64          `json:"created_at"`
+	UpdatedAt     int64          `json:"updated_at"`
 	// TurnCount is the count of turns in the log: the newest turn_open's n, and
 	// the one counter a window's n and has_more are read against.
 	TurnCount      int  `json:"turn_count"`
 	SupervisedMode bool `json:"supervised_mode,omitempty"`
+	// NameSetByUser marks Name as the user's own. No agent, first-prompt or stored
+	// title may overwrite it, and every KAS session the chat opens is renamed to it.
+	NameSetByUser bool `json:"name_set_by_user,omitempty"`
+}
+
+// InterruptMode is a chat's choice of what a message sent mid-turn does.
+type InterruptMode string
+
+const (
+	// InterruptSteer joins the running turn (_session/steer).
+	InterruptSteer InterruptMode = "steer"
+	// InterruptQueue holds the message as a QueuedPrompt for the turn's end.
+	InterruptQueue InterruptMode = "queue"
+)
+
+// Valid reports whether m is a member of the vocabulary; empty is not.
+func (m InterruptMode) Valid() bool {
+	return m == InterruptSteer || m == InterruptQueue
+}
+
+// MaxQueuedPrompts caps Chat.QueuedPrompts: the header carries the list to every
+// device on every change, so it must be bounded. A user's queue_prompt stops two
+// rows short, so the one carried row a shutdown writes always has a slot.
+const MaxQueuedPrompts = 20
+
+// carrySeparator joins the steers one carried row resends.
+const carrySeparator = "\n\n"
+
+// CarryCost is the bytes a steer of this text adds to the prompt it is joined
+// into, separator included.
+func CarryCost(text string) int { return len(text) + len(carrySeparator) }
+
+// QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is
+// CARRIED: the server wrote it at shutdown from the unread steers it held. Held
+// marks a row a previous process queued; it is shown and never sent
+// automatically. A list holds at most one carried row, and it is held.
+type QueuedPrompt struct {
+	ID          string       `json:"id"`
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	Resends     []string     `json:"resends,omitempty"`
+	Held        bool         `json:"held,omitempty"`
+}
+
+// Carried reports whether the row resends dropped steers rather than holding a
+// message the user queued.
+func (q *QueuedPrompt) Carried() bool { return len(q.Resends) > 0 }
+
+// CarriedRow is the carried row for unread steers, texts in the order given.
+func CarriedRow(id string, texts, resends []string) QueuedPrompt {
+	return QueuedPrompt{ID: id, Text: strings.Join(texts, carrySeparator), Resends: resends}
+}
+
+// Absorb appends more steers to q, keeping q's id.
+func (q *QueuedPrompt) Absorb(more *QueuedPrompt) {
+	q.Text += carrySeparator + more.Text
+	q.Resends = append(q.Resends, more.Resends...)
 }
 
 // SessionChain returns every KAS session id this chat has run on, current one
@@ -612,6 +726,8 @@ func (c *Chat) Header() ChatHeader {
 		LastTurnOutcome:     c.LastTurnOutcome,
 		EffortLevels:        c.EffortLevels,
 		EffortActive:        c.EffortActive,
+		Thinking:            c.Thinking,
+		ThinkingActive:      c.ThinkingActive,
 		Usage:               c.Usage,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
@@ -619,7 +735,38 @@ func (c *Chat) Header() ChatHeader {
 		PendingModel:        c.PendingModel,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
+		InterruptMode:       c.InterruptMode,
+		QueuedPrompts:       c.QueuedPrompts,
 	}
+}
+
+// ThinkingIsOff reports whether the chat's session runs, or will run, with
+// thinking off: the session's report when there is one, else the chat's own
+// choice, else the model's own default. Callers apply it only on a toggleable
+// model.
+func (c *Chat) ThinkingIsOff(modelDefaultOff bool) bool {
+	if c.ThinkingActive != "" {
+		return c.ThinkingActive == ThinkingOff
+	}
+	if c.Thinking != "" {
+		return c.Thinking == ThinkingOff
+	}
+	return modelDefaultOff
+}
+
+// CapEffortForThinkingOff mirrors KAS's own cap: with thinking off, xhigh and max
+// run as the highest tier below them in the model's vocabulary. Any other level,
+// or a vocabulary with no lower tier, is returned unchanged.
+func CapEffortForThinkingOff(level string, levels []SessionEffortLevel) string {
+	if level != string(EffortXHigh) && level != string(EffortMax) {
+		return level
+	}
+	for _, l := range slices.Backward(levels) {
+		if l.ID != string(EffortXHigh) && l.ID != string(EffortMax) {
+			return l.ID
+		}
+	}
+	return level
 }
 
 // ChatHeader is the metadata-only view of a Chat. Field order is fieldalignment's,
@@ -641,6 +788,10 @@ type ChatHeader struct {
 	// EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
 	// the control renders from the ACTIVE chat's header.
 	EffortActive string `json:"effort_active,omitempty"`
+	// Thinking and ThinkingActive mirror Chat's: the effort slider's Off stop
+	// reads them off the active chat's header.
+	Thinking       string `json:"thinking,omitempty"`
+	ThinkingActive string `json:"thinking_active,omitempty"`
 	// PendingModel mirrors Chat's: the model badge reads it off the header.
 	PendingModel string               `json:"pending_model,omitempty"`
 	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
@@ -651,11 +802,15 @@ type ChatHeader struct {
 	// PriorACPSessionIDs mirrors Chat's, because the retention sweep derives its
 	// keep-list from header reads rather than loading every chat in full.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	Usage              Usage    `json:"usage"`
-	CreatedAt          int64    `json:"created_at"`
-	UpdatedAt          int64    `json:"updated_at"`
-	TurnCount          int      `json:"turn_count"`
-	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
+	// InterruptMode and QueuedPrompts mirror Chat's: the composer and the dock
+	// render them on every device.
+	InterruptMode  InterruptMode  `json:"interrupt_mode,omitempty"`
+	QueuedPrompts  []QueuedPrompt `json:"queued_prompts,omitempty"`
+	Usage          Usage          `json:"usage"`
+	CreatedAt      int64          `json:"created_at"`
+	UpdatedAt      int64          `json:"updated_at"`
+	TurnCount      int            `json:"turn_count"`
+	SupervisedMode bool           `json:"supervised_mode,omitempty"`
 }
 
 // SessionChain returns every KAS session id the chat has run on, current one

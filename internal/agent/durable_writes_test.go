@@ -1,10 +1,7 @@
 package agent
 
-// The durable-write class, gated by a CENSUS rather than a list somebody has to
-// remember: a write carrying a CONVERSATIONAL RECORD (a prompt, a reply, a
-// turn-boundary event, a plan row, a transcript) must run detached from the shutdown
-// that made it necessary, and every other write is abandonable. A whitelist cannot
-// see the omission it exists for — a seal path landed in a function nobody listed.
+// A census gates the durable-write class: a write carrying a conversational record must run
+// detached from shutdown; every other write is abandonable. A list cannot see an omission.
 
 import (
 	"go/ast"
@@ -16,24 +13,18 @@ import (
 	"testing"
 )
 
-// The three packages the class spans. Their SOURCE is read rather than imported:
-// agent imports translate, so a test here has no other way to reach the far half.
-// turnlog is in the population because every content seal reaches the store through
-// its one Sink.Append, which the two writer packages never call directly.
+// The three packages the class spans, read as source because agent imports translate. turnlog
+// is included because every seal reaches the store through its Sink.Append.
 var storeWritePackages = []string{"internal/agent", "internal/translate", "internal/turnlog"}
 
-// What the census counts as a write: the entry store's verbs (the log
-// appenders, the turn opener, the two history rewriters, the header setters
-// and the header mutator) and the run log's own appenders.
+// What the census counts as a write: the entry store's verbs and the run log's appenders.
 var storeWriteNames = []string{
 	"Mutate", "Append", "AppendBetweenTurns", "OpenTurn", "Revert", "Rewrite",
 	"Reconcile", "SetDraft", "SetAttachments", "WriteCounters",
 	"CloseRun", "SwapMerged", "dropUnreadSteers", "appendLaneless", "appendBetweenTurns",
 }
 
-// A walk that stops finding anything must fail rather than report a clean class.
-// 44 measured; the slack covers a site or two moving, not a walker that drops the
-// package-level callees (calleeName's selector-only regression costs four).
+// A walk that finds nothing must fail. 44 measured; the slack covers a site moving, not a dropped callee class.
 const storeWriteFloor = 35
 
 // One function whose store writes carry a ruling.
@@ -41,13 +32,11 @@ type durableSite struct {
 	file  string
 	fn    string
 	calls []string
-	// because is what a failure says the reader loses, or what decides the context
-	// when this function is not the decider.
+	// because is what a failure loses, or what decides the context when this is not the decider.
 	because string
 }
 
-// Sites carrying a conversational record. finalizeTurn is deliberately absent: its
-// whole closer dispatch runs below one seam, which has its own test below.
+// Sites carrying a conversational record. finalizeTurn is absent: its closers sit below one seam, tested below.
 var durableWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "PersistModelSwitch",
@@ -100,11 +89,14 @@ var durableWriteSites = []durableSite{{
 	calls: []string{"appendBetweenTurns"},
 	because: "which agent read the steer, taken from its own ack — a replay carries the " +
 		"steer's text but neither its delivery state nor the lane that consumed it",
+}, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "HoldUnread",
+	calls:   []string{"Mutate"},
+	because: "a shutdown's unread steers as the Held row the next process shows",
 }}
 
-// Writes ruled NOT durable, each row naming its reason: the next frame or load
-// re-derives the value, or the caller's abandonment is the point. Listing them is
-// what makes the omission a decision rather than an oversight.
+// Writes ruled not durable, each with its reason, so the omission is a decision.
 var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/turn_metering.go",
 	fn:      "mutateUsage",
@@ -141,6 +133,16 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"Mutate"},
 	because: "a model pick on the REQUEST's context, the same class as the command/* writes: a switch nobody is waiting for must not land",
 }, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "AppendIfLive",
+	calls:   []string{"Mutate"},
+	because: "a queue_prompt on the REQUEST's context: a request that died never told the reader the row was queued, and the composer still holds the text",
+}, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "Unqueue",
+	calls:   []string{"Mutate"},
+	because: "an unqueue_prompt on the REQUEST's context: a request that died never told the reader the row was discarded, and the dock still shows it",
+}, {
 	file:    "internal/translate/streaming_content.go",
 	fn:      "appendSteerAcks",
 	calls:   []string{"appendBetweenTurns"},
@@ -172,10 +174,7 @@ var abandonableWriteSites = []durableSite{{
 	because: "the fallback mode, re-derived",
 }}
 
-// Sites that take the caller's context and must not wrap it, because the decision is
-// not theirs: a store forwarder shared between paths, a helper below a caller's
-// detach, and the run log's own writers, which the run appender drives on the
-// translator's frame context.
+// Sites that take the caller's context and must not wrap it: the decision is not theirs.
 var inheritedWriteSites = []durableSite{{
 	file:    "internal/agent/turn_finalize.go",
 	fn:      "closeTurn",
@@ -185,7 +184,7 @@ var inheritedWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "recordSteer",
 	calls:   []string{"AppendBetweenTurns"},
-	because: "its callers decide: dropUnreadSteers's caller's detach, and the run bound's own derived lifecycle context",
+	because: "its callers decide: dropUnreadSteers's caller's detach, holdUnreadSteers's detach, and the run bound's own derived lifecycle context",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "AppendBetweenTurns",
@@ -201,6 +200,11 @@ var inheritedWriteSites = []durableSite{{
 	fn:      "persistModelPick",
 	calls:   []string{"Mutate"},
 	because: "applyPendingModel's detach, and the spawn's own ctx at its fold",
+}, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "NextUserRow",
+	calls:   []string{"Mutate"},
+	because: "the drain's context; its only write is a removal the store already owes, retried by the next mutation",
 }, {
 	file:    "internal/agent/model_switch.go",
 	fn:      "clearPendingModel",
@@ -253,10 +257,8 @@ var inheritedWriteSites = []durableSite{{
 	because: "the seal path; the frame's context, refused on a dead ctx by EntryLog.Append, which the turnlog and entrylog tests pin",
 }}
 
-// The seam itself: one detach, below the position wait, above every closer. Both
-// halves in one test because each is the other's failure mode — a seam below a
-// persist helper leaves it refused at shutdown, and a seam above awaitPosition makes
-// a bounded shutdown wait unbounded, which fails by HANGING in a behavioural test.
+// The seam: one detach, below the position wait, above every closer. Either misplacement fails
+// (refused at shutdown, or an unbounded wait).
 func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 	const rel = "internal/agent/turn_finalize.go"
 	fset, file := parseModuleFile(t, rel)
@@ -332,9 +334,7 @@ func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 	}
 }
 
-// The census the site lists cannot be on their own: a write whose enclosing function
-// appears in none of the three lists is the omission class the gate exists for, since
-// a whitelist only inspects functions somebody already thought of.
+// A store write in a function no list names is the omission the gate exists for.
 func TestDurableWrites_EveryStoreWriteCarriesARuling(t *testing.T) {
 	ruled := map[string]string{}
 	for _, list := range []struct {
@@ -385,8 +385,7 @@ func TestDurableWrites_EveryStoreWriteCarriesARuling(t *testing.T) {
 	}
 }
 
-// The non-finalize half of the class. One seam cannot reach it: these handlers are
-// called from the translate cascade and the Forward goroutine.
+// The non-finalize half: handlers called from the translate cascade and Forward.
 func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testing.T) {
 	for _, site := range durableWriteSites {
 		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
@@ -403,9 +402,7 @@ func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testi
 	}
 }
 
-// The other direction. Asserting each ruling still describes real code is what stops
-// the list emptying under a rename: a site that vanished would read as one nobody had
-// to judge.
+// Each abandonable ruling must still describe real code, or a rename empties the list.
 func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) {
 	for _, site := range abandonableWriteSites {
 		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
@@ -423,9 +420,7 @@ func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) 
 	}
 }
 
-// The third ruling. A detach inside a shared persist helper would change the seal's
-// shutdown behaviour from refused to written, which is probably right and definitely
-// not what anyone reviewed.
+// A detach inside a shared persist helper would change shutdown behaviour unreviewed.
 func TestDurableWrites_TheInheritedSitesDecideNothing(t *testing.T) {
 	for _, site := range inheritedWriteSites {
 		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
@@ -449,8 +444,7 @@ type storeWrite struct {
 	at   string
 }
 
-// Every store write in one package directory's production files, whatever function
-// performs it.
+// Every store write in one package directory's production files.
 func censusStoreWrites(t *testing.T, dir string) []storeWrite {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(moduleRoot(t), dir))
@@ -498,8 +492,7 @@ func siteWrites(t *testing.T, site durableSite) (found, attached []writeCall) {
 	return found, attached
 }
 
-// A write is detached when its own context argument is durable.Context(...), or when
-// the body reassigned ctx from it beforehand.
+// A write is detached when its ctx argument is durable.Context(...) or ctx was reassigned from it.
 func writeCallsIn(fset *token.FileSet, body *ast.BlockStmt) []writeCall {
 	want := make(map[string]bool, len(storeWriteNames))
 	for _, n := range storeWriteNames {

@@ -1,14 +1,7 @@
 package forges
 
-// The listing cache exists so arriving at a view costs no forge request when
-// the answer is already known, and every case here is about a CALL COUNT rather
-// than a returned value: the value was never in doubt, the work was.
-//
-// The time-dependent cases run in a synctest BUBBLE. A TTL boundary is otherwise
-// only reachable by sleeping past it, which trades a real second per case for an
-// assertion that can still flake; in a bubble the clock advances only when every
-// goroutine is durably blocked, so "one nanosecond past the TTL" is exact and the
-// revalidation goroutine is joinable without polling for it.
+// The listing cache exists so arriving at a view costs no forge request when the answer is known,
+// so every case asserts a CALL COUNT rather than a value.
 
 import (
 	"context"

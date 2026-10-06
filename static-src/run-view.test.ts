@@ -1,19 +1,12 @@
-// ---------------------------------------------------------------------------
-// Tests for the run tab: its control row, its structure, its outputs and its
-// empty-step notes. The control row is the SERVER's answer
-// (`GET /api/runs/{id}/controls`), so these cases drive that answer and the verb rule is
-// pinned in Go. The page decides only what an empty step body says and whether the door
-// beside it is offered, from the RUN's own `parentSessionId`, never from the tab it was
-// opened through.
-// ---------------------------------------------------------------------------
+// Tests for the run tab: its control row, its structure, its outputs and its empty-step notes.
 
 import { vi, describe, it, expect, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
 import type * as RunStore from "./run-store.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-/** The run store's own module type, so the partial mock below keeps every export it
- *  does not override. Spelled as a namespace type import rather than an inline
- *  `import()` annotation, which the lint forbids; `docs.test.ts` is the precedent. */
+/** The run store's own module type, so the partial mock below keeps every export it does not
+ *  override. Spelled as a namespace type import rather than an inline `import()` annotation,
+ *  which the lint forbids; `docs.test.ts` is the precedent. */
 type RunStoreModule = typeof RunStore;
 
 interface RunInspectReply {
@@ -23,34 +16,31 @@ interface RunInspectReply {
     status?: string;
     root?: unknown;
     inputs?: Record<string, string>;
-    /** KAS's own answer to "was this launched by an agent": an ACP session id,
-     *  empty for a manual and a scheduled launch alike. */
+    /** KAS's own answer to "was this launched by an agent": an ACP session id, empty for a
+     *  manual and a scheduled launch alike. */
     parentSessionId?: string;
   };
   nodePlan?: unknown;
 }
 
-/** What a door decided, which is all a door decides now: `owns` (does the ×
- *  stop the run) and `parent` (which chat it nests under). Both are SUBJECT
- *  fields, so they travel to every device rather than living in a local spec. */
+/** What a door decided, which is all a door decides now: `owns` (does the × stop the run) and
+ *  `parent` (which chat it nests under). Both are SUBJECT fields, so they travel to every device
+ *  rather than living in a local spec. */
 interface OpenedTab {
   id: string;
   opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
 }
 
-/** What `GET /api/runs/{id}/controls` answers. The SERVER decides the row now, so
- *  this is the fixture that used to be a local `parentless` boolean plus a status
- *  table — and the swap is the fix: parentage came from an SSE-fed map that is
- *  empty after any reload, so a reloaded client read every chat-parented run as
- *  parentless. */
+/** What `GET /api/runs/{id}/controls` answers. */
 interface ControlsReply {
   verbs: string[];
   refused?: Record<string, string>;
   parent_chat_id: string;
+  pause_node_id?: string;
 }
 
-// Hoisted with the vi.mock factories below, which run before ordinary top-level
-// initialisers and would otherwise read these in their TDZ.
+// Hoisted with the vi.mock factories below, which run before ordinary top-level initialisers and
+// would otherwise read these in their TDZ.
 const m = vi.hoisted(() => ({
   reply: { current: undefined as unknown },
   controls: { current: undefined as unknown },
@@ -59,98 +49,90 @@ const m = vi.hoisted(() => ({
     opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
   }[],
   dispatched: [] as string[],
-  /** The launching chat a run tab's `TabSubject.Parent` resolves to. The
-   *  post-reload answer for a chat-parented run whose lease has been released, and
-   *  the only client-side one. */
+  /** The launching chat a run tab's `TabSubject.Parent` resolves to. The post-reload answer for
+   *  a chat-parented run whose lease has been released, and the only client-side one. */
   parentChat: { current: "" },
-  /** The run store's own record of the launching chat — the LIVE answer, fed by SSE
-   *  frames and by `GET /api/runs/live`, and the first of the two sources. */
+  /** The run store's own record of the launching chat — the LIVE answer, fed by SSE frames and
+   *  by `GET /api/runs/live`, and the first of the two sources. */
   runChat: { current: "" },
   /** What `openTab` was asked for. The affordance's whole observable. */
   tabbed: [] as { kind: string; ref?: string }[],
-  /** The node paths the chat-step stream was handed a slice for, and the hosts it
-   *  was given. Together they are the no-orphan-host rule's observable. */
+  /** The node paths the chat-step stream was handed a slice for, and the hosts it was given.
+   *  Together they are the no-orphan-host rule's observable. */
   projected: [] as string[],
   hosted: [] as HTMLElement[],
-  /** The LAST paint per node path: how many turns were painted for it and each
-   *  turn's `live` flag (its own `turn_close` absence). Per path rather than a flat
-   *  list, because the module's one view effect legitimately paints the PREVIOUS
-   *  case's plan on its first pass of the next one, and a cumulative list would carry
-   *  that. */
+  /** The LAST paint per node path: how many turns were painted for it and each turn's `live`
+   *  flag (its own `turn_close` absence). Per path rather than a flat list, because the module's
+   *  one view effect legitimately paints the PREVIOUS case's plan on its first pass of the next
+   *  one, and a cumulative list would carry that. */
   paint: new Map<string, { turns: number; live: boolean[] }>(),
   /** `<kind>:<ref>` for every open tab, as `hasTab` sees it. */
   tabsOpen: new Set<string>(),
-  /** The step read's VERDICT per node path, which is all a read carries now: its
-   *  entries are adopted into the run store, so there is no second copy of the
-   *  content for this suite to hold. A `ready` verdict with no turn in the log is a
-   *  real state and is exactly the case one note arm exists for. */
+  /** The step read's VERDICT per node path, which is all a read carries now: its entries are
+   *  adopted into the run store, so there is no second copy of the content for this suite to
+   *  hold. A `ready` verdict with no turn in the log is a real state and is exactly the case one
+   *  note arm exists for. */
   reads: new Map<string, { state: string }>(),
-  /** Every path a read was ARMED for, in order. `armStepRead`'s gates are all about
-   *  what must NOT reach here, so the observable is this list staying empty. */
+  /** Every path a read was ARMED for, in order. `armStepRead`'s gates are all about what must
+   *  NOT reach here, so the observable is this list staying empty. */
   requested: [] as string[],
-  /** Every path a settled-looking turn was RE-READ for. The second arm: a turn with
-   *  no `turn_close` is a client that missed the close, and re-reading is the repair. */
+  /** Every path a settled-looking turn was RE-READ for. The second arm: a turn with no
+   *  `turn_close` is a client that missed the close, and re-reading is the repair. */
   reread: [] as string[],
   /** How many times the page dropped every read. */
   cleared: { count: 0 },
 }));
 
-// `mockReset: true` wipes every implementation between tests, so these are ARMED
-// in beforeEach rather than only here. The suite used to get away with a
-// factory-only implementation because the run store's cache outlived each test and
-// answered paints 2..N with the previous test's state — which also meant a case
-// could pass on a stale fixture. Each test now genuinely fetches.
+// `mockReset: true` wipes every implementation between tests, so these are ARMED in beforeEach
+// rather than only here. Each test now genuinely fetches.
 vi.mock("./api-client.js", () => ({
   // Present-but-inert so real-ESM linking succeeds: other modules in this graph read it.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
-  // The run READ goes through the OrError variant, because the store spends a failed
-  // read's STATUS: a 404 is the server's settled answer about the run and skips its
-  // retry ladder, where a 0 (no request) keeps it.
+  // The run READ goes through the OrError variant, because the store spends a failed read's STATUS:
+  // a 404 is the server's settled answer about the run and skips its retry ladder, where a 0 (no
+  // request) keeps it.
   apiGetOrError: vi.fn(),
 }));
 
-// `refreshRun` reaches the launching chat's window through a lazy import, so the
-// graph resolves at runtime and stops here.
+// `refreshRun` reaches the launching chat's window through a lazy import, so the graph resolves at
+// runtime and stops here.
 vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
 vi.mock("./tabs.js", () => ({
-  // The spec is the FACTORY's now, so there is no onShow and no onClose to
-  // capture: what a door decides is `owns` (does the × stop the run) and
-  // `parent` (which chat it nests under), both subject fields.
+  // The spec is the FACTORY's now, so there is no onShow and no onClose to capture: what a door
+  // decides is `owns` (does the × stop the run) and `parent` (which chat it nests under), both
+  // subject fields.
   openRunTab: vi.fn(
     (id: string, _name: string, opts?: { parent?: string; owns?: boolean; activate?: boolean }) => {
       m.opened.push({ id, opts });
       return Promise.resolve();
     },
   ),
-  // Both reached through run-dots.js, which run-view imports to seed a parentless
-  // run's tab dot from the fetch. "" keeps the seed inert here: this suite opens
-  // no real tabs, so there is no dot to paint.
+  // Both reached through run-dots.js, which run-view imports to seed a parentless run's tab dot
+  // from the fetch. "" keeps the seed inert here: this suite opens no real tabs, so there is no dot
+  // to paint.
   tabIdFor: vi.fn(() => ""),
   tabSetVersion: vi.fn(() => 0),
   // The open run tabs run-dots seeds run state for. Empty keeps the seed inert.
   openRunRefs: vi.fn(() => []),
-  // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here;
-  // a Browser-Mode mock is linked as real ESM, so a name any module in the graph
-  // reaches has to exist on it.
+  // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here; a Browser-Mode
+  // mock is linked as real ESM, so a name any module in the graph reaches has to exist on it.
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
-  // The names this graph pulls in through the run CARD, whose markdown bubble
-  // reaches the linkifier and through it the editor openers. All inert: no case
-  // here closes a tab, reads which tab is on screen, or opens a file.
+  // The names this graph pulls in through the run CARD, whose markdown bubble reaches the linkifier
+  // and through it the editor openers. All inert: no case here closes a tab, reads which tab is on
+  // screen, or opens a file.
   closeTab: vi.fn(),
   getActiveTabId: vi.fn(() => ""),
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
   openGitView: vi.fn(),
-  // The launching chat a run tab nests under, read off the persisted subject. The
-  // cases below drive it directly, because the alternative is a whole tab
-  // projection for one string.
+  // The launching chat a run tab nests under, read off the persisted subject. The cases below drive
+  // it directly, because the alternative is a whole tab projection for one string.
   parentChatRef: vi.fn(() => m.parentChat.current),
-  // The eviction exemption's own reader, and the affordance's door. `hasTab`
-  // answers off a set the cases drive; `openTab` records so the link's dispatch is
-  // observable.
+  // The eviction exemption's own reader, and the affordance's door. `hasTab` answers off a set the
+  // cases drive; `openTab` records so the link's dispatch is observable.
   hasTab: vi.fn((kind: string, ref: string) => m.tabsOpen.has(`${kind}:${ref}`)),
   openTab: vi.fn((args: { kind: string; ref?: string }) => {
     m.tabbed.push({ kind: args.kind, ...(args.ref === undefined ? {} : { ref: args.ref }) });
@@ -158,20 +140,14 @@ vi.mock("./tabs.js", () => ({
   }),
 }));
 
-// `run-store.js` is REAL except for its LAUNCHING-CHAT MEMORY, and that carve-out
-// is not convenience. `launchingChatOf` writes a tab-derived answer back through
-// `noteRunChat` so every other reader converges on one, which makes `launchedBy`
-// module state that leaks between cases — and there is no reset for it alone:
-// `forgetRun` also drops the run's state CELL, which this module's one effect is
-// subscribed to, so dropping it would leave every later case unpainted. The fetch,
-// the cache and the coalescing stay real, because the paint path under test is
-// driven by them.
+// `run-store.js` is REAL except for its LAUNCHING-CHAT MEMORY, and that carve-out is not
+// convenience.
 vi.mock("./run-store.js", async (importOriginal) => {
   const actual = await importOriginal<RunStoreModule>();
   return {
     ...actual,
-    // Spied so the split can be pinned by CALL rather than by request count, and
-    // delegating so every case above keeps the real store's behaviour.
+    // Spied so the split can be pinned by CALL rather than by request count, and delegating so
+    // every case above keeps the real store's behaviour.
     invalidateRun: vi.fn(actual.invalidateRun),
     invalidateRunControls: vi.fn(actual.invalidateRunControls),
     runChatID: vi.fn(() => m.runChat.current),
@@ -186,21 +162,21 @@ vi.mock("./run-store.js", async (importOriginal) => {
 vi.mock("./decision-dock.js", () => ({
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
-  // Reached through run-dots.js, which run-view imports to seed a parentless
-  // run's tab dot from the fetch.
+  // Reached through run-dots.js, which run-view imports to seed a parentless run's tab dot from the
+  // fetch.
   hasPendingDecision: vi.fn(() => false),
-  // The card's second input beside `inspect`: which step is blocked on a person,
-  // which no node status can say. None is, in every case here.
+  // The card's second input beside `inspect`: which step is blocked on a person, which no node
+  // status can say. None is, in every case here.
   runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
 }));
 
 vi.mock("./actions/runs.js", () => {
   const stub = (verb: string) => ({
-    // `name` is read by the pending binding on each button, so the stub carries
-    // the real action name rather than only a dispatch.
+    // `name` is read by the pending binding on each button, so the stub carries the real action
+    // name rather than only a dispatch.
     name: `runs.${verb}`,
-    dispatch: vi.fn((id: string) => {
-      m.dispatched.push(`${verb}:${id}`);
+    dispatch: vi.fn((arg: unknown) => {
+      m.dispatched.push(`${verb}:${typeof arg === "string" ? arg : JSON.stringify(arg)}`);
       return Promise.resolve();
     }),
   });
@@ -209,22 +185,18 @@ vi.mock("./actions/runs.js", () => {
     pauseRun: stub("pause"),
     resumeRun: stub("resume"),
     retryRun: stub("retry"),
+    extendRunRepeat: stub("extend"),
+    finishRunRepeat: stub("finish_loop"),
   };
 });
 
-// `run-chat-steps.js` is MOCKED, and for two reasons. Unmocked, the lazy import
-// links the real `messages-blocks.ts` graph — the editor openers, the navigator and
-// through them `chat.ts`, the whole transcript stack — in a suite that mounts only
-// `#run-body` and `#run-dock`. And what run-view OWNS here is the WIRING (resolve
-// the chat, slice it, load lazily, hand out the right host per path); the render
-// lifecycle is `run-chat-steps.test.ts`'s subject.
+// `run-chat-steps.js` is MOCKED, and for two reasons. Unmocked, the lazy import links the real
+// `messages-blocks.ts` graph — the editor openers, the navigator and through them `chat.ts`, the
+// whole transcript stack — in a suite that mounts only `#run-body` and `#run-dock`.
 vi.mock("./run-chat-steps.js", () => ({
   createRunStepStream: vi.fn((hostFor: (path: string) => HTMLElement) => ({
-    // A LIST of paints per path, not one: a healed step re-opens the same node path
-    // as a NEW turn, so a run's log carries one closed turn per attempt and the pane
-    // renders every one of them. Each paint is the projected TURN plus whether more
-    // may still arrive in it (`RunStepPaint`), which is the whole shape now that
-    // there is one source rather than two routes to tell apart.
+    // A LIST of paints per path, not one: a healed step re-opens the same node path as a NEW turn,
+    // so a run's log carries one closed turn per attempt and the pane renders every one of them.
     apply: (
       paints: ReadonlyMap<
         string,
@@ -241,9 +213,8 @@ vi.mock("./run-chat-steps.js", () => ({
         m.hosted.push(host);
         const marker = document.createElement("p");
         marker.className = "step-marker";
-        // `turns:bodyEntries` — the number of TURNS painted for this path and the
-        // entries under them. A healed step is several turns at one path, so both
-        // halves are worth reading.
+        // `turns:bodyEntries` — the number of TURNS painted for this path and the entries under
+        // them. A healed step is several turns at one path, so both halves are worth reading.
         marker.textContent = `${path}:${String(list.length)}:${String(
           list.reduce((n, p) => n + p.turn.body.length, 0),
         )}`;
@@ -254,16 +225,10 @@ vi.mock("./run-chat-steps.js", () => ({
   })),
 }));
 
-// `run-step-transcript.js` is MOCKED for the same division of labour as the stream
-// above: what run-view owns is WHEN a read is armed and WHICH sentence each verdict
-// produces, and `run-step-transcript.test.ts` owns the module's own rules (the URL,
-// the no-refetch gate, the failure grading, the projection). Driving the verdicts
-// directly is also the only way to reach one note arm per case — through the real
-// module every arm would have to be produced by a differently-shaped
-// `apiGetTypedOrError` envelope.
-//
-// The version signal has to be a REAL signal: `installViewEffect` reads its `.value`
-// as its subscription, so a stub would leave the effect subscribed to nothing.
+// `run-step-transcript.js` is MOCKED for the same division of labour as the stream above: what
+// run-view owns is WHEN a read is armed and WHICH sentence each verdict produces, and
+// `run-step-transcript.test.ts` owns the module's own rules (the URL, the no-refetch gate, the
+// failure grading, the projection).
 vi.mock("./run-step-transcript.js", async () => {
   const { signal } = await import("@cplieger/reactive");
   return {
@@ -281,35 +246,27 @@ vi.mock("./run-step-transcript.js", async () => {
   };
 });
 
-// `showRun` is what the tab FACTORY calls as the run tab's activation hook
-// (registered by the composition root), so it is the seam this suite paints
-// through — a door no longer carries an `onShow` of its own.
+// `showRun` is what the tab FACTORY calls as the run tab's activation hook (registered by the
+// composition root), so it is the seam this suite paints through; a door carries no `onShow` of
+// its own.
 import { openRunTab } from "./tabs.js";
 import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
-// The MOCK's signal, which is the one the view effect subscribes to. Imported so a
-// case can drive the "a read resolved" half of `fetchStep`'s `finally` directly.
+// The MOCK's signal, which is the one the view effect subscribes to. Imported so a case can drive
+// the "a read resolved" half of `fetchStep`'s `finally` directly.
 import { stepTranscriptVersion } from "./run-step-transcript.js";
-// The REAL invalidation (the run-store mock overrides only its launching-chat
-// memory), so a case can drive a second fetch of the SAME run: that is how a step
-// settling under the reader's cursor reaches the page in production.
-// The RUN's own log, which is where a step's entries live now: `appendRunEntry` and
-// `openRunTurn` are the store operations `handlers/run.ts` calls for the run-scoped
-// entry events, so a case that wants a step's transcript writes it the way the wire
-// would rather than reaching past the store.
+// The REAL invalidation (the run-store mock overrides only its launching-chat memory), so a case
+// can drive a second fetch of the SAME run: that is how a step settling under the reader's cursor
+// reaches the page in production.
 import { appendRunEntry, invalidateRun, invalidateRunControls, openRunTurn } from "./run-store.js";
-// The REAL router: a zero-import leaf, so no mock, and taking the node from the
-// PARSER rather than a literal is what makes the fragment case below cover the
-// whole URL → focus chain instead of just the opener's fourth argument.
+// The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
+// a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
 import type { Entry } from "./types.js";
 
-/** The row a status used to imply, now stated as a server answer.
- *
- *  Kept as a helper rather than inlined per case so a case reads as "this run
- *  offers these verbs" — but it is a FIXTURE of the server's answer, not a
- *  reimplementation of its table: the table itself is pinned in Go, over all three
- *  of its inputs. */
+/** Kept as a helper rather than inlined per case so a case reads as "this run offers these
+ *  verbs" — but it is a FIXTURE of the server's answer, not a reimplementation of its table: the
+ *  table itself is pinned in Go, over all three of its inputs. */
 const CONTROLS_FOR: Record<string, ControlsReply> = {
   running: { verbs: ["pause", "cancel"], parent_chat_id: "" },
   paused: { verbs: ["resume", "cancel"], parent_chat_id: "" },
@@ -318,30 +275,27 @@ const CONTROLS_FOR: Record<string, ControlsReply> = {
   aborted: { verbs: ["retry"], parent_chat_id: "" },
 };
 
-/** Open a run through one of the two doors and let its first paint settle.
- *  Returns the control labels on screen, in order. */
+/** Open a run through one of the two doors and let its first paint settle. Returns the control
+ *  labels on screen, in order. */
 async function paint(
   door: (id: string, name: string) => void,
   status: string,
   opts: {
     controls?: ControlsReply;
-    /** Answer the affordance fetch with nothing, which is what a failed fetch and
-     *  the moment before the first one resolves both look like to the store. */
+    /** Answer the affordance fetch with nothing, which is what a failed fetch and the moment
+     *  before the first one resolves both look like to the store. */
     noControls?: boolean;
-    /** The run id to paint. Defaults to `wf_1`; a case that needs a run this
-     *  client holds NOTHING for names its own, because the store's caches live for
-     *  the module's lifetime and there is no reset that a subscribed view survives
-     *  (forgetting a run drops the very signal the view's effect is watching). */
+    /** The run id to paint. Defaults to `wf_1`; a case that needs a run this client holds
+     *  NOTHING for names its own, because the store's caches live for the module's lifetime and
+     *  there is no reset that a subscribed view survives (forgetting a run drops the very signal
+     *  the view's effect is watching). */
     id?: string;
-    /** Whether the run was launched MANUALLY. It reaches the page only as
-     *  `parentSessionId` below — no door carries it any more — so what it decides is
-     *  the empty-step note and the door beside it, never a verb. */
+    /** Whether the run was launched MANUALLY. */
     parentless?: boolean;
     root?: unknown;
     inputs?: Record<string, string>;
     nodePlan?: unknown;
-    /** The RUN's own answer to "was this launched by an agent". Defaults from
-     *  `parentless`. */
+    /** The RUN's own answer to "was this launched by an agent". Defaults from `parentless`. */
     parentSessionId?: string;
   } = {},
 ): Promise<{ labels: string[]; refusals: string[]; tab: OpenedTab; body: HTMLElement }> {
@@ -357,8 +311,8 @@ async function paint(
       ...(opts.inputs === undefined ? {} : { inputs: opts.inputs }),
       ...(parentSessionId === "" ? {} : { parentSessionId }),
     },
-    // Beside `state`, not inside it: the plan is its own member of KAS's inspect
-    // reply and the store keeps the two apart for that reason.
+    // Beside `state`, not inside it: the plan is its own member of KAS's inspect reply and the
+    // store keeps the two apart for that reason.
     ...(opts.nodePlan === undefined ? {} : { nodePlan: opts.nodePlan }),
   };
   m.reply.current = reply;
@@ -379,15 +333,13 @@ async function paint(
   if (tab === undefined) {
     throw new Error("the opener did not open a tab");
   }
-  // The activation hook, driven the way the composition root wires it. ONE argument:
-  // it used to take a `parentless` flag the caller derived from an event-fed cache,
-  // and the run's own `parentSessionId` answers it now.
+  // The activation hook, driven the way the composition root wires it.
   showRun(tab.id);
-  // The pair `activateTabQuietly` runs: the activation points the view, the refresh
-  // fetches. `showRun` issues nothing of its own.
+  // The pair `activateTabQuietly` runs: the activation points the view, the refresh fetches.
+  // `showRun` issues nothing of its own.
   refreshRun(tab.id);
-  // Two fetches settle before the row is right — the state and the affordance — so
-  // drain enough microtasks for both promise chains without reaching for fake timers.
+  // Two fetches settle before the row is right — the state and the affordance — so drain enough
+  // microtasks for both promise chains without reaching for fake timers.
   for (let i = 0; i < 12; i++) {
     await Promise.resolve();
   }
@@ -401,13 +353,10 @@ async function paint(
   return { labels, refusals, tab, body };
 }
 
-/** One step turn in a RUN's own log, written the way the run-scoped entry events
- *  write it: a `turn_open` carrying the step's `node_path` (the only join available,
- *  since `TurnState` carries no path of its own), one `text` entry, and a
- *  `turn_close` unless the turn is still open.
- *
- *  The turn id carries the run and the path so two runs of one recipe cannot collide
- *  on a shared node path, which is the ordinary case rather than an edge. */
+/** One step turn in a RUN's own log, written the way the run-scoped entry events write it: a
+ *  `turn_open` carrying the step's `node_path` (the only join available, since `TurnState`
+ *  carries no path of its own), one `text` entry, and a `turn_close` unless the turn is still
+ *  open. */
 function logStep(
   workflowID: string,
   nodePath: string,
@@ -434,11 +383,9 @@ function logStep(
   }
 }
 
-/** Let a clamp's ResizeObserver deliver its post-layout verdict. A callback is
- *  delivered after layout and before paint, so ONE frame is the settle; the second is
- *  margin for the cold-cache full-suite run, not a second mechanism (measured: every
- *  clamp case here passes at one frame). Module-scope so the instructions clamp and
- *  the result clamp share one wait rather than keeping a copy each. */
+/** Let a clamp's ResizeObserver deliver its post-layout verdict. A callback is delivered after
+ *  layout and before paint, so ONE frame is the settle; the second is margin for the cold-cache
+ *  full-suite run, not a second mechanism (measured: every clamp case here passes at one frame). */
 async function settleClamp(): Promise<void> {
   for (let i = 0; i < 2; i++) {
     await new Promise<void>((resolve) => {
@@ -449,10 +396,9 @@ async function settleClamp(): Promise<void> {
   }
 }
 
-// The shipped stylesheet, because the instructions clamp DECIDES on a measurement:
-// with no `-webkit-line-clamp` in force nothing is ever clipped, so every clamp case
-// would report "fits" and pass for the wrong reason. Mounted for the whole file so
-// the page renders here the way it renders in production.
+// The shipped stylesheet, because the instructions clamp DECIDES on a measurement: with no
+// `-webkit-line-clamp` in force nothing is ever clipped, so every clamp case would report "fits"
+// and pass for the wrong reason.
 let styleEl: HTMLStyleElement;
 
 beforeAll(() => {
@@ -477,10 +423,9 @@ beforeEach(() => {
   m.requested.length = 0;
   m.reread.length = 0;
   m.cleared.count = 0;
-  // The chat STORE is no longer part of this suite's state: a step's entries are the
-  // RUN's, in `runs/<workflowId>/entries.jsonl`, so nothing here writes a chat window
-  // and there is none to clear. Each case that wants a step transcript writes the
-  // run's own log under its own run id instead (`logStep`).
+  // The chat STORE is not part of this suite's state: a step's entries are the RUN's, in
+  // `runs/<workflowId>/entries.jsonl`, so nothing here writes a chat window and there is none to
+  // clear.
   m.controls.current = undefined;
   vi.mocked(apiGetOrError).mockImplementation(() =>
     Promise.resolve(
@@ -489,28 +434,24 @@ beforeEach(() => {
         : { ok: true, status: 200, data: m.reply.current, error: "" },
     ),
   );
-  // The affordance endpoint, the only typed GET this graph makes. Decoded FOR REAL
-  // by the caller's own generated decoder, so a fixture with the wrong shape fails
-  // here rather than reaching the row. `null` is what a failed fetch produces.
+  // The affordance endpoint, the only typed GET this graph makes. Decoded FOR REAL by the caller's
+  // own generated decoder, so a fixture with the wrong shape fails here rather than reaching the
+  // row. `null` is what a failed fetch produces.
   vi.mocked(apiGetTyped).mockImplementation((_path, decode) =>
     Promise.resolve(m.controls.current === undefined ? null : decode(m.controls.current)),
   );
 });
 
 describe("run view controls", () => {
-  // The page renders what the server hands it and decides nothing. These cases drive
-  // the affordance answer rather than a status, because the status is no longer the
-  // input: the exec view's own state word is deliberately not consulted, or the
-  // drifting copy of the rule would be back.
+  // The page renders what the server hands it and decides nothing. These cases drive the affordance
+  // answer rather than a status, because the status is not the input: consulting the exec view's own
+  // state word would make a second, drifting copy of the rule.
   it("renders the verbs the server offers, in the server's order", async () => {
     expect((await paint(openRunView, "running")).labels).toEqual(["Pause", "Cancel"]);
     expect((await paint(openRunView, "paused")).labels).toEqual(["Resume", "Cancel"]);
   });
 
-  // THE DEFECT, at the surface it was reported on. A chat-parented aborted run used
-  // to be denied every verb here, on the premise that an agent recovers its own
-  // runs — false for exactly this status, so the run had no recovery path and no
-  // door in either product. The server now offers retry and the page draws it.
+  // The server offers retry and the page draws it.
   it("offers retry on an aborted CHAT-PARENTED run", async () => {
     const painted = await paint(openRunView, "aborted", {
       controls: { verbs: ["retry"], parent_chat_id: "c-launcher" },
@@ -518,18 +459,15 @@ describe("run view controls", () => {
     expect(painted.labels).toEqual(["Retry failed steps"]);
   });
 
-  // A COMPLETED run offers nothing and says nothing: its state word in the header
-  // already says why, so a sentence there would be noise.
+  // A COMPLETED run offers nothing and says nothing: its state word in the header already says why,
+  // so a sentence there would be noise.
   it("renders no row at all for a run with no verbs and no refusal", async () => {
     const painted = await paint(openRunView, "completed");
     expect(painted.labels).toEqual([]);
     expect(painted.refusals).toEqual([]);
   });
 
-  // The other half of the fix, and it is new behaviour rather than a restored one:
-  // the row used to return null whenever the verbs were gated away, so a reader was
-  // never told WHY a run offered nothing. A refusal renders in the place they are
-  // already looking for the control.
+  // A refusal renders in the place they are already looking for the control.
   it("shows the server's sentence where the buttons would have been", async () => {
     const painted = await paint(openRunView, "running", {
       controls: {
@@ -552,9 +490,7 @@ describe("run view controls", () => {
     expect(stuck.refusals).toEqual(["This run has no live engine on this server."]);
   });
 
-  // Before the answer lands there is nothing to render. Not an empty row and not a
-  // guess: the same degradation the old table gave an unknown status, now covering
-  // the moment between the tab opening and the fetch resolving.
+  // Before the answer lands there is nothing to render.
   it("renders nothing while the affordance is still in flight", async () => {
     const painted = await paint(openRunView, "running", {
       noControls: true,
@@ -564,27 +500,24 @@ describe("run view controls", () => {
     expect(painted.refusals).toEqual([]);
   });
 
-  // The view is shared — one DOM element serves every run tab — so switching to a
-  // run with a different answer must repaint the row. A stale row would be the
-  // failure mode of the shared-element design.
+  // The view is shared — one DOM element serves every run tab — so switching to a run with a
+  // different answer must repaint the row. A stale row would be the failure mode of the
+  // shared-element design.
   it("repaints the row when the shown run's answer differs", async () => {
     expect((await paint(openRunView, "running")).labels).toEqual(["Pause", "Cancel"]);
     expect((await paint(openRunView, "completed")).labels).toEqual([]);
   });
 
-  // A run tab is a VIEW: every door opens it with `owns: false`, so its × closes a
-  // view and stops nothing. This is the assertion that used to distinguish the two
-  // doors, inverted.
+  // A run tab is a VIEW: every door opens it with `owns: false`, so its × closes a view and stops
+  // nothing.
   it("opens as a view from every door", async () => {
     const review = await paint(openRunView, "running");
     expect(review.tab.opts?.owns).toBe(false);
   });
 
-  // A DEEP LINK awaits this, and the router's claim on the location is released when it
-  // settles: `app.ts`'s `run` branch returns the promise so no unrelated projection emit
-  // can write the restored tab's route over the URL the reader opened. Voiding the tab
-  // open here resolved the branch as soon as the CHUNK had loaded, which is the gap that
-  // let a live `/chat/{id}/subagent/{taskId}` load end up showing the first chat.
+  // A DEEP LINK awaits this, and the router's claim on the location is released when it settles:
+  // `app.ts`'s `run` branch returns the promise so no unrelated projection emit can write the
+  // restored tab's route over the URL the reader opened.
   it("returns the tab open, so a deep link can await it", async () => {
     let release = (): void => undefined;
     vi.mocked(openRunTab).mockImplementationOnce(
@@ -613,24 +546,67 @@ describe("run view controls", () => {
     retry?.click();
     expect(m.dispatched).toEqual(["retry:wf_1"]);
   });
+
+  // A repeat paused at its cap addresses the NODE the server reported, so the two buttons carry it
+  // rather than a path derived here, and extend carries the count.
+  it("sends the paused node and the count from the repeat controls", async () => {
+    const painted = await paint(openRunView, "paused", {
+      controls: {
+        verbs: ["extend", "finish_loop", "cancel"],
+        pause_node_id: "loop-1",
+        parent_chat_id: "",
+      },
+    });
+    expect(painted.labels).toEqual(["Add iterations", "End this loop", "Cancel"]);
+    const count = painted.body.querySelector<HTMLInputElement>(".run-extend-count");
+    if (count === null) {
+      throw new Error("no count field beside Add iterations");
+    }
+    count.value = "5";
+    const buttons = [...painted.body.querySelectorAll<HTMLButtonElement>(".run-controls button")];
+    buttons[0]?.click();
+    buttons[1]?.click();
+    expect(m.dispatched).toEqual([
+      'extend:{"workflowID":"wf_1","nodeID":"loop-1","iterations":5}',
+      'finish_loop:{"workflowID":"wf_1","nodeID":"loop-1"}',
+    ]);
+  });
+
+  it("refuses an out-of-range count without sending", async () => {
+    const painted = await paint(openRunView, "paused", {
+      controls: { verbs: ["extend"], pause_node_id: "loop-1", parent_chat_id: "" },
+    });
+    const count = painted.body.querySelector<HTMLInputElement>(".run-extend-count");
+    if (count === null) {
+      throw new Error("no count field");
+    }
+    count.value = "1001";
+    painted.body.querySelector<HTMLButtonElement>(".run-controls button")?.click();
+    expect(m.dispatched).toEqual([]);
+  });
+
+  it("re-addresses the repeat controls when the paused node changes", async () => {
+    const painted = await paint(openRunView, "paused", {
+      controls: { verbs: ["finish_loop"], pause_node_id: "loop-1", parent_chat_id: "" },
+    });
+    m.controls.current = { verbs: ["finish_loop"], pause_node_id: "loop-2", parent_chat_id: "" };
+    invalidateRunControls("wf_1");
+    for (let i = 0; i < 12; i++) {
+      await Promise.resolve();
+    }
+    painted.body.querySelector<HTMLButtonElement>(".run-controls button")?.click();
+    expect(m.dispatched).toEqual(['finish_loop:{"workflowID":"wf_1","nodeID":"loop-2"}']);
+  });
+
+  it("draws no repeat control when the server named no paused node", async () => {
+    const painted = await paint(openRunView, "paused", {
+      controls: { verbs: ["extend", "finish_loop", "cancel"], parent_chat_id: "" },
+    });
+    expect(painted.labels).toEqual(["Cancel"]);
+  });
 });
 
-// ---------------------------------------------------------------------------
 // THE RESULTS REGION, and it is the SELECTED STEP's rather than the run's.
-//
-// It used to render `ExecRun.outputs`, the run-level merge of `capturedOutputs` and
-// `artifacts` — literally every step's capture at once, in a foot disclosure, while
-// the detail pane rendered the selected step's capture a second time on the same
-// screen. Both halves are gone: the run-level roll-up had no node attribution
-// anywhere on the wire to filter by (`ExecRun.outputs` and the merge are deleted with
-// it), and `detail.ts`'s own output region went with the duplication.
-//
-// What is here now is one region, sourced from `ExecNode.output` + `ExecNode.artifacts`,
-// gated on `settled(node.state)`, fixed above the panes, with no disclosure at either
-// level and a measured show-more on a long report. The accepted cost is stated: a
-// step's own capture is labelled `Output`, because the NAME (`build`, `review`) is a
-// run-level key nothing attributes to a node.
-// ---------------------------------------------------------------------------
 
 /** One step node carrying whatever a case needs it to have produced. */
 function resultStep(
@@ -641,8 +617,8 @@ function resultStep(
   return { nodeId, type: "step", status, children: [], ...extra };
 }
 
-/** A sequence root over the steps, which is the shape KAS sends: `runToExec` unwraps
- *  it, so each step is a top-level node addressed `wf_1/<nodeId>`. */
+/** A sequence root over the steps, which is the shape KAS sends: `runToExec` unwraps it, so each
+ *  step is a top-level node addressed `wf_1/<nodeId>`. */
 function resultPlan(...steps: unknown[]): unknown {
   return { nodeId: "wf_1", type: "sequence", status: "running", children: steps };
 }
@@ -657,9 +633,8 @@ function selectRow(body: HTMLElement, path: string): void {
 }
 
 describe("run view step results", () => {
-  // PER-STEP SCOPING. Two settled steps with different captures: only the selected
-  // one's is on screen, and clicking the other row swaps which. The old region
-  // showed both at once, keyed by capture name, with no way to tell whose was whose.
+  // PER-STEP SCOPING. Two settled steps with different captures: only the selected one's is on
+  // screen, and clicking the other row swaps which.
   it("shows only the selected step's capture, and swaps on a selection change", async () => {
     const { body } = await paint(openRunView, "completed", {
       root: resultPlan(
@@ -690,10 +665,9 @@ describe("run view step results", () => {
     expect(resultKeys(body)).toEqual(["Output", "diff"]);
   });
 
-  // THE DONE GATE. A step still in flight has produced nothing YET and one that
-  // never ran has produced nothing at all, so a region that appeared empty and then
-  // filled itself would be a claim the source cannot make good on. `failed` and
-  // `aborted` are IN, because such a step can carry a capture worth reading.
+  // THE DONE GATE. A step still in flight has produced nothing YET and one that never ran has
+  // produced nothing at all, so a region that appeared empty and then filled itself would be a
+  // claim the source cannot make good on.
   it.each([
     ["running", false],
     ["pending", false],
@@ -708,9 +682,9 @@ describe("run view step results", () => {
     expect(body.querySelector(".ev-results")?.hasAttribute("hidden")).toBe(!shown);
   });
 
-  // NOT IN THE DOM AT ALL, which is stronger than hidden and is what the `hidden`
-  // attribute plus `.ev-results[hidden] { display: none }` buys: nothing inside the
-  // region is reachable, by a reader or by find-in-page, until it has a subject.
+  // NOT IN THE DOM AT ALL, which is stronger than hidden and is what the `hidden` attribute plus
+  // `.ev-results[hidden] { display: none }` buys: nothing inside the region is reachable, by a
+  // reader or by find-in-page, until it has a subject.
   it("renders no entry for an unsettled step even though the node holds one", async () => {
     const { body } = await paint(openRunView, "running", {
       root: resultPlan(resultStep("build", "running", { capturedOutput: "a capture" })),
@@ -725,10 +699,7 @@ describe("run view step results", () => {
     expect(body.querySelector(".ev-results")?.hasAttribute("hidden")).toBe(true);
   });
 
-  // A step only gets a capture when it captured, and the captured value is its last
-  // assistant text. So an EMPTY value is a fact about the step, not an absence —
-  // dropping it made a silent step indistinguishable from one that never ran, on the
-  // surface whose whole job is reading a finished run.
+  // A step only gets a capture when it captured, and the captured value is its last assistant text.
   it("renders an empty capture with its reason instead of dropping it", async () => {
     const { body } = await paint(openRunView, "completed", {
       root: resultPlan(resultStep("build", "completed", { capturedOutput: "   " })),
@@ -737,15 +708,13 @@ describe("run view step results", () => {
     expect(body.querySelector(".ev-r-item-empty")?.textContent).toContain(
       "without producing any text",
     );
-    // Unclamped: one sentence never overflows, and an opener under it would open
-    // nothing.
+    // Unclamped: one sentence never overflows, and an opener under it would open nothing.
     expect(body.querySelectorAll(".ev-r-more")).toHaveLength(0);
   });
 
   it("renders a non-empty capture as MARKDOWN, not as preformatted text", async () => {
-    // A captured report is a step's last assistant message, so it is markdown and
-    // the review page is where it gets read. Rendered through the transcript's own
-    // bubble: before this it sat in a `<pre>`, showing its own asterisks.
+    // A captured report is a step's last assistant message, so it is markdown and the review page
+    // is where it gets read.
     const { body } = await paint(openRunView, "completed", {
       root: resultPlan(resultStep("build", "completed", { capturedOutput: "**shipped** ok" })),
     });
@@ -765,9 +734,8 @@ describe("run view step results", () => {
     expect(body.querySelectorAll(".ev-r-item")).toHaveLength(2);
   });
 
-  // THE DETAIL PANE NO LONGER RENDERS A CAPTURE, and this is the guard that keeps the
-  // duplicate from coming back: with the region per-step, `.ev-d-out` rendered exactly
-  // what `.ev-r-item` renders, one pane apart on the same screen.
+  // The detail pane renders no capture: `.ev-r-item` already renders it, one pane apart on the
+  // same screen.
   it("renders the capture once, in the results region and not in the detail pane", async () => {
     const { body } = await paint(openRunView, "completed", {
       root: resultPlan(resultStep("build", "completed", { capturedOutput: "the report" })),
@@ -780,15 +748,7 @@ describe("run view step results", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// NO TOGGLE, AT EITHER LEVEL. The region used to be a disclosure holding N
-// disclosures, and requirement 4 makes it always-open when present — so a surviving
-// per-entry chevron would contradict it. Nothing persisted the open state (grepped
-// `localStorage`, `per-chat-store`, `device-view` and the router across
-// `exec-view/**`, `run-view.ts` and `run-store.ts`: zero hits, and the only run
-// fragment is `#node=`), so the deletion is code-only and there is no stored key to
-// purge.
-// ---------------------------------------------------------------------------
+// NO TOGGLE, AT EITHER LEVEL.
 
 describe("run view step results have no toggle", () => {
   async function region(): Promise<HTMLElement> {
@@ -812,14 +772,14 @@ describe("run view step results have no toggle", () => {
     expect(el.querySelectorAll(".disclosure-chevron")).toHaveLength(0);
     expect(el.querySelectorAll('[role="button"]')).toHaveLength(0);
     expect(el.querySelectorAll("[tabindex]")).toHaveLength(0);
-    // The clamp opener is EXEMPT and its `aria-expanded` is not the toggle's: it
-    // states whether the report below it is clipped, which is a fact about that one
-    // box's text, not about whether the region is showing anything.
+    // The clamp opener is EXEMPT and its `aria-expanded` is not the toggle's: it states whether the
+    // report below it is clipped, which is a fact about that one box's text, not about whether the
+    // region is showing anything.
     expect(el.querySelectorAll("[aria-expanded]:not(.ev-r-more)")).toHaveLength(0);
   });
 
-  // The clamp opener is the ONE button the region may hold, and it is a real
-  // `<button>` rather than a `role`-bearing div for that reason.
+  // The clamp opener is the ONE button the region may hold, and it is a real `<button>` rather than
+  // a `role`-bearing div for that reason.
   it("holds no button other than a clamp opener", async () => {
     const el = await region();
     const buttons = [...el.querySelectorAll("button")];
@@ -839,15 +799,8 @@ describe("run view step results have no toggle", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// PLACEMENT: the region is a child of `.ev-page` sitting AFTER `.ev-panes`, at the
-// column's full width. `.ev-page` is a `flex-direction: column` with the default
-// `align-items: stretch`, so no CSS is needed to make it full width — which is
-// exactly why the width is asserted rather than assumed. The order is pinned because
-// it is a decision rather than an accident: the region's `hidden` flips as the reader
-// clicks between a settled step and an unsettled one, so above the panes it shifted
-// the very rows that had just been clicked.
-// ---------------------------------------------------------------------------
+// PLACEMENT: the region is a child of `.ev-page` sitting AFTER `.ev-panes`, at the column's full
+// width.
 
 describe("run view step results placement", () => {
   async function page(): Promise<HTMLElement> {
@@ -881,13 +834,9 @@ describe("run view step results placement", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE CLAMP on a result box, reusing the page's own affordance: `clamp-text.ts`
-// `attachClamp`, the `data-clamped` attribute and the `.ev-in-more` opener skin, the
-// same three the header's instructions use. Overflow is MEASURED, so an opener that
-// opens nothing is unrepresentable — which is what the last case here proves, and it
-// is the one a character-count implementation gets wrong.
-// ---------------------------------------------------------------------------
+// THE CLAMP on a result box, reusing the page's own affordance: `clamp-text.ts` `attachClamp`, the
+// `data-clamped` attribute and the `.ev-in-more` opener skin, the same three the header's
+// instructions use.
 
 describe("run view step result clamp", () => {
   async function capture(output: string): Promise<HTMLElement> {
@@ -911,8 +860,8 @@ describe("run view step result clamp", () => {
   });
 
   it("round-trips the opener on a capture that overflows the clamp", async () => {
-    // Twelve lines is the clamp, so a paragraph per line comfortably exceeds it at
-    // any width this suite runs at.
+    // Twelve lines is the clamp, so a paragraph per line comfortably exceeds it at any width this
+    // suite runs at.
     const long = Array.from({ length: 40 }, (_, i) => `line ${String(i)} of the report`).join(
       "\n\n",
     );
@@ -938,14 +887,13 @@ describe("run view step result clamp", () => {
     expect(more?.textContent).toBe("Show more");
   });
 
-  // THE MEASUREMENT CASE. Longer than `RESULT_CLAMP.fallbackChars` and still inside
-  // twelve lines at this width, so the pre-layout guess says "overflows" and the
-  // observer has to overrule it. A character-count implementation leaves an opener
-  // here that opens nothing.
+  // THE MEASUREMENT CASE. Longer than `RESULT_CLAMP.fallbackChars` and still inside twelve lines at
+  // this width, so the pre-layout guess says "overflows" and the observer has to overrule it. A
+  // character-count implementation leaves an opener here that opens nothing.
   it("withdraws the opener when layout says the long capture fits", async () => {
-    // `i ` packs ~200 chars per line, so 999 chars clears `RESULT_CLAMP.fallbackChars`
-    // (900) while filling six of the twelve. Prose runs ~109/line at this width, which
-    // leaves the premise one font-width from failing; the glyph is what buys the margin.
+    // `i ` packs ~200 chars per line, so 999 chars clears `RESULT_CLAMP.fallbackChars` (900) while
+    // filling six of the twelve. Prose runs ~109/line at this width, which leaves the premise one
+    // font-width from failing; the glyph is what buys the margin.
     const long = "i ".repeat(500).trim();
     expect(long.length).toBeGreaterThan(900);
     const body = await capture(long);
@@ -956,12 +904,8 @@ describe("run view step result clamp", () => {
   });
 });
 
-// The header's instructions: clamped to three lines with an opener that appears
-// ONLY when the content really overflows. Overflow is MEASURED
-// (`clamp-text.ts`'s shared ResizeObserver compares scrollHeight against
-// clientHeight); the character threshold is the pre-layout guess for the frame the
-// element is still detached in, and these cases pin that the measurement is what
-// decides — a character-count implementation gets the third one wrong.
+// The header's instructions: clamped to three lines with an opener that appears ONLY when the
+// content really overflows.
 describe("run view instructions", () => {
   function openers(body: HTMLElement): HTMLButtonElement[] {
     return [...body.querySelectorAll<HTMLButtonElement>(".ev-in-more")];
@@ -981,8 +925,7 @@ describe("run view instructions", () => {
     ]);
   });
 
-  // The short-instruction case, which a character count also gets right — so it is
-  // the floor rather than the proof.
+  // A character count also gets this case right, so it is the floor rather than the proof.
   it("offers NO opener on a short instruction", async () => {
     const { body } = await paint(openRunView, "running", {
       inputs: { repo: "marotte" },
@@ -993,10 +936,9 @@ describe("run view instructions", () => {
   });
 
   it("offers an opener on an instruction that overflows the clamp", async () => {
-    // Long enough to overflow three lines at any width this suite can run at.
-    // Newlines would NOT do it: the value is not preformatted, so they collapse to
-    // spaces — which is exactly why the character/newline guess cannot be trusted
-    // and the observer has the last word.
+    // Long enough to overflow three lines at any width this suite can run at. Newlines would NOT do
+    // it: the value is not preformatted, so they collapse to spaces — which is exactly why the
+    // character/newline guess cannot be trusted and the observer has the last word.
     const { body } = await paint(openRunView, "running", {
       inputs: { task: "converge the chevrons and then the boxes ".repeat(80).trim() },
     });
@@ -1018,27 +960,21 @@ describe("run view instructions", () => {
     expect(more?.textContent).toBe("Show less");
   });
 
-  // THE MEASUREMENT CASE. This value is longer than the character fallback and
-  // still fits three lines at this width, so the pre-layout guess says "overflows"
-  // and the observer must overrule it. A character-count implementation leaves an
-  // opener here that opens nothing.
+  // THE MEASUREMENT CASE. This value is longer than the character fallback and still fits three
+  // lines at this width, so the pre-layout guess says "overflows" and the observer must overrule
+  // it. A character-count implementation leaves an opener here that opens nothing.
   it("withdraws the opener when layout says the long value fits", async () => {
     const long = "shipped ".repeat(40).trim();
     expect(long.length).toBeGreaterThan(220);
     const { body } = await paint(openRunView, "running", { inputs: { task: long } });
     await settleClamp();
     const text = body.querySelector<HTMLElement>(".ev-in-text");
-    // The premise, or this case would assert nothing: the text really is not
-    // clipped at this width.
+    // The premise, or this case would assert nothing: the text really is not clipped at this width.
     expect(text!.scrollHeight - text!.clientHeight).toBeLessThanOrEqual(1);
     expect(openers(body).map((b) => b.hidden)).toEqual([true]);
   });
 
-  /** A settled step whose capture this render carries. The results region is
-   *  rebuilt whenever its own signature changes, so the capture read back off the
-   *  rendered entry is the independent witness that a second render really ran —
-   *  the retired `.ev-r-count` used to be, and it no longer exists (nor does the
-   *  run-level roll-up it counted). */
+  /** A settled step whose capture this render carries. */
   const capturing = (output: string): unknown => ({
     nodeId: "wf_1",
     type: "sequence",
@@ -1048,10 +984,7 @@ describe("run view instructions", () => {
     ],
   });
 
-  /** Re-render the SAME mounted page from a fresh `inspect` reply.
-   *
-   *  A fresh `state` object is what makes this a real second render: the store
-   *  assigns it to a reactive cell, and an identical reference would notify nobody. */
+  /** Re-render the SAME mounted page from a fresh `inspect` reply. */
   async function rerender(
     tabID: string,
     inputs: Record<string, string>,
@@ -1068,9 +1001,9 @@ describe("run view instructions", () => {
     }
   }
 
-  // `render` runs on every store invalidation — dozens of times a minute on a live
-  // run — so an unguarded rebuild would discard the reader's expansion and re-wire
-  // every clamp. Node identity is the assertion because that is what survives.
+  // `render` runs on every store invalidation — dozens of times a minute on a live run — so an
+  // unguarded rebuild would discard the reader's expansion and re-wire every clamp. Node identity
+  // is the assertion because that is what survives.
   it("does not rebuild the list when the inputs are unchanged", async () => {
     const { body, tab } = await paint(openRunView, "running", {
       inputs: { repo: "marotte" },
@@ -1097,10 +1030,8 @@ describe("run view instructions", () => {
   });
 });
 
-// The page's whole reason for existing: an execution is a TREE over time, and the
-// two things a single column cannot express are nesting and concurrency. Both were
-// being dropped — every surface flattened the state tree to its leaves — so these
-// pin that a container is a row of its own carrying the fact that explains it.
+// The page's whole reason for existing: an execution is a TREE over time, and the two things a
+// single column cannot express are nesting and concurrency.
 describe("run view structure", () => {
   const looping = {
     nodeId: "wf_1",
@@ -1134,14 +1065,13 @@ describe("run view structure", () => {
   it("renders control-flow containers as rows, not as an indent", async () => {
     const { body } = await paint(openRunView, "running", { root: looping });
     const kinds = [...body.querySelectorAll(".ev-row")].map((r) => r.getAttribute("data-kind"));
-    // The repeat is a row of its own, and its two steps are rows beneath it. Before
-    // this the leaf flattening left only the steps, so a loop was invisible.
+    // The repeat is a row of its own, and its two steps are rows beneath it.
     expect(kinds).toEqual(["repeat", "step", "step"]);
   });
 
   it("states a repeat's bound and stop condition from the node PLAN", async () => {
-    // `nodePlan` had ZERO client readers: it is passed through verbatim by
-    // GET /api/runs/{id} and its only content the state tree lacks is exactly this.
+    // `nodePlan` had ZERO client readers: it is passed through verbatim by GET /api/runs/{id} and
+    // its only content the state tree lacks is exactly this.
     const { body } = await paint(openRunView, "running", {
       root: looping,
       nodePlan: [
@@ -1153,9 +1083,9 @@ describe("run view structure", () => {
     expect(sub).toContain("verify.output contains PASS");
   });
 
-  // A container's own status reads `running` for as long as anything inside it is
-  // open, which tells a reader nothing. What is worth surfacing is the worst outcome
-  // beneath it, so a collapsed group still says a step inside it failed.
+  // A container's own status reads `running` for as long as anything inside it is open, which tells
+  // a reader nothing. What is worth surfacing is the worst outcome beneath it, so a collapsed group
+  // still says a step inside it failed.
   it("rolls a failure up to the container that holds it", async () => {
     const { body } = await paint(openRunView, "running", {
       root: {
@@ -1173,8 +1103,8 @@ describe("run view structure", () => {
     );
   });
 
-  // Every node carries its own timestamps, so the execution's shape over time is on
-  // the wire and no surface had ever drawn it. One lane per leaf.
+  // Every node carries its own timestamps, so the execution's shape over time is on the wire and no
+  // surface had ever drawn it. One lane per leaf.
   it("draws a lane per leaf on the timeline", async () => {
     const { body } = await paint(openRunView, "running", {
       root: {
@@ -1203,16 +1133,16 @@ describe("run view structure", () => {
     });
     const names = [...body.querySelectorAll(".ev-tl-name")].map((n) => n.textContent);
     expect(names).toEqual(["a", "b"]);
-    // Overlapping steps overlap on screen, which is the whole point: `b` starts a
-    // third of the way into the window rather than after `a`.
+    // Overlapping steps overlap on screen, which is the whole point: `b` starts a third of the way
+    // into the window rather than after `a`.
     const bar = body.querySelector<HTMLElement>('.ev-tl-lane[data-path$="/b"] .ev-tl-bar');
     expect(parseFloat(bar?.style.insetInlineStart ?? "0")).toBeGreaterThan(0);
     expect(parseFloat(bar?.style.insetInlineStart ?? "100")).toBeLessThan(50);
   });
 
-  // HIERARCHY IS A BOX. A top-level container gets `.ev-group` — bordered, with its
-  // own row as the filled header — and a top-level leaf does not. The common flat
-  // workflow is all depth-0 leaves, so this item is a no-op for it by design.
+  // HIERARCHY IS A BOX. A top-level container gets `.ev-group` — bordered, with its own row as the
+  // filled header — and a top-level leaf does not. The common flat workflow is all depth-0 leaves,
+  // so this item is a no-op for it by design.
   it("boxes a top-level container and leaves a top-level leaf plain", async () => {
     const { body } = await paint(openRunView, "running", {
       root: {
@@ -1230,8 +1160,8 @@ describe("run view structure", () => {
     expect(top.map((r) => r.classList.contains("ev-group"))).toEqual([true, false]);
   });
 
-  // A direct child of a group needs no marker — the box says whose it is. A
-  // sub-sub-item gets the `↳` glyph plus one step of indent.
+  // A direct child of a group needs no marker — the box says whose it is. A sub-sub-item gets the
+  // `↳` glyph plus one step of indent.
   it("marks a sub-sub-item with the nesting glyph and not a direct child", async () => {
     const { body } = await paint(openRunView, "running", {
       root: {
@@ -1273,8 +1203,8 @@ describe("run view structure", () => {
     expect([depthOf("outer"), depthOf("inner"), depthOf("coder")]).toEqual(["0", "0", "1"]);
   });
 
-  // STEPS MUST NOT BECOME COLLAPSIBLE. A childless row has no disclosure at all, and
-  // the grouping change must not have given it one.
+  // STEPS MUST NOT BECOME COLLAPSIBLE. A childless row has no disclosure at all, and the grouping
+  // change must not have given it one.
   it("leaves a step row non-collapsible", async () => {
     const { body } = await paint(openRunView, "running", { root: looping });
     const steps = [...body.querySelectorAll<HTMLElement>('.ev-row[data-kind="step"]')];
@@ -1288,10 +1218,9 @@ describe("run view structure", () => {
     }
   });
 
-  // ONE FOLD PER BOX. The top-level box discloses and a container inside it does
-  // not, so a loop's passes are always on screen. Reported: the box's chevron could
-  // open onto rows that were themselves still shut, and the inner fold hid the very
-  // rows a reader opens the box to read.
+  // ONE FOLD PER BOX. The top-level box discloses and a container inside it does not, so a loop's
+  // passes are always on screen. Reported: the box's chevron could open onto rows that were
+  // themselves still shut, and the inner fold hid the very rows a reader opens the box to read.
   const nested = {
     nodeId: "wf_1",
     type: "sequence",
@@ -1324,8 +1253,8 @@ describe("run view structure", () => {
     expect(twistHidden("outer")).toBe(false);
     expect(row("outer").getAttribute("aria-expanded")).toBe("true");
 
-    // No chevron AND no `aria-expanded`: announcing a disclosure state for a row
-    // with no disclosure is the half that hiding the chevron alone would leave.
+    // No chevron AND no `aria-expanded`: announcing a disclosure state for a row with no disclosure
+    // is the half that hiding the chevron alone would leave.
     expect(twistHidden("inner")).toBe(true);
     expect(row("inner").hasAttribute("aria-expanded")).toBe(false);
     expect(row("inner").querySelector<HTMLElement>(":scope > .ev-kids")?.hidden).toBe(false);
@@ -1342,8 +1271,8 @@ describe("run view structure", () => {
     box.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")!.click();
     expect(kidsOf(box).hidden).toBe(true);
     expect(box.getAttribute("aria-expanded")).toBe("false");
-    // The loop's own children never fold, so reopening the box reveals the whole
-    // subtree rather than a second layer of shut rows.
+    // The loop's own children never fold, so reopening the box reveals the whole subtree rather
+    // than a second layer of shut rows.
     expect(kidsOf(inner).hidden).toBe(false);
 
     box.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")!.click();
@@ -1352,18 +1281,8 @@ describe("run view structure", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A DOOR THAT NAMES A NODE. The transcript run card's step rows are anchors into
-// this page, and a plain click asks for the row's own node to be selected — which
-// is what makes a row a door rather than the disclosure it used to be. The request
-// travels as `openRunView`'s fourth argument into `ExecRun.focus`, the field the
-// subagent adapter has always set and the workflow one never did.
-//
-// The second case is the one with a mechanism behind it: `page.ts` remembers the
-// last focus it honoured, so without a reset the SAME row is a control that works
-// once per page instance. An ordinary invalidation carries no focus, and that is
-// what clears the watermark.
-// ---------------------------------------------------------------------------
+// A DOOR THAT NAMES A NODE. The request travels as `openRunView`'s fourth argument into
+// `ExecRun.focus`, the field the subagent adapter has always set and the workflow one never did.
 
 describe("run view door focus", () => {
   const stepNode = (nodeId: string, status: string): unknown => ({
@@ -1390,11 +1309,9 @@ describe("run view door focus", () => {
     return body.querySelector<HTMLElement>(".ev-row.ev-selected")?.dataset["path"] ?? "";
   }
 
-  /** One ordinary store invalidation, the way a `run_progress` frame arrives.
-   *
-   *  The reply is rebuilt rather than reused: the store's cell is a signal, so an
-   *  identical state OBJECT wakes nobody and the page would never repaint. A real
-   *  reply is freshly decoded JSON every time. */
+  /** One ordinary store invalidation, the way a `run_progress` frame arrives. The reply is
+   *  rebuilt rather than reused: the store's cell is a signal, so an identical state OBJECT
+   *  wakes nobody and the page would never repaint. */
   async function invalidated(root: unknown): Promise<void> {
     m.reply.current = {
       workflowId: "wf_1",
@@ -1407,8 +1324,8 @@ describe("run view door focus", () => {
   }
 
   it("selects the node the door named, not the one the page would follow", async () => {
-    // The auto-follow would pick `build` (it is running), so the door has to name
-    // the OTHER step for this to say anything.
+    // The auto-follow would pick `build` (it is running), so the door has to name the OTHER step
+    // for this to say anything.
     const { body } = await paint(rowDoor("wf_1/lint"), "running", {
       root: plan(["build", "running"], ["lint", "pending"]),
     });
@@ -1421,8 +1338,8 @@ describe("run view door focus", () => {
     const { body } = await paint(rowDoor("wf_1/build"), "running", { root: two });
     expect(selectedPath(body)).toBe("wf_1/build");
 
-    // The reader moves in the tree, and a frame lands meanwhile — which is the
-    // render that carries no focus.
+    // The reader moves in the tree, and a frame lands meanwhile — which is the render that carries
+    // no focus.
     body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/lint"] > .ev-row-main')?.click();
     expect(selectedPath(body)).toBe("wf_1/lint");
     await invalidated(two);
@@ -1435,19 +1352,13 @@ describe("run view door focus", () => {
   });
 
   it("focuses the node a `#node=` URL named, decoded by the router", async () => {
-    // The COLD-DEEP-LINK chain, end to end minus one line: parseRoute reads the
-    // fragment, openRunView records it, ExecRun.focus spends it. The node path
-    // carries a `/`, which is why the route spells it as a fragment rather than a
-    // path segment.
-    //
-    // What it does NOT cover: app.ts's own `case "run"` branch, which passes
-    // `route.node ?? ""` into this same opener. Nothing under static-src/ imports
-    // app.js, so no test in this repo can execute that line; the type checker is
-    // its only gate.
+    // The COLD-DEEP-LINK chain, end to end minus one line: parseRoute reads the fragment,
+    // openRunView records it, ExecRun.focus spends it. The node path carries a `/`, which is why
+    // the route spells it as a fragment rather than a path segment.
     const r = parseRoute("/run/wf_1", "#node=wf_1%2Flint");
     const node = r.kind === "run" ? (r.node ?? "") : "";
-    // The auto-follow would pick the running `build`, so a lost fragment shows up
-    // as that step being selected instead.
+    // The auto-follow would pick the running `build`, so a lost fragment shows up as that step
+    // being selected instead.
     const { body } = await paint((id, name) => openRunView(id, name, "", node), "running", {
       root: plan(["build", "running"], ["lint", "pending"]),
     });
@@ -1455,8 +1366,8 @@ describe("run view door focus", () => {
   });
 
   it("holds a pick the plan does not describe yet rather than losing it", async () => {
-    // The click-beats-fetch race: the row was clicked before `inspect` answered, so
-    // the first paint has no such node and the request must survive to the next one.
+    // The click-beats-fetch race: the row was clicked before `inspect` answered, so the first paint
+    // has no such node and the request must survive to the next one.
     const { body } = await paint(rowDoor("wf_1/lint"), "running", {
       root: plan(["build", "running"], ["publish", "pending"]),
     });
@@ -1467,25 +1378,7 @@ describe("run view door focus", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// WHAT AN EMPTY STEP PANE SAYS. Two arms are about the step, and the rest are the
-// on-demand read's own verdicts — which is the shape of the change rather than a
-// count: before it, the note branched on the LAUNCH ROUTE, so a finished
-// chat-parented step whose window had paged out was told its transcript was "never
-// stored" (false) and a parentless one was told to open a conversation that does not
-// exist. After it, the only route-dependent thing left on this pane is the DOOR.
-//
-// The two route-independent arms lead, because no read can change either: a step
-// that NEVER RAN (`pending`/`skipped` are neither in flight nor settled, and reading
-// the vocabulary as two buckets is what let a sentence about a step's past execution
-// answer for a step with none), and a step still IN FLIGHT (a busy session cannot be
-// `session/load`ed, so the read is refused by construction).
-//
-// TWO sentences were deleted rather than reworded, and each was honest when written:
-// "streams into that chat's transcript rather than here" while the sub-tab could not
-// READ those blocks, and "Nothing from it is loaded here" while nothing could fetch
-// them. Both are false in the common case once the read exists.
-// ---------------------------------------------------------------------------
+// WHAT AN EMPTY STEP PANE SAYS.
 
 describe("run view empty step notes", () => {
   const root = {
@@ -1503,10 +1396,10 @@ describe("run view empty step notes", () => {
     };
   }
 
-  /** A run whose ONE leaf carries `status`. One leaf because the pane picks its own
-   *  default: `autoSelect` takes the node wanting attention, and `pending`, `skipped`
-   *  and `ok` all rank last, so with two rank-last leaves the case would be asserting
-   *  on whichever the walk reached first. */
+  /** A run whose ONE leaf carries `status`. One leaf because the pane picks its own default:
+   *  `autoSelect` takes the node wanting attention, and `pending`, `skipped` and `ok` all rank
+   *  last, so with two rank-last leaves the case would be asserting on whichever the walk
+   *  reached first. */
   function oneLeaf(status: string): unknown {
     return { ...root, children: [{ nodeId: "verify", type: "step", status, children: [] }] };
   }
@@ -1519,10 +1412,9 @@ describe("run view empty step notes", () => {
     return body.querySelector(".ev-d-empty")?.textContent ?? "";
   }
 
-  // `gone` is the verdict for a step whose session KAS no longer holds, and it is
-  // the one that REPLACED the route-keyed "never stored" sentence — which was true
-  // for a parentless run and false for a chat-parented one. Now the same verdict
-  // produces the same sentence on both routes, and it still names what IS durable.
+  // `gone` is the verdict for a step whose session KAS no longer holds, and it is the one that
+  // REPLACED the route-keyed "never stored" sentence — which was true for a parentless run and
+  // false for a chat-parented one.
   it("says a gone transcript is no longer stored, on either route", async () => {
     for (const parentless of [true, false]) {
       m.reads.set("wf_1/coder", { state: "gone" });
@@ -1533,10 +1425,8 @@ describe("run view empty step notes", () => {
     }
   });
 
-  // `unavailable` is the transient verdict, and it must not read as `gone`: the read
-  // could not be COMPLETED, so it is worth asking again, where a gone transcript
-  // never will be. The sentence says so without instructing the reader to retry —
-  // re-selecting the step is what arms the next read.
+  // `unavailable` is the transient verdict, and it must not read as `gone`: the read could not be
+  // COMPLETED, so it is worth asking again, where a gone transcript never will be.
   it("says an unavailable transcript could not be read, not that it is gone", async () => {
     m.reads.set("wf_1/coder", { state: "unavailable" });
     const text = await note("completed", { root: settled("completed") });
@@ -1545,10 +1435,8 @@ describe("run view empty step notes", () => {
     expect(text).not.toContain("captureOutput");
   });
 
-  // A `ready` read reaches the NOTE only with the slice empty and the read holding no
-  // blocks, which is its own fact rather than a failure: the step ran and wrote
-  // nothing. Deliberately not "captured nothing" — the capture is a different thing
-  // this pane already names two regions above.
+  // A `ready` read reaches the NOTE only with the slice empty and the read holding no blocks, which
+  // is its own fact rather than a failure: the step ran and wrote nothing.
   it("says a ready read with no blocks means the step wrote nothing", async () => {
     m.reads.set("wf_1/coder", { state: "ready" });
     const text = await note("completed", { root: settled("completed") });
@@ -1557,17 +1445,16 @@ describe("run view empty step notes", () => {
     expect(text).not.toContain("could not be read");
   });
 
-  // While the read is in flight the pane says so rather than showing one of the
-  // settled answers, which would be a verdict nothing has reached yet.
+  // While the read is in flight the pane says so rather than showing one of the settled answers,
+  // which would be a verdict nothing has reached yet.
   it("says the transcript is loading while the read is in flight", async () => {
     m.reads.set("wf_1/coder", { state: "loading" });
     expect(await note("completed", { root: settled("completed") })).toContain("Loading this step");
   });
 
-  // The DEFAULT arm, reached for a SETTLED step in the instant before its request
-  // exists: `repaint` builds this note and only then fires `onShowNode`, which is what
-  // arms the read. So loading is what is true there, and a verdict would report an
-  // answer nothing has reached yet.
+  // The DEFAULT arm, reached for a SETTLED step in the instant before its request exists: `repaint`
+  // builds this note and only then fires `onShowNode`, which is what arms the read. So loading is
+  // what is true there, and a verdict would report an answer nothing has reached yet.
   it("says loading for a settled step whose read this repaint is arming", async () => {
     const text = await note("completed", { root: settled("completed") });
     expect(text).toContain("Loading this step");
@@ -1575,10 +1462,8 @@ describe("run view empty step notes", () => {
     expect(text).not.toContain("no longer stored");
   });
 
-  // The FOURTH arm, and the only one that is not the endpoint's own verdict: a 4xx
-  // means the server refused the ADDRESS itself. Its sentence must not read as the
-  // transient one a line above it, because `settled()` never re-asks — a retry-shaped
-  // sentence would offer the reader something that cannot happen.
+  // The FOURTH arm, and the only one that is not the endpoint's own verdict: a 4xx means the server
+  // refused the ADDRESS itself.
   it("says an unaddressable transcript is not named by the plan, not that it failed", async () => {
     m.reads.set("wf_1/coder", { state: "unaddressable" });
     const text = await note("completed", { root: settled("completed") });
@@ -1587,19 +1472,17 @@ describe("run view empty step notes", () => {
     expect(text).not.toContain("no longer stored");
   });
 
-  // IN FLIGHT is answered IN FULL and identically for both run populations, which is
-  // the collapse itself: a live step's entries arrive on the RUN's own log, so there
-  // is no residency question left to key a second sentence on and nothing about this
-  // pane is route-dependent.
+  // IN FLIGHT is answered IN FULL and identically for both run populations, which is the collapse
+  // itself: a live step's entries arrive on the RUN's own log, so there is no residency question
+  // left to key a second sentence on and nothing about this pane is route-dependent.
   it("says a live step has not spoken yet, whoever launched it", async () => {
     for (const parentless of [true, false]) {
       expect(await note("running", { parentless })).toContain("Waiting for this step");
     }
   });
 
-  // The same answer for the other IN-FLIGHT state, because `inFlight` spans three: a
-  // PAUSED step is not producing output either, and the answer may not read as a
-  // verdict about its transcript.
+  // The same answer for the other IN-FLIGHT state, because `inFlight` spans three: a PAUSED step is
+  // not producing output either, and the answer may not read as a verdict about its transcript.
   it("says the same for a paused step, never a verdict about its transcript", async () => {
     const text = await note("running", { root: oneLeaf("paused") });
     expect(text).toContain("Waiting for this step");
@@ -1607,21 +1490,19 @@ describe("run view empty step notes", () => {
     expect(text).not.toContain("no longer stored");
   });
 
-  // The FIRST question, asked ahead of every verdict because no read can change its
-  // answer: a `pending` step opened no turn, so the pane may not claim it is working
-  // and may not claim a load is in flight either. It has not begun.
+  // The FIRST question, asked ahead of every verdict because no read can change its answer: a
+  // `pending` step opened no turn, so the pane may not claim it is working and may not claim a load
+  // is in flight either. It has not begun.
   it("says a pending step has not started, never that it ran", async () => {
     const text = await note("running", { root: oneLeaf("pending") });
     expect(text).toContain("has not started");
     expect(text).not.toContain("Waiting");
     expect(text).not.toContain("Loading");
-    // And no capture hint: that sentence belongs to a step whose transcript is gone,
-    // not to one that never produced one.
     expect(text).not.toContain("captureOutput");
   });
 
-  // The other not-run state, and the one no wording can promise a future for: a
-  // branch that did not run never will.
+  // The other not-run state, and the one no wording can promise a future for: a branch that did not
+  // run never will.
   it("says a skipped step produced nothing, never that it ran", async () => {
     const text = await note("completed", { root: oneLeaf("skipped") });
     expect(text).toContain("was skipped");
@@ -1630,34 +1511,12 @@ describe("run view empty step notes", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A STEP'S TRANSCRIPT, FROM THE RUN'S OWN LOG. ONE source, so there is no route to
-// choose and no preference rule to state: a step's entries are appended to
-// `runs/<workflowId>/entries.jsonl` by the same store code that writes a chat's log,
-// for a chat-parented and a parentless run alike, and the step GET ADOPTS into that
-// same store rather than holding a second copy.
-//
-// TWO groups of cases replaced by these: the launching chat's `wf:` lane as a source
-// (a chat's log cannot hold a step's entries at all now) and the KAS read as a SECOND
-// source with a slice-wins rule (a read carries a VERDICT and nothing else). What the
-// pane still owns is the WIRING — project every leaf the log holds a turn for, hand
-// each one the host the detail pane minted for its path, load the renderer lazily —
-// and WHEN a read is armed.
-//
-// Every case here shares the DEFAULT run id and separates itself by NODE PATH, and
-// that is a property of the module rather than a convenience: `installViewEffect`
-// installs ONE effect for the module's life and reads `shownRun` as a plain variable,
-// so the effect re-runs only when a signal it read on its LAST pass changes. A case
-// naming its own run id paints once and never again, because the fetch writes that
-// run's cell and the effect is not subscribed to it. Sharing the run is safe because
-// the pane drops a turn whose path this plan does not name, which is the rule the
-// third case pins — so an earlier case's turn cannot reach a later case's pane.
-// ---------------------------------------------------------------------------
+// A STEP'S TRANSCRIPT, FROM THE RUN'S OWN LOG.
 
 describe("run view step transcripts", () => {
-  /** A two-leaf plan naming this case's OWN leaves. TWO because the page hides its
-   *  tree pane for a single row, and because the second one is the unstarted step the
-   *  no-orphan-host rule is measured against. */
+  /** A two-leaf plan naming this case's OWN leaves. TWO because the page hides its tree pane for
+   *  a single row, and because the second one is the unstarted step the no-orphan-host rule is
+   *  measured against. */
   const steps = (first: string, second: string): unknown => ({
     nodeId: "wf_1",
     type: "sequence",
@@ -1668,11 +1527,8 @@ describe("run view step transcripts", () => {
     ],
   });
 
-  /** Let the lazy `import("./run-chat-steps.js")` resolve and this case's OWN path
-   *  reach the pane. A module load is not a microtask chain, so this POLLS rather than
-   *  draining a fixed count — and it polls for the PATH rather than for any paint at
-   *  all, because the module's one view effect legitimately paints the previous case's
-   *  plan first, which would satisfy a count and prove nothing about this one. */
+  /** Let the lazy `import("./run-chat-steps.js")` resolve and this case's OWN path reach the
+   *  pane. */
   async function painted(path: string): Promise<void> {
     for (let i = 0; i < 200 && !m.paint.has(path); i++) {
       await new Promise<void>((resolve) => {
@@ -1681,9 +1537,9 @@ describe("run view step transcripts", () => {
     }
   }
 
-  /** Poll until the pane has re-projected. A store append reaches this effect through
-   *  the run log's own version signal, so the wait is for a real flush rather than a
-   *  fixed number of drained microtasks. */
+  /** Poll until the pane has re-projected. A store append reaches this effect through the run
+   *  log's own version signal, so the wait is for a real flush rather than a fixed number of
+   *  drained microtasks. */
   async function reprojected(was: number): Promise<void> {
     for (let i = 0; i < 200 && m.projected.length === was; i++) {
       await new Promise<void>((resolve) => {
@@ -1699,16 +1555,15 @@ describe("run view step transcripts", () => {
 
     const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/build"]');
     expect(host?.childElementCount).toBeGreaterThan(0);
-    // One turn, two body entries (the text and the close). The `turn_open` is the
-    // turn's identity rather than a row, which is why it is not among them.
+    // One turn, two body entries (the text and the close). The `turn_open` is the turn's identity
+    // rather than a row, which is why it is not among them.
     expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1/build:1:2");
-    // And the note is retired for the node on screen, because the host has content:
-    // no copy string may claim anything about a transcript that is rendered.
+    // The host has content, so no empty-note copy may claim anything about it.
     expect(body.querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
   });
 
-  // The no-orphan-host rule: a step the log holds no turn for gets no host minted for
-  // it, or the pane would carry an empty region per unstarted step.
+  // The no-orphan-host rule: a step the log holds no turn for gets no host minted for it, or the
+  // pane would carry an empty region per unstarted step.
   it("mints a host only for a step the log holds a turn for", async () => {
     logStep("wf_1", "wf_1/lint", "linting");
     const { body } = await paint(openRunView, "running", { root: steps("lint", "unstarted") });
@@ -1719,9 +1574,9 @@ describe("run view step transcripts", () => {
     expect(body.querySelector('.ev-d-body[data-path="wf_1/unstarted"]')).toBeNull();
   });
 
-  // A turn whose path names no node of THIS plan is dropped, so no orphan host is
-  // minted for it. Two runs of one recipe share every path, so a log carrying a path
-  // this plan does not have is the ordinary case rather than an edge.
+  // A turn whose path names no node of THIS plan is dropped, so no orphan host is minted for it.
+  // Two runs of one recipe share every path, so a log carrying a path this plan does not have is
+  // the ordinary case rather than an edge.
   it("drops a turn whose node path this plan does not name", async () => {
     logStep("wf_1", "wf_1/mine", "mine");
     logStep("wf_1", "wf_1/absent", "not in this plan");
@@ -1733,9 +1588,8 @@ describe("run view step transcripts", () => {
     expect(body.querySelector('.ev-d-body[data-path="wf_1/absent"]')).toBeNull();
   });
 
-  // A CONTAINER hosts nothing (`transcript !== true`), so it is out by construction
-  // rather than by a filter — and a host minted for one would be a region the pane
-  // can never fill.
+  // A CONTAINER hosts nothing (`transcript !== true`), so it is out by construction rather than by
+  // a filter — and a host minted for one would be a region the pane can never fill.
   it("mints no host for a container", async () => {
     logStep("wf_1", "wf_1/loop", "container work");
     logStep("wf_1", "wf_1/loop/inner", "leaf work");
@@ -1761,9 +1615,9 @@ describe("run view step transcripts", () => {
     expect(body.querySelector('.ev-d-body[data-path="wf_1/loop"]')).toBeNull();
   });
 
-  // SEVERAL turns at one path is the normal answer for a healed step rather than an
-  // edge case: a resume after a restart re-opens the same path as a NEW turn, so the
-  // log carries one closed turn per attempt and the pane renders every one.
+  // SEVERAL turns at one path is the normal answer for a healed step rather than an edge case: a
+  // resume after a restart re-opens the same path as a NEW turn, so the log carries one closed turn
+  // per attempt and the pane renders every one.
   it("paints every attempt of a healed step, not just the newest", async () => {
     logStep("wf_1", "wf_1/heal", "first attempt", { attempt: 1 });
     logStep("wf_1", "wf_1/heal", "second attempt", { attempt: 2 });
@@ -1777,18 +1631,18 @@ describe("run view step transcripts", () => {
     ).toBe("wf_1/heal:2:4");
   });
 
-  // `live` is each turn's OWN `turn_close` absence and never the run's status, so one
-  // node's caret says nothing about its siblings': a `parallel` node holds several
-  // open turns in one log, and a settled step inside a running run is settled.
+  // `live` is each turn's OWN `turn_close` absence and never the run's status, so one node's caret
+  // says nothing about its siblings': a `parallel` node holds several open turns in one log, and a
+  // settled step inside a running run is settled.
   it("marks a turn live from its own close, not from the run's status", async () => {
     logStep("wf_1", "wf_1/open", "still going", { live: true });
     await paint(openRunView, "running", { root: steps("open", "after") });
     await painted("wf_1/open");
     expect(m.paint.get("wf_1/open")?.live).toEqual([true]);
 
-    // The SAME running run, with a step whose own turn is closed: `live` follows the
-    // turn's `turn_close` and not the run's status, which is what makes a settled step
-    // inside a running run render settled.
+    // The SAME running run, with a step whose own turn is closed: `live` follows the turn's
+    // `turn_close` and not the run's status, which is what makes a settled step inside a running
+    // run render settled.
     m.paint.clear();
     m.projected.length = 0;
     logStep("wf_1", "wf_1/closed", "finished");
@@ -1797,10 +1651,9 @@ describe("run view step transcripts", () => {
     expect(m.paint.get("wf_1/closed")?.live).toEqual([false]);
   });
 
-  // A step's prose GROWS after the first paint, and the pane has to follow it or the
-  // transcript is only correct for entries that arrived before the tab was opened.
-  // The run log's own version signal is what `installViewEffect` reads, so an append
-  // is the whole trigger.
+  // A step's prose GROWS after the first paint, and the pane has to follow it or the transcript is
+  // only correct for entries that arrived before the tab was opened. The run log's own version
+  // signal is what `installViewEffect` reads, so an append is the whole trigger.
   it("re-projects a step when an entry lands in its turn", async () => {
     logStep("wf_1", "wf_1/grow", "compiling", { live: true });
     const { body } = await paint(openRunView, "running", { root: steps("grow", "after") });
@@ -1826,20 +1679,15 @@ describe("run view step transcripts", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE STEP READ: `GET /api/runs/{id}/steps/{path...}`, the fallback for a step whose
-// turn the run's log does not hold — a step that opened and closed entirely inside a
-// connection gap, or a client that missed its close. It ADOPTS into the same log, so
-// what this pane owns is WHEN it is armed and WHICH sentence each verdict produces,
-// never a second copy of the content.
-// ---------------------------------------------------------------------------
+// THE STEP READ: `GET /api/runs/{id}/steps/{path...}`, the fallback for a step whose turn the run's
+// log does not hold — a step that opened and closed entirely inside a connection gap, or a client
+// that missed its close.
 
 describe("run view step reads", () => {
   const oneStep = (status: string): unknown => oneNamedStep("coder", status);
 
-  /** One leaf under the run's own root, named by the case so a log written for one
-   *  case cannot reach another's pane (the transcripts group above states why every
-   *  case shares the run id). */
+  /** One leaf under the run's own root, named by the case so a log written for one case cannot
+   *  reach another's pane (the transcripts group above states why every case shares the run id). */
   const oneNamedStep = (nodeId: string, status: string): unknown => ({
     nodeId: "wf_1",
     type: "sequence",
@@ -1847,11 +1695,8 @@ describe("run view step reads", () => {
     children: [{ nodeId, type: "step", status, children: [] }],
   });
 
-  /** A two-leaf plan: `first` is the step the reader watches, `second` the one that
-   *  picks up after it. TWO leaves because the page hides the tree pane for a single
-   *  row (`structural` in `exec-view/page.ts`), so a one-leaf plan has no row to click
-   *  — and because `autoSelect` then has somewhere else to go once the first settles,
-   *  which is what makes the reader's pin load-bearing rather than incidental. */
+  /** A two-leaf plan: `first` is the step the reader watches, `second` the one that picks up
+   *  after it. */
   const twoLeaves = (first: string, second: string): unknown => ({
     nodeId: "wf_1",
     type: "sequence",
@@ -1862,18 +1707,16 @@ describe("run view step reads", () => {
     ],
   });
 
-  // THE ARM, and the case every gate below is measured against: a settled leaf the
-  // log holds NO turn for is exactly what the read exists for. It is also where a
-  // hole recorded for a turn this client never SAW converges, since such an id
-  // belongs to no `TurnState` and can be attributed to no node path.
+  // THE ARM, and the case every gate below is measured against: a settled leaf the log holds NO
+  // turn for is exactly what the read exists for.
   it("arms a read for a settled step with no turn in the log", async () => {
     await paint(openRunView, "completed", { root: oneStep("completed") });
     expect(m.requested).toEqual(["wf_1/coder"]);
     expect(m.reread).toEqual([]);
   });
 
-  // GATE 1. A step with no execution behind it has nothing to load, so the round trip
-  // would be spent being told what the note already answers locally.
+  // GATE 1. A step with no execution behind it has nothing to load, so the round trip would be
+  // spent being told what the note already answers locally.
   it("arms no read for a step that never ran", async () => {
     for (const status of ["pending", "skipped"]) {
       m.requested.length = 0;
@@ -1882,9 +1725,8 @@ describe("run view step reads", () => {
     }
   });
 
-  // GATE 2. A busy session cannot be `session/load`ed, so a live step's read is
-  // refused by construction — and its entries reach the pane on the run's own log
-  // meanwhile.
+  // GATE 2. A busy session cannot be `session/load`ed, so a live step's read is refused by
+  // construction — and its entries reach the pane on the run's own log meanwhile.
   it("arms no read for a step still in flight", async () => {
     for (const status of ["running", "paused"]) {
       m.requested.length = 0;
@@ -1893,11 +1735,7 @@ describe("run view step reads", () => {
     }
   });
 
-  // ...and gate 2 is a DEFERRAL, not a refusal, which is the half a path-keyed guard
-  // loses. A reader who clicks a running step pins the selection (`select()` sets
-  // `userPicked`), so the shown path never moves again for the rest of that run's
-  // viewing — and the step they are looking at is then the one node never read. The
-  // step SETTLING is what arms it.
+  // ...and gate 2 is a DEFERRAL, not a refusal, which is the half a path-keyed guard loses.
   it("arms the read when the step the reader picked settles where it stands", async () => {
     const { body } = await paint(openRunView, "running", {
       root: twoLeaves("running", "pending"),
@@ -1910,9 +1748,9 @@ describe("run view step reads", () => {
     await Promise.resolve();
     expect(m.requested).toEqual([]);
 
-    // One ordinary refetch: the first step finished and the second picked up. Same run,
-    // same page, same selection — and `autoSelect` would have MOVED to the now-running
-    // `verify`, so the pin is what keeps `coder` on screen.
+    // One ordinary refetch: the first step finished and the second picked up. Same run, same page,
+    // same selection — and `autoSelect` would have MOVED to the now-running `verify`, so the pin is
+    // what keeps `coder` on screen.
     m.reply.current = {
       workflowId: "wf_1",
       state: { workflowId: "wf_1", status: "running", root: twoLeaves("completed", "running") },
@@ -1923,14 +1761,14 @@ describe("run view step reads", () => {
     }
 
     expect(body.querySelector<HTMLElement>(".ev-d-title")?.textContent).toBe("coder");
-    // EXACTLY one, which is the other half: arming per repaint would re-ask on every
-    // frame of a live run, and `unavailable` is a verdict a repeat ask retries.
+    // EXACTLY one, which is the other half: arming per repaint would re-ask on every frame of a
+    // live run, and `unavailable` is a verdict a repeat ask retries.
     expect(m.requested).toEqual(["wf_1/coder"]);
   });
 
-  // GATE 3, and the one that makes the log the SOURCE rather than a preference: the
-  // turn is already held and settled, so asking would fetch a second copy of what is
-  // on screen. Neither verb fires — not the request, and not the re-read either.
+  // GATE 3, and the one that makes the log the SOURCE rather than a preference: the turn is already
+  // held and settled, so asking would fetch a second copy of what is on screen. Neither verb fires
+  // — not the request, and not the re-read either.
   it("arms nothing when the log already holds the step's settled turn", async () => {
     logStep("wf_1", "wf_1/held", "compiled");
     await paint(openRunView, "completed", { root: oneNamedStep("held", "completed") });
@@ -1938,12 +1776,8 @@ describe("run view step reads", () => {
     expect(m.reread).toEqual([]);
   });
 
-  // THE SECOND ARM: a turn the log holds with NO `turn_close` while `inspect` reports
-  // the node settled is a client that missed the close, and it would otherwise read
-  // live for the tab's life. That is a RE-READ rather than a first request, because
-  // the turn exists and only its tail is missing; the `gone` verdict on the same
-  // turn's stamp repairs it from the digest's side and cannot disagree, since both
-  // read this log.
+  // THE SECOND ARM: a turn the log holds with NO `turn_close` while `inspect` reports the node
+  // settled is a client that missed the close, and it would otherwise read live for the tab's life.
   it("re-reads a settled step whose turn is missing its close", async () => {
     logStep("wf_1", "wf_1/reopen", "no close arrived", { live: true });
     await paint(openRunView, "completed", { root: oneNamedStep("reopen", "completed") });
@@ -1951,15 +1785,8 @@ describe("run view step reads", () => {
     expect(m.requested).toEqual([]);
   });
 
-  // GATE 4. A container hosts no transcript, so there is nothing to read for it — and
-  // it must not be asked about, because the endpoint answers 404 for a path that names
-  // no STEP.
-  //
-  // It has to SELECT the container to reach the gate at all: `onShowNode` fires for
-  // the shown node, and the pane auto-selects a LEAF, so a case that only paints
-  // passes with the gate deleted. A container row is an ordinary `treeitem` whose
-  // click selects it (`exec-view/tree.ts`), so this is a real gesture rather than a
-  // reach into internals.
+  // GATE 4. A container hosts no transcript, so there is nothing to read for it — and it must not
+  // be asked about, because the endpoint answers 404 for a path that names no STEP.
   it("arms no read for a container the reader selects", async () => {
     const { body } = await paint(openRunView, "completed", {
       root: {
@@ -1978,8 +1805,8 @@ describe("run view step reads", () => {
     });
     m.requested.length = 0;
 
-    // The root sequence is the run's own header rather than a row, so `wf_1/loop` is
-    // the container on screen.
+    // The root sequence is the run's own header rather than a row, so `wf_1/loop` is the container
+    // on screen.
     const head = body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/loop"] > .ev-row-main');
     expect(head).not.toBeNull();
     head?.click();
@@ -1987,11 +1814,9 @@ describe("run view step reads", () => {
     expect(m.requested).toEqual([]);
   });
 
-  // A RESOLVED read has to repaint the pane, and its VERDICT is what this signal
-  // carries: the entries the same answer adopted bump the run log's own version, so
-  // the two halves reach the page on two channels. Without the verdict channel a
-  // `ready`-with-nothing answer would leave the loading sentence on screen for the
-  // rest of the tab's life.
+  // A RESOLVED read has to repaint the pane, and its VERDICT is what this signal carries: the
+  // entries the same answer adopted bump the run log's own version, so the two halves reach the
+  // page on two channels.
   it("repaints when a read's verdict resolves after the first paint", async () => {
     const { body } = await paint(openRunView, "completed", { root: oneStep("completed") });
     expect(body.querySelector<HTMLElement>(".ev-d-empty")?.textContent).toContain(
@@ -2009,17 +1834,17 @@ describe("run view step reads", () => {
     );
   });
 
-  // Every read is dropped when the page mounts. The on-demand reads go with the page,
-  // which is the cache's whole bound: a run tab retargeting or closing is the one
-  // moment a step's answer stops being wanted.
+  // Every read is dropped when the page mounts. The on-demand reads go with the page, which is the
+  // cache's whole bound: a run tab retargeting or closing is the one moment a step's answer stops
+  // being wanted.
   it("drops every read on mount", async () => {
     await paint(openRunView, "completed", { root: oneStep("completed") });
     expect(m.cleared.count).toBeGreaterThan(0);
   });
 });
 
-// The affordance: a real anchor into the launching conversation, rendered only where
-// there is a conversation to name.
+// The affordance: a real anchor into the launching conversation, rendered only where there is a
+// conversation to name.
 describe("run view empty step action", () => {
   const root = {
     nodeId: "wf_1",
@@ -2040,9 +1865,9 @@ describe("run view empty step action", () => {
     expect(body.querySelector<HTMLElement>(".ev-d-empty-action")?.hidden).toBe(false);
   });
 
-  // THE CASE A COPY STRING MUST NOT OVER-CLAIM ON. A cold client reaching a finished
-  // chat-parented run through a bare `/run/{id}` link can prove the run WAS
-  // chat-parented and cannot name the chat, so it gets the sentence and no door.
+  // THE CASE A COPY STRING MUST NOT OVER-CLAIM ON. A cold client reaching a finished chat-parented
+  // run through a bare `/run/{id}` link can prove the run WAS chat-parented and cannot name the
+  // chat, so it gets the sentence and no door.
   it("offers no link when the launching chat is unknown", async () => {
     const { body } = await paint(openRunView, "completed", {
       parentless: false,
@@ -2050,9 +1875,8 @@ describe("run view empty step action", () => {
     });
     expect(body.querySelector(".ev-d-link")).toBeNull();
     expect(body.querySelector<HTMLElement>(".ev-d-empty-action")?.hidden).toBe(true);
-    // ...and the note still stands on its own. It is the READ's verdict now, which is
-    // what makes the note and the door independent: the door needs a launching chat,
-    // the sentence does not.
+    // ...and the note still stands on its own. It is the READ's verdict now, which is what makes
+    // the note and the door independent: the door needs a launching chat, the sentence does not.
     expect(body.querySelector(".ev-d-empty")?.textContent).toContain("Loading this step");
   });
 
@@ -2062,14 +1886,8 @@ describe("run view empty step action", () => {
     expect(body.querySelector(".ev-d-link")).toBeNull();
   });
 
-  /** Click the link and report whether the APP's own handler cancelled the event,
-   *  without letting the browser act on it.
-   *
-   *  The guard is not optional: this is a real anchor in a real browser, so an
-   *  uncancelled click FOLLOWS the href, which navigates the test iframe and takes
-   *  the whole file down with "Cannot connect to the iframe". A document-level
-   *  listener runs after the anchor's own, so it reads the app's verdict first and
-   *  then cancels on the test's behalf. */
+  /** Click the link and report whether the APP's own handler cancelled the event, without
+   *  letting the browser act on it. */
   function clickLink(link: HTMLElement | null, init: MouseEventInit = {}): boolean {
     let prevented = false;
     const guard = (e: Event): void => {
@@ -2097,8 +1915,8 @@ describe("run view empty step action", () => {
     expect(m.tabbed).toEqual([{ kind: "chat", ref: "c-1" }]);
   });
 
-  // The middle-click / modified-click escape: a reader asking the BROWSER to open it
-  // gets the browser's behaviour, which is what the real `href` is for.
+  // The middle-click / modified-click escape: a reader asking the BROWSER to open it gets the
+  // browser's behaviour, which is what the real `href` is for.
   it("stands aside for a modified click", async () => {
     m.parentChat.current = "c-1";
     const { body } = await paint(openRunView, "completed", {
@@ -2119,9 +1937,8 @@ describe("run view empty step action", () => {
     expect(m.tabbed).toEqual([]);
   });
 
-  // `detail.ts` guards its slot on element IDENTITY, and re-seating a node BLURS it,
-  // so a fresh element per render would drop focus out of the link several times a
-  // minute on a live run.
+  // `detail.ts` guards its slot on element IDENTITY, and re-seating a node BLURS it, so a fresh
+  // element per render would drop focus out of the link several times a minute on a live run.
   it("returns the same element across repaints", async () => {
     m.parentChat.current = "c-1";
     const { body, tab } = await paint(openRunView, "running", {
@@ -2143,11 +1960,9 @@ describe("run view empty step action", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The activation half and the fetch half. Leaving the two `invalidate*` calls in
-// `showRun` would double-fetch on every run activation, since the dispatcher now
-// calls `refresh` immediately after `onShow`.
-// ---------------------------------------------------------------------------
+// The activation half and the fetch half. Leaving the two `invalidate*` calls in `showRun` would
+// double-fetch on every run activation, since the dispatcher now calls `refresh` immediately after
+// `onShow`.
 
 describe("showRun and refreshRun", () => {
   it("showRun fetches nothing", () => {
@@ -2193,8 +2008,8 @@ describe("the page's scroll position", () => {
     return el;
   }
 
-  /** Two frames: the scroll event is dispatched in the rendering step, and the
-   *  offset is recorded from it. */
+  /** Two frames: the scroll event is dispatched in the rendering step, and the offset is
+   *  recorded from it. */
   async function frames(): Promise<void> {
     for (let i = 0; i < 2; i++) {
       await new Promise<void>((resolve) => {
@@ -2208,8 +2023,8 @@ describe("the page's scroll position", () => {
   /** Activate a run tab the way the factory does, and wait for its page. */
   async function activate(id: string): Promise<void> {
     showRun(id);
-    // Stands in for `rerenderDocks`, which the dock mock replaces: in production that
-    // bump is what re-runs the one view effect for the newly shown run.
+    // Stands in for `rerenderDocks`, which the dock mock replaces: in production that bump is what
+    // re-runs the one view effect for the newly shown run.
     stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
     refreshRun(id);
     await vi.waitFor(() => {

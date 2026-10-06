@@ -1,11 +1,6 @@
-// A history row's accessible names, in its own file for a MODULE-GRAPH reason:
-// this suite mounts the REAL history.js over stubbed actions, and in
-// a11y-labels.test.ts that arrangement leaned on `vi.doMock` taking effect for
-// modules an earlier sibling had already imported — which it never does (a
-// mocked module is evaluated once and cached). The lean broke the day tabs.ts
-// grew a real edge to actions/chat.js (the optimistic close's composer
-// restore), because the settings-tab case imports tabs.js first. File-level
-// mocks are hoisted before any import, so here the stubs always take.
+// In its own file for a MODULE-GRAPH reason: this suite mounts the REAL history.js over
+// stubbed actions, and `vi.doMock` never affects a module a sibling already imported.
+// File-level mocks are hoisted before any import, so these stubs always take.
 import { describe, it, expect, vi } from "vitest";
 
 // Hoisted alongside the vi.mock factories that reference it — a plain const
@@ -30,17 +25,13 @@ vi.mock("./actions/chat.js", () => ({
 vi.mock("./actions/chat-search.js", () => ({
   searchChats: { dispatch: noop, cancel: noop },
 }));
-// The row's delete control: two actions plus the confirm dialog, stubbed for
-// the same reason the others are — actions/index.js is reduced to one symbol
-// here, so an unmocked action def cannot build.
+// actions/index.js is reduced to one symbol here, so an unmocked action def cannot build.
 vi.mock("./actions/runs.js", () => ({ deleteRun: { dispatch: noop } }));
 vi.mock("./confirm.js", () => ({ confirm: async () => false }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: noop }));
 vi.mock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
 vi.mock("./run-view.js", () => ({ openRunView: noop }));
-// The dock's queue, which a run row reads for its `input` mark: the real module
-// builds the three ask cards and reaches actions/index.js past the one symbol
-// stubbed above. No run here has an ask.
+// The real dock module reaches actions/index.js past the stub above. No run here has an ask.
 vi.mock("./decision-dock.js", () => ({
   runPendingAsks: () => ({ count: 0, nodes: new Set<string>(), label: "" }),
 }));
@@ -61,9 +52,7 @@ vi.mock("./editor-openers.js", () => ({
   openFile: undefined,
   openFileGitDiff: undefined,
 }));
-// `openSpec` is here for the LINK, not for a case: a module in this graph imports
-// it, and Browser Mode links for real rather than reading properties off a
-// namespace object, so one missing export fails the whole file.
+// For the LINK: Browser Mode links ESM for real, so one missing export fails the file.
 vi.mock("./navigate.js", () => ({
   openChange: noop,
   openAtLine: noop,
@@ -79,13 +68,9 @@ vi.mock("./scroll.js", () => ({
 import { loadHistoryView, refreshHistoryView } from "./history.js";
 
 describe("a11y: History row accessible names", () => {
-  // A history row's OPEN control is a real button whose name says what a click
-  // does ("Open X"); the row itself carries no role, because a role="button" on it
-  // is Children-Presentational and flattens the delete button beside it out of the
-  // accessibility tree (axe nested-interactive, serious, every row).
-  // A settled run also states its OUTCOME, and that outcome is a glyph — so the
-  // word has exactly one home, that control's accessible name, and must not be
-  // duplicated as visible text beside the glyph it replaced.
+  // A history row's OPEN control is a real button named for its click ("Open X"); a
+  // role="button" row would flatten the delete button out of the accessibility tree (axe
+  // nested-interactive). A settled run's outcome word lives only in that accessible name.
   it("a settled run row names the outcome once, in the accessible name only", async () => {
     const view = document.createElement("div");
     view.id = "history-view";

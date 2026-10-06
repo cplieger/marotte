@@ -18,13 +18,8 @@ func seedStoreFile(t *testing.T, path string) {
 	}
 }
 
-// TestLoad_ModeIsVerifiedNotRequested pins that the tighten on load is an
-// enforcement rather than a request: the drift is driven by an explicit widening
-// chmod, and the witness fails the test as INVALID if this filesystem will not
-// store that drift, rather than letting the assertion hold for the wrong reason.
-//
-// It complements TestLoadTightensLoosePerms, which seeds 0644 through
-// os.WriteFile and is therefore at the mercy of umask.
+// TestLoad_ModeIsVerifiedNotRequested pins that the load tightens by enforcement, driving
+// the drift with an explicit chmod and failing as INVALID if the filesystem will not store it.
 func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, fileName)
@@ -57,25 +52,9 @@ func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 	}
 }
 
-// TestLoad_RefusesAStoreWhoseModeItCannotVerify pins the POSTURE CHANGE at this
-// site: unlike the mcp config, a store whose 0600 cannot be established FAILS to
-// open instead of warning.
-//
-// The values here are OAuth client secrets, refresh tokens and PKCE verifiers,
-// and the package doc is explicit that the base64 is an encoding and not
-// encryption — the mode is the whole of the protection. Continuing would mean
-// writing every credential KAS hands us into a file we already know we cannot
-// protect, which is the exposure the 0600 exists to prevent.
-//
-// A symlink at the name is the shape that reaches this branch in a test: the
-// kernel refuses the O_NOFOLLOW open, so the mode cannot be established on the
-// object the name refers to. The same branch is what a filesystem storing 0660
-// for a 0o600 request reaches, via atomicfile.ErrModeNotStored.
-//
-// Failing here does not brick boot, which is why the escalation is legitimate:
-// agent treats a secretstore that will not open as best-effort (one ERROR log,
-// h.secrets left nil) and degrades MCP OAuth to the per-spawn DCR it did before
-// this package existed.
+// TestLoad_RefusesAStoreWhoseModeItCannotVerify pins that an unverifiable 0600 FAILS the
+// open (the mode is these tokens' whole protection). A symlink at the name reaches the
+// branch here; a mode-widening filesystem reaches it via atomicfile.ErrModeNotStored.
 func TestLoad_RefusesAStoreWhoseModeItCannotVerify(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "planted.json")
@@ -111,18 +90,13 @@ func TestLoad_RefusesAStoreWhoseModeItCannotVerify(t *testing.T) {
 	if got := fi.Mode().Perm(); got != 0o666 {
 		t.Errorf("planted symlink target mode = %v, want 0666: the chmod followed the pathname", got)
 	}
-	// ...and the refusal must not DELETE anything. On a filesystem that widens
-	// every mode, removing the file would destroy re-derivable credentials on
-	// every boot with no path to recovery — a reported confidentiality problem
-	// traded for repeated silent data loss.
+	// ...and the refusal must not DELETE the file (that would lose credentials every boot).
 	if _, statErr := os.Lstat(filepath.Join(dir, fileName)); statErr != nil {
 		t.Errorf("the refused store was removed from the config dir: %v", statErr)
 	}
 }
 
-// TestLoad_FirstRunIsStillNotAnError pins that the refusal above is scoped to a
-// file that EXISTS: an absent store is the first-run state, and making it fatal
-// would mean no marotte container ever persisted a credential.
+// TestLoad_FirstRunIsStillNotAnError pins that an absent store is the first-run state.
 func TestLoad_FirstRunIsStillNotAnError(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)

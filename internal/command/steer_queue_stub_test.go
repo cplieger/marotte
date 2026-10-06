@@ -4,8 +4,6 @@ import (
 	"context"
 	"slices"
 	"sync"
-	"testing"
-	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -17,27 +15,26 @@ import (
 type stubSteerQueue struct {
 	removeRes  SteerOpResult
 	discardRes SteerOpResult
-	// opEnd is the turn end EndOp answers: the op's turn closed under it.
-	opEnd      *SteerTurnEnd
+	// reroute is what EndOp answers: a stale bind ended the op's channel.
+	reroute    bool
+	ends       []SteerEnd
+	unsentRows []SteerRow
 	run        func(SteerJob)
 	removeRef  string
 	discardRef string
 	routeRef   string
 	flush      []SteerSend
 	jobRows    []SteerRow
-	resentKeys []string
+	delivered  []string
 	calls      []string
 	sent       []stubSent
 	parked     []string
 	cleared    []string
-	resentText string
 	mu         sync.Mutex
 	needsClear bool
 	postLoad   bool
 	agentRows  bool
 	jobGone    bool
-	// jobRowsGate, when set, holds JobRows until it is closed.
-	jobRowsGate chan struct{}
 	// unfolded makes every read-loop barrier fail.
 	unfolded bool
 }
@@ -68,19 +65,6 @@ func (q *stubSteerQueue) callLog() []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return slices.Clone(q.calls)
-}
-
-// waitUnlocked polls until the steer lock is released, which a turn end handed to a
-// goroutine does after the command has replied.
-func (q *stubSteerQueue) waitUnlocked(t *testing.T) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !slices.Contains(q.callLog(), "unlock") {
-		if time.Now().After(deadline) {
-			t.Fatalf("the steer lock was never released; calls were %v", q.callLog())
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 func (q *stubSteerQueue) LockSteerOps(ctx context.Context, _ marotte.ChatID) (func(), error) {
@@ -157,17 +141,20 @@ func (q *stubSteerQueue) OpSent(_ marotte.ChatID, _ string, s SteerSend, queued 
 	q.mu.Unlock()
 }
 
-func (q *stubSteerQueue) EndOp(marotte.ChatID, string) *SteerTurnEnd {
+func (q *stubSteerQueue) EndOp(marotte.ChatID, string) bool {
 	q.log("end-op")
-	return q.opEnd
+	return q.reroute
 }
 
 func (q *stubSteerQueue) OnSteerJob(run func(SteerJob)) { q.run = run }
 
-func (q *stubSteerQueue) JobRows(marotte.ChatID, string, string) ([]SteerRow, bool) {
-	if q.jobRowsGate != nil {
-		<-q.jobRowsGate
-	}
+func (q *stubSteerQueue) Ends(marotte.ChatID) []SteerEnd {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return slices.Clone(q.ends)
+}
+
+func (q *stubSteerQueue) JobRows(marotte.ChatID, string) ([]SteerRow, bool) {
 	q.log("job-rows")
 	return q.jobRows, q.jobGone
 }
@@ -188,14 +175,25 @@ func (q *stubSteerQueue) Release(_ marotte.ChatID, _ string, inKASOnly bool) {
 	q.log("release")
 }
 
-func (q *stubSteerQueue) Unsent(marotte.ChatID, string) { q.log("unsent") }
-
-func (q *stubSteerQueue) Resent(marotte.ChatID, string, string) ([]string, string) {
-	q.log("resent")
-	return q.resentKeys, q.resentText
+// EndUnsent drops the end, as the record does once its rows are unsent.
+func (q *stubSteerQueue) EndUnsent(_ marotte.ChatID, owner string) {
+	q.log("end-unsent")
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.ends = slices.DeleteFunc(q.ends, func(e SteerEnd) bool { return e.Owner == owner })
 }
 
-func (q *stubSteerQueue) Delivered(marotte.ChatID, string) { q.log("delivered") }
+func (q *stubSteerQueue) UnsentRows(marotte.ChatID, bool) []SteerRow {
+	q.log("unsent-rows")
+	return q.unsentRows
+}
+
+func (q *stubSteerQueue) Delivered(_ marotte.ChatID, keys []string) {
+	q.log("delivered")
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.delivered = append(q.delivered, keys...)
+}
 
 func (q *stubSteerQueue) PlanFlush(marotte.ChatID) []SteerSend {
 	q.log("plan-flush")
@@ -212,7 +210,7 @@ func (q *stubSteerQueue) PostLoadCleared(_ marotte.ChatID, _ []string, landed bo
 
 func (q *stubSteerQueue) AgentRowsWaiting(marotte.ChatID) bool { return q.agentRows }
 
-func (q *stubSteerQueue) NextParked(marotte.ChatID) (string, string, bool) {
+func (q *stubSteerQueue) NextParked(marotte.ChatID, string) (string, string, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.parked) == 0 {

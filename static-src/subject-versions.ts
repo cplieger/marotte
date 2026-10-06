@@ -1,9 +1,5 @@
-// The digest subjects' version map: one epoch-bound entry per subject this client holds,
-// read by the wake digest. Every version is a server stamp except `run_turn`, which
-// `run-store.ts` mints in the server's own spelling.
-//
-// A LEAF. `store.ts` and `store-load.ts` both import it, so it may import neither; the
-// stream that binds it to the hub's epoch lives in `sse-adapter.ts`.
+// The digest subjects' version map, read by the wake digest. Every version is a server stamp except
+// `run_turn` (`run-store.ts`). A LEAF: `store.ts` and `store-load.ts` import it.
 import { type Subject, type VersionMap, createVersionMap } from "@cplieger/sse";
 
 import type { SubjectStamp } from "./wire/types.gen.js";
@@ -26,11 +22,9 @@ export function setObserveSink(fn: ObserveSink | null): void {
   sink = fn;
 }
 
-/** Record a stamp AFTER the state it certifies has been applied, never before and never
- *  from a digest's own answer — whoever minted it. A REST stamp carries the epoch and binds
- *  an unbound map to it; a frame stamp carries none and rides the stream's own binding. A
- *  stamp from a foreign epoch is ignored by the map and reported through the stream's
- *  lifecycle feed. */
+/** Record a stamp AFTER the state it certifies is applied, never from a digest's answer. A REST
+ *  stamp carries and binds the epoch; a frame stamp rides the stream's binding; a foreign one is
+ *  ignored. */
 export function observeStamp(stamp: SubjectStamp | undefined): void {
   if (stamp === undefined) {
     return;

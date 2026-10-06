@@ -1,39 +1,8 @@
-// A FAILED TURN STATES ITS REASON EXACTLY ONCE, IN ONE CARD, IN BOTH FOLD STATES.
-//
-// This is the composition half of the ownership rule, and it is the half no
-// existing suite reaches. Three surfaces of one card could each carry the server's
-// prose, and each is pinned somewhere on its own:
-//
-//   - the card-level `.turn-notice`   -> `turnFailureText`, pinned in turns.node.test.ts
-//   - the folded card's `.turn-face`  -> `syncTurnFace` deliberately mounts none,
-//     pinned by a COMMENT at messages.ts and by nothing else
-//   - the footer's outcome lead       -> `OUTCOME_LEAD`, a fixed word per outcome
-//
-// THERE IS NO FOURTH SURFACE: a broken turn's body carries no `.boundary` divider. A
-// turn's own end is its `turn_close.outcome`, and `messages-events.ts` builds a
-// boundary for FOUR entry kinds only — `compaction`, `compaction_failed`,
-// `safety_blocked` and `model_switched` — so an interrupted or cancelled turn renders
-// no divider at all and no labelFn can carry a reason into one. The FOOTER is what
-// case 1 asserts against instead: present, marking the boundary, WITHOUT the prose,
-// which is also the control the two cancelled cases below read.
-//
-// Three fixtures, three suites, and nothing asserting the SUM. So a reason on the
-// face puts the sentence on screen twice with every existing test still green —
-// which is exactly the defect `messages-events.ts` records as measured on a live
-// chat, about 50px apart.
-//
-// The FOLDED case is the one with no other guard at all: the face is the surface a
-// broken turn's reader sees after collapsing it, and `syncTurnFace`'s "No failure
-// text here" is a comment rather than a test.
-//
-// TWO TURNS IN EVERY FIXTURE, and that is a requirement rather than realism:
-// `isTurnOpen` returns true for the newest turn UNCONDITIONALLY, above the
-// overrides, so a one-turn chat cannot be folded at all and a folded case built on
-// one would assert against an open card while reading as though it had folded.
-//
-// Counted over the rendered card's own text, through the REAL paint, because the
-// property is about what one card shows rather than about what any one builder
-// returns.
+// A FAILED TURN STATES ITS REASON EXACTLY ONCE, IN ONE CARD, IN BOTH FOLD STATES: the sum no
+// per-surface suite asserts. The notice carries the prose (`turnFailureText`), the folded face
+// mounts none (`syncTurnFace`), the footer lead is a fixed word; a broken turn's body has no
+// `.boundary` (only four event kinds build one). Counted over the card's own text through the REAL
+// paint. TWO TURNS per fixture: `isTurnOpen` keeps the newest turn open unconditionally.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import type { TurnState } from "./types.js";
@@ -93,16 +62,9 @@ function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unkno
   } as Entry;
 }
 
-/** A prompt-opened turn: the `turn_open` the appender stamped, TWO text entries, and
- *  the `turn_close` carrying the outcome — and, for a turn that did not end cleanly,
- *  its own account. `turnFailureText`'s specific source is that close's
- *  `failure_reason`.
- *
- *  TWO text entries rather than one, and that is a requirement rather than realism:
- *  `turnFoldHides` counts a body of one text entry as hiding NOTHING, and
- *  `planResidency` keeps such a turn open whatever the override says (its face would
- *  be identical to its body). A folded case built on a one-entry turn would assert
- *  against an open card while reading as though it had folded. */
+/** A prompt-opened turn: the stamped `turn_open`, TWO text entries, and the `turn_close` with its
+ *  outcome and `failure_reason`. Two entries: a one-entry body hides nothing, so `planResidency`
+ *  keeps it open whatever the override. */
 function turnEntries(
   id: string,
   n: number,
@@ -143,12 +105,11 @@ function twoCleanTurns(): Entry[][] {
   ];
 }
 
-/** The sentence a cancelled turn used to carry in its own record, and still carries
- *  on every one persisted before `defaultFailureReason` stopped supplying it. */
+/** The reason sentence a persisted cancelled turn may carry in its own record. */
 const CANCELLED_REASON = "The turn was cancelled.";
 
-/** A cancelled turn followed by a clean one, in the HISTORICAL shape: the close
- *  stamped `cancelled` AND still holding the dead sentence. The second turn exists so
+/** A cancelled turn followed by a clean one, its persisted close stamped `cancelled`
+ *  AND still holding the reason sentence. The second turn exists so
  *  the first can fold, exactly as in `brokenThenClean`. */
 function cancelledThenClean(): Entry[][] {
   return [
@@ -173,10 +134,8 @@ async function until(pred: () => boolean, what: string): Promise<void> {
   }
 }
 
-/** The fold pass applies its transitions through a compensated batch rather than in the
- *  paint that planned them, so a card's `data-folded` lands a frame or two after `mount`
- *  resolves and after a toggle click. Waiting on the card count alone reads the pre-fold
- *  state, which is the premise every folded case here opens with. */
+/** The fold pass applies through a compensated batch, so `data-folded` lands a frame or two after
+ *  `mount` or a toggle; the card count alone reads the pre-fold state. */
 async function untilFolded(card: HTMLElement, folded: boolean): Promise<void> {
   await until(
     () => card.hasAttribute("data-folded") === folded,
@@ -251,10 +210,8 @@ describe("a failed turn's reason", () => {
       REASON,
     );
 
-    // THE NEGATIVE CONTROL, at the one surface a broken turn's body has: the footer
-    // names HOW the turn ended, without the prose. Its presence is what
-    // makes the two absences above meaningful — a card rendering nothing at all about
-    // its end would pass them trivially. `Interrupted` is `OUTCOME_LEAD`'s word.
+    // THE NEGATIVE CONTROL: the footer names HOW the turn ended, without the prose, so the absences
+    // above are not trivial. `Interrupted` is `OUTCOME_LEAD`'s word.
     const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
     expect(footer, "the footer is rendered").not.toBeNull();
     expect(footer?.textContent ?? "").toContain("Interrupted");
@@ -291,27 +248,10 @@ describe("a failed turn's reason", () => {
   });
 
   it("mounts the FOLDED card's notice after its face, not between body and face", async () => {
-    // The order is load-bearing twice over, and neither half had a guard.
-    // READING: the notice says why the turn stopped, so it belongs after what the
-    // turn produced — before it, the error sat above the answer. CASCADE: the
-    // hidden body is still in the DOM at `block-size: 0`, so a notice adjacent to
-    // it matches 29-turns.css's divider-is-the-frame rules, which suppress the
-    // notice's own top rule — and the face's fill IS the body's, so with that rule
-    // suppressed nothing at all would mark the edge between the answer and the
-    // reason. (It used to read "the header has already dropped its bottom border on
-    // the promise that the element below draws one"; that seam is gone outright now
-    // — 29-turns.css's file header — and the consequence of the wrong order is the
-    // same either way.)
-    //
-    // What decides it is `syncTurnFace`'s ANCHOR, not the call order: the face has
-    // five call sites against the notice's two, and the fold toggle plus the fold
-    // pass mount a face without touching the notice — so a face anchored on the
-    // footer lands wherever the notice is not. Which is why this drives the real
-    // paint AND the reader's own toggle rather than any one sync function.
-    // Painted OPEN first and then folded, so the body is still mounted when the
-    // face arrives: that is the shape the cascade half is about, and a card born
-    // folded builds no body at all (`mountTurn` skips it), which would pass the
-    // ordering assertion without ever putting a body beside a notice.
+    // The order matters twice: READING (the reason follows the answer) and CASCADE (a notice adjacent
+    // to the zero-height body loses its own top rule to 29-turns.css's frame rules, leaving no edge).
+    // `syncTurnFace`'s ANCHOR decides it, not call order, so this drives the real paint and the
+    // reader's toggle, painted OPEN first so a body is mounted when the face arrives.
     const chat = "folded-order";
     const REGIONS = ["turn-body", "turn-face", "turn-notice", "turn-footer"];
     setTurnOpen(chat, BROKEN_TURN, true);
@@ -353,15 +293,9 @@ describe("a failed turn's reason", () => {
 });
 
 describe("a cancelled turn's ONE status channel", () => {
-  // The reader caused the stop, so the footer's own outcome word is the whole
-  // record and a notice beside it would render one fact twice. Asserted through the
-  // real paint because that is the only harness here that can answer what a reader
-  // actually sees, and in BOTH fold states because the notice survives a fold —
-  // which is exactly why it had to be the surface that goes.
-  //
-  // The fixture carries the HISTORICAL shape (`turn_failure_reason` still on the
-  // carrier), so these two cases fail if `turnFailureText`'s outcome gate is
-  // reverted, not merely if the default sentence comes back.
+  // The reader caused the stop, so the footer's word is the whole record; asserted in BOTH fold
+  // states since the notice survives a fold. The fixture keeps `turn_failure_reason` on the carrier,
+  // so reverting `turnFailureText`'s outcome gate fails.
   beforeEach(() => {
     resetFoldState();
   });

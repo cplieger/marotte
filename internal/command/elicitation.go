@@ -1,11 +1,5 @@
 package command
 
-// Elicitation response forwarding: the user answered (or dismissed) an
-// MCP elicitation form; relay the result to kiro-cli on the same
-// JSON-RPC id the elicitation/create request carried. Mirrors
-// CmdPermission — the elicitation flow is request/response shaped just
-// like permission prompts.
-
 import (
 	"context"
 	"encoding/json"

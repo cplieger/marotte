@@ -1,10 +1,5 @@
-// When the transcript FORGETS what it measured.
-//
-// `block-heights.ts` is the one per-TURN store an unmount deliberately keeps: its numbers
-// are what price the spacers standing in for entries nobody has mounted, so dropping them
-// at the unmount would defeat the cache. That leaves the view's dispose as the moment they
-// stop standing for anything, and `disposeChatView` reaches it through the chat's own
-// `turn_order` — which is the key space, since a height is keyed `(turnID, seq)`.
+// Heights are kept across an unmount (they price the spacers) and forgotten at the view's dispose, which reaches
+// them through the chat's `turn_order`, since a height is keyed `(turnID, seq)`.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 for (const id of [
@@ -19,8 +14,7 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-// scroll.ts is a self-initialising singleton over a real scroller; the canonical
-// mock is what every other suite in this graph uses.
+// scroll.ts is a self-initialising singleton; the canonical mock is what every suite in this graph uses.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 vi.mock("./actions/messages.js", () => ({
   copyClipboard: { dispatch: () => Promise.resolve() },
@@ -45,18 +39,14 @@ import type { Entry, TurnState } from "./types.js";
 const CHAT = "c-height";
 const TURN = "t1";
 
-/** The whole turn's cold price: eight `text` entries in one lane are ONE prose run, so the
- *  spacer stands for one row (`ENTRY_ESTIMATE_PX.text`, 48 at both tiers) plus the boundary
- *  gap `.turn-body` no longer supplies (`ROW_GAP_PX`, 12). */
+/** Eight `text` entries in one lane are one prose run: one row (`ENTRY_ESTIMATE_PX.text`, 48) plus `ROW_GAP_PX` (12). */
 const COLD_PX = 60;
 
-/** A height no estimate can produce, so a read answering it can only have come from the
- *  cache — plus that same boundary gap. */
+/** No estimate produces this, so a read answering it came from the cache, plus the boundary gap. */
 const MEASURED_PX = 999;
 const MEASURED_TOTAL_PX = 1011;
 
-/** The run the eight text entries form: `seq` 1 through 8, so `sliceTurn` answers
- *  `{from: 1, to: 9}` and that is the range a row records against. */
+/** `seq` 1 through 8, so `sliceTurn` answers `{from: 1, to: 9}`, the range a row records against. */
 const RUN = { from: 1, to: 9 } as const;
 
 function sealed(at: number, kind: Entry["kind"], payload: unknown): Entry {
@@ -83,8 +73,7 @@ function activate(): void {
   bumpMessages(CHAT, "load");
 }
 
-/** The projection `spacerHeight` prices, taken from production rather than hand-built, so a
- *  reshape of `Turn` cannot leave this suite pricing a shape the renderer never sees. */
+/** From production, so a reshaped `Turn` cannot leave this suite pricing a shape the renderer never sees. */
 function turn(): Turn {
   const built = projectTurns({
     turns: new Map<string, TurnState>([[TURN, { entries: entries(), openEntries: new Map() }]]),
@@ -97,7 +86,7 @@ function turn(): Turn {
   return t;
 }
 
-/** The whole turn, priced: nothing mounted, so the tail spacer stands for every entry. */
+/** Nothing mounted, so the tail spacer stands for every entry. */
 function wholeTurn(): number {
   return spacerHeight(turn(), { from: 0, to: 0 }, "tail", "");
 }
@@ -112,8 +101,7 @@ beforeEach(() => {
 
 describe("the measurement cache over a view's life", () => {
   it("answers from the measurement while the view lives", () => {
-    // The control. Without it the case below passes for the wrong reason: a
-    // `spacerHeight` that never consulted the cache also returns the estimate.
+    // The control: a `spacerHeight` that never read the cache also returns the estimate.
     activate();
     expect(wholeTurn()).toBe(COLD_PX);
     recordRowHeight(TURN, RUN, MEASURED_PX);
@@ -127,8 +115,8 @@ describe("the measurement cache over a view's life", () => {
     recordRowHeight(TURN, RUN, MEASURED_PX);
     expect(wholeTurn()).toBe(MEASURED_TOTAL_PX);
 
-    // Tab close, LRU eviction and teardown all run this, and the chat's `turn_order` is
-    // what it forgets by — so the record has to still be in the store when it runs.
+    // Tab close, LRU eviction and teardown all run this, and it forgets by `turn_order`, so the record must still be in the
+    // store.
     disposeChatView(CHAT);
     expect(wholeTurn()).toBe(COLD_PX);
   });

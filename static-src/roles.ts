@@ -1,27 +1,5 @@
-// ---------------------------------------------------------------------------
-// Mode catalog: maps a session mode id to a label, description, and icon.
-// Shared by the prompt-bar mode pill (role-picker.ts) and the chat-tab icon
-// (chat.ts openChatTab / tabs.ts).
-//
-// On kiro-cli v3 (KAS) every role is a *mode* in the session's
-// availableModes — the bundled workflow modes AND every workspace custom
-// agent (.kiro/agents/*), switched via session/set_mode. The wire tags each
-// with _meta.kiro.source ("bundled" | "workspace"); the picker groups
-// bundled modes above custom agents.
-//
-// Icons: each bundled workflow mode gets a distinct glyph; every custom
-// agent (and bundled non-workflow agents like semantic_reviewer) shares one
-// common hexagon. Matching is by mode id, and the v2 agent ids
-// (kiro_default / kiro_planner) resolve too so the legacy engine's tab
-// icons still work when KIRO_AGENT_ENGINE=v2 is pinned:
-//   vibe / "" / kiro_default -> wand (Default)
-//   spec                     -> checklist (Spec)
-//   quick-spec               -> file-check (Quick Spec)
-//   bug-fix                  -> bug (Bug Fix)
-//   plan / kiro_planner      -> notes (Plan)
-//   autonomous               -> bot (Autonomous)
-//   anything else            -> hexagon (custom agent)
-// ---------------------------------------------------------------------------
+// Mode catalog: maps a session mode id to a label, description, and icon. Shared by the prompt-bar
+// mode pill (role-picker.ts) and the chat-tab icon (chat.ts openChatTab / tabs.ts).
 
 import {
   ICON_TAB_CHAT,
@@ -40,16 +18,12 @@ import { signal } from "@cplieger/reactive";
 import type { SessionMode, ToolCall } from "./types.js";
 import { humanName } from "./strings.js";
 
-/** The engine-default mode id. kiro-cli v3's session/new starts here; a
- *  chat with an empty current_mode_id is in this mode. Labelled "Default". */
+/** The engine-default mode id. kiro-cli v3's session/new starts here; a chat with an empty
+ *  current_mode_id is in this mode. Labelled "Default". */
 const DEFAULT_MODE_ID = "vibe";
 
-/** The bundled v3 workflow modes, in canonical order. Seeds the picker for
- *  an empty chat that has no live session yet (availableModes arrives only
- *  with session/new). Once the session reports availableModes that list is
- *  authoritative — it carries the same bundled modes PLUS workspace custom
- *  agents. ids/names/descriptions mirror kiro-cli v3's session/new
- *  modes.availableModes. */
+/** The bundled v3 workflow modes, in canonical order. Seeds the picker for an empty chat that
+ *  has no live session yet (availableModes arrives only with session/new). */
 const BUILTIN_MODES: readonly SessionMode[] = [
   { id: "vibe", name: "Default", description: "General coding assistance", source: "bundled" },
   { id: "spec", name: "Spec", description: "Structured feature development", source: "bundled" },
@@ -78,13 +52,9 @@ const BUILTIN_MODES: readonly SessionMode[] = [
     description: "Autonomous agent execution",
     source: "bundled",
   },
-  // Kiro ships this one as a bundled AGENT rather than a workflow mode, so it
-  // has no entry in iconForMode and takes the generic hexagon — which is what a
-  // workspace custom agent gets too, and is correct: it is not one of the six
-  // workflow arms. It belongs in this list anyway, because the list's job is to
-  // seed a bridgeless chat with what session/new WILL report, and upstream
-  // reports seven bundled entries (measured on kiro-cli 2.20.0). Without it the
-  // pre-fetch picker was short by one.
+  // Kiro ships this one as a bundled AGENT rather than a workflow mode, so it has no entry in
+  // iconForMode and takes the generic hexagon — which is what a workspace custom agent gets too,
+  // and is correct: it is not one of the six workflow arms.
   {
     id: "semantic_reviewer",
     name: "Semantic Reviewer",
@@ -93,68 +63,41 @@ const BUILTIN_MODES: readonly SessionMode[] = [
   },
 ];
 
-/** The WORKSPACE mode catalog, served once by /api/config-template: the bundled
- *  modes + bundled agents + the user's global ~/.kiro/agents, with real
- *  names/descriptions/source tags, and — once any session has run — the live
- *  list KAS reported, which additionally carries the workspace agents with the
- *  shadowing already resolved.
- *
- *  This is the ONE copy. The same list used to ride every ChatHeader as
- *  `available_modes`: 59 entries repeated across 29 chats, identical in all of
- *  them, 93.1% of a 1.25 MiB response the boot fetched twice.
- *
- *  A signal rather than a plain binding because the label call sites are inside
- *  reactive effects, and the catalog arrives after the first paint. Empty until
- *  the fetch lands; catalogBaseModes falls back to BUILTIN_MODES. */
+/** The WORKSPACE mode catalog, served once by /api/config-template: the bundled modes + bundled
+ *  agents + the user's global ~/.kiro/agents, with real names/descriptions/source tags, and —
+ *  once any session has run — the live list KAS reported, which additionally carries the
+ *  workspace agents with the shadowing already resolved. A signal rather than a plain binding
+ *  because the label call sites are inside reactive effects, and the catalog arrives after the
+ *  first paint. */
 const catalogModes = signal<readonly SessionMode[]>([]);
 
 export function setCatalogModes(modes: readonly SessionMode[]): void {
   catalogModes.value = modes;
 }
 
-/** The workspace mode base: the fetched catalog when it has landed, else the
- *  static bundled list. */
+/** The workspace mode base: the fetched catalog when it has landed, else the static bundled
+ *  list. */
 export function catalogBaseModes(): readonly SessionMode[] {
   const modes = catalogModes.value;
   return modes.length > 0 ? modes : BUILTIN_MODES;
 }
 
-/** One offered mode plus what the pre-session merge had to DECIDE about it.
- *
- *  `shadowed` is that decision, made visible. It is not a field on SessionMode
- *  because SessionMode is a codegen'd wire type and this is a client-side
- *  resolution the wire never carries: the live session's availableModes arrives
- *  already resolved by KAS, so a shadow only exists in the pre-session window. */
+/** One offered mode plus what the pre-session merge had to DECIDE about it. */
 export interface PickerMode {
   mode: SessionMode;
-  /** The SOURCE of the catalog entry this workspace agent shadows (`global` or
-   *  `bundled`), when it shadows one. Absent when nothing is shadowed. */
+  /** The SOURCE of the catalog entry this workspace agent shadows (`global` or `bundled`), when
+   *  it shadows one. Absent when nothing is shadowed. */
   shadowed?: string;
 }
 
-/** The description a workspace agent carries before a session can supply its
- *  own. Exported so a test can assert the merge's output shape without pinning
- *  the sentence. */
+/** The description a workspace agent carries before a session can supply its own. Exported so a
+ *  test can assert the merge's output shape without pinning the sentence. */
 export const WORKSPACE_AGENT_DESC = "Custom agent from your workspace .kiro/agents/ folder.";
 
-/** Merge the pre-session catalog with the workspace agents, MODELLING the
- *  collision instead of deduping it away.
- *
- *  The rule is KAS's own last-write-wins: when a workspace agent and a catalog
- *  entry (a bundled mode, or the user's global ~/.kiro/agents) share an id, the
- *  WORKSPACE definition is what a session loads. So the workspace row is the one
- *  offered, and it says what it shadows.
- *
- *  That is the opposite of what this merge used to do. It filtered the workspace
- *  agent OUT whenever the catalog held its id, so the surviving row was the
- *  GLOBAL entry while the comment three lines above claimed the workspace
- *  definition was what a session would load — the picker did not merely hide one
- *  of the two, it showed the wrong one, and the user had no way to tell.
- *
- *  Both halves matter: dropping the shadowed catalog row keeps one row per id
- *  (two rows carrying the same id would offer a choice `session/set_mode` cannot
- *  express, since both would send the same mode id), and marking the survivor is
- *  what tells the user which definition a run will use. */
+/** Merge the pre-session catalog with the workspace agents, MODELLING the collision instead of
+ *  deduping it away. The rule is KAS's own last-write-wins: when a workspace agent and a catalog
+ *  entry (a bundled mode, or the user's global ~/.kiro/agents) share an id, the WORKSPACE
+ *  definition is what a session loads. */
 export function mergeCatalogAndWorkspace(
   base: readonly SessionMode[],
   workspaceAgents: readonly string[],
@@ -169,9 +112,9 @@ export function mergeCatalogAndWorkspace(
   }
   for (const name of workspaceAgents) {
     const shadows = base.find((m) => m.id === name);
-    // A `workspace` value is the entry shadowing ITSELF: ids are unique within
-    // one .kiro/agents tree, and handleConfigTemplate serves KAS's live
-    // availableModes once any session has run, which already carries these.
+    // A `workspace` value is the entry shadowing ITSELF: ids are unique within one .kiro/agents
+    // tree, and handleConfigTemplate serves KAS's live availableModes once any session has run,
+    // which already carries these.
     const shadowedSource = shadows === undefined ? undefined : (shadows.source ?? "bundled");
     out.push({
       mode: {
@@ -187,27 +130,15 @@ export function mergeCatalogAndWorkspace(
   return out;
 }
 
-/** Whether a mode's `source` puts it under the picker's "Custom agents"
- *  divider rather than in the bundled top group.
- *
- *  Answers by testing what IS bundled rather than by enumerating the two custom
- *  values, and the difference only shows up on a value that does not exist yet:
- *  excluding `workspace|global` puts anything upstream adds later
- *  (`organization`, `team`) in the BUNDLED group, which is the one group a
- *  reader trusts to be Kiro's own. An absent or empty source is bundled,
- *  because that is what BUILTIN_MODES carries before the catalog fetch resolves.
- *
- *  Lives here beside scopeLabel so the wire's source vocabulary has ONE home;
- *  the picker's grouping and its row labels cannot then disagree about what
- *  "custom" means. */
+/** Whether a mode's `source` puts it under the picker's "Custom agents" divider rather than in
+ *  the bundled top group. */
 export function isCustomSource(source: string | undefined): boolean {
   return source !== undefined && source !== "" && source !== "bundled";
 }
 
-/** Human-facing label for a mode's scope. The wire's `source` values are
- *  `bundled` | `global` | `workspace`; a bundled mode needs no label (it is the
- *  top group and every row in it is bundled), which is why this answers "" for
- *  it rather than "bundled". */
+/** Human-facing label for a mode's scope. The wire's `source` values are `bundled` | `global` |
+ *  `workspace`; a bundled mode needs no label (it is the top group and every row in it is
+ *  bundled), which is why this answers "" for it rather than "bundled". */
 export function scopeLabel(source: string | undefined): string {
   switch (source) {
     case "workspace":
@@ -219,9 +150,8 @@ export function scopeLabel(source: string | undefined): string {
   }
 }
 
-/** Normalize an empty / legacy mode id to the canonical default. Maps the
- *  v2 default-agent ids onto the default so mixed-engine state resolves to
- *  one highlighted entry in the picker. */
+/** Normalize an empty / legacy mode id to the canonical default. Maps the v2 default-agent ids
+ *  onto the default so mixed-engine state resolves to one highlighted entry in the picker. */
 export function normalizeModeID(id: string): string {
   if (id === "") {
     return DEFAULT_MODE_ID;
@@ -229,9 +159,9 @@ export function normalizeModeID(id: string): string {
   return id;
 }
 
-/** Icon (SVG string) for a mode/role, keyed by id. Each bundled workflow
- *  mode gets a distinct glyph; every other entry (workspace custom agents,
- *  bundled non-workflow agents) shares the hexagon. */
+/** Icon (SVG string) for a mode/role, keyed by id. Each bundled workflow mode gets a distinct
+ *  glyph; every other entry (workspace custom agents, bundled non-workflow agents) shares the
+ *  hexagon. */
 export function iconForMode(id: string): string {
   switch (id) {
     case "":
@@ -252,14 +182,10 @@ export function iconForMode(id: string): string {
   }
 }
 
-/** Icon (SVG string) for a subagent, keyed by the invoke_sub_agent tool's
- *  input name (raw id, e.g. "introspect", "context-gatherer"). Mirrors
- *  iconForMode's convention on the SubagentBlock header: each pre-built
- *  kiro-cli subagent gets a distinct glyph, custom/unknown subagents share
- *  the agent hexagon. Subagents are NOT modes — the bundled set here
- *  (kiro-cli 2.13: general-task-execution, context-gatherer,
- *  custom-agent-creator, introspect) never appears in availableModes, so
- *  the two lookups stay separate. */
+/** Icon (SVG string) for a subagent, keyed by the invoke_sub_agent tool's input name (raw id,
+ *  e.g. "introspect", "context-gatherer"). Mirrors iconForMode's convention on the SubagentBlock
+ *  header: each pre-built kiro-cli subagent gets a distinct glyph, custom/unknown subagents
+ *  share the agent hexagon. */
 export function iconForSubagent(name: string): string {
   switch (name) {
     case "introspect":
@@ -275,23 +201,58 @@ export function iconForSubagent(name: string): string {
   }
 }
 
-/** The raw subagent id from the invocation tool's input (e.g. "introspect",
- *  "context-gatherer"), or "" when the input carries none. Keys the header
- *  icon (iconForSubagent above); subagentLabel humanizes the same value. */
+/** The raw subagent id from the invocation tool's input (e.g. "introspect", "context-gatherer"),
+ *  or "" when the input carries none. Keys the header icon (iconForSubagent above);
+ *  subagentLabel humanizes the same value. */
 export function subagentName(tc: ToolCall): string {
   const input = tc.input;
   if (input !== undefined && input !== null && typeof input === "object") {
     const nm = (input as Record<string, unknown>)["name"];
-    if (typeof nm === "string") {
+    if (typeof nm === "string" && nm !== "") {
       return nm;
     }
   }
-  return "";
+  // KAS names an unnamed inline agent this, so the label agrees with its own.
+  return inlineAgentOf(tc) === null ? "" : INLINE_AGENT_NAME;
 }
 
-/** A delegate's display name: the invocation's own `Sub-agent: <name>` title
- *  first, then its declared id humanized, then whatever title it carries. */
+const INLINE_AGENT_NAME = "inline_agent";
+
+/** The model and effort the parent chose for an inline helper (the invocation's `inlineAgent`
+ *  input, kiro-cli 2.27), or null for a saved agent. Values are passed through as given; KAS
+ *  resolves shorthand model ids itself. */
+export function inlineAgentOf(tc: ToolCall): { model: string; effort: string } | null {
+  const input = tc.input;
+  if (input === undefined || input === null || typeof input !== "object") {
+    return null;
+  }
+  const inline = (input as Record<string, unknown>)["inlineAgent"];
+  if (inline === undefined || inline === null || typeof inline !== "object") {
+    return null;
+  }
+  const rec = inline as Record<string, unknown>;
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  return { model: str(rec["model"]), effort: str(rec["effort"]) };
+}
+
+/** An inline helper's model and effort as one line for its card, or "". */
+export function inlineAgentDetail(tc: ToolCall): string {
+  const inline = inlineAgentOf(tc);
+  if (inline === null) {
+    return "";
+  }
+  return [inline.model, inline.effort].filter((v) => v !== "").join(" · ");
+}
+
+/** A delegate's display name: the invocation's own `Sub-agent: <name>` title first, then its
+ *  declared id humanized, then whatever title it carries. An inline helper is marked as one,
+ *  since its name is only a label. */
 export function subagentLabel(tc: ToolCall): string {
+  const base = baseSubagentLabel(tc);
+  return inlineAgentOf(tc) === null ? base : `${base} (inline agent)`;
+}
+
+function baseSubagentLabel(tc: ToolCall): string {
   const title = tc.title;
   if (title.startsWith("Sub-agent:")) {
     const name = title.slice("Sub-agent:".length).trim();
@@ -309,29 +270,13 @@ export function subagentLabel(tc: ToolCall): string {
   return FALLBACK_SUBAGENT_NAME;
 }
 
-/** What a delegate with no invocation tool call in the store reads as. Exported
- *  because the tab factory falls back to it for a restored tab whose chat has not
- *  been fetched yet, and the two must agree or a tab renames itself on load. */
+/** What a delegate with no invocation tool call in the store reads as. Exported because the tab
+ *  factory falls back to it for a restored tab whose chat has not been fetched yet, and the two
+ *  must agree or a tab renames itself on load. */
 export const FALLBACK_SUBAGENT_NAME = "Subagent";
 
-/** Display form of a mode's name, for names that are really identifiers.
- *
- *  The six bundled workflow modes carry hand-written names (`bug-fix` is
- *  "Bug Fix"), so they never reach this. Everything else arrives named by
- *  whoever declared it, and two of those sources hand over a raw id: KAS names
- *  its non-workflow agents after themselves (`semantic_reviewer`), and a
- *  workspace agent is named by its front matter, which is commonly the file's
- *  own snake_case stem. Rendering those verbatim put an underscore in the role
- *  list beside eleven properly-spaced neighbours.
- *
- *  Applied by SHAPE rather than by a list of known ids, so an agent added later
- *  — by KAS or by the user — is covered without an edit here.
- *
- *  A name is treated as an identifier only when it has no whitespace and no
- *  capital: both are marks of a human having written it, and neither survives
- *  the transformation intact, so respecting them is what keeps this from
- *  mangling a deliberate name. "iOS review" and "Bug Fix" pass through
- *  untouched; `semantic_reviewer` becomes "Semantic Reviewer". */
+/** Display form of a mode's name, for names that are really identifiers. The six bundled
+ *  workflow modes carry hand-written names (`bug-fix` is "Bug Fix"), so they never reach this. */
 export function displayModeName(name: string): string {
   if (name === "" || /\s/.test(name) || /[A-Z]/.test(name)) {
     return name;
@@ -343,13 +288,8 @@ export function displayModeName(name: string): string {
     .join(" ");
 }
 
-/** Human-facing label for a mode id, from the workspace catalog (custom agents
- *  carry their own name), falling back to the bundled list and then to the raw
- *  id.
- *
- *  `modes` defaults to the catalog rather than being passed in by every caller:
- *  the three call sites used to read the per-session `available_modes`, which was
- *  the same 59 entries on every chat. */
+/** Human-facing label for a mode id, from the workspace catalog (custom agents carry their own
+ *  name), falling back to the bundled list and then to the raw id. */
 export function labelForMode(
   id: string,
   modes: readonly SessionMode[] = catalogModes.value,

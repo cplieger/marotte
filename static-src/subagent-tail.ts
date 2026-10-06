@@ -1,15 +1,12 @@
-// ---------------------------------------------------------------------------
-// ONE delegate's last few output lines, derived from its LANE rather than harvested
-// from the DOM: the transcript renders none of a delegate's own entries, because
-// every lane predicate in `messages-blocks.ts` compares against its root lane.
-// ---------------------------------------------------------------------------
+// ONE delegate's last output lines, derived from its LANE: the transcript renders none of a
+// delegate's own entries.
 
 import type { Entry } from "./types.js";
 import { effect, touch } from "@cplieger/reactive";
 import { get, messagesVersionOf } from "./store.js";
 import { laneSig } from "./store-signals.js";
 import { payloadOf } from "./turns.js";
-import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
+import { commandTitle, isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
 import { readLane, type LaneRead } from "./subagent-slice.js";
 
 /** How many trailing lines a card's tail shows. */
@@ -34,8 +31,9 @@ function tailOf(s: string, want: number): string[] {
   return out;
 }
 
-/** The line a `tool_call` entry contributes: its title. A card's claim line is
- *  `tool-card.ts`'s presentation of the input, so deriving one here is a second owner. */
+/** The line a `tool_call` entry contributes: its title, or the command a
+ *  description-less shell call ran. `commandTitle` owns that derivation for the
+ *  card and this line alike. */
 function toolLine(e: Entry): string[] {
   const call = payloadOf(e, "tool_call");
   if (
@@ -46,7 +44,7 @@ function toolLine(e: Entry): string[] {
   ) {
     return [];
   }
-  return tailOf(call.title, 1);
+  return tailOf(commandTitle(call.title, call.kind, call.input) ?? call.title, 1);
 }
 
 function textOf(e: Entry): string | null {
@@ -59,11 +57,8 @@ function textOf(e: Entry): string | null {
   return null;
 }
 
-/** The last `want` lines of one lane's read.
- *
- *  Walks the lane's entries BACKWARDS over `text`, `thinking` and tool titles until it
- *  holds `want` lines, sealed or open: the open entry is the lane's tail and carries no
- *  `seq`, so it is read first and separately. */
+/** The last `want` lines of a lane, walking `text`, `thinking` and tool titles backwards; the
+ *  open entry carries no `seq`, so it is read first. */
 function tailOfLane(lane: LaneRead, want: number): string[] {
   const lines: string[] = [];
   if (want <= 0) {
@@ -89,10 +84,7 @@ function tailOfLane(lane: LaneRead, want: number): string[] {
   return lines.slice(-want);
 }
 
-/** One delegate's trailing output, from its LANE alone.
- *
- *  An empty subtask id is nobody's delegate and answers nothing, and so does a chat the
- *  store does not hold. */
+/** One delegate's trailing output from its LANE alone; an empty id or unknown chat answers nothing. */
 export function subagentTail(
   chatID: string,
   subtaskID: string,
@@ -105,14 +97,9 @@ export function subagentTail(
   return tailOfLane(readLane(session, subtaskID), want);
 }
 
-/** Repaint ONE delegate's tail whenever its own output grows. Returns the disposer.
- *
- *  TWO dependencies. The chat's TRANSCRIPT version exists before the lane does, which is
- *  the state at a card's creation — the card is built from the invocation, and that call
- *  sits in the ISSUER's lane — so on the lane signal alone this effect records no source
- *  and never runs again, which is the live delegate it exists for; the store bumps that
- *  version for a laned entry too (`entryCause` answers `chunk`). The LANE signal is the
- *  narrow channel, bumped on every open, delta, seal and laned append. */
+/** Repaint ONE delegate's tail as its output grows; returns the disposer. TWO dependencies: the
+ *  chat's TRANSCRIPT version (exists before the lane, and bumps for laned entries too) and the
+ *  narrow LANE signal. */
 export function bindSubagentTail(
   chatID: string,
   subtaskID: string,

@@ -1,17 +1,7 @@
-// ---------------------------------------------------------------------------
-// User-input card: the agent asked a structured question mid-turn (kiro-cli
-// v3 `_kiro/userInput` — plan clarifications, spec gates). Rendered in the
-// interaction dock, which owns the queue and the settle-once guard.
-//
-// Three answer shapes, all reported as a plain string because that is the
-// wire contract: a clicked option sends its title, an option with sub-options
-// sends the TUI's "Title [Sub1, Sub2]", and a typed answer sends its text.
-// Skip dismisses, which makes the agent advance to its next phase.
-//
-// It was a centered <dialog> with a focus trap. A question about work in the
-// transcript should not cover the transcript, and a non-modal region must not
-// hold focus captive.
-// ---------------------------------------------------------------------------
+// User-input card: the agent's structured mid-turn question (kiro-cli v3 `_kiro/userInput`), in the
+// interaction dock, which owns the queue and settle-once. Answers are plain strings (the wire
+// contract): an option's title, the TUI's "Title [Sub1, Sub2]", or typed text; Skip advances the
+// agent. A non-modal region, not a <dialog>: it must not cover the transcript or trap focus.
 
 import { el } from "@cplieger/reactive";
 import { askActions, askEditor, askHead } from "./dock-ask.js";
@@ -20,25 +10,18 @@ import type { UserInputNeededPayload, UserInputOption } from "./types.js";
 type UserInputAction = "answered" | "dismissed";
 type SubmitFn = (action: UserInputAction, answer?: string) => void;
 
-/** Build the dock card for one agent question.
- *
- *  The reporter is threaded through every stage rather than parked in module
- *  state, and that is a correctness requirement rather than a style choice. The
- *  dock keeps the ANSWERED card on screen for the length of its advance
- *  animation, so two cards coexist: a module-level reporter would have been
- *  overwritten by the incoming card, and the outgoing card's handlers would then
- *  report against the INCOMING decision — which `settle`'s membership guard
- *  cannot catch, because that decision is legitimately still in the queue. */
+/** Build the dock card for one agent question. The reporter is threaded through every stage, NOT
+ *  module state: the answered card stays on screen through its advance animation beside the
+ *  incoming one, and a shared reporter would report against the INCOMING decision, which `settle`'s
+ *  guard cannot catch. */
 export function buildUserInputCard(
   payload: UserInputNeededPayload,
   onSubmit: SubmitFn,
 ): HTMLElement {
   const { body } = askHead(payload.question !== "" ? payload.question : "The agent has a question");
 
-  // All three regions exist whatever the stage renders, so a stage switch is a
-  // `replaceChildren` in place rather than a re-parent. An EMPTY one collapses in
-  // CSS (`:empty`), so a free-form question's options region and the sub-option
-  // stage's answer box cost no gap.
+  // All three regions always exist, so a stage switch replaces children in place; an EMPTY one
+  // collapses in CSS (`:empty`).
   const optionsEl = el("div", { className: "user-input-options" });
   const editorEl = el("div", { className: "dock-ask-editor" });
   const actions = askActions();
@@ -162,15 +145,8 @@ function renderSubOptionsStage(
   actions.append(confirm, back, dismissButton(submit));
 }
 
-/** The typed-answer editor. Primary (textarea) for a free-form question;
- *  compact alternative under the cards when options exist.
- *
- *  The box goes in `editorEl` and Send goes in `actions`, which is the shared ask
- *  card's shape rather than a preference: one right-aligned wrapping row holds every
- *  button, so the sub-option stage's Confirm/Back/Skip and this stage's Send/Skip
- *  are one row and not two. Send beside the box also made that row the editor's own,
- *  which cost the textarea 62px of width and put the card's two controls on two
- *  right-aligned lines. */
+/** The typed-answer editor: primary for a free-form question, compact under option cards. The box
+ *  goes in `editorEl` and Send in `actions`, the shared ask card's one wrapping button row. */
 function renderEditor(
   editorEl: HTMLElement,
   actions: HTMLElement,
@@ -220,12 +196,8 @@ function dismissButton(submit: SubmitFn): HTMLButtonElement {
   return btn;
 }
 
-/** Reset module state for test isolation. Production never calls this.
- *
- *  A documented NO-OP: this module holds no module state any more (see
- *  `buildUserInputCard`). It stays exported because `user-input.test.ts` imports
- *  it, and that file is outside this change's scope. Dropping the export and its
- *  import is a one-line follow-up for whoever next touches that suite. */
+/** Reset module state for test isolation. Production never calls this. A NO-OP: this module holds
+ *  no state; kept for `user-input.test.ts`'s import. */
 export function _resetForTest(): void {
   // Nothing to reset.
 }

@@ -1,11 +1,6 @@
-// The root's text-inflation pin, guarded at the SOURCE: iOS Safari's default
-// `-webkit-text-size-adjust: auto` scales each block by its own width, so a diff's
-// `white-space: pre` lines in a scroller render at a different size per line, and no
-// engine available here observes it (Chromium's autosizing is Android-only and off
-// under `width=device-width`). The likely regression is a `stylelint --fix` of
-// `property-no-vendor-prefix` rewriting the prefixed form away (Safari implements
-// only that one); the synced config exempts this property by name, and this guards
-// that exemption being narrowed.
+// The root's text-inflation pin, guarded at the SOURCE (no engine here observes it): iOS Safari's
+// `-webkit-text-size-adjust: auto` sized a diff's per-line scrollers differently. A `stylelint
+// --fix` dropping the prefixed form, the only one Safari implements, is the likely regression.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";

@@ -2,16 +2,11 @@ package agent
 
 import "reflect"
 
-// requireCollaborators panics unless every collaborator field of every collaborator
-// the Runtime built is populated. A collaborator binds its own collaborators BY
-// VALUE at construction, so a field still nil at that literal stays nil forever;
-// this has shipped as a nil-receiver panic three times, which is why it gets a
-// structural check via reflection rather than a hand-edited checklist. Only
-// pointer, interface and func fields are checked. A genuinely optional
-// collaborator carries `wiring:"optional"` on the FIELD.
+// requireCollaborators panics unless every pointer, interface and func field of every collaborator the Runtime
+// built is populated. Collaborators bind theirs by value at construction, so a nil there stays nil; that shipped as a
+// nil-receiver panic three times. An optional field carries `wiring:"optional"`.
 func requireCollaborators(h *Runtime) {
-	// Keyed literals: a positional list silently swaps meaning if fieldalignment
-	// ever reorders these.
+	// Keyed literals: a positional list would swap meaning if fieldalignment reordered them.
 	for _, c := range []struct {
 		v    any
 		name string
@@ -23,6 +18,7 @@ func requireCollaborators(h *Runtime) {
 		{name: "agentTerms", v: h.agentTerms},
 		{name: "mcpRegistry", v: h.mcpRegistry},
 		{name: "runRoutes", v: h.runRoutes},
+		{name: "powers", v: h.powers},
 		{name: "utility", v: h.utility},
 		{name: "replay", v: h.replay},
 		// Every collaborator constructed inside New with fields taken from h.
@@ -52,9 +48,7 @@ func requirePopulated(owner string, v any) {
 					"constructor than the literal that binds it")
 			}
 		default:
-			// A value field (a mutex, a map, a string, an embedded struct) has no
-			// nil state to check. Maps are excluded: several collaborators
-			// initialise theirs lazily on first write.
+			// Value fields have no nil state; maps are skipped because several collaborators initialise theirs lazily.
 		}
 	}
 }

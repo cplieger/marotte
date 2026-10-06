@@ -1,14 +1,7 @@
-// ---------------------------------------------------------------------------
-// Forge authentication UI: one always-visible section per forge kind, then one
-// for a server whose kind the detect route names. The add pane opens ABOVE a
-// section's account list, next to the "+" that asked for it. The server keys a
-// connection on kind and host, so a second account on the same host replaces
-// the first; accounts on different hosts coexist.
-// ---------------------------------------------------------------------------
+// One section per forge kind, then one for a server whose kind the detect route names. The server keys a
+// connection on kind and host, so a second account on the same host replaces the first.
 
-// signal.aborted / generation-counter defensive guards: the value can flip
-// between awaited microtasks even though the type system sees it as an
-// always-defined boolean.
+// signal.aborted and generation guards: the value can flip between awaited microtasks though the type says it cannot.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import { apiGetTyped, apiPost, CancellableSlot } from "./api-client.js";
@@ -50,8 +43,6 @@ interface LocalReposResponse {
   repos: string[];
 }
 
-// --- Response decoders ------------------------------------------------
-
 const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
   const o = asObject(v, "$.local_repos");
   return {
@@ -70,8 +61,6 @@ const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
 
 import { iconEl } from "./icon-el.js";
 
-// --- Module state -----------------------------------------------------
-
 /** Each connected account's repository listing, by forge ID: what its
  *  collapsible footer counts and lists. */
 let lastReposByForge: Record<string, RepoListing> = {};
@@ -80,55 +69,43 @@ let lastReposByForge: Record<string, RepoListing> = {};
  *  short, by forge ID, until the next one. */
 const listNotes = new Map<string, string>();
 
-/** Names of locally-cloned repos. Used to compute the cloned-count
- *  per-account and to drive the green dot / Trash button per row. */
+/** Locally-cloned repo names: the cloned count per account and each row's green dot and Trash button. */
 let lastLocalNames = new Set<string>();
 
-/** Forge IDs whose collapsible footer should render expanded on the
- *  next paint. Populated when the user successfully adds an account
- *  (PAT submit or OAuth complete) so the user lands on the freshly-
- *  added account with its repos visible. Cleared after one paint. */
+/**
+ * Forge IDs whose repo footer renders expanded on the next paint, so a newly added account lands with its repos
+ * visible. Cleared after one paint.
+ */
 const expandOnNextPaint = new Set<string>();
 
 /** OAuth availability per kind, populated from the forges list response. */
 let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
 
-/** A row action's failure the row itself does not carry, per forge ID: a
- *  sign-out or a check the server never answered. Cleared when the next
- *  action on that row starts. */
+/**
+ * A row action's failure the row does not carry (a sign-out, or a check never answered), per forge ID. Cleared
+ * when the next action on that row starts.
+ */
 const rowNotes = new Map<string, string>();
 
-/** Row requests in flight, keyed by forge ID and action (a repository row's by
- *  its own key), so a control rebuilt while its request runs shows that request
- *  rather than a fresh button. */
+/** Row requests in flight, by forge ID and action, so a control rebuilt while its request runs shows that request. */
 const rowRequests = new Map<string, Promise<void>>();
 
-/** True when the last /api/forges fetch failed; the effect renders an
- *  error UI with a Retry button instead of the kind sections. */
+/** True when the last /api/forges fetch failed: the effect renders the error UI with Retry instead of the sections. */
 let lastForgesError = false;
 
-/** Last-known forges payload. Effect paints from this when non-null
- *  and `lastForgesError` is false. */
 let lastForgesData: ForgesListResponse | null = null;
 
-/** Generation counter to prevent stale concurrent renderForgesPanel
- *  calls from overwriting a newer render. */
+/** Stops a stale concurrent renderForgesPanel from overwriting a newer render. */
 let renderGen = 0;
 
-/** Monotonic state-version signal. Every mutation to lastForgesData /
- *  lastReposByForge / lastLocalNames / lastForgesError bumps this; the
- *  paint effect subscribes to it and reconciles the panel. */
+/** Every mutation of the panel state above bumps this; the paint effect subscribes to it. */
 const stateVersion = signal(0);
 
 function bumpState(): void {
   stateVersion.value = stateVersion.peek() + 1;
 }
 
-/** Lazy-initialized paint effect. First renderForgesPanel call sets it
- *  up; subsequent calls are no-ops. The effect runs on every bumpState
- *  and re-acquires #forges-panel each run, so tab close/reopen is
- *  handled transparently (the next bump after re-mounting paints into
- *  the new root). */
+/** The effect re-acquires #forges-panel on every run, so a tab close and reopen paints into the new root. */
 let panelEffectStarted = false;
 function ensurePanelEffect(): void {
   if (panelEffectStarted) {
@@ -145,13 +122,9 @@ function ensurePanelEffect(): void {
   });
 }
 
-// --- In-flight handles for cancel-on-navigate -------------------------
-
-/** AbortController for the background revalidation probes. */
 let revalidateController: AbortController | null = null;
 
-/** CancellableSlot for the primary renderForgesPanel fetch path.
- *  Each call aborts the previous in-flight fetch. */
+/** Each renderForgesPanel aborts the previous in-flight fetch. */
 const panelSlot = new CancellableSlot();
 
 registerCleanup(() => {
@@ -166,23 +139,15 @@ const ALL_KINDS = Object.keys(FORGE_META) as ForgeKind[];
 const OTHER_SERVER = "other";
 type SectionKey = ForgeKind | typeof OTHER_SERVER;
 
-/** Manage-account URL on the forge itself, parameterized by host. */
 function manageAccountURL(kind: ForgeKind, host: string): string {
   return FORGE_URLS[kind](host);
 }
 
-/** Render the full forges panel. Idempotent; call after every list
- *  mutation to refresh.
- *
- *  When `revalidate` is true (the default), connected accounts are
- *  re-probed in parallel after the initial paint. Tokens can be
- *  silently revoked or expire; this catches that on page open. The
- *  initial paint shows last-known state immediately; the panel
- *  re-renders once when all probes have settled.
- *
- *  When `skipRepos` is true, the local-repos fetch is skipped so that
- *  an optimistic in-memory mutation (e.g. removeLocalRepo) is not
- *  overwritten by a stale server response before the action completes. */
+/**
+ * Render the full forges panel. Idempotent; call after every list mutation. `revalidate` (default true) re-probes
+ * connected accounts after the first paint, since tokens can be revoked or expire silently. `skipRepos` skips the
+ * local-repos fetch so an optimistic in-memory mutation is not overwritten by a stale answer.
+ */
 export async function renderForgesPanel(
   opts: { revalidate?: boolean; skipRepos?: boolean } = {},
 ): Promise<void> {
@@ -196,11 +161,9 @@ export async function renderForgesPanel(
   const myGen = ++renderGen;
   const signal = panelSlot.start();
 
-  // Through the shared store rather than this module's own fetch: a sign-in or a
-  // sign-out has to reach the sidebar badge and the PRs tab too, which a private
-  // copy could never do. It carries no signal, deliberately — see forge-store.ts:
-  // one consumer navigating away must not abort a fetch two others await. The
-  // guards below are what make a stale answer harmless here.
+  // Through the shared store: a sign-in or sign-out must reach the sidebar badge and the PRs tab too. It carries no
+  // signal on purpose (one consumer navigating away must not abort a fetch others await); the guards below make a
+  // stale answer harmless.
   const data = await refreshForges();
   if (signal.aborted || myGen !== renderGen) {
     return;
@@ -211,10 +174,6 @@ export async function renderForgesPanel(
     return;
   }
 
-  // Refresh repo + local-clone caches in parallel with the forges
-  // list. The per-account collapsible footer renders from these.
-  // When skipRepos is true (optimistic updates), skip the local-repos
-  // fetch so the caller's in-memory mutation isn't overwritten.
   if (opts.skipRepos !== true) {
     const [localNames, reposByForge] = await Promise.all([
       refreshLocalNames(signal),
@@ -293,14 +252,9 @@ async function loadMoreRepos(forgeId: string): Promise<void> {
   }
 }
 
-/** Re-probe every connected account in parallel; on completion, re-fetch
- *  /api/forges and bump state with the post-probe results. The paint
- *  effect surgically reconciles the panel; an open add-account slot is
- *  preserved as a non-keyed sibling so the user's mid-interaction is
- *  not disrupted. */
+/** An open add-account slot is a non-keyed sibling, so the reconcile after the probes leaves the user's pane alone. */
 async function revalidateInBackground(ids: string[]): Promise<void> {
-  // Cancel any prior in-flight revalidation; we always want the most
-  // recent paint's state to win.
+  // The most recent paint's state wins.
   revalidateController?.abort();
   revalidateController = new AbortController();
   const signal = revalidateController.signal;
@@ -335,10 +289,6 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
   bumpState();
 }
 
-// --- Effect-driven paint ----------------------------------------------
-
-/** Called by the paint effect on every state change. Reconciles the
- *  panel root to match the latest forges/repos/local-names state. */
 function paintIntoRoot(root: HTMLElement): void {
   if (lastForgesError) {
     paintErrorState(root);
@@ -348,7 +298,6 @@ function paintIntoRoot(root: HTMLElement): void {
     return;
   }
 
-  // Clear any leftover error UI before reconciling kind sections.
   const errEl = root.querySelector(":scope > .forge-error");
   errEl?.remove();
 
@@ -357,7 +306,6 @@ function paintIntoRoot(root: HTMLElement): void {
 }
 
 function paintErrorState(root: HTMLElement): void {
-  // Remove existing keyed kind sections first; the error UI stands alone.
   for (const child of [...root.children]) {
     if ((child as HTMLElement).getAttribute("data-reconcile-key") !== null) {
       child.remove();
@@ -365,7 +313,7 @@ function paintErrorState(root: HTMLElement): void {
   }
   if (root.querySelector(":scope > .forge-error") !== null) {
     return;
-  } // already shown
+  }
   const retryBtn = el("button", { type: "button", className: "btn-small" }, "Retry");
   retryBtn.addEventListener("click", () => {
     void renderForgesPanel();
@@ -373,8 +321,6 @@ function paintErrorState(root: HTMLElement): void {
   const errDiv = el("div", { className: "forge-error" }, "Failed to load forges.", retryBtn);
   root.appendChild(errDiv);
 }
-
-// --- Reconcile specs --------------------------------------------------
 
 const sectionSpec: ReconcileSpec<SectionKey> = {
   key: (k) => k,
@@ -411,12 +357,7 @@ const repoSpec: ReconcileSpec<Repo> = {
   },
 };
 
-// --- Kind section -----------------------------------------------------
-
-/** Build a fresh section element for one forge kind. The header,
- *  account list container, and slot are static (their identity is
- *  preserved across re-paints); the account list is reconciled on
- *  every update. */
+/** The header, list container and slot keep their identity across repaints; the account list is reconciled. */
 function buildKindSection(kind: ForgeKind): HTMLElement {
   const badge = el(
     "span",
@@ -427,8 +368,7 @@ function buildKindSection(kind: ForgeKind): HTMLElement {
     showAddPane(s, kind);
   });
 
-  // Always present an account list container so reconcile has a
-  // deterministic mount point. Empty list renders nothing.
+  // Always present, so reconcile has a deterministic mount point.
   const list = el("ul", { className: "forge-account-list" });
   section.appendChild(list);
   reconcile(list, accountsForKind(kind), accountSpec);
@@ -443,8 +383,6 @@ function buildOtherSection(): HTMLElement {
   return buildSectionShell(OTHER_SERVER, badge, "Another server", showDetectPane);
 }
 
-/** A section's header (badge, title, the "+" that toggles the add pane) and
- *  its add-pane slot. */
 function buildSectionShell(
   key: SectionKey,
   badge: HTMLElement,
@@ -478,15 +416,8 @@ function buildSectionShell(
     ),
   );
 
-  // Inline mount point for the add-account pane (OAuth + PAT) and
-  // status messages. Non-keyed sibling — survives reconcile.
-  //
-  // It sits DIRECTLY under the header, above the account list, because
-  // the "+" that opens it is in that header. Below the list, the pane
-  // opened one account row plus one expanded repo list away from the
-  // click that asked for it, so on a kind that already has an account
-  // the button read as doing nothing. Same rule the knowledge-base add
-  // form follows (`knowledge-list`.before(form)).
+  // The add pane's mount point, a non-keyed sibling that survives reconcile. It sits directly under the header,
+  // beside the "+" that opens it: below the list, on a populated section the button read as doing nothing.
   section.appendChild(el("div", { className: "forge-kind-slot", "data-forge-slot": key }));
   return section;
 }
@@ -506,16 +437,12 @@ function accountsForKind(kind: ForgeKind): ConfiguredForge[] {
   return lastForgesData.forges.filter((f) => f.kind === kind);
 }
 
-// --- Account row ------------------------------------------------------
-
-/** Paint or repaint the contents of one account <li>. Used both as
- *  the spec's mount body (li freshly created, empty) and as update
- *  (li already in DOM, may have stale children). */
+/** Both the mount body (fresh empty li) and the update (li with stale children). */
 function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
   li.classList.toggle("forge-account-row-error", !a.connected);
 
-  // The identity and the actions repaint apart: a check rewrites the identity's
-  // error line, and its button has to survive that to show the outcome.
+  // The identity and actions repaint apart: a check rewrites the identity's error line, and its button must survive
+  // that to show the outcome.
   let top = li.querySelector<HTMLElement>(":scope > .forge-account-row-top");
   if (top === null) {
     top = el("div", { className: "forge-account-row-top" });
@@ -531,7 +458,6 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
     renderAccountActions(a, li),
   );
 
-  // Repos details (only when connected and we have repo data).
   const oldDetails = li.querySelector<HTMLElement>(":scope > .forge-account-repos");
   const listing = lastReposByForge[a.id];
   if (a.connected && listing !== undefined) {
@@ -556,7 +482,6 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
   }
 }
 
-/** Replace the child `selector` names, or add one, when `parts` moved. */
 function swapIfChanged(
   host: HTMLElement,
   selector: string,
@@ -576,8 +501,10 @@ function swapIfChanged(
   }
 }
 
-/** Which controls a row can offer: none that need a request when no request
- *  can succeed, a new sign-in when only that revives the credential. */
+/**
+ * Which controls a row offers: none needing a request when none can succeed; a new sign-in when only that revives
+ * the credential.
+ */
 type RowState = "unusable" | "reconnect" | "ok";
 
 const CONNECTION_UNUSABLE = "connection_unusable";
@@ -589,7 +516,6 @@ function rowState(a: ConfiguredForge): RowState {
   return a.reconnect_required ? "reconnect" : "ok";
 }
 
-/** The row's error in words, by the code the server gave it. */
 function rowErrorText(a: ConfiguredForge): string {
   const reason = a.last_error ?? "";
   if (a.reconnect_required) {
@@ -627,11 +553,8 @@ function renderAccountIdentity(a: ConfiguredForge): HTMLElement {
   if (hasEmail || hasUsername) {
     primary.textContent = hasEmail ? a.email! : a.username!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   } else {
-    // No identity data yet (this is the first paint right after a
-    // PAT submit / OAuth complete; the background probe hasn't
-    // populated email or username yet). Show a skeleton bar instead
-    // of falling back to the host string — the host is already shown
-    // on the meta line below.
+    // No identity until the background probe lands (first paint after a sign-in): a skeleton, not the host, which the
+    // meta line already shows.
     primary.classList.add("skeleton", "forge-account-primary-skeleton");
     primary.setAttribute("aria-label", "Loading account identity…");
   }
@@ -722,9 +645,7 @@ function renderAccountActions(a: ConfiguredForge, li: HTMLElement): HTMLElement 
   return actions;
 }
 
-/** Start the row request `key` unless it already runs, answering it. It is
- *  registered before `fn` runs, so a repaint `fn` causes builds its control
- *  showing the request. */
+/** Registered before `fn` runs, so a repaint `fn` causes builds its control showing the request. */
 function startRowRequest(key: string, fn: () => Promise<void>): Promise<void> | undefined {
   if (rowRequests.has(key)) {
     return undefined;
@@ -742,8 +663,7 @@ function startRowRequest(key: string, fn: () => Promise<void>): Promise<void> | 
   return p;
 }
 
-/** Run one row request with its button's feedback; a press while the same
- *  request runs does nothing. */
+/** A press while the same request runs does nothing. */
 function runRowRequest(btn: HTMLButtonElement, key: string, fn: () => Promise<void>): void {
   const p = startRowRequest(key, fn);
   if (p !== undefined) {
@@ -758,7 +678,6 @@ function adoptRowRequest(btn: HTMLButtonElement, key: string): void {
   }
 }
 
-/** Replace one row of the held list with the server's copy and repaint. */
 function replaceRow(f: ConfiguredForge): void {
   if (lastForgesData === null) {
     return;
@@ -779,8 +698,7 @@ function setRowNote(id: string, note: string): void {
   bumpState();
 }
 
-/** Check a connection; the answer is the row as the probe left it. Rejects
- *  when the check failed, after the row says why. */
+/** Rejects when the check failed, after the row says why. */
 async function onProbe(id: string): Promise<void> {
   setRowNote(id, "");
   const o = await probeForge.dispatch({ forgeId: id }).outcome;
@@ -799,8 +717,7 @@ async function onProbe(id: string): Promise<void> {
   }
 }
 
-/** Open the add pane of `a`'s kind for its host: a new sign-in is the one
- *  remedy for a credential the server can neither use nor renew. */
+/** A new sign-in is the one remedy for a credential the server can neither use nor renew. */
 function openReconnect(li: HTMLElement, a: ConfiguredForge): void {
   const section = li.closest<HTMLElement>(".forge-kind-section");
   if (section === null) {
@@ -810,8 +727,6 @@ function openReconnect(li: HTMLElement, a: ConfiguredForge): void {
   showAddPane(section, a.kind, a.host);
 }
 
-// --- Account repos (details) ------------------------------------------
-
 function buildAccountReposDetails(a: ConfiguredForge, l: RepoListing): HTMLElement {
   return buildAccountReposDetailsImpl(a, l, reposRenderDeps);
 }
@@ -819,9 +734,6 @@ function buildAccountReposDetails(a: ConfiguredForge, l: RepoListing): HTMLEleme
 function updateAccountReposDetails(details: HTMLElement, a: ConfiguredForge, l: RepoListing): void {
   updateAccountReposDetailsImpl(details, a, l, reposRenderDeps);
 }
-
-// --- Repo row ---------------------------------------------------------
-// --- Deps wiring for extracted modules --------------------------------
 
 const repoDeps: RepoDeps = {
   isCloned: (name) => lastLocalNames.has(name),
@@ -867,13 +779,10 @@ const patDeps: PATFormDeps = {
   },
 };
 
-// --- Add-account flow dispatch ---
-
-/** Toggle the add-account pane on a forge section. The pane offers
- *  every supported method stacked, so the user picks one without
- *  flipping between buttons: the device sign-in where the kind has one,
- *  and the PAT paste for every kind. Clicking the same `+` button twice
- *  closes the pane. */
+/**
+ * Every supported method is offered stacked: the device sign-in where the kind has one, and the PAT paste for all.
+ * A second press on the same `+` closes the pane.
+ */
 function onAddAccount(section: HTMLElement, showPane: (section: HTMLElement) => void): void {
   const slot = slotOf(section);
   if (slot.dataset["mode"] === "add") {
@@ -993,8 +902,6 @@ function slotOf(section: HTMLElement): HTMLElement {
   }
   return slot;
 }
-
-// --- Sign out ---
 
 async function onSignOut(f: ConfiguredForge, btn: HTMLButtonElement): Promise<void> {
   const label = f.email ?? f.username ?? f.host;

@@ -1,11 +1,5 @@
 package command
 
-// The staged-attachment command, plus the draft_changed broadcast both composer
-// writers share. What is pinned is the twinning with set_draft — the caps, the
-// two refusals to create anything, no bridge traffic — and the one property the
-// broadcast exists for: a frame goes out when something landed and does not when
-// nothing did.
-
 import (
 	"context"
 	"encoding/json"
@@ -68,8 +62,6 @@ func TestCmdSetAttachments(t *testing.T) {
 		wantStored []string
 	}{
 		{name: "stores the paths in order", paths: []string{"docs/spec.pdf", "out/shot.png"}, wantStatus: http.StatusOK, wantStored: []string{"docs/spec.pdf", "out/shot.png"}},
-		// Empty is a VALUE, not a missing field: it is how a send or an emptied
-		// pill row clears, so it must be accepted rather than rejected.
 		{name: "accepts an empty list as a clear", paths: []string{}, wantStatus: http.StatusOK, wantStored: nil},
 		{name: "accepts a list at exactly the cap", paths: manyReqPaths(marotte.MaxAttachments), wantStatus: http.StatusOK, wantStored: manyReqPaths(marotte.MaxAttachments)},
 		{name: "refuses one entry over the cap", paths: manyReqPaths(marotte.MaxAttachments + 1), wantStatus: http.StatusRequestEntityTooLarge, wantStored: nil},
@@ -97,8 +89,6 @@ func TestCmdSetAttachments(t *testing.T) {
 			if strings.Join(c.Attachments, ",") != strings.Join(tc.wantStored, ",") {
 				t.Errorf("stored = %v, want %v", c.Attachments, tc.wantStored)
 			}
-			// Staging a file is not a session config option: nothing about it
-			// belongs on the wire to KAS, and this rides the draft's debounce.
 			if b.callCount != 0 {
 				t.Errorf("bridge called %d times; staging a file must not reach the agent", b.callCount)
 			}
@@ -115,8 +105,6 @@ func TestCmdSetAttachments_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	// Raw bytes, not json.Marshal: marshalling would sanitize them before the
-	// handler ever saw them, which is the same coercion under test.
 	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, &marotte.ClientCommand{
 		Type:    marotte.CmdSetAttachments,
 		ChatID:  "c1",
@@ -207,17 +195,14 @@ func TestComposerCommands_BroadcastDraftChanged(t *testing.T) {
 	if frames[0].Text != "half a question" {
 		t.Errorf("frame 0 text = %q, want the draft that was written", frames[0].Text)
 	}
-	// BOTH halves ride every frame, whichever writer produced it. A frame that
-	// carried only the field that moved would blank the other one on every
-	// receiving device, because a receiver cannot know which command fired.
+	// BOTH halves ride every frame: a receiver cannot know which command fired, so a one-field
+	// frame would blank the other field.
 	if frames[1].Text != "half a question" {
 		t.Errorf("frame 1 text = %q, want the draft already on the record", frames[1].Text)
 	}
 	if strings.Join(frames[1].Attachments, ",") != "docs/spec.pdf" {
 		t.Errorf("frame 1 attachments = %v, want docs/spec.pdf", frames[1].Attachments)
 	}
-	// Chat-scoped: the receiver keys the frame to a chat and applies it only to a
-	// chat it is not typing in, so an empty envelope id would make it unroutable.
 	for i, evt := range bus.events {
 		if evt.ChatID != "c1" {
 			t.Errorf("event %d chat id = %q, want c1", i, evt.ChatID)
@@ -249,11 +234,9 @@ func TestComposerCommands_NoBroadcastWhenNothingChanged(t *testing.T) {
 	}
 }
 
-// The send clears the staged list in the same header write that clears the
-// draft. Belt to the client's own set_attachments([]) braces: a lost POST would
-// otherwise bring three already-sent attachments back on the next open. The list
-// is not dropped: it rides the turn_open's prompt (TestPromptEntry_CarriesTheAttachments),
-// which is where a sent turn's header reads its pills from.
+// TestSettleComposerOnPrompt_ClearsTheStagedAttachments: the send clears the staged list in the
+// draft-clearing header write, or a lost client POST brings sent attachments back; the list rides
+// the turn_open's prompt instead.
 func TestSettleComposerOnPrompt_ClearsTheStagedAttachments(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")

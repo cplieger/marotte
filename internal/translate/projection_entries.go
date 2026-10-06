@@ -1,10 +1,8 @@
 package translate
 
-// The ENTRY projection: a chat's turn log rebuilt from a `session/load` replay, beside
-// the message projection rather than in place of it. A SECOND type rather than a flag
-// on Projection because three rules differ: a compaction separator closes no turn, a
-// resent steer is not inferred (the record carries the state), and a user row settles
-// at its arrival position rather than at the next bracket.
+// The ENTRY projection: a chat's turn log rebuilt from a `session/load` replay. A compaction
+// separator closes no turn, a resent steer is not inferred, and a user row settles at its
+// arrival position.
 
 import (
 	"cmp"
@@ -15,30 +13,24 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/runesafe/v2"
 )
 
-// ProjectedTurn is one turn as the replay describes it: its entries in KAS order,
-// Seq unassigned, because a projection holds no durable position and the merge is
-// what assigns one.
-//
-// The turn id is Entries[0].Turn, minted by the injected generator, and the merge's
-// rule-one pairing key is the turn_open payload's prompt id — on this side KAS's own
-// record id for the user row that opened the bracket.
+// ProjectedTurn is one turn as the replay describes it, entries in KAS order with Seq
+// unassigned (the merge assigns positions). The merge's rule-one key is the turn_open prompt
+// id: KAS's record id for the opening user row.
 type ProjectedTurn struct {
 	Entries []marotte.Entry
 }
 
-// replaySteerSource is `_meta.kiro.source` on every one of the four steering shapes,
-// so it marks the CHANNEL rather than a reader's steer: the workflow-progress drop
-// and the empty-boundary drop must both run before it decides anything. Declared
-// here, beside the only code that reads it.
+// replaySteerSource is `_meta.kiro.source` on all four steering shapes: it marks the CHANNEL,
+// so the workflow-progress and empty-boundary drops must run before it decides anything.
 const replaySteerSource = "steer"
 
-// subagentInvocationKind is `_meta.kiro.kind` on the tool_call that starts a
-// delegate. It is what makes the call an INVOCATION, filed in the issuer's lane with
-// the delegate uuid in its payload; the stamp alone cannot say so, because the
-// pipeline driver carries none while an ordinary call inside a delegate carries one.
+// subagentInvocationKind is `_meta.kiro.kind` on the tool_call that starts a delegate, filed
+// in the issuer's lane; the stamp alone cannot say so.
 const subagentInvocationKind = "agent-subtask"
 
 // laneSay is the say one lane is still accumulating: its entry id and its kind, so a
@@ -48,16 +40,21 @@ type laneSay struct {
 	kind marotte.EntryKind
 }
 
-// projectedFacts are the open turn's turn_close inputs, held rather than stamped on
-// arrival: a turn replays as `turn_completion` then `turn_end`, and the close keys on
-// the second, so the metering has to survive one frame.
+// projectedFacts are the open turn's turn_close inputs, held because turn_completion arrives
+// before the turn_end the close keys on.
 type projectedFacts struct {
-	// conclusion is what the turn_end frame said, and nil means no turn_end reached
-	// this turn at all: the replay ended inside it, which is the crash the merge's
-	// rule 4 closes rather than the projection.
+	// conclusion is the turn_end's; nil means no turn_end reached this turn (merge rule 4 closes it).
 	conclusion *marotte.TurnConclusion
-	credits    float64
-	elapsedMs  float64
+	// refusal is first-wins, like the live turn's: the tagged chunk latches it, and
+	// turn_end's stopDetails fills it only for a turn whose chunk carried none.
+	refusal *marotte.RefusalInfo
+	// engine is the replayed display_error, last write winning like the live latch.
+	engine *displayErrorBlock
+	// footer is the asks, request ids, throughput, recoveries and steering, the
+	// live turn's own accumulator applied to the replayed frames.
+	footer    turnlog.Facts
+	credits   float64
+	elapsedMs float64
 }
 
 // EntryProjection accumulates a replayed transcript as entries. Not safe for
@@ -67,32 +64,24 @@ type EntryProjection struct {
 	// prompt is the user row the next turn opens with, and its ID is the merge's
 	// rule-one key.
 	prompt *marotte.EntryPrompt
-	// sayAt maps a say id to its entry's index in cur and sayText to that entry's
-	// coalesced text, so a delta for a say the turn already holds EXTENDS that entry:
-	// section 7.2 emits one text entry per say id and the merge pairs on it, so a
-	// second entry under one id would give the merge two candidates for one key.
+	// sayAt maps a say id to its entry's index in cur and sayText to its text, so a later delta
+	// EXTENDS that entry: two entries under one id would give the merge two candidates for a key.
 	sayAt   map[string]int
 	sayText map[string]string
-	// carry is the marker filter's withheld tail per lane, and carrySay the say the
-	// released bytes belong to. Owned here rather than in a turnlog.Turn, which is the
-	// live path's accumulator and holds no replay.
+	// carry is the marker filter's withheld tail per lane, carrySay the say it belongs to.
 	carry    map[string]string
 	carrySay map[string]string
 	// calls maps an unsettled tool_call's entry id to the lane its result belongs in,
 	// fixed at the create frame; callOrder is the order the turn's close aborts them
 	// in.
 	calls map[string]string
-	// laneOpen is the say each lane is still accumulating, which is what lets a delta
-	// whose frame carried NO id extend the entry it belongs to rather than minting a
-	// second one. Cleared when an entry of another kind seals that lane, the live
-	// accumulator's own barrier.
+	// laneOpen is the say each lane is accumulating, so an id-less delta extends it; cleared when
+	// another kind seals the lane.
 	laneOpen map[string]laneSay
 	// turns are the settled turns, oldest first.
 	turns []ProjectedTurn
-	// cur is the newest turn's entries, open or closed, with its turn_open at index 0.
-	// It is NOT moved into turns at the close: content arriving after a turn_end with
-	// no turn_start of its own continues that turn, and keeping it here is what lets
-	// the say index and the unsettled calls continue with it.
+	// cur is the newest turn's entries, turn_open at index 0. Not moved into turns at the close:
+	// content after a turn_end with no turn_start continues that turn.
 	cur       []marotte.Entry
 	callOrder []string
 	// workDir is the workspace root a projected diff path is made relative to. A plain
@@ -104,9 +93,8 @@ type EntryProjection struct {
 	// ISSUER's lane for a subagent invocation: the lane whose text was open when the
 	// frame arrived.
 	lane string
-	// The user row being accumulated. KAS writes one record per row, so a replay sends
-	// one chunk; the text still accumulates, because a row's identity is its FIRST
-	// chunk's and a second row with another id has to flush the first.
+	// The user row being accumulated. Its identity is its FIRST chunk's, so a row with another id
+	// flushes the first.
 	userID       string
 	userText     string
 	userSeverity string
@@ -128,12 +116,8 @@ type EntryProjection struct {
 	userPending bool
 }
 
-// NewEntryProjection returns an empty EntryProjection. newID must produce unique
-// ids; it mints the two bracket entries and a delta whose frame carried none, and the
-// caller supplies it so a test is deterministic. workDir is the workspace root a diff
-// path is made relative to; empty leaves paths as sent.
-//
-// The two parameters have different types, so a caller cannot transpose them.
+// NewEntryProjection returns an empty EntryProjection. newID mints unique ids for the bracket
+// entries and id-less deltas (injected for determinism); workDir relativizes diff paths.
 func NewEntryProjection(newID func() string, workDir string) *EntryProjection {
 	return &EntryProjection{newID: newID, workDir: workDir, compactAt: -1}
 }
@@ -144,10 +128,8 @@ func (p *EntryProjection) relPath(ref string) string {
 	return relPathIn(p.workDir, ref)
 }
 
-// Ingest folds one replayed session/update frame into the projection. Unknown kinds
-// are ignored: a replay carries catalog and telemetry frames a transcript cannot use,
-// and `hook_update` is a session_info sub-kind this switch deliberately drops (a hook
-// card is record-only, and the projection has no operationId twin to pair on).
+// Ingest folds one replayed session/update frame into the projection; unknown kinds, and
+// `hook_update` (record-only, no twin to pair on), are ignored.
 func (p *EntryProjection) Ingest(kind marotte.ACPUpdateKind, raw json.RawMessage) {
 	switch kind {
 	case marotte.ACPUpdateSessionInfo:
@@ -161,8 +143,7 @@ func (p *EntryProjection) Ingest(kind marotte.ACPUpdateKind, raw json.RawMessage
 	case marotte.ACPUpdateToolUpdate:
 		p.ingestToolUpdate(raw)
 	default:
-		// user_message_chunk is handled here because its kind constant lives outside
-		// the ACPUpdate* set marotte declares (it has never had a live handler).
+		// user_message_chunk's kind constant is outside the ACPUpdate* set.
 		if kind == replayUserChunkKind {
 			p.ingestUserText(raw)
 		}
@@ -174,9 +155,8 @@ func (p *EntryProjection) Ingest(kind marotte.ACPUpdateKind, raw json.RawMessage
 // every step below is a no-op once it has run.
 func (p *EntryProjection) Turns() []ProjectedTurn {
 	p.flushUser()
-	// A trailing prompt with no bracket after it is a turn the reader opened and the
-	// process never ran. Represented rather than dropped: it carries rule one's key, so
-	// the record's own prompt turn pairs with it instead of standing unpaired.
+	// A trailing prompt with no bracket is a turn the process never ran; it is kept because it
+	// carries rule one's key.
 	if p.prompt != nil {
 		p.openTurn()
 	}
@@ -190,20 +170,17 @@ func (p *EntryProjection) ingestUserText(raw json.RawMessage) {
 	if json.Unmarshal(raw, &c) != nil {
 		return
 	}
-	// A workflow-progress row rides this same frame type and carries the steering
-	// source too, so this drop must lead: it is machine state for the run card.
+	// A workflow-progress row also carries the steering source, so this drop leads.
 	if isWorkflowProgress(&c.Meta) {
 		return
 	}
-	// Two rows with no frame of another kind between them merge into one carrying the
-	// FIRST row's identity without this, so the empty steering-boundary row hijacks
-	// the prompt that follows it and stamps `steer` onto the reader's own words.
+	// Without this, an empty steering-boundary row would hijack the following prompt's identity
+	// and mark the reader's own words as a steer.
 	if id := c.Meta.Kiro.MessageID; p.userPending && id != "" && id != p.userID {
 		p.flushUser()
 	}
 	if !p.userPending {
-		// `_meta.kiro.messageId` on a REPLAYED user chunk is KAS's own record id (the
-		// frame is built FROM the record), which is what makes it rule one's key.
+		// On a replayed chunk `_meta.kiro.messageId` is KAS's record id: rule one's key.
 		p.userID = c.Meta.Kiro.MessageID
 		p.userTs = replayTS(c.Meta.Kiro.Timestamp)
 		p.userSteer = c.Meta.Kiro.Source == replaySteerSource
@@ -213,13 +190,8 @@ func (p *EntryProjection) ingestUserText(raw json.RawMessage) {
 	p.userPending = true
 }
 
-// flushUser settles the accumulated user row.
-//
-// A prompt-class row becomes the NEXT turn's turn_open.prompt and emits nothing. A
-// steer row is an entry at its own arrival position, which is why every path that
-// appends an entry flushes first: the replay places a steer at its QUEUE time inside
-// the bracket, and landing it there rather than after the reply is the reordering
-// this design exists for.
+// flushUser settles the accumulated user row: a prompt-class row becomes the NEXT turn's
+// turn_open.prompt; a steer row is an entry at its own arrival (queue) position.
 func (p *EntryProjection) flushUser() {
 	if !p.userPending {
 		return
@@ -236,13 +208,11 @@ func (p *EntryProjection) flushUser() {
 		p.prompt, p.promptTs = &marotte.EntryPrompt{ID: id, Text: text}, ts
 		return
 	}
-	// Lane-less, so it settles every lane's carry first, and it lands in whatever turn
-	// was newest when it arrived — after that turn's turn_close when the turn had
-	// already ended, which is the between-turns rule.
+	// Lane-less: it settles every lane's carry and lands in the newest turn, after its close when
+	// it had ended.
 	p.ensureTurn(marotte.TurnOpenNameEvent)
 	p.sealLanes()
-	// state stays empty: the projection knows only that KAS holds the words. A steer
-	// with no record twin is stamped `dropped, restart` by the merge that inserts it.
+	// state stays empty; a steer with no record twin is stamped `dropped, restart` by the merge.
 	p.appendEntry(marotte.EntryKindSteer, id, "", ts, marotte.EntrySteer{
 		Text:     text,
 		Origin:   projectedSteerOrigin(id),
@@ -250,12 +220,8 @@ func (p *EntryProjection) flushUser() {
 	})
 }
 
-// projectedSteerOrigin is a replayed steer's origin from its id alone: KAS's
-// `steer-` prefix is the reader's own and every other prefix is the agent's, which is
-// the rule the live steerOrigin leads on.
-//
-// No ledger is consulted, unlike the live path: a projection has none, and the
-// merge's union takes the record's origin wherever the record has one.
+// projectedSteerOrigin is a replayed steer's origin from its id alone (`steer-` is the
+// reader's); the merge takes the record's origin where it has one.
 func projectedSteerOrigin(id string) marotte.SteerOrigin {
 	if strings.HasPrefix(id, marotte.SteerIDPrefix) {
 		return marotte.SteerOriginUser
@@ -272,21 +238,24 @@ func (p *EntryProjection) ingestAgentText(raw json.RawMessage, kind marotte.Entr
 	p.ensureTurn(marotte.TurnOpenNameWireTurnStart)
 	lane := c.Meta.Kiro.AgentSubtaskID
 	p.lane = lane
+	// markRefusal's rule: the tagged chunk seals the lane and never becomes prose.
+	if r := refusalFrom(c.Meta.Kiro.Refusal); r != nil {
+		p.sealLane(lane)
+		if p.facts.refusal == nil {
+			p.facts.refusal = r
+		}
+		return
+	}
 	sayID := p.sayIDFor(kind, lane, c.Meta.Kiro.MessageID)
-	// A delta for another say, or a thinking delta over a text say, is the live
-	// accumulator's barrier: the lane's held carry belongs to the say it was withheld
-	// from, and settling it here is what keeps a `[` tail off the next say's head.
+	// Another say, or thinking over text, is a barrier: settle the held carry first so a `[` tail
+	// stays off the next say's head.
 	if held, ok := p.heldSay(lane); ok && (held.id != sayID || held.kind != kind) {
 		p.sealLane(lane)
 	}
 	text := c.Content.Text
 	if kind == marotte.EntryKindText {
-		// The same marker filter the live path runs, per delta, and not optional here:
-		// KAS replays its own log with the acknowledgements it never scrubbed, so
-		// without it the projected text is LONGER than the record's by the marker and
-		// the union's text row appends machinery to the record's last segment on every
-		// session/load. The acks are DISCARDED — the record has them, and an ack whose
-		// seal a crash lost is one line of machinery text the reader never saw.
+		// The live marker filter, required here: KAS replays the acks it never scrubbed, so without it
+		// the projected text outgrows the record's. The acks are discarded.
 		emit, held, _ := stripSteerAcks(p.carry[lane], text)
 		p.setCarry(lane, sayID, held)
 		text = emit
@@ -297,13 +266,9 @@ func (p *EntryProjection) ingestAgentText(raw json.RawMessage, kind marotte.Entr
 	p.extendSay(kind, sayID, lane, replayTS(c.Meta.Kiro.Timestamp), text)
 }
 
-// sayIDFor is the say a delta belongs to: `<uuid>-say` on a text chunk and a distinct
-// `<reasoningActionId>-say` on a thought chunk, which is what makes the two sides'
-// segment ids agree.
-//
-// A frame carrying NO id extends the lane's current say of the same kind, matching the
-// live accumulator, and only a lane with none mints one — the message projection's own
-// fallback for an id-less frame.
+// sayIDFor is the say a delta belongs to (`<uuid>-say`, or `<reasoningActionId>-say` for a
+// thought). An id-less frame extends the lane's current say of that kind; only a lane with
+// none mints one.
 func (p *EntryProjection) sayIDFor(kind marotte.EntryKind, lane, sayID string) string {
 	if sayID != "" {
 		return sayID
@@ -326,10 +291,8 @@ func (p *EntryProjection) heldSay(lane string) (laneSay, bool) {
 	return laneSay{}, false
 }
 
-// extendSay appends delta to the turn's entry for id, opening one when the turn holds
-// none. One entry per say id per turn, whatever the frame order: the merge pairs a
-// projected `S` against every record entry whose id is `S` or `S#k`, so two projected
-// entries under one id would give it two candidates for one key.
+// extendSay appends delta to the turn's entry for id, opening one if needed: one entry per say
+// id per turn, whatever the frame order.
 func (p *EntryProjection) extendSay(kind marotte.EntryKind, id, lane string, ts int64, delta string) {
 	p.laneOpen[lane] = laneSay{id: id, kind: kind}
 	if at, held := p.sayAt[id]; held {
@@ -337,8 +300,7 @@ func (p *EntryProjection) extendSay(kind marotte.EntryKind, id, lane string, ts 
 		p.rewritePayload(at, payloadForSay(kind, p.sayText[id]))
 		return
 	}
-	// The index is recorded AFTER the append, because insertEntry shifts every index at
-	// or past its own position and would otherwise bump the entry it just placed.
+	// The index is recorded AFTER the append: insertEntry shifts every index at or past its own.
 	at := len(p.cur)
 	if !p.insertEntry(at, kind, id, lane, ts, payloadForSay(kind, delta)) {
 		return
@@ -366,13 +328,8 @@ func (p *EntryProjection) setCarry(lane, sayID, held string) {
 	p.carrySay[lane] = sayID
 }
 
-// sealLane settles one lane's carry and closes the say it was accumulating, which is
-// what an entry of another kind in that lane does.
-//
-// The carry rule is turnlog's seal rule, restated rather than called because that
-// runs inside the live accumulator this projection does not hold: a carry starting
-// with SteerAckPrefix is a marker the model never closed and is dropped; anything
-// else goes back into its say.
+// sealLane settles one lane's carry and closes its say: a carry starting with SteerAckPrefix
+// is an unclosed marker and is dropped, anything else returns to its say (turnlog's seal rule).
 func (p *EntryProjection) sealLane(lane string) {
 	held, sayID := p.carry[lane], p.carrySay[lane]
 	p.setCarry(lane, "", "")
@@ -399,26 +356,21 @@ func (p *EntryProjection) ingestToolCall(raw json.RawMessage) {
 		return
 	}
 	tc.gate()
-	// The live path's own suppression: KAS's log stores the cloud-config fetch it
-	// announced during session creation, so without this a resumed chat regains the
-	// card the live stream dropped.
+	// The live path's suppression: KAS's log stores the cloud-config fetch it announced.
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
 		return
 	}
 	p.flushUser()
 	p.ensureTurn(marotte.TurnOpenNameWireTurnStart)
 	ts := p.frameTS(tc.Meta.Kiro.Timestamp)
-	// The live path's own builder, so one frame decodes one way; the hand-written
-	// literal it replaces is how the message projection came to drop the terminal
-	// link, the diffs, the disclosure and the denial.
+	// The live path's own builder, so one frame decodes one way.
 	wire := toolCallFromWire(&tc, "",
 		parseToolContent(p.relPath, tc.ToolCallID, tc.Content), ts)
 	call := marotte.EntryToolCallOf(&wire)
 	lane := tc.Meta.Kiro.AgentSubtaskID
 	if tc.Meta.Kiro.Kind == subagentInvocationKind {
-		// An invocation is filed in the ISSUER's lane and the frame's stamp is the
-		// DELEGATE's uuid, which becomes the key of the lane the delegate's own entries
-		// carry. So the card sits between the issuer's two prose runs, as it arrived.
+		// An invocation is filed in the ISSUER's lane; its stamp (the DELEGATE's uuid) keys the
+		// delegate's own lane.
 		lane = p.lane
 		call.AgentSubtaskID = tc.Meta.Kiro.AgentSubtaskID
 	}
@@ -428,12 +380,9 @@ func (p *EntryProjection) ingestToolCall(raw json.RawMessage) {
 	p.appendEntry(marotte.EntryKindToolCall, tc.ToolCallID, lane, ts, call)
 }
 
-// ingestToolUpdate folds a replayed tool_call_update into the tool_result entry for
-// the call the preceding tool_call opened, when the update SETTLES the call. A replay
-// sends the terminal status on the update (the persisted status is `approved`), so a
-// projected card lands settled. An update carrying no status or a non-terminal one is
-// progress the log never holds: a tool_result is a settled value, and the wire
-// requires its status, so the call stays open for the close's abort rule instead.
+// ingestToolUpdate folds a replayed tool_call_update into the call's tool_result when the
+// update SETTLES it (a replay carries the terminal status on the update). A non-terminal
+// update leaves the call open for the close's abort rule.
 func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil || tu.ToolCallID == "" {
@@ -445,14 +394,11 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 	}
 	lane, known := p.calls[tu.ToolCallID]
 	if !known {
-		// An update with no create in this turn has nothing to settle: the create was
-		// dropped as an internal tool, or the replay is malformed.
+		// No create in this turn (dropped as internal, or malformed): nothing to settle.
 		return
 	}
 	if stamp := tu.Meta.Kiro.AgentSubtaskID; stamp != "" && stamp != lane {
-		// The call's lane is fixed at the create frame and there is no late adoption.
-		// The replayed invocation update carries no stamp at all, so the call's lane is
-		// the only correct source on this side.
+		// The call's lane is fixed at the create frame; the replayed update carries no stamp.
 		slog.Warn("entry projection: tool_call_update lane disagrees with its call's lane",
 			"turn", p.curID, "tool_call", tu.ToolCallID, "call_lane", lane, "update_lane", stamp)
 	}
@@ -468,14 +414,14 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 		Checkpoint: checkpointFrom(tu.Meta.Kiro.Checkpoint),
 		Disclosed:  disclosedFrom(tu.Meta.Kiro.DisclosedContext),
 		Denial:     denialFrom(tu.Meta.Kiro.PolicyDenial),
-		// The meta read leads because it is what carries the id on a replay; the
-		// rawOutput read is the live path's own spelling of the same fact.
+		Offload:    offloadFrom(tu.Meta.Kiro.OutputTransformation),
+		// The meta read carries the id on a replay; rawOutput is the live path's spelling.
 		WorkflowID: cmp.Or(tu.Meta.Kiro.WorkflowID, rawOutputWorkflowID(tu.RawOutput)),
 	}
 	p.sealLane(lane)
 	p.settleCall(tu.ToolCallID)
 	p.appendEntry(marotte.EntryKindToolResult, marotte.ToolResultID(tu.ToolCallID), lane,
-		p.frameTS(tu.Meta.Kiro.Timestamp), res)
+		p.frameTS(tu.Meta.Kiro.Timestamp), *p.facts.footer.WithInteraction(tu.ToolCallID, &res))
 }
 
 // checkpointFrom maps KAS's checkpoint block onto the domain type, nil for the tool
@@ -487,6 +433,24 @@ func checkpointFrom(in *ACPCheckpointMeta) *marotte.ToolCheckpoint {
 	return &marotte.ToolCheckpoint{Original: in.Original, Modified: in.Modified, Local: in.Local}
 }
 
+// noteAskFact records an ask, its answer or the steering added on the open turn;
+// outside a turn there is nothing to record it on.
+func (p *EntryProjection) noteAskFact(k *replayInfoKiro) {
+	if p.cur == nil {
+		return
+	}
+	switch {
+	case k.PendingInteraction != nil:
+		q := k.PendingInteraction
+		p.facts.footer.NoteAsk(q.ToolCallID, q.InteractionType, q.askOptions())
+	case k.InteractionResolved != nil:
+		r := k.InteractionResolved
+		p.facts.footer.NoteAnswer(r.ToolCallID, r.Outcome, displayText(r.SelectedOption))
+	case k.Kind == infoKindSteeringInclusion:
+		p.facts.footer.NoteSteering(steeringDocIDs(k.SteeringDocuments))
+	}
+}
+
 func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 	var u replayInfoMeta
 	if json.Unmarshal(raw, &u) != nil {
@@ -494,26 +458,27 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 	}
 	switch u.Meta.Kiro.Kind {
 	case infoKindTurnStart:
-		// Close, THEN flush, THEN open. A start with a turn still open means its end
-		// never arrived; flushing first would attribute a steer that arrived inside the
-		// old bracket to the new turn.
+		// Close, THEN flush, THEN open: flushing first would attribute an old-bracket steer to the new turn.
 		p.closeTurn()
 		p.flushUser()
 		p.openTurn()
 	case infoKindTurnCompletion:
 		p.noteTurnMetering(u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime)
+		k := &u.Meta.Kiro
+		p.facts.footer.NoteTurnCompletion(boundedIDs(k.RequestIDs), boundedIDs(k.Recoveries), k.Throughput.summary())
+	case infoKindPendingInteraction, infoKindInteractionResolved, infoKindSteeringInclusion:
+		p.noteAskFact(&u.Meta.Kiro)
+	case infoKindDisplayError:
+		if d := u.Meta.Kiro.DisplayError; d != nil && p.cur != nil && d.ErrorType != displayErrorMCPConnection && d.Message != "" {
+			p.facts.engine = d
+		}
 	case infoKindTurnEnd:
-		// The payload BEFORE the close, so closeTurn can stamp it; the close still keys
-		// on the KIND, so a bracket carrying no payload closes the turn either way.
+		// The payload BEFORE the close, so closeTurn can stamp it; the close keys on the KIND.
 		p.noteTurnEnd(u.Meta.Kiro.TurnEnd)
 		p.closeTurn()
 	case infoKindSeparator:
-		// NO close, which is the message projection's one rule this type drops: that
-		// close existed to keep a message boundary between the segment and the summary,
-		// and under entries there is no message to keep a boundary between. So a
-		// separator inside a bracket lands the compaction inside the open turn and the
-		// frames after the summary continue it. The seal runs HERE, where the
-		// compaction will land, so a say a released carry creates precedes it.
+		// No close: a separator inside a bracket lands the compaction inside the open turn. The seal
+		// runs here, where the compaction lands, so a released carry's say precedes it.
 		p.flushUser()
 		p.ensureTurn(marotte.TurnOpenNameEvent)
 		p.sealLanes()
@@ -546,8 +511,10 @@ func (p *EntryProjection) noteTurnEnd(e *turnEndBlock) {
 		return
 	}
 	c := marotte.ConcludeStopReason(marotte.StopReason(e.StopReason))
-	c.Reason = displayText(stopDetailsText(e.StopDetails))
 	p.facts.conclusion = &c
+	if p.facts.refusal == nil {
+		p.facts.refusal = stopDetailsRefusal(e.StopDetails)
+	}
 }
 
 // applySummary appends the compaction entry at the separator's own position, with the
@@ -567,8 +534,7 @@ func (p *EntryProjection) applySummary(sum *struct {
 		p.emptySummaries++
 	}
 	id := marotte.CompactionEntryID(summary, p.emptySummaries)
-	// The summary_message frame carries no timestamp, so the entry inherits the entry
-	// it lands behind; the load's own clock would date replayed history to now.
+	// summary_message carries no timestamp: inherit the neighbour's, not the load's clock.
 	var ts int64
 	if at > 0 {
 		ts = p.cur[at-1].Ts
@@ -577,11 +543,8 @@ func (p *EntryProjection) applySummary(sum *struct {
 		marotte.EntryCompaction{Summary: sum.Content})
 }
 
-// ensureTurn opens the turn an entry lands in when the projection holds none. Three
-// arms in order: a pending prompt opens its own turn; otherwise the newest turn takes
-// it, open or CLOSED, because content with neither a turn_start nor a user row before
-// it continues the turn it follows; only with no turn at all does a headerless one
-// open with the caller's `source`.
+// ensureTurn opens the turn an entry lands in: a pending prompt opens its own; else the newest
+// turn, open or CLOSED, takes it; only with none does a headerless turn open with `source`.
 func (p *EntryProjection) ensureTurn(source marotte.TurnOpenSourceName) {
 	if p.prompt != nil {
 		p.openTurn()
@@ -606,9 +569,7 @@ func (p *EntryProjection) openTurn() {
 	p.startTurn(source, prompt, ts)
 }
 
-// startTurn appends the turn_open every later entry hangs off. `n` is left at zero:
-// the transcript ordinal belongs to the merged log, which renumbers every turn by its
-// own order.
+// startTurn appends the turn_open later entries hang off. `n` stays zero: the merged log numbers turns.
 func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *marotte.EntryPrompt, ts int64) {
 	p.curID = p.newID()
 	p.cur = nil
@@ -629,13 +590,8 @@ func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *m
 	})
 }
 
-// closeTurn settles the newest turn and appends the turn_close when a turn_end reached
-// it. The settle runs on every call, closer or not: content after a turn_end continues
-// the turn (7.2), and Turns() must settle that continuation too.
-//
-// A turn that already closed gets no second closer (the merge requires one per turn),
-// and a turn no turn_end reached gets none from here either: KAS's account ends where
-// the frames end, so the merge's rule 4 synthesizes the closer an inserted turn needs.
+// closeTurn settles the newest turn and appends its turn_close when a turn_end reached it.
+// A closed turn gets no second closer; one no turn_end reached gets none here (merge rule 4).
 func (p *EntryProjection) closeTurn() {
 	if p.cur == nil {
 		return
@@ -646,26 +602,40 @@ func (p *EntryProjection) closeTurn() {
 		return
 	}
 	p.closed = true
-	p.appendEntry(marotte.EntryKindTurnClose, p.newID(), "", 0, marotte.EntryTurnClose{
+	reason, kind := c.Reason, marotte.FailureKind("")
+	if e := p.facts.engine; e != nil && reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
+		m := rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}
+		reason, _ = runesafe.SanitizeSingleLineCapped(rpcerr.Account(m, e.Message), maxDisplayErrorBytes, "...")
+		if m.ErrorType == rpcerr.ContextWindowExceededError {
+			kind = marotte.FailureKindContextLimit
+		}
+	}
+	footer := marotte.EntryTurnClose{
 		Outcome:       c.Outcome,
 		StopReasonRaw: string(c.RawStop),
-		FailureReason: c.Reason,
+		FailureReason: reason,
+		FailureKind:   kind,
 		Truncated:     c.Truncated,
 		Credits:       p.facts.credits,
 		ElapsedMs:     p.facts.elapsedMs,
-	})
+		Refusal:       p.facts.refusal,
+	}
+	p.facts.footer.Stamp(&footer)
+	if e := p.facts.engine; e != nil {
+		footer.EngineErrorClass = turnlog.EngineClass(e.ErrorType, c.Outcome)
+	}
+	p.appendEntry(marotte.EntryKindTurnClose, p.newID(), "", 0, footer)
 }
 
 // settle seals every lane's carry and aborts every tool call the replay never settled,
 // which is what the live closer does to a turn's open content.
 func (p *EntryProjection) settle() {
 	p.sealLanes()
-	// A call with no result is aborted in its own lane. KAS's synthetic `failed` result
-	// pre-empts it, having settled the call.
+	// A call with no result is aborted in its own lane; KAS's synthetic `failed` result pre-empts it.
 	for _, id := range p.callOrder {
 		lane := p.calls[id]
 		p.appendEntry(marotte.EntryKindToolResult, marotte.ToolResultID(id), lane, 0,
-			marotte.EntryToolResult{Status: marotte.ToolAborted})
+			*p.facts.footer.WithInteraction(id, &marotte.EntryToolResult{Status: marotte.ToolAborted}))
 	}
 	p.calls, p.callOrder = map[string]string{}, nil
 }
@@ -711,11 +681,8 @@ func (p *EntryProjection) appendEntry(kind marotte.EntryKind, id, lane string, t
 	p.insertEntry(len(p.cur), kind, id, lane, ts, payload)
 }
 
-// insertEntry places one entry at `at`, shifting the say index for everything the
-// insertion moved so a later delta still extends the entry it names. It reports whether
-// the entry landed: a payload this file builds cannot fail to marshal, so a failure is
-// said out loud rather than leaving a caller to record an index for a row that is not
-// there.
+// insertEntry places one entry at `at`, shifting the say index for what moved, and reports
+// whether it landed.
 func (p *EntryProjection) insertEntry(at int, kind marotte.EntryKind, id, lane string, ts int64, payload any) bool {
 	raw, err := json.Marshal(payload)
 	if err != nil {

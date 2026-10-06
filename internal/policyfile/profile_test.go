@@ -5,19 +5,8 @@ import (
 	"testing"
 )
 
-// TestPresetIDs_MatchKAS is the contract test the whole profile mechanism rests
-// on, and it guards a failure mode worse than a wrong grant.
-//
-// KAS's validatePresetIds throws InvalidParamsError on an unknown id, so
-// `session/new` never completes: an upstream rename does not quietly grant less,
-// it takes every chat down at its first prompt. The ids below are therefore a hard
-// dependency, snapshotted from the 2.19.1 PRESET_REGISTRY, and no RPC enumerates
-// them so this list cannot be derived at runtime.
-//
-// Keep this in sync BY HAND on a kiro-cli bump, the same discipline kascap's
-// census uses: grep the bundle for `var PRESET_REGISTRY` and compare. The
-// alternative — deriving the set from the bundle at test time — was declined
-// because the bundle is not present in CI.
+// TestPresetIDs_MatchKAS pins every profile's preset ids against KAS's registry: KAS's
+// validatePresetIds throws InvalidParamsError on an unknown id, failing the session door.
 func TestPresetIDs_MatchKAS(t *testing.T) {
 	want := []string{
 		"allow-all",

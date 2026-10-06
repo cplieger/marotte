@@ -1,9 +1,5 @@
-// The tool card's SILENCE MARKER: when it renders, what it says, and when it leaves.
-//
-// Its companion is `tool-silence.test.ts`, which owns the value's own two properties
-// (Date.now()-derived, reads no entry `ts`). This file owns the card: the marker is
-// an in-flight card's alone, it clears on the next PROGRESS frame, and a status
-// change with no progress behind it leaves it standing.
+// The tool card's SILENCE MARKER: an in-flight card's alone, cleared by the next PROGRESS frame, and
+// left standing by a status change. The value itself is `tool-silence.test.ts`'s.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 
 import { clearToolSilence, noteToolActivity, silenceMsFor } from "./tool-silence.js";
@@ -22,11 +18,8 @@ import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 import type * as ScrollModule from "./scroll.js";
 import type * as OpenersModule from "./editor-openers.js";
 
-// Mock scroll.ts for its eager `$.messages` read at module level, and
-// editor-openers.ts for its transitive DOM, exactly as `tool-card.test.ts` does:
-// this file's subject is one span in a card's header, not the transcript around it.
-// The spread below evaluates the real scroll.ts, whose load builds its controller
-// over these ids, so they exist before any import of this file is linked.
+// Mock scroll.ts (eager `$.messages` read) and editor-openers.ts (transitive DOM), as
+// `tool-card.test.ts` does. The ids exist before any import is linked.
 vi.hoisted(() => {
   for (const [tag, id] of [
     ["div", "messages"],

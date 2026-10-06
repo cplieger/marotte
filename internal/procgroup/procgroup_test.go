@@ -39,19 +39,8 @@ func TestOwns(t *testing.T) {
 	}
 }
 
-// TestAlreadyGone pins which errors mean the signal target was already reaped,
-// because that decision is what stands between a teardown log and a false alarm:
-// callers gate a Warn on it, so a member wrongly added silences a real failure
-// and a member wrongly dropped puts a warning on every ordinary release.
-//
-// The wrapped cases are the reason the predicate spells this with errors.Is and
-// not ==. No caller wraps today — auth's killGroup returns the raw syscall error
-// and Kill returns p.Signal's — so an unwrapped-only test would stay green while
-// the first %w on either path silently broke every consumer's gate.
-//
-// EPERM is the negative case that stops the predicate being vacuously true: the
-// target exists and we are not permitted to signal it, which is exactly the
-// failure the Warn exists for.
+// TestAlreadyGone pins which errors mean the signal target was already reaped; callers gate a Warn
+// on it, so a wrong member hides a real failure.
 func TestAlreadyGone(t *testing.T) {
 	cases := []struct {
 		name string
@@ -76,15 +65,8 @@ func TestAlreadyGone(t *testing.T) {
 	}
 }
 
-// TestKill_ReapedProcessIsAlreadyGone ties the predicate to the error Kill really
-// produces on the path that made this necessary: KAS releases an agent terminal
-// after wait_for_exit, so awaitExit has already reaped the process by the time
-// the release site calls Kill.
-//
-// Without this, TestAlreadyGone pins a set of errnos with nothing saying they are
-// the errnos this code meets. The measured answer on go1.27.0 is one specific
-// member: Getpgid answers ESRCH so the group form is skipped, and p.Signal answers
-// os.ErrProcessDone rather than a bare ESRCH, because os translates it.
+// TestKill_ReapedProcessIsAlreadyGone ties the predicate to the error Kill really produces after
+// awaitExit has reaped an agent terminal.
 func TestKill_ReapedProcessIsAlreadyGone(t *testing.T) {
 	cmd := exec.Command("true")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -108,15 +90,8 @@ func TestKill_ReapedProcessIsAlreadyGone(t *testing.T) {
 	}
 }
 
-// Kill reclaims a tree whose head has children that outlive it, which is the
-// shape both consumers produce: an agent terminal running a build tool, and
-// `kiro-cli acp` re-execing kiro-cli-chat and node.
-//
-// The assertion is on the GRANDCHILD, because that is what survived the measured
-// head-only kill. It is a direct child of the TEST binary that JOINS the group
-// under test, so this test reaps it at an instant it controls rather than
-// depending on the ambient reaper; a descendant forked inside the head would be
-// orphaned the moment the head exits and the poll would be reaper-dependent.
+// TestKill_ReapsTheWholeTree: Kill reclaims a tree whose head has children that outlive it, as an
+// agent terminal's build tool and `kiro-cli acp`'s re-exec do.
 func TestKill_ReapsTheWholeTree(t *testing.T) {
 	head := exec.Command("sh", "-c", "echo $$; exec sleep 60")
 	head.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

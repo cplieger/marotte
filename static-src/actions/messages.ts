@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Actions: messages, plan, clipboard (ui.copy_clipboard).
-// ---------------------------------------------------------------------------
-
 import { defineAction, apiAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 /** Copy text to clipboard with success/error toast. */

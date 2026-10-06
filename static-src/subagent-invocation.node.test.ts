@@ -1,11 +1,6 @@
-// The invocation is the ISSUER's, client side: design 13's `node` half.
-//
-// A delegate has no record of its own: what identifies one is its LANE, and the `tool_call`
-// that dispatched it sits in the ISSUER's lane carrying that uuid in `agent_subtask_id`. Two
-// readers turn on it — the predicate deciding whether an agent-initiated turn renders, and
-// the projection the delegate's page is built from.
-//
-// Folded through the store operations: the bus is one call into one of these per event.
+// The invocation is the ISSUER's: a delegate is identified by its LANE, and its dispatching
+// `tool_call` sits in the issuer's lane carrying that uuid in `agent_subtask_id`. Folded through
+// the store operations.
 import { describe, it, expect, beforeEach } from "vitest";
 
 import {
@@ -85,8 +80,7 @@ function invocation(id: string, subtask: string): unknown {
   };
 }
 
-/** The stream design 13 drives: a parent text delta, the invocation, deltas in the
- *  delegate's lane, then a parent delta. The seals bracket the invocation because the
+/** The seals bracket the invocation because the
  *  appender seals the lane it is interrupting before it writes the call. */
 const STREAM: readonly Frame[] = [
   { kind: "turn_opened", entry: sealed(TURN, 0, "turn_open", { source: "prompt", n: 1 }) },

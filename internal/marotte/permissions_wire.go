@@ -21,19 +21,26 @@ func PermissionOutcomeSelected(optionID string) *PermissionOutcome {
 	}
 }
 
-// PermissionOutcomeWithFileDecisions builds a permission response that also
-// carries per-file decisions for a TURN APPROVAL.
-//
-// The decisions ride `_meta.kiro.fileDecisions` on the ordinary permission
-// reply — a map from KAS's pending-action id to accept/reject. KAS applies the
-// accepted ids and calls restorePendingChanges on the rest, so **an id omitted
-// from the map counts as a REJECT**, not as unspecified: a partial map silently
-// discards the files it forgot. Callers must send a decision for every file they
-// were offered.
+// PermissionOutcomeWithFileDecisions builds a permission response carrying per-file decisions for a
+// TURN APPROVAL as `_meta.kiro.fileDecisions` (pending-action id to accept/reject). KAS restores
+// every id the map omits, so an omitted id is a REJECT: send a decision for every file offered.
 func PermissionOutcomeWithFileDecisions(optionID string, decisions map[string]bool) *PermissionOutcome {
 	out := PermissionOutcomeSelected(optionID)
 	if len(decisions) > 0 {
 		out.Meta = &PermissionOutcomeMeta{Kiro: PermissionOutcomeKiro{FileDecisions: decisions}}
+	}
+	return out
+}
+
+// PermissionOutcomeWithRejectionReason builds a permission response carrying the
+// user's note as `_meta.kiro.rejectionReason`, which KAS hands the model as
+// "The user rejected this tool call: <reason>". An empty reason sends no `_meta`:
+// KAS forwards "" verbatim as a dangling sentence. KAS reads the note only on a
+// reject_once answer, so the caller need not gate on the option's kind.
+func PermissionOutcomeWithRejectionReason(optionID, reason string) *PermissionOutcome {
+	out := PermissionOutcomeSelected(optionID)
+	if reason != "" {
+		out.Meta = &PermissionOutcomeMeta{Kiro: PermissionOutcomeKiro{RejectionReason: reason}}
 	}
 	return out
 }
@@ -45,7 +52,8 @@ type PermissionOutcomeMeta struct {
 
 // PermissionOutcomeKiro is the vendor block inside that envelope.
 type PermissionOutcomeKiro struct {
-	FileDecisions map[string]bool `json:"fileDecisions,omitempty"`
+	FileDecisions   map[string]bool `json:"fileDecisions,omitempty"`
+	RejectionReason string          `json:"rejectionReason,omitempty"`
 }
 
 // PermissionOutcomeCancelled builds the ACP permission-outcome response

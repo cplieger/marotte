@@ -155,15 +155,8 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 	})
 }
 
-// The TTL edge belongs to the expired side, and the reader and the evictor have
-// to agree on that. They ask the question in opposite directions — the reader
-// asks whether an entry is still fresh, the evictor whether it has expired — so
-// an entry sitting exactly on the edge is where the two can disagree, and a
-// disagreement means an entry the reader keeps serving that the evictor has
-// already decided is gone.
-//
-// A synthetic clock rather than a real one: the boundary is one instant, and no
-// real-clock test can land on it.
+// TestRegistryCache_theTTLEdgeIsExpired: the reader (still fresh?) and the evictor (expired?) ask
+// opposite questions, so they must agree that the TTL edge is expired.
 func TestRegistryCache_theTTLEdgeIsExpired(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		p := NewRegistryProxy()

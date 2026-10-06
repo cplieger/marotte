@@ -1,12 +1,9 @@
 package mcp
 
-// D80: validation reports every error.
-//
-// Validate used to return on the first failure, so a spec with three problems
-// took three submit-fix-submit round trips. These tests pin both halves of the
-// replacement: independent checks ACCUMULATE, and the transport chain still
-// short-circuits because an unknown transport means the validator map has no
-// entry and the per-transport check cannot run.
+// Validation reports every error, so a spec with three problems takes one
+// submit-fix round trip. Independent checks ACCUMULATE; the transport chain still
+// short-circuits, because an unknown transport has no validator map entry and the
+// per-transport check cannot run.
 
 import (
 	"errors"
@@ -43,8 +40,8 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 		wantMsgs   []string
 	}{
 		{
-			// The pasted-block case D80 exists for: a README block whose name,
-			// url and headers are all wrong, none of which the user typed.
+			// A pasted README block whose name, url and headers are all wrong,
+			// none of which the user typed.
 			name: "PastedRemoteBlockWithThreeBadFields",
 			srv: &Server{
 				Transport: TransportHTTP,
@@ -60,10 +57,8 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 			},
 		},
 		{
-			// The two shapes the grouped checks used to collapse. A stdio record
-			// carrying BOTH url and headers reported one error attributed only to
-			// url, so the headers box was never marked — and these are independent
-			// presence facts with nothing sequencing them.
+			// url and headers are independent presence facts on a stdio record,
+			// so both boxes must be marked.
 			name: "StdioCarryingBothURLAndHeaders",
 			srv: &Server{
 				Transport: TransportStdio,
@@ -101,20 +96,17 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 		{
 			name: "StdioNameAndToolListsAndOAuth",
 			srv: &Server{
-				Transport:         TransportStdio,
-				Name:              "-nope",
-				Command:           "bash",
-				OAuthClientID:     "abc",
-				OAuthClientSecret: "def",
-				DisabledTools:     []string{"ok", "bad\x01"},
-				AutoApprove:       []string{"also\x02bad"},
+				Transport:     TransportStdio,
+				Name:          "-nope",
+				Command:       "bash",
+				OAuthClientID: "abc",
+				DisabledTools: []string{"ok", "bad\x01", "also\x02bad"},
 			},
-			wantFields: []string{"auto_approve", "disabled_tools", "name", "oauth_client_id", "oauth_client_secret"},
+			wantFields: []string{"disabled_tools", "name", "oauth_client_id"},
 			wantMsgs: []string{
 				"disabled_tools[1]: control character",
-				"auto_approve[0]: control character",
+				"disabled_tools[2]: control character",
 				"stdio transport cannot have oauth_client_id",
-				"stdio transport cannot have oauth_client_secret",
 			},
 		},
 		{
@@ -308,14 +300,18 @@ func TestFieldErrors_Bounded(t *testing.T) {
 		for range 400 {
 			tools = append(tools, "bad\x01name")
 		}
-		// Both lists, so more failures arrive at the outer accumulator than one
-		// sub-validator can hand it.
+		env := make([]KeyPair, 0, 64)
+		for range 64 {
+			env = append(env, KeyPair{Name: "bad name", Value: "x"})
+		}
+		// Two sub-validators, so more failures arrive at the outer accumulator
+		// than one of them can hand it.
 		err := Validate(&Server{
 			Name: "ok", Transport: TransportStdio, Command: "bash",
-			DisabledTools: tools, AutoApprove: tools,
+			DisabledTools: tools, Env: env,
 		})
 		if err == nil {
-			t.Fatal("Validate accepted 800 control-bearing tool names")
+			t.Fatal("Validate accepted 400 control-bearing tool names and 64 bad env names")
 		}
 		joined, ok := err.(interface{ Unwrap() []error })
 		if !ok {
@@ -359,7 +355,7 @@ func TestValidate_CleanRecordsStayClean(t *testing.T) {
 		{Name: "ok", Transport: TransportSSE, URL: "http://x.test/sse"},
 		{
 			Name: "ok", Transport: TransportHTTP, URL: "https://x.test/mcp",
-			OAuthClientID: "cid", OAuthClientSecret: "csec",
+			OAuthClientID: "cid",
 		},
 	}
 	for _, srv := range cases {

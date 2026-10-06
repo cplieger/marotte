@@ -15,6 +15,7 @@ These flags are refused with a logged reason, because each one breaks a chat or 
 | --- | --- |
 | `--agent-engine` | marotte speaks only the v3 protocol |
 | `--auth-method`, `--authMethod` | marotte sets the sign-in method itself, and a wrong value makes kiro-cli exit before the chat starts |
+| `--agent` | kiro-cli rejects it and exits before the session opens. Pick the role per chat with the mode pill |
 | `--trust-all-tools`, `-a`, `--trust-tools` | They have no effect on v3, where tool approval is the policy you edit on the **Permissions** tab in **Settings** |
 | `--model`, `--effort` | kiro-cli rejects both and exits before the session opens. Pick them per chat in the composer |
 

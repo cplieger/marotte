@@ -14,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// logFixture is one entry log under its own root, with the header beside it, so a
-// test can assert on both halves of what an operation wrote.
+// logFixture is one entry log under its own root with the header beside it.
 type logFixture struct {
 	t      *testing.T
 	log    *EntryLog
@@ -23,8 +22,7 @@ type logFixture struct {
 	root   string
 }
 
-// newLogFixture opens a CHAT root: the header's three hooks are wired, so the session
-// the header names, the closer's model and the two counters are all observable.
+// newLogFixture opens a chat root, so the header's session, closer model and counters are observable.
 func newLogFixture(t *testing.T) *logFixture {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "chats", "c-abcdef01")
@@ -37,8 +35,7 @@ func newLogFixture(t *testing.T) *logFixture {
 	return &logFixture{t: t, log: lg, header: h, root: root}
 }
 
-// reopen closes and reopens the log, which is what runs the scan, the torn-tail rule
-// and the store-open closer again.
+// reopen closes and reopens the log, rerunning the scan, the torn-tail rule and the store-open closer.
 func (f *logFixture) reopen() {
 	f.t.Helper()
 	if err := f.log.Close(); err != nil {
@@ -89,7 +86,7 @@ func (f *logFixture) readHeader() *marotte.Chat {
 	return c
 }
 
-// entryOf is one sealed entry ready for Append; the store assigns seq and ts.
+// entryOf is one sealed entry for Append; the store assigns seq and ts.
 func entryOf(turn, lane, id string, kind marotte.EntryKind, payload any) *marotte.Entry {
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -98,8 +95,7 @@ func entryOf(turn, lane, id string, kind marotte.EntryKind, payload any) *marott
 	return &marotte.Entry{ID: id, Turn: turn, Lane: lane, Kind: kind, Payload: raw}
 }
 
-// shapes is each entry as "<seq>:<lane>/<kind>", the envelope facts every rule here
-// is about.
+// shapes renders each entry as "<seq>:<lane>/<kind>".
 func shapes(entries []marotte.Entry) []string {
 	out := make([]string, 0, len(entries))
 	for i := range entries {
@@ -115,9 +111,8 @@ func wantShapes(t *testing.T, got []marotte.Entry, want []string, what string) {
 	}
 }
 
-// A directory holding chat.json and no entries.jsonl is the normal state of a fresh
-// chat: every read answers empty, no descriptor is held, and the first turn open
-// creates the log.
+// chat.json without entries.jsonl is a fresh chat: reads are empty, no descriptor is held, the first open creates the
+// log.
 func TestEntryLog_AMissingLogIsAChatOfZeroTurns(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Name: "fresh"}); err != nil {
@@ -154,8 +149,7 @@ func TestEntryLog_AMissingLogIsAChatOfZeroTurns(t *testing.T) {
 	}
 }
 
-// seq is contiguous from 0 per turn, where the turn_open is 0, and the header's two
-// caches follow the log.
+// seq is contiguous from 0 per turn, and the header's caches follow the log.
 func TestEntryLog_SeqIsContiguousAndTheHeaderCachesFollow(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -178,8 +172,7 @@ func TestEntryLog_SeqIsContiguousAndTheHeaderCachesFollow(t *testing.T) {
 	}
 }
 
-// last_turn_outcome is the newest FINISHED turn's, so a turn still running does not
-// blank it.
+// last_turn_outcome is the newest finished turn's, so a running turn does not blank it.
 func TestEntryLog_LastOutcomeIsTheNewestFinishedTurn(t *testing.T) {
 	f := newLogFixture(t)
 	first := f.prompt("one")
@@ -194,9 +187,7 @@ func TestEntryLog_LastOutcomeIsTheNewestFinishedTurn(t *testing.T) {
 	}
 }
 
-// The store half of property 1's second generator: two of a chat's turns are open
-// together in one registry state, their entries interleave in the file, and each
-// turn's seq stays contiguous on its own. n is the prompt's plus one.
+// Two open turns interleave in the file with each seq contiguous; n is the prompt's plus one.
 func TestEntryLog_TwoOpenTurnsInterleave(t *testing.T) {
 	f := newLogFixture(t)
 	promptTurn := f.prompt("do it")
@@ -222,8 +213,7 @@ func TestEntryLog_TwoOpenTurnsInterleave(t *testing.T) {
 	}
 }
 
-// A torn tail is one partial line: it is dropped at the last complete newline, and
-// the next append continues seq.
+// A torn tail is dropped at the last complete newline and seq continues.
 func TestEntryLog_ATornTailIsDroppedAndSeqContinues(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -251,9 +241,8 @@ func TestEntryLog_ATornTailIsDroppedAndSeqContinues(t *testing.T) {
 	}
 }
 
-// The store-open closer: every open turn is closed with interrupted/unterminated —
-// which IS the reconcile signal, so nothing is written on the header first — every
-// unsettled call is aborted in its own lane, and the next append continues seq.
+// The store-open closer closes every open turn as interrupted/unterminated, aborts unsettled calls in their lanes, and
+// seq continues.
 func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
@@ -268,8 +257,7 @@ func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 
 	f.reopen()
 
-	// The synthesized closer IS the reconcile signal now, so the predicate reads it
-	// off the log rather than off a header flag written beside it.
+	// The synthesized closer is the reconcile signal, read off the log.
 	if !f.log.NeedsReconcile() {
 		t.Error("NeedsReconcile() is false after the closer synthesized an unterminated turn_close")
 	}
@@ -309,8 +297,7 @@ func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 	}
 }
 
-// The header's counters are CACHES: a header left behind by a crash is recomputed
-// from the log at open, and the log wins.
+// The header's counters are caches recomputed from the log at open.
 func TestEntryLog_HeaderCountersAreRecomputedOnOpen(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("one")
@@ -334,8 +321,8 @@ func TestEntryLog_HeaderCountersAreRecomputedOnOpen(t *testing.T) {
 	}
 }
 
-// The between-turns rule: a lane-less entry with no open turn joins the NEWEST turn
-// after its turn_close, and on an empty log it opens turn_open{source: event}.
+// A lane-less entry with no open turn joins the newest turn after its turn_close; on an empty log it opens
+// turn_open{source: event}.
 func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 	ctx := t.Context()
 	t.Run("an empty log opens a headerless event turn", func(t *testing.T) {
@@ -380,8 +367,7 @@ func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 	})
 }
 
-// A window is a SET of turns read in file order, and a line of a turn outside the set
-// inside that byte range is skipped.
+// A window is a set of turns in file order; lines of other turns in the range are skipped.
 func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 	f := newLogFixture(t)
 	var turns []string
@@ -419,7 +405,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 	}
 }
 
-// The interleave a window's byte range can contain is SKIPPED, not returned.
+// An interleaved foreign turn inside the range is skipped.
 func TestEntryLog_WindowSkipsAForeignTurnInsideItsRange(t *testing.T) {
 	f := newLogFixture(t)
 	first := f.prompt("one")
@@ -443,9 +429,7 @@ func TestEntryLog_WindowSkipsAForeignTurnInsideItsRange(t *testing.T) {
 		[]string{"0:/turn_open", "1:/text", "2:/turn_close"}, "the interleaved turn's window")
 }
 
-// The rail index holds a row for a DRAWN turn only, and a turn becomes drawn at the
-// first append satisfying the predicate — so an undrawn turn keeps its n and the
-// visible numbering skips one.
+// Only drawn turns get rail rows, from the first drawing append; an undrawn turn keeps its n, so numbering skips.
 func TestEntryLog_RailRowsHoldOnlyDrawnTurns(t *testing.T) {
 	f := newLogFixture(t)
 	prompt := f.prompt("ask something\nsecond line")
@@ -474,9 +458,7 @@ func TestEntryLog_RailRowsHoldOnlyDrawnTurns(t *testing.T) {
 	for _, r := range rows {
 		got = append(got, fmt.Sprintf("%d:%s", r.N, r.Outcome))
 	}
-	// Turns 2 and 3 are numbered and never drawn: a turn_bind renders at no position
-	// of its own, and a delegate lane's entries other than the invocation are dropped
-	// by the transcript, so neither turn has a card for the rail to jump to.
+	// Turns 2 and 3 are never drawn: a turn_bind renders nowhere, and a delegate lane's non-invocation entries are dropped.
 	want := []string{"1:completed", "4:completed", "5:running"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("rail rows are %v, want %v", got, want)
@@ -492,9 +474,7 @@ func TestEntryLog_RailRowsHoldOnlyDrawnTurns(t *testing.T) {
 	}
 }
 
-// A `steer_ack` makes its turn DRAWN: an ack renders at its own position rather than
-// folding into the steer note alone, so a turn holding nothing else still draws a card
-// and needs the rail row its jump target reads.
+// A steer_ack renders at its own position, so an ack-only turn draws a card and needs its rail row.
 func TestEntryLog_AnAckOnlyTurnIsDrawn(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameWireTurnStart})
@@ -515,8 +495,7 @@ func TestEntryLog_AnAckOnlyTurnIsDrawn(t *testing.T) {
 	}
 }
 
-// A between-turns entry can make the newest turn drawn, and it gains its rail row at
-// that append.
+// A between-turns entry can draw the newest turn, adding its rail row then.
 func TestEntryLog_ABetweenTurnsEntryCanDrawTheNewestTurn(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameWireTurnStart})
@@ -533,8 +512,7 @@ func TestEntryLog_ABetweenTurnsEntryCanDrawTheNewestTurn(t *testing.T) {
 	}
 }
 
-// A write error refuses every further append for this log through the latch alone, and
-// reuses no seq. Nothing is handed back, so the client never learns of the entry.
+// A write error refuses later appends through the latch and reuses no seq; nothing is broadcast.
 func TestEntryLog_AWriteErrorRefusesFurtherAppends(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -562,9 +540,7 @@ func TestEntryLog_AWriteErrorRefusesFurtherAppends(t *testing.T) {
 	}
 }
 
-// A line over the per-entry cap is refused before anything reaches disk, so the log
-// stays exactly as it was and the refusal does NOT latch: a size refusal is about one
-// entry, where a write error is about the device.
+// A line over the per-entry cap is refused before any write and does not latch: it concerns one entry, not the device.
 func TestEntryLog_ALineOverThePerEntryCapIsRefused(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -585,9 +561,7 @@ func TestEntryLog_ALineOverThePerEntryCapIsRefused(t *testing.T) {
 	}
 }
 
-// The whole-log cap refuses a write that would cross it, before anything reaches
-// disk. The cap is the CALLER's to set: the log derives nothing, so a run root and a
-// chat root are bounded by whatever their store passes.
+// The whole-log cap refuses a crossing write before it happens; the cap is whatever the store passes.
 func TestEntryLog_TheWholeLogCapRefusesBeforeTheWrite(t *testing.T) {
 	ctx := t.Context()
 	root := filepath.Join(t.TempDir(), "chats", "c-abcdef01")
@@ -616,8 +590,7 @@ func TestEntryLog_TheWholeLogCapRefusesBeforeTheWrite(t *testing.T) {
 	wantShapes(t, entries, []string{"0:/turn_open"}, "the capped log")
 }
 
-// Remove closes the descriptor and refuses every later append, so a turn still
-// folding into a removed chat cannot re-create its log.
+// Remove closes the descriptor and refuses later appends, so a folding turn cannot recreate a removed chat's log.
 func TestEntryLog_RemoveRefusesLaterAppends(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -633,8 +606,7 @@ func TestEntryLog_RemoveRefusesLaterAppends(t *testing.T) {
 	}
 }
 
-// The repair read is TurnRange from an inclusive bound: only the entries at or above the
-// seq the client asked from, which for the wire's `?after=1` is from 2.
+// The repair read is TurnRange from an inclusive bound: `?after=1` is from 2.
 func TestEntryLog_TurnRangeAnswersTheTailFromItsBound(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -652,12 +624,8 @@ func TestEntryLog_TurnRangeAnswersTheTailFromItsBound(t *testing.T) {
 	}
 }
 
-// A turn the log holds nothing for is the ONE range-read failure a CALLER can cause, so
-// it carries ErrTurnNotInLog and every other failure — a log that cannot be read or
-// decoded — does not. Both routes over this read answer the sentinel 404 and anything
-// else 500, so folding the two classes into one bare error makes the 500 arm and its
-// Warn unreachable: a disk or decode fault then reaches the client as "that turn does
-// not exist", which tells it to stop asking about a turn that is really there.
+// A missing turn is the one caller-caused failure, so only it carries ErrTurnNotInLog; read and decode faults must
+// reach the 500 arm, not tell the client a real turn does not exist.
 func TestEntryLog_AMissingTurnCarriesTheSentinel(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -672,17 +640,14 @@ func TestEntryLog_AMissingTurnCarriesTheSentinel(t *testing.T) {
 	if _, _, err := f.log.TurnPage("t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
 		t.Errorf("TurnPage(unknown) = %v, want ErrTurnNotInLog", err)
 	}
-	// The other direction, or a sentinel returned for every read would pass the two
-	// above and say nothing.
+	// The other direction, so a sentinel on every read fails.
 	if _, err := f.log.TurnRange(turn, 0); err != nil {
 		t.Errorf("TurnRange(%q) = %v, want the turn's entries and no error", turn, err)
 	}
 }
 
-// A rewrite whose grouping is malformed is REFUSED with the log byte-unchanged. The
-// rescan a rewrite ends with reads a first line naming a turn it does not hold as a
-// torn tail, so committing before the check would truncate the whole log at offset 0,
-// log it as an unreadable tail and answer success.
+// A malformed rewrite is refused with the log unchanged: the rescan would read it as a torn tail at offset 0 and
+// truncate everything while answering success.
 func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
@@ -697,8 +662,7 @@ func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 	}
 	path := filepath.Join(f.root, entriesFileName)
 	before := fileHead(t, path, 0)
-	// The counters are the only thing a rewrite writes on the header now, so they are
-	// what says a refused rewrite wrote nothing there either.
+	// The counters are all a rewrite writes on the header.
 	turnCount := f.readHeader().TurnCount
 
 	malformed := slices.DeleteFunc(merged.Entries, func(e marotte.Entry) bool {
@@ -722,9 +686,7 @@ func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 	}
 }
 
-// A rewrite writes each turn contiguously in n order with seq renumbered from 0 and
-// stamps nothing on the header but the counters: the evidence a merge answers is in the
-// log, and the swap's own output is what answers it.
+// A rewrite writes turns contiguously in n order with seq renumbered and stamps only the counters.
 func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
@@ -755,9 +717,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 	}
 	wantShapes(t, mustRange(t, f, first),
 		[]string{"0:/turn_open", "1:/text", "2:/turn_close"}, "the first turn after a rewrite")
-	// The rewrite stamps no provenance: what it writes on the header is the counters,
-	// re-cached from the merged log. A projection opened before it is gated by the
-	// reverts the log holds, and this log holds none.
+	// No provenance stamp: only counters re-cached from the merged log.
 	if h := f.readHeader(); h.TurnCount != 2 {
 		t.Errorf("turn_count is %d after the rewrite, want the 2 turns the merged log holds", h.TurnCount)
 	}
@@ -769,8 +729,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 	}
 }
 
-// A RUN root has no header, so none of the hooks is wired and nothing here
-// reaches one: the log's rules about the log itself are both stores'.
+// A run root has no header; the log's own rules hold for both stores.
 func TestEntryLog_ARunRootNeedsNoHeader(t *testing.T) {
 	ctx := t.Context()
 	root := filepath.Join(t.TempDir(), "runs", "wf_1")
@@ -839,9 +798,7 @@ func turnsOf(entries []marotte.Entry) []string {
 	return out
 }
 
-// fileHead is the file's first n bytes, or the whole file for n <= 0, so a
-// truncation or a refusal can be checked against the bytes that were there before
-// rather than against a length alone.
+// fileHead returns the file's first n bytes, or all of it for n <= 0, to compare bytes before and after.
 func fileHead(t *testing.T, path string, n int) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

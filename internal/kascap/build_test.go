@@ -4,36 +4,24 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-// Golden fixtures for the two projections. Stage 1 of the capability-regression
-// gate: no agent-server bundle is required, so these run in CI as they stand.
+// Golden fixtures for the two projections. No agent-server bundle is required, so
+// these run in CI as they stand.
 // The bundle-dependent census is census_test.go and skips when it is absent.
 const (
-	initializeGoldenPath = "testdata/initialize.golden"
-	sessionGoldenPath    = "testdata/session.golden"
-	updateGoldenCmd      = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly'"
+	initializeGoldenPath  = "testdata/initialize.golden"
+	sessionGoldenPath     = "testdata/session.golden"
+	environmentGoldenPath = "testdata/environment.golden"
+	updateGoldenCmd       = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly|TestEnvironmentDoorDeclaresExactly'"
 )
 
-// spawnMatrix is the COMPLETE set of runtime inputs to either projection, and
-// exhaustive is what makes a golden a contract rather than a sample: a change to
-// how a gate is applied cannot hide in an untested combination.
-//
-// It is exhaustive over the two ORIGINAL booleans and representative over the
-// three gates added since, rather than the 32-line cross product five gates would
-// give. The reasoning is that the added gates are INDEPENDENT of the first two —
-// each keys on its own Spawn field and writes its own wire key — so a full
-// product would add 25 lines that differ from a line already here by exactly one
-// key. What each added gate does need is BOTH of its states plus one line where it
-// coexists with the originals, and that is what the rows below give it. A gate
-// whose value interacted with another's would break that argument and earn its
-// product.
-//
-// The slice order IS the goldens' line order. Reordering it rewrites both
-// fixtures without changing any payload.
+// spawnMatrix is the COMPLETE set of runtime inputs to either projection; exhaustive is what makes
+// the golden a contract rather than a sample.
 var spawnMatrix = []struct {
 	name  string
 	spawn Spawn
@@ -42,70 +30,51 @@ var spawnMatrix = []struct {
 	{"secret storage only", Spawn{SecretStorage: true}},
 	{"hooks only", Spawn{Hooks: true}},
 	{"both gates on", Spawn{SecretStorage: true, Hooks: true}},
-	// Presets are the third gate, and BOTH of its states need a line here. An
-	// empty set withholds the policyPreset key entirely, which is the Custom
-	// profile's whole implementation and the one payload shape where a missing key
-	// is the correct wire — so the four cases above double as its fixture. A
-	// non-empty set is the ordinary case every named profile produces, and the
-	// multi-id line is what would catch the key being flattened to a bare string
-	// or truncated to its first entry, neither of which errors on the wire.
+	// Presets need both states: an empty set withholds the policyPreset key entirely (the Custom
+	// profile).
 	{"one preset", Spawn{Presets: []string{"read-workspace"}}},
 	{"several presets", Spawn{Presets: []string{"read-workspace", "read-only-shell", "read-all"}}},
 	{"presets with both gates", Spawn{
 		SecretStorage: true, Hooks: true,
 		Presets: []string{"allow-all"},
 	}},
-	// ToolSearch and Knowledge gate three keys between them and they gate DIFFERENTLY,
-	// which is the whole reason both need their own lines rather than one combined row.
-	//
-	// ToolSearch is PRESENCE-gated: off withholds settings.toolSearch entirely,
-	// because absent already resolves false at isSettingEnabled. Every line above
-	// is therefore its off fixture, and the line below is the only place the key
-	// appears at all.
-	//
-	// Knowledge is VALUE-gated across TWO keys — the knowledge capability, whose
-	// resolver compares `=== true`, and settings.knowledge, read through
-	// isSettingEnabled. So its off state is a payload shape rather than an absence,
-	// and the lines above are that shape: `"knowledge":false` beside
-	// `"knowledge":{"enabled":false}`. The line below is its on state, and it is
-	// what would catch the pair drifting apart — one key flipping without the other
-	// is the exact defect that shipped a knowledge UI over a store the agent had no
-	// tool to query.
-	{"tool search on", Spawn{ToolSearch: true}},
+	// Knowledge is value-gated across TWO keys, the capability (`=== true`) and settings.knowledge
+	// (isSettingEnabled).
 	{"knowledge on", Spawn{Knowledge: true}},
-	// Memory is the sixth gate and it is VALUE-gated like Knowledge, but for the
-	// opposite reason and with the opposite polarity, so it earns both states here.
-	// Its key is ALWAYS PRESENT: KAS reads userMemoryOptIn as a tri-state through
-	// hasOwnProperty and only an explicit false vetoes, so withholding it means "no
-	// opinion, let the experiment decide" — the one state that must never reach the
-	// wire. Every line above is therefore its off fixture, asserting the literal
-	// `{"enabled":false}` rather than an absence, and the line below is the only
-	// place the value flips. A regression that presence-gated this row instead
-	// would produce a payload with the key simply gone, which is invisible to a
-	// test asserting on the key's presence and is exactly what the golden catches.
-	{"memory on", Spawn{Memory: true}},
+	{"memory read only", Spawn{MemoryMode: "read_only"}},
+	{"memory read write", Spawn{MemoryMode: "read_write"}},
+	{"memory learn", Spawn{MemoryMode: "read_write", MemoryReflection: true}},
+	{"tool load on", Spawn{ToolLoad: true}},
+	{"run bridge titles off", Spawn{DisableSessionTitles: true}},
+	{"auto compaction off", Spawn{DisableAutoCompaction: true}},
+	{"spec planning quick", Spawn{SpecPlan: "quick"}},
+	{"spec planning full, ask first", Spawn{SpecPlan: "full", SpecAskClarification: true}},
+	{"inline agents and steering reminders on", Spawn{InlineAgents: true, SteeringReminders: true}},
+	{"work validation and safety check on", Spawn{WorkValidation: "on", InfraSafetyMonitor: "on"}},
+	{"work validation and safety check off", Spawn{WorkValidation: "off", InfraSafetyMonitor: "off"}},
+	{"shell timeout set", Spawn{TerminalCommandTimeoutMs: 300000}},
+	{"workflows on", Spawn{Workflows: true}},
 	{"every gate on", Spawn{
 		SecretStorage: true, Hooks: true,
-		Presets:    []string{"read-workspace"},
-		ToolSearch: true, Knowledge: true, Memory: true,
+		Presets:   []string{"read-workspace"},
+		Knowledge: true, MemoryMode: "read_write", MemoryReflection: true,
+		DisableAutoCompaction: true, ToolLoad: true, DisableSessionTitles: true,
+		SpecPlan: "full", SpecAskClarification: true,
+		WorkValidation: "on", InfraSafetyMonitor: "on",
+		TerminalCommandTimeoutMs: 300000,
+		InlineAgents:             true, SteeringReminders: true,
+		Workflows: true,
 	}},
 }
 
-// renderMatrix marshals one projection across the whole spawn matrix, one
-// compact JSON object per line. encoding/json sorts map keys, so the output is
-// deterministic without the test sorting anything itself.
-//
-// Spawn is no longer the only runtime input: an env-bearing row reads the
-// process environment, so the ambient environment is part of this fixture and
-// neutralizeEnvOverrides makes it an explicit one. Without that, a machine
-// carrying MAROTTE_AGENT_WORKFLOWS=false fails both goldens for a reason the
-// diff does not explain.
-func renderMatrix(t *testing.T, build func(Spawn) map[string]any) string {
+// renderMatrix marshals one projection across the matrix, one compact JSON object per line;
+// encoding/json sorts map keys, so the output is deterministic.
+
+func renderMatrix[T any](t *testing.T, build func(*Spawn) T) string {
 	t.Helper()
-	neutralizeEnvOverrides(t)
 	var out strings.Builder
 	for _, tc := range spawnMatrix {
-		raw, err := json.Marshal(build(tc.spawn))
+		raw, err := json.Marshal(build(&tc.spawn))
 		if err != nil {
 			t.Fatalf("%s: marshal: %v", tc.name, err)
 		}
@@ -161,76 +130,113 @@ regenerate with:
 	}
 }
 
-// TestInitializeDeclaresExactly pins the exact _meta.kiro payload the
-// initialize handshake carries, for every spawn combination.
-//
-// This is the loud half of the capability-regression gate. Every failure mode
-// this table exists to prevent is silent on the wire: a settings key dropped to
-// a bare true resolves false, a capability renamed by a KAS bump simply never
-// matches, and a key nested one level wrong is ignored. None of those produce an
-// error, a log line or a -32601, so a fixture is the only thing that notices.
-//
-// internal/bridge holds the paired fixture over the FULL initialize request, so
-// a change here that somehow did not reach the wire fails there instead.
-//
-// Regenerate with:
-//
-//	UPDATE_GOLDEN=1 go test ./internal/kascap/ -run TestInitializeDeclaresExactly
+// TestInitializeDeclaresExactly pins the exact _meta.kiro payload of the initialize handshake for
+// every spawn combination.
 func TestInitializeDeclaresExactly(t *testing.T) {
 	checkGolden(t, initializeGoldenPath, renderMatrix(t, Capabilities))
 }
 
-// TestSessionDoorDeclaresExactly pins the payload session/new and session/load
-// carry, for every spawn combination.
-//
-// It went from four empty objects to a real payload when workflows moved here,
-// and that diff is what the empty fixture existed to produce. It now guards the
-// same silent failures the initialize golden does, plus one of its own: the
-// session door is the only door whose payload can be EMPTY, and an empty map is
-// the one value the caller must not send at all, so a row leaving this door has
-// to be a visible change here rather than a call that quietly stops carrying
-// _meta.
-//
-// internal/bridge holds the paired fixtures over the two real session requests.
-//
-// Regenerate with:
-//
-//	UPDATE_GOLDEN=1 go test ./internal/kascap/ -run TestSessionDoorDeclaresExactly
+// TestSessionDoorDeclaresExactly pins the payload session/new and session/load carry for every
+// spawn combination.
 func TestSessionDoorDeclaresExactly(t *testing.T) {
 	checkGolden(t, sessionGoldenPath, renderMatrix(t, SessionMeta))
 }
 
-// TestSessionDoor_WithdrawnRowsLeaveNoSettingsObject pins the one payload shape
-// the goldens above cannot reach: the session door with every settings row
-// withheld.
-//
-// The session door is the only door whose settings map can empty out, and it can
-// because its single sending row is env-overridable. An empty `settings` object
-// is not the same message as no `settings` key: KAS's resolvers read an absent
-// key as false, which is exactly what withholding a row is asking for, so sending
-// `{"settings":{}}` puts a key on the wire whose only content is the claim that
-// marotte had something to say about settings. That is the failure this guard
-// exists for, and no spawn combination produces it — only the override does.
-func TestSessionDoor_WithdrawnRowsLeaveNoSettingsObject(t *testing.T) {
-	neutralizeEnvOverrides(t)
-	t.Setenv(envWorkflows, "false")
+// TestEnvironmentDoorDeclaresExactly pins the KIRO_* assignments ChildEnv hands
+// the bridge for every spawn combination, one JSON array per line.
+func TestEnvironmentDoorDeclaresExactly(t *testing.T) {
+	checkGolden(t, environmentGoldenPath, renderMatrix(t, ChildEnv))
+}
 
-	meta := SessionMeta(Spawn{SecretStorage: true, Hooks: true})
-	if _, present := meta[settingsKey]; present {
-		t.Errorf("SessionMeta()[%q] = %#v, want the key absent once every settings row is withheld",
-			settingsKey, meta[settingsKey])
+// TestMemoryRow_FailsClosedAndNeverVetoes pins the memory preference's two
+// load-bearing facts: a zero Spawn (the utility bridge) sends mode disabled on
+// the session door, and the legacy userMemoryOptIn veto is on no door, because
+// sending it refuses the sessionless _kiro/memory/* calls the Memories tab makes.
+func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
+	settings, _ := SessionMeta(&Spawn{})[settingsKey].(map[string]any)
+	want := map[string]any{"mode": "disabled", "reflection": false}
+	if got := settings["memory"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionMeta(&Spawn{}) memory = %#v, want %#v", got, want)
 	}
+	for _, build := range []func(*Spawn) map[string]any{Capabilities, SessionMeta} {
+		for _, tc := range spawnMatrix {
+			s, _ := build(&tc.spawn)[settingsKey].(map[string]any)
+			if _, present := s["userMemoryOptIn"]; present {
+				t.Errorf("%s: userMemoryOptIn is sent; want it withheld on every door", tc.name)
+			}
+		}
+	}
+	if _, present := Capabilities(&Spawn{MemoryMode: "read_write"})[settingsKey].(map[string]any)["memory"]; present {
+		t.Error("memory rides initialize; want the session door only (only it upgrades a legacy session)")
+	}
+}
 
-	// The override is the only thing suppressing it, so the same call with the
-	// row sending must still carry the object — otherwise this test would pass
-	// against a projection that never emits settings at all.
-	t.Setenv(envWorkflows, "true")
-	withRow := SessionMeta(Spawn{SecretStorage: true, Hooks: true})
-	settings, present := withRow[settingsKey]
-	if !present {
-		t.Fatalf("SessionMeta() carries no %q key with the row sending, so the case above proves nothing", settingsKey)
+// TestChildEnv_WritesToolLoadInBothStates pins that the tool_load arm is always
+// explicit and that no other KIRO_FEATURE_* arm is pinned: the rest follow the
+// experiment ramp.
+func TestChildEnv_WritesToolLoadInBothStates(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		got := ChildEnv(&Spawn{ToolLoad: on})
+		want := []string{"KIRO_FEATURE_TOOL_LOAD_ENABLED=" + strconv.FormatBool(on)}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ChildEnv(ToolLoad=%v) = %q, want %q", on, got, want)
+		}
 	}
-	if got, ok := settings.(map[string]any); !ok || len(got) == 0 {
-		t.Errorf("SessionMeta()[%q] = %#v, want a non-empty settings object", settingsKey, settings)
+	got := ChildEnv(&Spawn{DisableSessionTitles: true})
+	want := []string{"KIRO_DISABLE_SESSION_TITLE_LLM=true", "KIRO_FEATURE_TOOL_LOAD_ENABLED=false"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ChildEnv(DisableSessionTitles) = %q, want %q", got, want)
+	}
+}
+
+// TestSessionDoor_WorkflowsFollowsTheSetting pins that the workflows row is
+// value-gated on both states: a resumed chat drops its workflow tools only when
+// false is SENT, because an absent key falls back to KAS's persisted value.
+func TestSessionDoor_WorkflowsFollowsTheSetting(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		settings, _ := SessionMeta(&Spawn{Workflows: on})[settingsKey].(map[string]any)
+		if got, want := settings["workflows"], enabledIf(on); !reflect.DeepEqual(got, want) {
+			t.Errorf("SessionMeta(Workflows=%v) workflows = %#v, want %#v", on, got, want)
+		}
+		connection, _ := Capabilities(&Spawn{Workflows: on})[settingsKey].(map[string]any)
+		if _, present := connection["workflows"]; present {
+			t.Errorf("Capabilities(Workflows=%v) carries workflows; KAS reads it on the session door only", on)
+		}
+	}
+}
+
+// TestSessionDoor_BackgroundExecutionAndShellTypeAreUngated pins the two rows
+// every session carries whatever the spawn: the control_process class as an
+// {enabled} object (a bare true resolves undefined) and the shell type.
+func TestSessionDoor_BackgroundExecutionAndShellTypeAreUngated(t *testing.T) {
+	for _, tc := range spawnMatrix {
+		meta := SessionMeta(&tc.spawn)
+		settings, _ := meta[settingsKey].(map[string]any)
+		if got, want := settings["backgroundExecution"], enabled(); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: backgroundExecution = %#v, want %#v", tc.name, got, want)
+		}
+		if got := meta["shellType"]; got != "bash" {
+			t.Errorf("%s: shellType = %#v, want \"bash\"", tc.name, got)
+		}
+	}
+	if _, present := Capabilities(&Spawn{})["backgroundProcesses"]; !present {
+		t.Error("backgroundProcesses left initialize; it is the fallback for sessions resolving backgroundExecution false")
+	}
+}
+
+// TestDisableAutoCompaction_ValueGatedOnSessionDoorOnly pins the three door facts
+// the compaction policy depends on: false is sent (absence would keep a
+// persisted true), true is sent as an object (a bare true resolves undefined),
+// and the key never reaches initialize, where step sessions would inherit it.
+func TestDisableAutoCompaction_ValueGatedOnSessionDoorOnly(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		settings, _ := SessionMeta(&Spawn{DisableAutoCompaction: disabled})[settingsKey].(map[string]any)
+		if got, want := settings["disableAutoCompaction"], enabledIf(disabled); !reflect.DeepEqual(got, want) {
+			t.Errorf("SessionMeta(DisableAutoCompaction=%v) disableAutoCompaction = %#v, want %#v", disabled, got, want)
+		}
+		connection, _ := Capabilities(&Spawn{DisableAutoCompaction: disabled})[settingsKey].(map[string]any)
+		if _, present := connection["disableAutoCompaction"]; present {
+			t.Errorf("Capabilities(DisableAutoCompaction=%v) carries disableAutoCompaction; want it on the session door only", disabled)
+		}
 	}
 }

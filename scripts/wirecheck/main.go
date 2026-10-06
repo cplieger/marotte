@@ -1,27 +1,11 @@
-// Command wirecheck asserts wire-protocol compatibility between the Go
-// server half (the web-terminal-engine module go.mod pins, used by the PTY
-// shell in internal/agent) and the bundled TS client half (the Dockerfile-ARG-
-// pinned npm artifact that static-src/shell.ts imports). The two halves are
-// pinned INDEPENDENTLY — Renovate moves the Go module and the npm ARG in
-// separate PRs, and a Go-only engine release publishes no npm package at all —
-// so nothing but this gate proves the pair the image ships is one the engine
-// considers compatible.
+// Command wirecheck asserts wire-protocol compatibility between the Go server half (the
+// web-terminal-engine module go.mod pins) and the bundled TS client half (the npm artifact
+// static-src/shell.ts imports). The two are pinned independently, so this gate is the
+// only proof the shipped pair is compatible; otherwise a mismatch deploys healthy and
+// breaks only the shell tab (close 4002). The rule is the engine's
+// terminal.WirePairIncompatibility, the same verdict as its runtime handshake.
 //
-// The compatibility RULE is the engine's (terminal.WirePairIncompatibility —
-// the same verdict its runtime handshake reaches, so this gate can never
-// disagree with the close-4002 refusal). This program supplies the Go side
-// from the engine's public constants; the client side arrives as flags the
-// Dockerfile's wire-floor gate extracts from the vendored artifact.
-//
-// Without the gate a declared-incompatible pairing builds green, deploys,
-// answers /api/health healthy, and then breaks only the shell tab — every
-// terminal attempt closing with code 4002 while the rest of the app works, so
-// the failure reads as a shell bug rather than a version mismatch. Fail the
-// build instead.
-//
-// Exit 0: the pairing is declared-compatible. Exit 1: a declared floor is
-// violated. Exit 2: usage error (a missing, malformed, or non-positive
-// -client-rev / -client-min-server flag).
+// Exit 0: compatible. Exit 1: a declared floor is violated. Exit 2: usage error.
 package main
 
 import (
@@ -34,18 +18,10 @@ import (
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
-// readManifest resolves the client half from the engine artifact's own published
-// manifest, via the engine's exported decoder.
-//
-// Preferred over the -client-* flags because the alternative was scraping the
-// vendored TypeScript with sed in the Dockerfile, which is the practice the
-// engine published this manifest to end (web/src/wire-manifest.ts: it "breaks
-// silently on any reformat"). The DECODING is the engine's — it owns the format,
-// its schema check and its unusable-revisions check. What stays here is the
-// POLICY: every failure is the usage error's exit 2, never a compatibility
-// verdict, because a manifest the gate cannot read means the gate is broken and
-// no pin should move. An unknown schema is named separately since its remedy is
-// the opposite one: bump this gate.
+// readManifest resolves the client half from the engine artifact's published manifest
+// via the engine's decoder (scraping the vendored TS breaks on any reformat). Every
+// failure is exit 2: an unreadable manifest means the gate is broken. An unknown schema
+// is named separately: its remedy is to bump this gate.
 func readManifest(path string, stderr io.Writer) (clientRev, clientMinServer int, ok bool) {
 	m, err := terminal.ReadWireManifest(path)
 	if err != nil {
@@ -74,14 +50,9 @@ func main() {
 	os.Exit(run(rev, minServer, os.Stdout, os.Stderr))
 }
 
-// run performs the wire-floor gate against the engine's exported constants and
-// returns the process exit code main hands to os.Exit — the contract the
-// Dockerfile consumes: 0 declared-compatible, 1 floor violated (fail the
-// build), 2 usage error (missing/non-positive flag values).
-//
-// The flags are validated here rather than left to the engine's comparator so
-// a missing extraction is reported as the usage error it is (exit 2, "fix the
-// gate") instead of a compatibility verdict (exit 1, "bump a pin").
+// run performs the wire-floor gate and returns the exit code (0 compatible, 1 floor
+// violated, 2 usage error). Flags are validated here so a missing extraction reports as a
+// usage error rather than a compatibility verdict.
 func run(clientRev, clientMinServer int, stdout, stderr io.Writer) int {
 	if clientRev <= 0 || clientMinServer <= 0 {
 		fmt.Fprintln(stderr, "wirecheck: -client-rev and -client-min-server are required positive integers")
@@ -102,9 +73,8 @@ func run(clientRev, clientMinServer int, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// remediation names this repo's engine pins. Which pin to move is build-layout
-// knowledge the engine deliberately does not carry, so the app supplies it
-// alongside the engine's reason.
+// remediation names this repo's engine pins: which pin to move is build-layout knowledge
+// the engine does not carry.
 func remediation() string {
 	return "fix: bump go.mod's web-terminal-engine (Go half) or the Dockerfile's CPLIEGER_WEB_TERMINAL_ENGINE_VERSION ARG + static-src/package.json pin (TS half) so both halves resolve to a compatible pair"
 }

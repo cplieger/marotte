@@ -1,19 +1,12 @@
-// Focused test for createPlannerSession — the ?agent=planner share shortcut's
-// server-side handoff. chat.ts has a heavy import graph, so every direct
-// dependency is mocked at the first hop; the store mock is stateful for
-// activeId so getActiveId() returns the id createSession set. The assertion:
-// createPlannerSession dispatches chat.set_mode with modeID "plan" for the new
-// chat (mirrors role-picker's selectMode).
+// chat.ts's lifecycle, with every direct dependency mocked at the first hop. The store mock
+// is stateful for activeId so getActiveId() returns the id createSession set.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Type-only, for the `importOriginal` below.
 import type * as Skeleton from "./skeleton.js";
 
-// The creating actions answer with the SERVER's chat header now, so their mocks
-// have to as well: a stub returning undefined would make every createSession below
-// take the refused branch and open no tab, which is the opposite of what these
-// cases are about. A FIXED id per action rather than a counter, so an assertion
-// names the id it means instead of depending on how many tests ran before it.
+// The creating actions answer with the SERVER's header, so the mocks do too (undefined
+// would take the refused branch). A FIXED id per action, so assertions name their id.
 const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, messagesEl } = vi.hoisted(
   () => {
     const serverHeader = (id: string): unknown => ({
@@ -31,9 +24,8 @@ const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, message
       updated_at: 0,
       turn_count: 0,
     });
-    // The widened creating reply: the chat, the tab the coordinator opened for
-    // it, and the version that open committed. The fork's subject carries the
-    // PARENT the server nested it under — resolving it is no longer the client's.
+    // The creating reply: chat, the tab the coordinator opened, the committed version. A fork's
+    // subject carries the PARENT the server nested it under.
     const serverCreated = (id: string, tabID: string, parent = ""): unknown => ({
       chat: serverHeader(id),
       subject: { id: tabID, kind: "chat", ref: id, parent, pinned: false, owns: true },
@@ -41,9 +33,7 @@ const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, message
     });
     return {
       setModeDispatch: vi.fn(),
-      // Both creating dispatches are called WITH a payload, so the fakes declare
-      // that parameter: without it the mock's calls tuple is empty and the cases
-      // below cannot read the argument they exist to assert on.
+      // Typed with a payload parameter, so the calls tuple carries the argument under test.
       forkDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
         serverCreated("c-forked", "tb_forked", "tb_parent"),
       ),
@@ -59,13 +49,8 @@ const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, message
 let activeId = "";
 
 vi.mock("./store.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  // A real spy, not the present-but-undefined placeholder it used to be: seeding a
-  // created chat calls it to recompute the DERIVED usage.context_size, which is a
-  // function of the model and so cannot ride the server's header.
+  // A real spy: seeding a created chat recomputes the DERIVED usage.context_size, a function
+  // of the model the header cannot carry.
   setModel: vi.fn(),
   getActiveId: () => activeId,
   getActive: vi.fn(() => undefined),
@@ -73,10 +58,8 @@ vi.mock("./store.js", () => ({
   getSessions: vi.fn(() => []),
   // The per-row strip effect's tracked read; inert until a case aims it.
   watchSession: vi.fn(() => undefined),
-  // Present so real-ESM linking succeeds: `chat-settled.js` is in this graph and
-  // imports it. The real derivation rather than a flat answer, matching
-  // `__test-helpers__/store-mock.ts` — a constant would answer for a session that
-  // says otherwise.
+  // Present for real-ESM linking (`chat-settled.js` imports it), with the real derivation as
+  // in `__test-helpers__/store-mock.ts`.
   turnLive: (s: { thinking: boolean; turn_open?: boolean; provisional?: boolean }) =>
     s.thinking || s.turn_open === true || s.provisional === true,
   setActive: vi.fn((id: string) => {
@@ -97,21 +80,15 @@ vi.mock("./store.js", () => ({
   })),
   activeSession: { value: undefined },
   removeChat: vi.fn(),
-  // The dot's seed at tab creation. `clearTurnDone` went with the store field it
-  // cleared: the finished-turn mark is the header's `last_turn_outcome` now, which a
-  // header read REPLACES, so there is no clear for a caller to skip and no absence
-  // for a case to assert.
+  // The dot's seed at tab creation; the finished-turn mark is the header's
+  // `last_turn_outcome`.
   tabStatusFor: vi.fn(() => ""),
-  // The activation refetch gate. Defaults TRUE — refetch, the shape every case
-  // outside the gate describe was written against; the gate describe drives
-  // both verdicts explicitly. The predicate's own truth table (residency ×
-  // loadedEpoch × syncEpoch) is store.test.ts's subject; what THIS suite owns
-  // is the routing each verdict produces.
+  // The activation refetch gate, TRUE by default; the gate describe drives both verdicts. The
+  // predicate's truth table is store.test.ts's; this suite owns the routing.
   transcriptStale: vi.fn(() => true),
 }));
-// The loader, including the one call that asks the SERVER whether a chat exists.
-// A stub rather than the real thing, because what `resolveUnknownChat` owns is the
-// ROUTING of each verdict; the status-to-verdict mapping is store-load.test.ts's.
+// The loader, stubbed: `resolveUnknownChat` owns the ROUTING of each verdict; the
+// status-to-verdict mapping is store-load.test.ts's.
 vi.mock("./store-load.js", () => ({
   loadList: vi.fn(),
   loadMessages: vi.fn(),
@@ -126,8 +103,7 @@ vi.mock("./tabs.js", () => ({
   // The adoption path: creating commands paint their tab from the reply.
   adoptSubject: vi.fn(),
   activateTab: vi.fn(),
-  // The lookup that replaced `hasTab(chatID)`: a chat id is no longer a tab id, so
-  // "" means no tab is open for that chat.
+  // A chat id is not a tab id; "" means no tab is open for that chat.
   tabIdFor: vi.fn(() => ""),
   // The registry seam: which chat refs hold an open tab. Empty means the strip
   // wires no row effects; the row-effect suite below aims it at one chat.
@@ -137,9 +113,7 @@ vi.mock("./tabs.js", () => ({
   setTabStatus: vi.fn(),
 }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-// The chat tab's activity dot asks the dock whether this chat holds an
-// unanswered decision. Mocked so the suite does not pull in the three card
-// builders behind the real module for a boolean.
+// The dot asks the dock for an unanswered decision; mocked to avoid the card builders.
 vi.mock("./decision-dock.js", () => ({
   hasPendingDecision: vi.fn(() => false),
   dropDecisions: vi.fn(),
@@ -157,22 +131,19 @@ vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
-  // Needed even though no case below reaches it: activateChatView's success
-  // branch calls it, so omitting it leaves a TypeError waiting for whichever
-  // future test does exercise that path.
+  // activateChatView's success branch calls it, so it must exist.
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),
-  // The multiplexer's surface: activation mounts transcript furniture into the
-  // active view (null here — the mock has no view, so callers fall back to
-  // $.messages), and a tab close disposes the chat's view.
+  // No view here, so callers fall back to $.messages; a tab close disposes the chat's view.
   activeTranscriptView: vi.fn(() => null),
   transcriptViewFor: vi.fn(() => null),
   disposeChatView: vi.fn(),
 }));
-vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
-// The composer's per-chat state owns real DOM (the textarea) and a debounced
-// action dispatch; chat.ts only has to call its save/restore pair in the right
-// order, which the mock records.
+vi.mock("./attachments.js", () => ({
+  addAttachment: vi.fn(),
+  unownedAttachmentPaths: vi.fn(() => []),
+}));
+// chat.ts only orders the save/restore pair, which the mock records.
 vi.mock("./composer-state.js", () => ({
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
@@ -186,16 +157,12 @@ vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
 vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock }));
-// $.messages is a real element so a listener registered on it could be driven.
-// Nothing in chat.ts registers one any more — see "no transcript context menu"
-// below, which is what that element is here to witness.
+// A real element, witnessing that chat.ts registers no listener (see "no transcript context
+// menu").
 vi.mock("./dom.js", () => ({
   $: { messages: messagesEl, promptInput: { focus: () => undefined } },
-  // `paintPlaceholder` is REAL here (the ./skeleton.js mock spreads the original
-  // through), and it marks its host busy through this module — so a factory that
-  // returns only `$` makes `setBusy` undefined and the painter throws. The fake is
-  // `setBusy`'s own body rather than `importOriginal`: this module is mocked to keep
-  // its element lookups out, and spreading it back in reintroduces them.
+  // The real `paintPlaceholder` marks its host busy through this module; the fake is
+  // `setBusy`'s own body, since spreading the original back in reintroduces element lookups.
   setBusy: (el: Element, busy: boolean) => {
     if (busy) {
       el.setAttribute("aria-busy", "true");
@@ -205,12 +172,15 @@ vi.mock("./dom.js", () => ({
   },
 }));
 vi.mock("./retention.js", () => ({ isRetentionEnabled: vi.fn(() => false) }));
-vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_ACTIVATE_CHAT: "activate-chat" }));
-// transport.ts owns the SSE connection and the command POST; chat.ts reaches it
-// for exactly one thing, the create gesture's correlation id. Mocked at the first
-// hop like every other dependency here, or this suite opens an EventSource. The
-// stub keeps the `op-` prefix the server's ValidIdent gate accepts, because the
-// assertions below read it.
+// governance.ts, reached through the settings actions, imports `onSSE`; Browser
+// Mode links for real, so the name has to exist.
+vi.mock("./bus.js", () => ({
+  onBus: vi.fn(),
+  onSSE: undefined,
+  BUS_ACTIVATE_CHAT: "activate-chat",
+}));
+// chat.ts reaches transport.ts only for the correlation id; the `op-` prefix passes the
+// server's ValidIdent gate.
 vi.mock("./transport.js", () => ({ newOpID: () => "op-test" }));
 vi.mock("./actions/chat.js", () => ({
   deleteChat: { dispatch: vi.fn() },
@@ -242,7 +212,7 @@ import {
   setTabStatus,
   openChatRefs,
 } from "./tabs.js";
-import { addAttachment } from "./attachments.js";
+import { addAttachment, unownedAttachmentPaths } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
 import { get, watchSession, removeChat, setActive, upsertHeader } from "./store.js";
 import { transcriptStale } from "./store.js";
@@ -252,8 +222,7 @@ import { seedComposerState } from "./composer-state.js";
 import { info } from "./toast.js";
 import { isRetentionEnabled } from "./retention.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
-// `closeChat` is deliberately not imported: the command was retired, and the
-// process teardown a chat-tab close performs is `close_tab`'s, server-side.
+// No `closeChat`: a chat-tab close's process teardown is the server's `close_tab`.
 import { deleteChat } from "./actions/chat.js";
 
 beforeEach(() => {
@@ -284,9 +253,7 @@ describe("createPlannerSession", () => {
     expect(setModeDispatch).not.toHaveBeenCalled();
   });
 
-  // The op id is a DISPATCH ARGUMENT and there is exactly one per gesture. Minted
-  // inside the action's run() it would be fresh per retry attempt and the server
-  // would mint a second chat for one click.
+  // One op id per gesture, as a DISPATCH ARGUMENT: minted in run() it would change per retry.
   it("passes an op id with the create", async () => {
     await createPlannerSession();
     const arg = createDispatch.mock.calls[0]?.[0] as { opID: string };
@@ -294,13 +261,8 @@ describe("createPlannerSession", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// createSession is ASYNC because the chat id is the SERVER's, and every caller has
-// to await it or explicitly detach. These pin the class, so that a site converted
-// to a bare `void` fails here rather than in production: the failure a `void` at a
-// dependent site produces is silent — the work lands on the previously active chat,
-// or nowhere at all on a first-ever visit.
-// ---------------------------------------------------------------------------
+// createSession is ASYNC because the id is the SERVER's; these pin that every caller awaits
+// or detaches, since a bare `void` silently lands work on the previous chat.
 
 describe("createSession is async, and what that means for its callers", () => {
   it("does not set the active chat until the server has answered", async () => {
@@ -358,9 +320,7 @@ describe("createSession is async, and what that means for its callers", () => {
     expect(activeId).toBe("");
   });
 
-  // The tab rides the CREATE's reply: the coordinator opened it under the same
-  // lock that wrote the record, so dispatching `open_tab` afterwards was a whole
-  // round trip to learn `created: false`. The adoption replaced it.
+  // The tab rides the CREATE's reply (one coordinator lock), so no second `open_tab`.
   it("adopts the tab from the create's reply instead of dispatching a second open", async () => {
     await chatModule.createSession();
     expect(vi.mocked(openTab)).not.toHaveBeenCalled();
@@ -378,17 +338,27 @@ describe("createSession is async, and what that means for its callers", () => {
     expect(submitPromptMock).toHaveBeenCalledWith("c-created", "do the thing");
   });
 
+  // Files staged before any chat existed would be discarded by the retarget, so an
+  // attachment-only send from the empty state would create a chat and send nothing.
+  it("carries files staged with no chat into the new chat and sends them", async () => {
+    vi.mocked(unownedAttachmentPaths).mockReturnValueOnce(["/workspace/shot.png"]);
+    await chatModule.createSession("");
+    expect(vi.mocked(addAttachment)).toHaveBeenCalledWith("/workspace/shot.png");
+    expect(submitPromptMock).toHaveBeenCalledWith("c-created", "");
+  });
+
+  it("sends nothing for an empty box with no staged files", async () => {
+    await chatModule.createSession("");
+    expect(submitPromptMock).not.toHaveBeenCalled();
+  });
+
   it("seeds the row from the SERVER's header rather than a local guess", async () => {
     await chatModule.createSession();
     expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({ id: "c-created" });
   });
 });
 
-// ---------------------------------------------------------------------------
-// Attaching a BATCH. The plural signature is the structural fix for the concurrent
-// -create hazard the async boundary introduced: every caller was already a loop, and
-// N iterations each finding no active chat would each ask for one.
-// ---------------------------------------------------------------------------
+// Attaching a BATCH: N singular calls on an empty workspace would each create a chat.
 
 describe("attaching several paths at once", () => {
   it("creates ONE chat for the whole batch", async () => {
@@ -420,15 +390,8 @@ describe("attaching several paths at once", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Activating a chat with NO messages. It still takes the model-picker branch, so
-// it never called loadMessages — and the draft rides that single-chat GET, on
-// purpose (it must travel on neither the list nor a chat_updated frame). A chat
-// can be PERSISTED with zero messages, because set_mode and set_effort both
-// auto-create the record before the first prompt, so a mode pick plus half a
-// typed message plus a reload came back to an empty box with the draft sitting on
-// the server: the exact case server-side drafts exist for.
-// ---------------------------------------------------------------------------
+// Activating a chat with NO messages: the draft rides the single-chat GET, and a chat can be
+// persisted with zero messages (set_mode, set_effort), so the draft must still load.
 
 describe("the draft of a chat with no turns", () => {
   /** A persisted zero-turn chat. `model` is empty so the context-size branch
@@ -483,9 +446,7 @@ describe("the draft of a chat with no turns", () => {
     expect(seedComposerState).not.toHaveBeenCalled();
   });
 
-  // The skip this branch used to carry is GONE, and its absence is the assertion:
-  // a brand-new chat is a server record before its tab opens, so the GET has
-  // something to answer and there is no id the server has never seen.
+  // A brand-new chat is a server record before its tab opens, so the GET has an answer.
   it("fetches even a brand-new chat, because the server already has it", async () => {
     await createPlannerSession();
     const id = (vi.mocked(upsertHeader).mock.calls.at(-1)?.[0] as { id: string }).id;
@@ -498,12 +459,7 @@ describe("the draft of a chat with no turns", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The timeline rail on a chat with no turns. The rail is a module singleton,
-// so activation has to hand it the chat it is activating; only the loaded branch
-// used to, which left a brand-new chat wearing the previous chat's timeline —
-// markers over a conversation the reader had not spoken in yet.
-// ---------------------------------------------------------------------------
+// The rail is a module singleton, so activation must hand it the chat even with no turns.
 
 describe("the timeline rail of a chat with no turns", () => {
   function emptyChat(): never {
@@ -516,11 +472,7 @@ describe("the timeline rail of a chat with no turns", () => {
     } as never;
   }
 
-  /** Drive the restore and wait for the activation.
-   *
-   *  AWAITED, because opening a tab is a round trip: `openPreviousSession` runs
-   *  `activateChatView` in the open's continuation, so nothing the activation does
-   *  has happened yet when the call returns. */
+  /** Drive the restore and await the activation, which runs in the open's continuation. */
   async function activate(): Promise<void> {
     openPreviousSession({ chat_id: "c-empty", session_id: "s1", title: "t", updated_at: 1 });
     await vi.waitFor(() => {
@@ -549,18 +501,11 @@ describe("the timeline rail of a chat with no turns", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The scroller is the second per-chat view singleton and it leaked the same way
-// the rail did. Two of its elements belong to whichever chat was open when the
-// reader last scrolled: the resume control ("Latest") and the "Load older
-// messages" button, which is an unkeyed child of #messages that the transcript's
-// keyed reconcile leaves in place. Only the loaded branch used to hand the
-// scroller its next chat, so a New chat click opened a tab wearing both.
-// ---------------------------------------------------------------------------
+// The scroller is the other per-chat singleton: the "Latest" control and the unkeyed
+// "Load older messages" button must follow the chat switch.
 
 describe("the scroller on a chat switch", () => {
-  /** A chat holding `turnIDs` resident turns. `turn_order` is the only transcript
-   *  field the activation reads, so the fixture states it and nothing it does not. */
+  /** A chat holding `turnIDs` resident turns; `turn_order` is the only field activation reads. */
   function chat(turnIDs: string[]): never {
     return {
       id: "c-1",
@@ -581,12 +526,8 @@ describe("the scroller on a chat switch", () => {
   }
 
   it("re-keys the rail before the transcript repaints", async () => {
-    // setActive re-derives activeSession, which repaints synchronously — and
-    // the paint is what parks the outgoing view and attaches the incoming one
-    // (the scroller's per-view state is the multiplexer's now, not this
-    // module's). What activation still owns is the rail: pointing it AFTER
-    // setActive would leave one frame of the previous chat's markers over the
-    // new chat's transcript.
+    // setActive repaints synchronously (the multiplexer swaps views); activation still owns
+    // the rail, pointed before that frame.
     vi.mocked(get).mockReturnValue(chat([]));
     await activate();
     const rail = vi.mocked(pointTurnRail).mock.invocationCallOrder[0] ?? 0;
@@ -596,9 +537,7 @@ describe("the scroller on a chat switch", () => {
   });
 
   it("points the rail on a chat that has messages, without waiting for the fetch", async () => {
-    // The loaded branch used to re-key the view furniture only after its own
-    // load resolved, so between the switch and the response the reader saw the
-    // previous chat's timeline over this chat's transcript.
+    // Re-keyed at the switch, not after the load resolves.
     vi.mocked(get).mockReturnValue(chat(["t1"]));
     await activate();
     expect(pointTurnRail).toHaveBeenCalledWith("c-1");
@@ -606,26 +545,16 @@ describe("the scroller on a chat switch", () => {
   });
 
   it("points the rail for a chat the store holds no row for", () => {
-    // activateChatView returns early on a missing row and renders an empty view.
-    // The re-point sits above that return, or the blank page keeps the markers.
-    //
-    // Called by NAME rather than pulled off the spec a door passed: a chat tab's
-    // activation hook is the factory's, registered once by the composition root,
-    // so `activateChatView` IS that hook and reaching it any other way would test
-    // a second definition of it.
+    // The re-point sits above the missing-row early return. Called by NAME: `activateChatView`
+    // IS the factory's registered hook.
     vi.mocked(get).mockReturnValue(undefined);
     activateChatView("c-1");
     expect(pointTurnRail).toHaveBeenCalledWith("c-1");
   });
 });
 
-// ---------------------------------------------------------------------------
-// The loading skeleton. It is a PLACEHOLDER, so the one thing it may never do is
-// paint beside the content it stands in for — and that is what every switch back
-// to a loaded chat looked like: setActive repaints the whole transcript
-// synchronously, then the refresh fetch armed a skeleton that appended a shimmer
-// underneath the real turns until the response landed.
-// ---------------------------------------------------------------------------
+// The loading skeleton is a PLACEHOLDER and must never paint beside the content it stands
+// for, as on a switch back to a loaded chat.
 
 describe("the transcript's loading skeleton", () => {
   function chat(turnIDs: string[]): never {
@@ -664,13 +593,8 @@ describe("the transcript's loading skeleton", () => {
 });
 
 describe("closeChatTab is the one client-local teardown", () => {
-  // `closeChatTab` IS the tab's teardown, exported and registered once by the
-  // composition root, so it is called by name rather than pulled off a spec a
-  // door passed. There is no retention branch and no provenance flag left in
-  // it: the process teardown AND the retention-off record delete are both the
-  // server's `close_tab` operation, so this runs the identical local cleanup
-  // whoever closed the tab and whatever retention says — `delete_chat`
-  // survives as History's delete and is never dispatched from a close.
+  // `closeChatTab` IS the tab's teardown, called by name. It runs identical local cleanup
+  // whatever retention says; teardown and delete are the server's `close_tab`.
 
   it("cleans up locally with retention ENABLED, and dispatches nothing", () => {
     vi.mocked(get).mockReturnValue({ turn_count: 3 } as never);
@@ -678,9 +602,7 @@ describe("closeChatTab is the one client-local teardown", () => {
     closeChatTab("c-closed");
     expect(removeChat).toHaveBeenCalledWith("c-closed");
     expect(dropDecisions).toHaveBeenCalledWith("c-closed");
-    // The chat's transcript view — active or parked — runs the real per-view
-    // dispose, BEFORE the store row goes (the removal's repaint must not park
-    // a view this close is about to throw away).
+    // The chat's view is disposed BEFORE the store row goes, so the repaint cannot park it.
     expect(disposeChatView).toHaveBeenCalledWith("c-closed");
     const disposeOrder = vi.mocked(disposeChatView).mock.invocationCallOrder[0] ?? 0;
     const removeOrder = vi.mocked(removeChat).mock.invocationCallOrder[0] ?? 0;
@@ -689,9 +611,7 @@ describe("closeChatTab is the one client-local teardown", () => {
   });
 
   it("cleans up locally with retention DISABLED, and still dispatches nothing", () => {
-    // 0 = ephemeral: the record is gone by design — deleted INSIDE the server's
-    // close operation, exactly once, wherever the gesture happened. A second
-    // delete from here would race the one that already ran.
+    // Ephemeral: the server deletes the record inside its close; a second delete would race it.
     vi.mocked(get).mockReturnValue({ turn_count: 3 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(false);
     closeChatTab("c-ephemeral");
@@ -700,9 +620,7 @@ describe("closeChatTab is the one client-local teardown", () => {
   });
 
   it("removes a zero-turn chat like any other", () => {
-    // The old zero-count skip predated the coordinator writing the
-    // record before its tab; the server deletes zero-turn chats like any
-    // other now, and the client has no branch to mirror.
+    // The server deletes zero-turn chats like any other; no client branch.
     vi.mocked(get).mockReturnValue({ turn_count: 0 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(false);
     closeChatTab("c-empty");
@@ -721,10 +639,7 @@ describe("closeChatTab is the one client-local teardown", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The tangent: a real chat opened as a sub-tab of the one it came from, whose
-// context is the parent's REAL context via a session fork.
-// ---------------------------------------------------------------------------
+// The tangent: a sub-tab whose context is the parent's REAL context via a session fork.
 
 describe("openTangentChat", () => {
   beforeEach(() => {
@@ -733,11 +648,8 @@ describe("openTangentChat", () => {
     vi.mocked(get).mockReturnValue({ model: "parent-model" } as never);
   });
 
-  // ASYNC now, and the ORDER inverted with it: the fork is what mints the chat
-  // id, so the sub-tab cannot exist until the reply lands — and the reply is
-  // what carries it. TANGENT PARITY with createSession: the tab is adopted from
-  // the fork's response, the second POST is gone, and the subject's PARENT is
-  // the server's nesting decision rather than a client lookup.
+  // The fork mints the id, so the sub-tab is adopted from its reply, parent included, with no
+  // second POST.
   it("adopts the sub-tab from the fork's reply, parent and all, with no second POST", async () => {
     await openTangentChat("c-parent");
     expect(vi.mocked(openTab)).not.toHaveBeenCalled();
@@ -753,9 +665,7 @@ describe("openTangentChat", () => {
     expect(vi.mocked(activateTab)).toHaveBeenCalledWith("tb_forked");
   });
 
-  // The fork is what persists the chat AND what carries the context, so it must
-  // name the parent — the server has nothing to fork without it. It no longer
-  // carries a chat id: that is what the reply brings back.
+  // The fork names the parent and carries no chat id; the reply brings it back.
   it("dispatches chat.fork naming the parent, with an op id and no chat id", async () => {
     await openTangentChat("c-parent");
     expect(forkDispatch).toHaveBeenCalledTimes(1);
@@ -769,17 +679,13 @@ describe("openTangentChat", () => {
     expect(arg.chatID).toBeUndefined();
   });
 
-  // A selection chooses nothing once the whole conversation is inherited, so
-  // there is no seeded prompt any more. This is the assertion that fails if the
-  // old selection-seeding path is reintroduced.
+  // No seeded prompt: the fork carries the whole context.
   it("seeds no prompt: the fork carries the context, not a quoted phrase", async () => {
     await openTangentChat("c-parent");
     expect(submitPromptMock).not.toHaveBeenCalled();
   });
 
-  // Model, mode and effort are ALL the server's to copy off the parent record now,
-  // and the row is seeded from the header the fork returned rather than from a
-  // local guess — which is invariant 2 applied to creation.
+  // Model, mode and effort are copied server-side; the row is seeded from the returned header.
   it("seeds the row from the server's header and leaves mode to the server", async () => {
     vi.mocked(get).mockReturnValue({ model: "parent-model", current_mode_id: "plan" } as never);
     await openTangentChat("c-parent");
@@ -810,20 +716,14 @@ describe("openTangentChat", () => {
   });
 });
 
-// The transcript's right-click entry is GONE with the selection it read. A
-// tangent inherits the whole conversation, so "I selected these words" does not
-// mean "branch this conversation", and a menu entry that silently inherited
-// everything from a phrase-scoped gesture was misleading. The `+` menu is the
-// door.
+// No transcript context menu: a tangent inherits the whole conversation, so a
+// phrase-scoped gesture would mislead. The `+` menu is the door.
 describe("no transcript context menu", () => {
   it("exports no initTranscriptContextMenu", () => {
     expect(chatModule).not.toHaveProperty("initTranscriptContextMenu");
   });
 
-  // The listener is what the export wired, so its absence is the behavioural
-  // half: a right-click on the transcript is the native menu's again. Asserting
-  // on defaultPrevented rather than on a mock, because there is no longer a
-  // context-menu module for this file to mock.
+  // A transcript right-click is the native menu's: asserted on defaultPrevented.
   it("leaves a transcript right-click to the native menu", () => {
     activeId = "c-active";
     const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
@@ -833,9 +733,7 @@ describe("no transcript context menu", () => {
 });
 
 describe("the chat tab's row effect supplies the title, and no second string", () => {
-  /** The opaque id the projection minted for chat `c1`. Every writer in the row
-   *  effect is id-keyed because the DOM row is, and a chat id is no longer that
-   *  id — so ONE `tabIdFor` lookup per row is what the effect reuses. */
+  /** The opaque id minted for chat `c1`; the row effect reuses ONE `tabIdFor` lookup. */
   const TAB_ID = "tb_c1";
 
   function driveEffect(over: Record<string, unknown>): void {
@@ -860,8 +758,7 @@ describe("the chat tab's row effect supplies the title, and no second string", (
     expect(written.length).toBeGreaterThan(0);
     for (const call of written) {
       for (const arg of call) {
-        // Case-insensitive: the realistic regression folds in the RAW mode id
-        // (`plan`), and nothing in the SUT can produce `labelForMode`'s output.
+        // Case-insensitive: the realistic regression folds in the RAW mode id (`plan`).
         expect(String(arg)).not.toMatch(/plan/iu);
       }
     }
@@ -869,14 +766,9 @@ describe("the chat tab's row effect supplies the title, and no second string", (
 });
 
 describe("a superseded activation paints no failure", () => {
-  // The History page activates a chat TWICE — openChatTab activates the tab
-  // (onShow → activateChatView) and openPreviousSession activates it again — and
-  // store-load keys its abort controller by chat id, so the second fetch aborts
-  // the first. loadMessages reports that abort the same way it reports a real
-  // failure, so the superseded activation used to append its retry box and the
-  // user opening a previous chat got "Failed to load messages." sitting beside a
-  // transcript that had loaded fine (reconcile leaves unkeyed siblings alone, so
-  // it stayed there).
+  // History activates a chat TWICE and store-load aborts the first fetch by chat id;
+  // loadMessages reports that abort like a failure, so the superseded activation must not
+  // paint its retry box.
   function loadedChat(): never {
     return {
       id: "c-loaded",
@@ -923,11 +815,8 @@ describe("a superseded activation paints no failure", () => {
 });
 
 describe("a tab whose chat this device's store does not hold", () => {
-  // Measured after a forced restart: a TRUNCATED /api/chats answer left several
-  // open tabs with no store row, and activateChatView's early return left the
-  // pane holding whatever the previous chat had put there — no error, no retry,
-  // no self-heal, until the reader reloaded the page. (The server half of that
-  // truncation is internal/chat's shared-scan ownership.)
+  // A truncated /api/chats answer left open tabs with no store row, and the pane kept the
+  // previous chat's content with no retry.
   function loadedChat(): never {
     return {
       id: "c-missing",
@@ -954,9 +843,7 @@ describe("a tab whose chat this device's store does not hold", () => {
   });
 
   it("re-reads the chat list once and activates the chat when it arrives", async () => {
-    // The store answers absent for the first activation and populated once the
-    // re-read has landed, which is exactly what a truncated boot list followed by
-    // a complete one produces.
+    // Absent on the first activation, present after the re-read.
     vi.mocked(get).mockReturnValueOnce(undefined).mockReturnValue(loadedChat());
     vi.mocked(loadList).mockResolvedValue(true);
 
@@ -997,10 +884,7 @@ describe("a tab whose chat this device's store does not hold", () => {
 });
 
 describe("restore: opening a closed conversation from History", () => {
-  // The reported symptom was a blank chat page, so the assertion is that the
-  // transcript is actually FETCHED and the tab actually opens. Every row the
-  // History page offers now carries a chat_id (the server lists a session only
-  // when a marotte chat owns it), so this one path is the whole restore.
+  // The transcript is FETCHED and the tab opens; every History row carries a chat_id.
   function closedChat(): never {
     return {
       id: "c-closed",
@@ -1044,11 +928,8 @@ describe("restore: opening a closed conversation from History", () => {
   });
 
   it("fetches the chat list first when this device dropped the store row", async () => {
-    // The ordinary case for this page: closing a tab calls removeChat, so a chat
-    // closed in this session is absent from the store while its file survives.
-    // activateChatView returns early on a missing row and loadMessages refuses to
-    // write into one, so activating before the header lands renders an empty chat
-    // view and stops — the blank page, reached from the other side.
+    // A chat closed in this page is absent from the store while its file survives, so
+    // activating before the header lands renders an empty view.
     vi.mocked(get).mockReturnValue(undefined);
     vi.mocked(loadList).mockResolvedValue(true);
     openPreviousSession(row);
@@ -1070,27 +951,23 @@ describe("restore: opening a closed conversation from History", () => {
   });
 
   it("ignores a row with no owning chat", async () => {
-    // The adoption path is gone: an unclaimed row was always marotte's own
-    // utility session, and adopting it produced the blank page plus a junk chat.
-    // The server no longer emits one; this is the belt-and-braces half.
+    // Belt and braces: an unclaimed row is never adopted.
     await openPreviousSession({ ...row, chat_id: "" });
     expect(openTab).not.toHaveBeenCalled();
     expect(loadMessages).not.toHaveBeenCalled();
   });
 
   it("a 404 reopen answers 'gone': ephemeral notice, NO activation", async () => {
-    // Retention is off and a close DELETED the conversation after History
-    // listed it. The open's outcome keeps the 404 distinct from a network
-    // failure, so this arm can say the truth — the chat was ephemeral — and
-    // must not activate: an activation here is an empty transcript over a dead
-    // active pointer.
+    // Retention off and the chat deleted after History listed it: the 404 outcome says so and
+    // must not activate.
     vi.mocked(get).mockReturnValue(closedChat());
     vi.mocked(openTab).mockResolvedValue("not-found");
 
     await expect(openPreviousSession(row)).resolves.toBe("gone");
 
+    // Named by the History row's title, the name the reader clicked.
     expect(vi.mocked(info)).toHaveBeenCalledWith(
-      "That conversation is gone. It was ephemeral because retention is off.",
+      "Yesterday's work: That conversation is gone. It was ephemeral because retention is off.",
     );
     // activateChatView never ran: no rail pointing, no fetch.
     expect(pointTurnRail).not.toHaveBeenCalled();
@@ -1111,15 +988,9 @@ describe("restore: opening a closed conversation from History", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The activation refetch gate. activateChatView used to refetch unconditionally;
-// now the transcript-staleness verdict routes it: stale → the fetch path, with
-// the rail FORCED behind the successful load (the heal re-stamps the session
-// fresh, so the rail's own gate can no longer see the verdict); fresh → zero
-// message fetches, the view furniture re-wired, and the rail left to its own
-// record (its count arm may still fetch — that decision is turn-rail.test.ts's
-// subject, not this module's).
-// ---------------------------------------------------------------------------
+// The activation refetch gate: stale routes to the fetch, with the rail FORCED after the
+// load; fresh means no message fetch, re-wired furniture, and the rail left to its own gate
+// (turn-rail.test.ts).
 
 describe("activateChatView routes on the staleness verdict", () => {
   function loadedChat(id: string): never {
@@ -1155,22 +1026,14 @@ describe("activateChatView routes on the staleness verdict", () => {
     activateChatView("c-fresh");
 
     expect(loadMessages).not.toHaveBeenCalled();
-    // The per-chat view furniture is still re-wired: the load-more hook is
-    // activation's, not the fetch's. (The landing position is the
-    // multiplexer's now — a resident view restores its own.)
+    // The load-more hook is activation's, not the fetch's.
     expect(setLoadMore).toHaveBeenCalled();
     // The rail is handed the chat WITHOUT force: its own record decides.
     expect(loadTurnRail).toHaveBeenCalledWith("c-fresh");
   });
 
-  // The "Load older messages" button's ONE producer, and its only input is
-  // `session.has_more`, which `store-load.ts` derives. This is the other half of
-  // that pair: what the derived value does at the seam.
-  //
-  // The ARGUMENTS rather than a rendered element, because `./scroll.js` is mocked
-  // wholesale here — asserting DOM through the mock would be asserting the mock.
-  // `scroll.test.ts` owns the rendering half (`setLoadMore(fn, true)` prepends
-  // `#load-more-indicator`, `(null, false)` removes it).
+  // "Load older messages" has one producer, fed by `session.has_more` (store-load.ts).
+  // Asserted on the ARGUMENTS: `./scroll.js` is mocked; `scroll.test.ts` owns the rendering.
   it("offers no pagination for a chat with nothing older", () => {
     vi.mocked(get).mockReturnValue(loadedChat("c-whole"));
     vi.mocked(transcriptStale).mockReturnValue(false);
@@ -1181,9 +1044,7 @@ describe("activateChatView routes on the staleness verdict", () => {
   });
 
   it("offers pagination for a chat that genuinely has older messages", () => {
-    // The other direction, so the case above cannot be satisfied by never offering
-    // pagination at all. Written out rather than spread over `loadedChat`, whose
-    // return type is `never`.
+    // The other direction, so never offering pagination cannot pass.
     vi.mocked(get).mockReturnValue({
       id: "c-paged",
       name: "seeded",
@@ -1249,9 +1110,7 @@ describe("activateChatView routes on the staleness verdict", () => {
   });
 
   it("a gap makes the next activation refetch", () => {
-    // A gap bumps the sync epoch, which is the input `transcriptStale` reads, so the
-    // second pass over the same chat answers the other way. Driven through the
-    // predicate because the counter is store.ts's and this suite mocks that module.
+    // A gap bumps the sync epoch `transcriptStale` reads, so the second pass answers otherwise.
     vi.mocked(get).mockReturnValue(loadedChat("c-gap"));
     vi.mocked(transcriptStale).mockReturnValue(false);
 
@@ -1267,9 +1126,7 @@ describe("activateChatView routes on the staleness verdict", () => {
   });
 
   it("one activation of a stale chat issues exactly ONE loadTurnRail", async () => {
-    // The forced rail belongs to the refresh alone. Hoisting the activation's
-    // furniture pair above its condition puts an UNFORCED rail fetch beside it, and
-    // turn-rail.ts has no abort, no in-flight set and no dedupe to absorb the pair.
+    // The forced rail is the refresh's alone; turn-rail.ts cannot dedupe a second fetch.
     vi.mocked(get).mockReturnValue(loadedChat("c-one-rail"));
     vi.mocked(transcriptStale).mockReturnValue(true);
 
@@ -1305,11 +1162,8 @@ describe("activateChatView routes on the staleness verdict", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The painter is the ENFORCEMENT and the arm is the optimisation, so the two are
-// pinned separately: these drive `skeletonTiming`'s show callback so
-// `paintPlaceholder` actually runs against the real container.
-// ---------------------------------------------------------------------------
+// The painter is the ENFORCEMENT and the arm the optimisation, pinned separately through
+// `skeletonTiming`'s show callback.
 
 describe("the placeholder's own refusal, against the real container", () => {
   function pendingChat(id: string): never {
@@ -1350,10 +1204,8 @@ describe("the placeholder's own refusal, against the real container", () => {
   });
 
   it("replaces a previous load's failure box rather than shimmering under it", async () => {
-    // The one surface that cannot use `mount: "replace"`, so the box has to be GONE
-    // before the placeholder mounts. Driven with NO activation behind the second
-    // refresh, which is the shape a gap and a resume reach it in — and the only shape
-    // in which the refresh's own clear is the one doing the work.
+    // The one surface that cannot use `mount: "replace"`, so the box must be GONE before the
+    // placeholder mounts, with no activation behind the refresh.
     messagesEl.replaceChildren();
     vi.mocked(get).mockReturnValue(pendingChat("c-failed"));
     vi.mocked(transcriptStale).mockReturnValue(true);
@@ -1374,11 +1226,8 @@ describe("the placeholder's own refusal, against the real container", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The three LIVE direct callers of activateChatView. None passes through
-// `activateTabQuietly`, so none reaches `refreshRow`: each carries the fetch
-// itself, and each was a silent regression rather than a compile error.
-// ---------------------------------------------------------------------------
+// The three live direct callers of activateChatView bypass `refreshRow`, so each fetches
+// itself.
 
 describe("every direct caller of activateChatView still fetches", () => {
   function staleChat(id: string): never {
@@ -1439,20 +1288,8 @@ describe("every direct caller of activateChatView still fetches", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A deep link to a chat with no open tab.
-//
-// `switchSession` resolved the chat's tab id and returned EARLY on "", so
-// `applyRoute`'s chat branch did nothing at all for a chat whose tab had been
-// closed: no tab, no transcript, no error, the empty-state hero, and the URL still
-// naming the chat. The five singleton routes already opened their tab through
-// `openTab`; this was the one kind that did not. Measured twice on the live
-// instance.
-//
-// The arm for an id that names NO record lives in `app.ts`'s router — the
-// composition root, which has no test address — so it is verified in the live
-// browser and said so rather than claimed here.
-// ---------------------------------------------------------------------------
+// A deep link to a chat with no open tab must open it through `openTab`, like the singleton
+// routes. The no-record arm lives in `app.ts`'s router, verified in the live browser.
 
 describe("switchSession", () => {
   it("activates the tab a chat already has, and dispatches no open", async () => {
@@ -1466,9 +1303,7 @@ describe("switchSession", () => {
   });
 
   it("OPENS the tab for a chat that has none, through the server door", async () => {
-    // The fix. `openChatTab` → `openTab` → `open_tab` → the membership coordinator,
-    // which is what keeps the tab set server-owned and coordinator-ordered; a
-    // local-only row is never minted.
+    // Through `open_tab` and the membership coordinator; a local-only row is never minted.
     vi.mocked(tabIdFor).mockReturnValue("");
     vi.mocked(get).mockReturnValue({ id: "c-no-tab", name: "The old chat" } as never);
 
@@ -1497,29 +1332,13 @@ describe("switchSession", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A deep link to a chat the STORE has never heard of.
-//
-// The router's dead-id arm used to say "That conversation no longer exists." on the
-// strength of a chat list having landed once. That is a terminal verdict derived
-// from data this client may simply not have yet: a list is authoritative at the
-// instant it lands and stale from then on, so a chat created on another device while
-// this client's SSE was down is missing from a store that is otherwise entitled to
-// speak, and the reader was told a live conversation was gone.
-//
-// `resolveUnknownChat` is the ask that replaces the guess. What is pinned here is
-// the ROUTING of each verdict — the terminal claim allowed for `gone` and refused
-// for `unresolved`, the deep link opening for `exists` — plus the ordering rule the
-// round trip creates. The URL rewrite itself stays in `applyRoute`, a private
-// function in the composition root with no test address, so it is verified in the
-// live browser and said so rather than claimed here.
-// ---------------------------------------------------------------------------
+// A deep link to a chat the STORE has never heard of: a landed list goes stale, so
+// `resolveUnknownChat` ASKS. Pinned: the routing of each verdict and the ordering rule. The
+// URL rewrite is `applyRoute`'s, verified in the live browser.
 
 describe("resolveUnknownChat", () => {
   it("OPENS the chat when the server says it exists", async () => {
-    // The direction that makes the round trip worth making. `confirmChatExists` has
-    // already adopted the header by this point, so the deep link lands on a real
-    // transcript instead of on the empty-state hero.
+    // `confirmChatExists` has adopted the header, so the deep link lands on a real transcript.
     vi.mocked(confirmChatExists).mockResolvedValue("exists");
     vi.mocked(tabIdFor).mockReturnValue("");
 
@@ -1541,9 +1360,7 @@ describe("resolveUnknownChat", () => {
   });
 
   it("REFUSES the terminal claim when nobody answered", async () => {
-    // A 5xx, a dead network, an undecodable body. The caller holds the URL and says
-    // nothing terminal — claiming the chat is gone here would be the same defect one
-    // layer down from the one this function exists to fix.
+    // A 5xx, dead network or undecodable body: nothing terminal is said.
     vi.mocked(confirmChatExists).mockResolvedValue("unresolved");
 
     expect(await resolveUnknownChat("c-real")).toBe("unresolved");
@@ -1552,10 +1369,8 @@ describe("resolveUnknownChat", () => {
   });
 
   it("prefers a row that appeared WHILE the request was in flight over a `gone`", async () => {
-    // The ordering rule the round trip creates: the missing `chat_created` frame can
-    // land during the trip, and a row that arrived after the verdict was computed is
-    // newer than it. Without the post-await store read this answers `gone` for a
-    // chat whose tab the reader can already see.
+    // A `chat_created` frame landing during the trip is newer than the verdict, hence the
+    // post-await store read.
     vi.mocked(confirmChatExists).mockImplementation(async () => {
       vi.mocked(get).mockReturnValue({ id: "c-raced", name: "Landed mid-flight" } as never);
       return "gone";

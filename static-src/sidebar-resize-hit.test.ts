@@ -1,6 +1,6 @@
-// A hit test is the only reader of hit order: boxes and declarations are identical
-// whichever element wins a point. The fixture is the production `#app` markup with
-// the rows script would add planted by hand.
+// A hit test is the only reader of hit order: boxes and declarations are identical whichever
+// element wins a point. The fixture is the production `#app` markup with the rows script would add
+// planted by hand.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
 
@@ -62,8 +62,8 @@ function mountApp(tier: Tier, widened: boolean): Shell {
     throw new Error("index.html has no #app");
   }
   document.body.replaceChildren(document.importNode(parsed, true));
-  // What `initSidebarResize` writes; the tabindex is what the universal hit floor
-  // keys on, so a bare div would not exercise the floor opt-out.
+  // What `initSidebarResize` writes; the tabindex is what the universal hit floor keys on, so a
+  // bare div would not exercise the floor opt-out.
   const handle = q("#sidebar-resize");
   handle.setAttribute("role", "separator");
   handle.tabIndex = 0;
@@ -102,7 +102,7 @@ function mountApp(tier: Tier, widened: boolean): Shell {
   head.className = "turn-header";
   const copy = document.createElement("button");
   copy.type = "button";
-  copy.className = "turn-copy-req icon-btn";
+  copy.className = "turn-fold-toggle icon-btn";
   copy.setAttribute("aria-label", "Copy");
   head.append(copy);
   const body = document.createElement("div");
@@ -200,13 +200,13 @@ describe.each(CASES)("at the %s tier, widened %s", (tier, widened) => {
       for (let y = area.top + 2; y < area.bottom; y += 6) {
         for (let x = b + 0.5; x < b + FLOOR[tier]; x += 3) {
           const owner = beneath(s, x, y)?.closest(INTERACTIVE);
-          // The shell's own separator spans the panel's full width, so the two
-          // separators share its leading corner; it keeps the rest of its width.
+          // The shell's own separator spans the panel's full width, so the two separators share its
+          // leading corner; it keeps the rest of its width.
           if (owner === null || owner === undefined || owner.id === "shell-resize") {
             continue;
           }
-          // The editor's textarea may start under the coarse reach, but only its
-          // left padding does: a press on text always reaches the editor.
+          // The editor's textarea may start under the coarse reach, but only its left padding does:
+          // a press on text always reaches the editor.
           if (owner === editor && x < textStart) {
             continue;
           }

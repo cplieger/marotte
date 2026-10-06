@@ -1,7 +1,7 @@
 package agent
 
-// The liveness split: only an ACTIVELY EXECUTING run holds a process, every run stays
-// reachable, and the verbs that drive a parked run re-host it on demand.
+// The liveness split: only an executing run holds a process, every run stays reachable, and the verbs that
+// drive a parked run re-host it.
 
 import (
 	"context"
@@ -21,8 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The `_kiro/workflow/run_complete` notification KAS sends when a run stops. One frame
-// reports terminal and paused alike; the status is the only thing separating them.
+// One `run_complete` frame reports terminal and paused alike; only the status differs.
 func runCompleteFrame(t *testing.T, workflowID, status string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"workflowId": workflowID, "status": status})
@@ -42,8 +41,7 @@ func hostedRun(t *testing.T, workflowID string) (*Runtime, *fakeBridge) {
 	return h, br
 }
 
-// Deadline-bounded rather than a sleep: closeStoppedBridge hands the close to a
-// goroutine (it runs FROM the bridge's own forward loop), so the effect is async.
+// closeStoppedBridge closes on a goroutine, so poll with a deadline.
 func waitForBridge(t *testing.T, h *Runtime, workflowID string, want bool) bool {
 	t.Helper()
 	stop := time.Now().Add(3 * time.Second)
@@ -58,9 +56,8 @@ func waitForBridge(t *testing.T, h *Runtime, workflowID string, want bool) bool 
 	}
 }
 
-// No process needs to run for a run that cannot be resumed, and every run stays
-// reachable, so a PAUSED run keeps its lease. Driven through the real dispatch path
-// because observeComplete decides the lease half on that same frame.
+// No process for a run that cannot be resumed, and every run stays reachable; a paused run keeps its lease.
+// Through the real dispatch, since observeComplete decides the lease on that frame.
 func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 	cases := map[string]struct {
 		status     string
@@ -68,14 +65,13 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 		wantLease  bool
 	}{
 		"a pause drops the process and keeps the lease": {string(marotte.RunStatusPaused), false, true},
-		// Here so a mutation widening the close cannot pass on the pause row alone.
+		// So a widened close cannot pass on the pause row alone.
 		"a completed run drops both":  {"completed", false, false},
 		"a failed run drops both":     {"failed", false, false},
 		"an aborted run drops both":   {"aborted", false, false},
 		"a cancelled run drops both":  {"cancelled", false, false},
 		"an executing run keeps both": {"running", true, true},
-		// An unknown status keeps the bridge: a leaked process costs memory, a wrongly
-		// closed one loses the frames a live run is still emitting.
+		// An unknown status keeps the bridge: a leak costs memory, a wrong close loses a live run's frames.
 		"an unrecognised status keeps both": {"reticulating", true, true},
 	}
 
@@ -95,13 +91,11 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 	}
 }
 
-// The second half of the pause row: presence alone would be satisfied by a lease
-// stripped of everything it answers. The DEADLINE is deliberately absent from the
-// wanted set — a pause parks it, and a re-arm on resume bounds the next stretch.
+// A paused lease must keep its fields, minus the deadline, which the pause parks.
 func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-	// A SCHEDULED launch, because that is the origin the unattended mark rides.
+	// A scheduled launch carries the unattended mark.
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch("sched_1", time.Now().Add(time.Hour)))
 
@@ -127,17 +121,15 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	}
 }
 
-// The four verbs that drive a parked run start a carrier on demand: without it the
-// parked population is unreachable the moment a pause drops its bridge. Through their
-// PUBLIC entry points, so what is pinned is the behaviour a REST caller gets.
+// The four parked-run verbs start a carrier on demand, through their public entry points.
 func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
-	// Parented on nothing this process knows, so the re-host is the verb's only way in.
+	// Parented on nothing known here.
 	seed := func(t *testing.T) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowList: parentlessRunList("wf_1"),
-			// SetStepStatus reads the tree first, so the target must resolve to its node.
+			// SetStepStatus reads the tree first.
 			methodKiroWorkflowInspect: parkedInspect(
 				t, marotte.RunStatusPaused, needInputPauseReason, "sess_step",
 			),
@@ -155,8 +147,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		"resume": {methodKiroWorkflowResume, func(h *Runtime) error {
 			return h.runs.Resume(context.Background(), "wf_1")
 		}},
-		// KAS's pause REFUSES a run it has forgotten, and the refusal has to come from
-		// KAS rather than marotte, or the reader is shown marotte's bookkeeping.
+		// KAS refuses a pause for a run it forgot, and the refusal must be KAS's.
 		"pause": {methodKiroWorkflowPause, func(h *Runtime) error {
 			return h.runs.Pause(context.Background(), "wf_1")
 		}},
@@ -177,6 +168,10 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 			if h.bridge.mgr.get(runChatID("wf_1")) == nil {
 				t.Error("no bridge is registered under the run's synthetic chat id, so the " +
 					"run's own lifecycle frames have nowhere to route")
+			}
+			if opts := br.lastStartOpts(); opts == nil || !opts.EnableHooks {
+				t.Errorf("%s re-hosted the run on a bridge without EnableHooks (opts %+v), "+
+					"so workspace hooks never fire during its steps", name, opts)
 			}
 		})
 	}
@@ -200,8 +195,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		}
 	})
 
-	// A carrier THIS verb started holds a run nothing is executing once the verb
-	// fails, so it must go.
+	// A carrier this verb started holds nothing executing once the verb fails.
 	t.Run("a refused verb tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
 		br.callRPCErrs = map[string]*marotte.RPCError{
@@ -215,10 +209,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		}
 	})
 
-	// The DECLINE, the one outcome neither the error path above nor a lifecycle frame
-	// covers: KAS resolved the run and WROTE NOTHING, so no run_complete follows and
-	// nothing else would ever close the process the re-host started. Driven through the
-	// re-host, because every other case pre-inserts a bridge this verb did not start.
+	// A decline writes nothing, so no run_complete would ever close the re-host's process.
 	t.Run("a DECLINED step status tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
 		br.callResults[methodKiroWorkflowUpdate] = json.RawMessage(
@@ -236,8 +227,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		}
 	})
 
-	// The other side: for an agent-launched run the bridge the verb did not start is
-	// the launching CHAT's, so closing it would tear down the conversation's process.
+	// The bridge it did not start is the launching chat's.
 	t.Run("a refused verb leaves a bridge it did not start alone", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
@@ -254,9 +244,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	})
 }
 
-// A resident under the run's chat id is found before any second process exists. The
-// factory is overridden because newTestHub's serves one shared bridge, and the
-// question here is whether a SECOND one is ever made.
+// A resident under the run's chat id is found before any second process exists; the factory is overridden to see a second one.
 func TestRehost_AResidentCarrierIsHandedBackAndNoSecondProcessStarts(t *testing.T) {
 	h, _, _ := newTestHub()
 	incumbent := newFakeBridge()
@@ -278,7 +266,7 @@ func TestRehost_AResidentCarrierIsHandedBackAndNoSecondProcessStarts(t *testing.
 		t.Error("a second process was started for a run whose carrier was already registered")
 	}
 
-	// The refusal path, which is where the third wrong lands.
+	// The refusal path.
 	host.release(errors.New("refused"))
 	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
 		t.Error("release closed a carrier this verb did not start, so a run KAS may " +
@@ -289,9 +277,8 @@ func TestRehost_AResidentCarrierIsHandedBackAndNoSecondProcessStarts(t *testing.
 	}
 }
 
-// session/load sends `_kiro/terminal/shell_type` before it answers, so the carrier
-// must be registered and forwarded BEFORE the load or nothing answers it. KAS 2.27.0
-// then stalls the load about 2s and carries on without the client's shell.
+// session/load sends `_kiro/terminal/shell_type` first, so the carrier must be registered and forwarded
+// before the load (KAS 2.27.0 otherwise stalls ~2s).
 func TestRehost_AHostRequestDuringTheLoadIsAnswered(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
@@ -309,8 +296,7 @@ func TestRehost_AHostRequestDuringTheLoadIsAnswered(t *testing.T) {
 	}
 }
 
-// hostRequestingBridge sends `_kiro/terminal/shell_type` from inside a Start that names
-// a session and fails unless it is answered, which makes KAS's stall observable.
+// hostRequestingBridge sends `_kiro/terminal/shell_type` from inside Start and fails unless answered.
 type hostRequestingBridge struct {
 	*fakeBridge
 	answered chan struct{}
@@ -337,9 +323,7 @@ func (b *hostRequestingBridge) Respond(ctx context.Context, id int64, result any
 	return b.fakeBridge.Respond(ctx, id, result, err)
 }
 
-// A context error says the verb's outcome is UNKNOWN, so the carrier stays — the same
-// direction closeStoppedBridge takes for an unrecognised status. Through hostedControl
-// rather than the closure, because the verb call is where the caller's context lands.
+// A context error leaves the outcome unknown, so the carrier stays.
 func TestRehost_ACancelledVerbKeepsTheCarrierItStarted(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -356,20 +340,17 @@ func TestRehost_ACancelledVerbKeepsTheCarrierItStarted(t *testing.T) {
 	}
 }
 
-// The lease and the carrier follow ONE unknown-outcome rule, and the lease is what
-// makes a run BOUNDABLE — armDeadline reads it first and returns when there is none.
-// So handing it back on a cancellation leaves a retry KAS did take executing with no
-// ceiling, no slot, absent from the executing set, and unbindable afterwards.
+// The lease follows the same unknown-outcome rule: armDeadline needs it, so dropping it on a cancellation
+// leaves a taken retry unbounded.
 func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 	cases := map[string]struct {
 		cause     error
 		wantLease bool
 	}{
-		// The unknown outcome: the client walked away mid-verb.
+		// The client walked away mid-verb.
 		"a cancelled retry keeps it": {context.Canceled, true},
 		"a deadline keeps it":        {context.DeadlineExceeded, true},
-		// A KAS refusal is a KNOWN outcome — nothing re-drove — so the minted lease goes
-		// back, and a mutation keeping it cannot pass on the rows above alone.
+		// A known refusal gives the lease back.
 		"a refused retry gives it back": {errors.New("refused"), false},
 	}
 
@@ -402,10 +383,7 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 	}
 }
 
-// The bound's decision, asked SYNCHRONOUSLY rather than through its timer. The spared
-// rows are why: through the timer, "the bridge is still there" is satisfied by the
-// instant BEFORE the grace elapses, so each would pass against a bound that closes the
-// carrier unconditionally a moment later.
+// The bound's decision asked synchronously: through the timer a spared row passes against an unconditional close.
 func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 	cases := map[string]struct {
 		inspect json.RawMessage
@@ -413,32 +391,28 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 		held bool
 		want carrierVerdict
 	}{
-		// KAS never took the verb: the run is where it was, and nothing is coming.
+		// KAS never took the verb.
 		"a parked run's kept carrier is closed": {
 			inspectReply(t, "wf_1", marotte.RunStatusPaused, ""), false, carrierClosed,
 		},
 		"a terminal run's kept carrier is closed": {
 			inspectReply(t, "wf_1", "failed", ""), false, carrierClosed,
 		},
-		// KAS DID take it, so the carrier is the connection that run's frames arrive
-		// on and closing it would send them nowhere.
+		// KAS took it; the carrier carries the run's frames.
 		"an executing run's carrier is spared": {
 			inspectReply(t, "wf_1", "running", ""), false, carrierSpared,
 		},
-		// A failed read never destroys work here.
+		// A failed read never destroys work.
 		"an unreadable run's carrier is spared": {json.RawMessage(`{`), false, carrierSpared},
-		// The identity guard: a reply naming another run says nothing about this one.
+		// A reply naming another run says nothing about this one.
 		"a reply naming another run is ignored": {
 			inspectReply(t, "wf_other", "failed", ""), false, carrierSpared,
 		},
-		// The USE guard: a reader whose first resume was cancelled clicks again and
-		// reuses the kept carrier, so KAS reports the run parked while that second verb
-		// is in flight on the very process the bound is about to stop.
+		// A second verb reusing the kept carrier is in flight on it.
 		"a carrier a verb is holding is kept, whatever the run reports": {
 			inspectReply(t, "wf_1", marotte.RunStatusPaused, ""), true, carrierBusy,
 		},
-		// Both directions of that guard, so neither arm can pass by widening the
-		// other: an executing run is spared for its OWN reason, not for this one.
+		// An executing run is spared for its own reason.
 		"a held carrier on an executing run is still busy": {
 			inspectReply(t, "wf_1", "running", ""), true, carrierBusy,
 		},
@@ -469,9 +443,7 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 		})
 	}
 
-	// The map holds a DIFFERENT carrier, so this one is no longer ours to end. SPARED
-	// rather than busy even under a verb, so a stale bound cannot re-arm forever over a
-	// carrier nothing will close.
+	// Another carrier is mapped: spared, not busy, so a stale bound cannot loop.
 	t.Run("a carrier replaced meanwhile is left alone", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -493,9 +465,7 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 	})
 }
 
-// A second verb reuses the kept carrier, and its release leaves the carrier alone, so
-// a bound that declines once and stops leaves exactly the leak it exists to end. Through the TIMER, because the re-arm is the timer's own decision; the negative
-// half runs first and only the positive half polls.
+// A bound that declines once and stops leaks the carrier; through the timer, negative half first.
 func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T) {
 	old := keptCarrierGrace
 	keptCarrierGrace = time.Millisecond
@@ -511,15 +481,14 @@ func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T)
 
 	h.runs.boundKeptCarrier(runChatID("wf_1"), "wf_1", kept)
 
-	// Many graces' worth: a bound that closed under the verb, or that gave up
-	// silently, both land here — and they are told apart by the poll below.
+	// Many graces: a close under the verb and a silent give-up both land here.
 	time.Sleep(50 * time.Millisecond)
 	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
 		t.Fatal("the bound closed a carrier a verb was still holding, which is the " +
 			"unknown-outcome state keeping it exists to prevent")
 	}
 
-	// The verb finishes; the next firing has nothing left to wait for.
+	// The verb finishes.
 	h.runs.carriers.leave(kept)
 	if !waitForBridge(t, h, "wf_1", false) {
 		t.Error("the bound never came back after the verb released the carrier, so a " +
@@ -527,25 +496,19 @@ func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T)
 	}
 }
 
-// The WIRING, which the decision table above cannot pin: that one drives carrierUse
-// from the test, so with a verb's enter/leave gone the guard still answers while
-// nothing registers. Each verb is held open ON a real call, so the assertion lands
-// strictly inside its window.
+// The wiring: each verb is held open on a real call so the assertion lands inside its span.
 func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 	cases := map[string]struct {
-		// blocked is the method held open, and it is what puts the assertion inside
-		// the span rather than beside it.
+		// blocked is the method held open.
 		blocked string
 		drive   func(*testing.T, *Runtime) error
 	}{
-		// A reader whose first resume was cancelled clicks again, reuses the kept carrier,
-		// and is still waiting when the grace elapses — where both older guards pass.
+		// A second resume on the kept carrier still waiting when the grace elapses.
 		"a resume in flight": {
 			methodKiroWorkflowResume,
 			func(t *testing.T, h *Runtime) error { return h.runs.Resume(t.Context(), "wf_1") },
 		},
-		// Why the count is entered at RESOLVE: this verb's address read is a round trip,
-		// so a Call-scoped count leaves the carrier closable for the length of it.
+		// The address read is a round trip, so the count starts at resolve.
 		"an answer still resolving its address": {
 			methodKiroWorkflowInspect,
 			func(t *testing.T, h *Runtime) error {
@@ -559,9 +522,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 				return h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the release branch")
 			},
 		},
-		// The other two verbs, so no site's hold can be deleted silently. Retry's own call
-		// is bounded by launchTimeout and counted anyway: a bound armed by an EARLIER verb
-		// targets this same carrier.
+		// The other two verbs; Retry is counted too, since an earlier bound may target this carrier.
 		"a step-status write in flight": {
 			methodKiroWorkflowUpdate,
 			func(t *testing.T, h *Runtime) error {
@@ -584,7 +545,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 				methodKiroWorkflowInspect: parkedInspect(
 					t, marotte.RunStatusPaused, needInputPauseReason, "sess_step",
 				),
-				// Retry reads its recipe off the run list before it re-drives.
+				// Retry reads its recipe off the run list first.
 				methodKiroWorkflowList: json.RawMessage(
 					`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`,
 				),
@@ -597,8 +558,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 			done := make(chan error, 1)
 			go func() { done <- tc.drive(t, h) }()
 
-			// The fake's own record, never carriers.busy: waiting on the thing under
-			// assertion would make the assertion vacuous.
+			// The fake's record, never carriers.busy, or the assertion is vacuous.
 			stop := time.Now().Add(5 * time.Second)
 			for !slices.Contains(br.callLog(), tc.blocked) {
 				if time.Now().After(stop) {
@@ -621,7 +581,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 			if err := <-done; err != nil {
 				t.Fatalf("the verb failed: %s", err)
 			}
-			// RELEASED on the way out, or the bound re-arms forever and never closes it.
+			// Released on the way out.
 			if h.runs.carriers.busy(kept) {
 				t.Error("the carrier is still recorded as held after the verb returned, so " +
 					"its bound re-arms forever and the process leaks")
@@ -630,9 +590,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 	}
 }
 
-// The keeping and the bound are one decision, so a cancelled verb has to ARM it rather
-// than leave the carrier for the container's life. What keeps the re-read off a verb in
-// flight is carrierUse, not the grace's length.
+// A cancelled verb arms the bound on the carrier it keeps; carrierUse, not the grace, protects a verb in flight.
 func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	old := keptCarrierGrace
 	keptCarrierGrace = time.Millisecond
@@ -641,7 +599,7 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: parentlessRunList("wf_1"),
-		// KAS never took the resume, so the run is still parked.
+		// KAS never took the resume.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusPaused, ""),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: context.Canceled}
@@ -649,18 +607,15 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	if err := h.runs.Resume(t.Context(), "wf_1"); err == nil {
 		t.Fatal("a cancelled resume reported success")
 	}
-	// Deterministic in this direction only: the poll can pass exclusively once the
-	// bridge is genuinely gone, which nothing but the bound can do here.
+	// The poll passes only once the bridge is gone, which only the bound does.
 	if !waitForBridge(t, h, "wf_1", false) {
 		t.Error("the kept carrier was never bounded, so a browser tab closed at the wrong " +
 			"instant leaks a ~300 MB process tree for the container's life")
 	}
 }
 
-// KAS reroutes a prompt into the run only while the addressed step is parked; past
-// that the same prompt runs as an ordinary turn on that session. SETTLED rather than
-// restored, because
-// nothing will wait on the question again — the between-steps case below will.
+// KAS reroutes a prompt only while the addressed step is parked; past that it runs as an ordinary turn.
+// Settled, not restored.
 func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 	cases := map[string]json.RawMessage{
 		"a different step is parked now": parkedInspect(
@@ -679,7 +634,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 			h.runs.asks.Add(&runAsk{
 				chatID: runChatID("wf_1"),
 				payload: marotte.RunInputNeededPayload{
-					// A node the reply does NOT report as the parked leaf.
+					// A node the reply does not report as parked.
 					WorkflowID: "wf_1", AskID: "a1", NodeID: "plan",
 					StepSessionID: "sess_stale",
 				},
@@ -707,15 +662,12 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 	}
 }
 
-// The third verdict, and the one a reader reaches WITHOUT a race: the run view offers
-// Resume and the ask card at once, and between the resume and the re-park nothing is
-// parked. Reading that as GONE discards the words just typed and reports the step as
-// moved on, false in both clauses, so the card goes BACK.
+// Between resume and re-park nothing is parked, and reading that as gone would discard the typed words, so the card goes back.
 func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: parentlessRunList("wf_1"),
-		// Non-terminal, and no node parked: the resume landed, the re-park has not.
+		// The resume landed, the re-park has not.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
 	h.runs.asks.Add(&runAsk{
@@ -750,10 +702,8 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 	}
 }
 
-// The check asks whether the step THAT ASKED is parked, addressed by the ask's own node
-// id rather than by pausedLeaf's first depth-first match. The two agree for a run parked
-// at one step and diverge exactly here: with two branches parked, first-match names the
-// wrong one and the other branch's answer is destroyed.
+// The ask's own node id decides which step is parked; with two parked branches pausedLeaf's first match
+// names the wrong one and destroys the other's answer.
 func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *testing.T) {
 	tree, err := json.Marshal(map[string]any{
 		"state": map[string]any{
@@ -779,8 +729,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 	h.runs.asks.Add(&runAsk{
 		chatID: runChatID("wf_1"),
 		payload: marotte.RunInputNeededPayload{
-			// The SECOND parked branch, so a first-match check answers "a different
-			// step is parked" and moots it.
+			// The second parked branch.
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "branch_b", StepSessionID: "sess_stale",
 		},
 	})
@@ -798,8 +747,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 	}
 }
 
-// The read has to LEAD for the check above to mean anything: preferring the ask's own
-// address makes a stale ask unnoticeable. The payload is only the unreadable-run fallback.
+// The fresh read leads; the ask's own address is only the unreadable-run fallback.
 func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -811,8 +759,7 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	h.runs.asks.Add(&runAsk{
 		chatID: runChatID("wf_1"),
 		payload: marotte.RunInputNeededPayload{
-			// `review` is the leaf parkedInspect reports, so the step has NOT moved —
-			// only the session recorded on the ask is out of date.
+			// The step has not moved; only the ask's recorded session is stale.
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review",
 			StepSessionID: "sess_stale",
 		},
@@ -831,9 +778,7 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	}
 }
 
-// A failed read never destroys work, and here the work is the answer itself: refusing
-// every answer whenever the utility session is briefly unreachable would be a new way
-// to lose a run parked on a person.
+// A brief utility-session outage must not refuse every answer.
 func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -859,10 +804,8 @@ func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testin
 	}
 }
 
-// The ORDERING, not the outcome: a claimed ask is off every surface, so the other order
-// leaves a window with neither a card nor a process. The discriminator is an ask already
-// GONE — host-then-claim spends one spawn, claim-then-host none — so the spawn DELTA
-// answers which ran. The utility session is warmed first because one factory serves both.
+// The ordering: claim-then-host leaves a window with neither card nor process. With the ask already gone,
+// the spawn delta tells which order ran. The utility session is warmed first: one factory serves both.
 func TestAnswerInput_HostsBeforeItClaimsTheAsk(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -887,9 +830,7 @@ func TestAnswerInput_HostsBeforeItClaimsTheAsk(t *testing.T) {
 	}
 }
 
-// Cancel is the one verb that may run on the utility session — it rehydrates from disk
-// and only WRITES state — and it is the tab-close gesture, so it must never be the verb
-// that fails. A re-host would spend a ~300 MB process tree to tell a run to stop.
+// Cancel may run on the utility session (it rehydrates and only writes state) and must never fail; a re-host would spend a ~300 MB process tree.
 func TestCancel_IsUnchangedByTheReHostAndStartsNoProcess(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -918,9 +859,7 @@ func TestCancel_IsUnchangedByTheReHostAndStartsNoProcess(t *testing.T) {
 	}
 }
 
-// Every run stays reachable: a failed run stays openable in a subtab though nothing is
-// running. The endpoint reads no lease and needs no run bridge — it goes out on the
-// shared utility session and passes `state` and `nodePlan` through verbatim.
+// A failed run stays openable with no lease and no run bridge: the read uses the utility session and passes `state` and `nodePlan` through.
 func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge(t *testing.T) {
 	h, _, br := newTestHub()
 	tree, err := json.Marshal(map[string]any{
@@ -966,17 +905,14 @@ func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge(t *testing.T) {
 	}
 }
 
-// The mechanism that lets a lifecycle frame ask the kept-carrier bound's question with
-// no timer. Asked directly, because the wait is bounded by the verb's own span and that
-// is a property of this type rather than of the frame.
+// whenIdle lets a lifecycle frame wait out a verb's span with no timer.
 func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 	t.Run("an idle carrier closes immediately", func(t *testing.T) {
 		var c carrierUse
 		sb := &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle}
 		ran := 0
 		c.whenIdle(sb, func() { ran++ })
-		// SYNCHRONOUSLY, so a caller that must run the close on its own goroutine
-		// (closeStoppedBridge runs from the forward loop) still controls when.
+		// Synchronously, so a caller needing its own goroutine controls when.
 		if ran != 1 {
 			t.Errorf("the close ran %d times on an idle carrier, want 1", ran)
 		}
@@ -1004,9 +940,7 @@ func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 		}
 	})
 
-	// A re-registration is cheap to reach (a duplicate frame, a paused frame then a
-	// terminal one) and closing twice tears down whatever a later re-host put under that
-	// chat id. WHICH closer survives is not asserted: both close the same carrier.
+	// Closing twice would tear down a later re-host's carrier; which closer survives is not asserted.
 	t.Run("two registrations still close once", func(t *testing.T) {
 		var c carrierUse
 		sb := &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle}
@@ -1020,8 +954,7 @@ func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 		}
 	})
 
-	// The entry has to go with the count, or a carrier that was closed once holds a
-	// stale closer that the NEXT verb's leave would fire against a different process.
+	// A fired closer is forgotten, or the next verb's leave fires it against another process.
 	t.Run("a fired closer is forgotten", func(t *testing.T) {
 		var c carrierUse
 		sb := &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle}
@@ -1037,10 +970,8 @@ func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 	})
 }
 
-// This closer and closeKeptCarrier are siblings and both must ask. Reachability is
-// narrow — the response and the notification travel one stdio stream but land in two
-// places, measured margin 15 ms — but Stop unblocks every pending waiter with the
-// bridge-exited sentinel, so a frame inside a verb's span makes its outcome unknown.
+// Both closers must ask about a verb in flight: Stop unblocks pending waiters with the bridge-exited
+// sentinel, so a frame inside a verb's span leaves its outcome unknown (measured margin 15 ms).
 func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	h, _, br := newTestHub()
 	br.setCallResult(methodKiroWorkflowInspect, parkedInspect(
@@ -1054,8 +985,7 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted) }()
 
-	// The fake's own call log, never carriers.busy: waiting on the thing under
-	// assertion would make the assertion vacuous.
+	// The fake's own log, never carriers.busy.
 	stop := time.Now().Add(5 * time.Second)
 	for !slices.Contains(br.callLog(), methodKiroWorkflowUpdate) {
 		if time.Now().After(stop) {
@@ -1067,8 +997,7 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 
 	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "completed"))
 
-	// A BOUNDED negative: the close the guard suppresses is a goroutine, so absence has
-	// to be observed over a window rather than at one instant.
+	// A bounded negative: the suppressed close is a goroutine.
 	windowEnd := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(windowEnd) {
 		if h.bridge.mgr.get(runChatID("wf_1")) == nil {
@@ -1083,34 +1012,30 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("the verb failed: %s", err)
 	}
-	// The other half: a deferred close that never fires is the leak the ask was
-	// supposed to avoid, so the frame's decision has to survive the wait.
+	// A deferred close that never fires is the leak.
 	if !waitForBridge(t, h, "wf_1", false) {
 		t.Error("the stopped run kept its process after the verb released the carrier")
 	}
 }
 
-// The identity re-check the deferral needs: a release on a non-context error closes the
-// carrier itself, so a later verb can re-host and put a DIFFERENT process under the same
-// chat id while this close is still pending.
+// The deferred close must re-check identity: a later re-host can put another process under the same chat id.
 func TestCloseStoppedBridge_DoesNotCloseALaterReHostsCarrier(t *testing.T) {
 	h, _, br := newTestHub()
 	kept := &sharedBridge{bridge: br, state: bridgeIdle}
 	h.bridge.mgr.insert(runChatID("wf_1"), kept)
-	// A verb holding it, so the frame's close is deferred rather than taken.
+	// A verb holding it defers the frame's close.
 	h.runs.carriers.enter(kept)
 
 	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "completed"))
 
-	// The window: the first carrier goes and a re-host registers a second one.
+	// The window: the first carrier goes and a re-host registers a second.
 	h.bridge.mgr.close(runChatID("wf_1"))
 	incumbent := &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle}
 	h.bridge.mgr.insert(runChatID("wf_1"), incumbent)
 
 	h.runs.carriers.leave(kept)
 
-	// BOUNDED for the same reason: without the check `leave` launches the close, and an
-	// assertion read at one instant usually wins that race.
+	// Bounded, as above.
 	windowEnd := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(windowEnd) {
 		if got := h.bridge.mgr.get(runChatID("wf_1")); got != incumbent {
@@ -1128,9 +1053,7 @@ func parentlessRunList(workflowID string) json.RawMessage {
 		`","status":"paused","parentSessionId":"` + testLaunchSession + `"}]}`)
 }
 
-// A parentless run is re-hosted by LOADING the session it was launched from, with the
-// profile's presets: KAS checks every step against that session, and a fresh session
-// would leave it rebuilt from disk without them, so the steps would ask.
+// A parentless run is re-hosted by loading its launch session with the profile's presets; a fresh session would make its steps ask.
 func TestRehost_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
@@ -1153,9 +1076,7 @@ func TestRehost_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
 	}
 }
 
-// A chat-parented run is reached through its chat's own bridge, which loads the chat's
-// session with the presets. A run bridge loading that session would be a second
-// resident on it, and a verb never closes the chat's bridge, refused or not.
+// A chat-parented run is reached through its chat's bridge; a verb never closes that bridge.
 func TestRehost_ReachesAChatParentedRunThroughTheChatsBridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -1173,8 +1094,7 @@ func TestRehost_ReachesAChatParentedRunThroughTheChatsBridge(t *testing.T) {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 
-	// The refused verb is the first to hold the chat's bridge, so nothing but the
-	// ownership rule keeps it open.
+	// The refused verb is the first to hold the chat's bridge.
 	if err := h.runs.Pause(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Setup: the scripted pause refusal did not happen")
 	}
@@ -1192,16 +1112,12 @@ func TestRehost_ReachesAChatParentedRunThroughTheChatsBridge(t *testing.T) {
 	}
 }
 
-// A verb is REFUSED as a state of the run when no carrier here can hold the session
-// the run was launched from, rather than driven on another session, where the
-// profile's presets do not govern its steps. Nothing is left registered, the chat's
-// own bridge stays, and the ask the reader typed into stays offered.
+// No carrier able to hold the launch session refuses the verb as a run state; nothing is registered, the chat's bridge stays, the ask stays offered.
 func TestRehost_ALaunchingSessionNoCarrierCanHoldRefusesTheVerb(t *testing.T) {
 	cases := map[string]struct {
 		list  func(*testing.T) json.RawMessage
 		chain []string
-		// failLoads makes every carrier the factory builds refuse a named load, so the
-		// chat's open falls back to a fresh session.
+		// failLoads makes every factory-built carrier refuse a named load.
 		failLoads bool
 	}{
 		"the inventory names no launching session": {
@@ -1234,7 +1150,7 @@ func TestRehost_ALaunchingSessionNoCarrierCanHoldRefusesTheVerb(t *testing.T) {
 					t.Fatalf("Setup: seeding the chat: %s", err)
 				}
 			}
-			// The utility session shares the factory, so it is started first.
+			// The utility session shares the factory, so start it first.
 			if _, err := h.runs.listRaw(t.Context()); err != nil {
 				t.Fatalf("Setup: warming the utility session: %s", err)
 			}
@@ -1286,8 +1202,7 @@ func chatRunList(parent string) func(*testing.T) json.RawMessage {
 	}
 }
 
-// Retry reaches a chat-parented run through the same contract: a retry KAS would run
-// under another session is never sent.
+// Retry is never sent under another session.
 func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -1312,9 +1227,7 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 	}
 }
 
-// A failed load and an unreadable inventory are faults on THIS server, not states of
-// the run: the verb may succeed on the next attempt. Neither drives the run on a fresh
-// session, and nothing is left registered.
+// A failed load and an unreadable inventory are server faults, not run states; nothing is left registered.
 func TestRehost_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 	cases := map[string]struct {
 		loadErr error
@@ -1357,8 +1270,7 @@ func TestRehost_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 	}
 }
 
-// The REST answers: a launching session no carrier can hold is a 409 carrying its
-// sentence, and a refused load is this server's failed spawn, a 500.
+// A launch session no carrier can hold is a 409; a refused load is a 500.
 func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testing.T) {
 	cases := map[string]struct {
 		list    json.RawMessage
@@ -1400,9 +1312,7 @@ func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testi
 	}
 }
 
-// Retry on a run launched from a segment its chat has since retired is refused even
-// while that chat is open: the open bridge holds another session, which never
-// registered the run and whose presets KAS does not check the run's steps against.
+// A run from a retired segment is refused even with its chat open: that bridge holds another session.
 func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -1432,9 +1342,7 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 	}
 }
 
-// A launching session no READABLE chat owns is not proved parentless while a chat
-// file exists that could not be read: it may be that chat's session, and loading it
-// on a run bridge would replay a conversation into a run carrier.
+// An incomplete chat scan proves nothing: the unreadable chat may own the session.
 func TestRehost_AnIncompleteChatScanRefusesToLoadOnARunBridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}

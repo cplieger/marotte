@@ -21,8 +21,6 @@ func newEventCaptureDeps() (*baseDeps, *[]marotte.ServerEvent) {
 	return deps, events
 }
 
-// --- Event sequence tests ---
-
 // The first delta of a stream OPENS an entry and every later one is a delta onto
 // it: one frame each, so a client that missed neither holds exactly what the turn
 // holds.
@@ -181,10 +179,8 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	}
 }
 
-// TestSequence_MCPStatus_RoutesDisabledToTheRecorder: the "disabled" status reaches the
-// recorder rather than the default arm, which discards. Whether it produces a row is the
-// recorder's call (only an unconfigured server gets one) — but the frame has to arrive for
-// that call to be possible at all.
+// TestSequence_MCPStatus_RoutesDisabledToTheRecorder pins that "disabled" reaches the recorder
+// (which decides whether it yields a row).
 func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	var disabled []string
@@ -194,8 +190,7 @@ func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 		Params: mustJSON(t, map[string]any{
 			"servers": []map[string]any{
 				{"name": "off-server", "status": "disabled"},
-				// "connecting" is transient, not terminal: it must stay discarded,
-				// or a row would be painted that the next frame replaces.
+				// "connecting" is transient: discarded, or a row would be painted the next frame replaces.
 				{"name": "starting-server", "status": "connecting"},
 				// A nameless entry is unaddressable and skipped before the switch.
 				{"name": "", "status": "disabled"},
@@ -247,8 +242,7 @@ func TestSequence_MCPStatus_CapturesToolsPromptsAndResources(t *testing.T) {
 	if connected != "everything" {
 		t.Fatalf("connected = %q", connected)
 	}
-	// The tool names are what the MCP page lists the server's capabilities
-	// from, so losing them leaves a connected server looking capability-free.
+	// The tool names are the server's listed capabilities.
 	if !slices.Equal(tools, []string{"search", "fetch"}) {
 		t.Errorf("tools = %v, want [search fetch] (empty name dropped)", tools)
 	}
@@ -266,20 +260,79 @@ func TestSequence_MCPStatus_CapturesToolsPromptsAndResources(t *testing.T) {
 	}
 }
 
+func TestSequence_MCPStatus_CapturesResourceTemplates(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	var templates []marotte.MCPResourceTemplateInfo
+	wrapper := &mcpCaptureDeps{baseDeps: deps, templates: &templates}
+	tr := New(rolesOf(wrapper))
+
+	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
+		Params: mustJSON(t, map[string]any{
+			"servers": []map[string]any{{
+				"name":   "everything",
+				"status": "connected",
+				"resourceTemplates": []map[string]any{
+					{"name": "issue", "uriTemplate": "gh://issues/{number}", "mimeType": "text/plain"},
+					{"name": "no template", "uriTemplate": ""},
+				},
+			}},
+		}),
+	})
+
+	want := []marotte.MCPResourceTemplateInfo{{Name: "issue", URITemplate: "gh://issues/{number}", MimeType: "text/plain"}}
+	if !slices.Equal(templates, want) {
+		t.Errorf("templates = %+v, want %+v (empty uriTemplate dropped)", templates, want)
+	}
+}
+
 type mcpCaptureDeps struct {
 	*baseDeps
 	connected *string
 	tools     *[]string
 	prompts   *[]marotte.MCPPromptInfo
 	resources *[]marotte.MCPResourceInfo
+	templates *[]marotte.MCPResourceTemplateInfo
 	disabled  *[]string
 	failures  *[]mcpFailure
+	oauth     *[]string
+	sources   map[string]marotte.MCPSource
 }
 
 func (d *mcpCaptureDeps) MCPRecorder() MCPRecorder {
 	return &captureMCPRecorder{
 		connected: d.connected, tools: d.tools, prompts: d.prompts,
-		resources: d.resources, disabled: d.disabled, failures: d.failures,
+		resources: d.resources, templates: d.templates, disabled: d.disabled, failures: d.failures,
+		oauth: d.oauth, sources: d.sources,
+	}
+}
+
+// A status frame lists every server, so the pool it yields is the whole set: a
+// server that is not connected, or offers nothing to read, is not in it.
+func TestReadMCPPool_IsTheConnectedServersWithSomethingToRead(t *testing.T) {
+	msg := &marotte.RPCResponse{Params: mustJSON(t, map[string]any{"servers": []map[string]any{
+		{"name": "docs", "status": "connected", "resources": []map[string]any{{"name": "a", "uri": "a://x"}}},
+		{"name": "tmpl", "status": "connected", "resourceTemplates": []map[string]any{{"name": "t", "uriTemplate": "t://{id}"}}},
+		{"name": "bare", "status": "connected"},
+		{"name": "down", "status": "failed", "resources": []map[string]any{{"name": "d", "uri": "d://x"}}},
+	}})}
+	got, ok := ReadMCPPool(msg)
+	if !ok {
+		t.Fatal("ReadMCPPool(valid frame) ok = false, want true")
+	}
+	var names []string
+	for _, s := range got {
+		names = append(names, s.Name)
+	}
+	if want := []string{"docs", "tmpl"}; !slices.Equal(names, want) {
+		t.Errorf("ReadMCPPool servers = %v, want %v", names, want)
+	}
+
+	empty, ok := ReadMCPPool(&marotte.RPCResponse{Params: mustJSON(t, map[string]any{"servers": []any{}})})
+	if !ok || len(empty) != 0 {
+		t.Errorf("ReadMCPPool(no servers) = %v, %t; want empty, true", empty, ok)
+	}
+	if _, ok := ReadMCPPool(&marotte.RPCResponse{Params: []byte("not json")}); ok {
+		t.Error("ReadMCPPool(undecodable frame) ok = true, want false")
 	}
 }
 
@@ -295,11 +348,21 @@ type captureMCPRecorder struct {
 	tools     *[]string
 	prompts   *[]marotte.MCPPromptInfo
 	resources *[]marotte.MCPResourceInfo
+	templates *[]marotte.MCPResourceTemplateInfo
 	disabled  *[]string
 	failures  *[]mcpFailure
+	oauth     *[]string
+	sources   map[string]marotte.MCPSource
 }
 
-func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo) {
+func (r *captureMCPRecorder) source(name string, src marotte.MCPSource) {
+	if r.sources != nil {
+		r.sources[name] = src
+	}
+}
+
+func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, src marotte.MCPSource, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo, templates []marotte.MCPResourceTemplateInfo) {
+	r.source(name, src)
 	if r.connected != nil {
 		*r.connected = name
 	}
@@ -312,17 +375,27 @@ func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, too
 	if r.resources != nil {
 		*r.resources = resources
 	}
+	if r.templates != nil {
+		*r.templates = templates
+	}
 }
-func (*captureMCPRecorder) RecordOAuth(context.Context, string, string) {}
-func (*captureMCPRecorder) SignalReady()                                {}
 
-func (r *captureMCPRecorder) RecordInitFailure(_ context.Context, name, reason string) {
+func (r *captureMCPRecorder) RecordOAuth(_ context.Context, name string, src marotte.MCPSource, _ string) {
+	r.source(name, src)
+	if r.oauth != nil {
+		*r.oauth = append(*r.oauth, name)
+	}
+}
+
+func (r *captureMCPRecorder) RecordInitFailure(_ context.Context, name string, src marotte.MCPSource, reason string) {
+	r.source(name, src)
 	if r.failures != nil {
 		*r.failures = append(*r.failures, mcpFailure{name: name, reason: reason})
 	}
 }
 
-func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string) {
+func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string, src marotte.MCPSource) {
+	r.source(name, src)
 	if r.disabled != nil {
 		*r.disabled = append(*r.disabled, name)
 	}
@@ -333,7 +406,6 @@ func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c-reason")
 
-	// Send a reasoning chunk (isReasoning=true)
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "thinking..."},
 	}), true, FrameAttribution{})
@@ -347,8 +419,7 @@ func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 		t.Fatal("no entry_opened event emitted")
 	}
 
-	// Send a regular text chunk (isReasoning=false): the kind change seals the
-	// thinking and opens a text entry in the same lane.
+	// A text chunk: the kind change seals the thinking and opens a text entry in the same lane.
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "answer"},
 	}), false, FrameAttribution{})
@@ -372,8 +443,6 @@ func hasEventType(events []marotte.ServerEvent, et marotte.EventType) bool {
 	}
 	return false
 }
-
-// --- Helpers ---
 
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()

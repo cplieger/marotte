@@ -45,14 +45,8 @@ func setKey(key, value string) func(map[string]json.RawMessage) error {
 	}
 }
 
-// TestUpdate_ConcurrentWritersLoseNoKey is the whole reason the lock lives in this
-// package: an HTTP-shaped write and a command-shaped one reach one file from two
-// packages, and a read-modify-write with no lock across it drops whichever key was
-// read before the other landed. Remove the lock from Update and this fails under
-// -race, usually with one of the two keys missing.
-//
-// Every writer names its OWN key, so the merged document is only complete when
-// every read saw every earlier write.
+// TestUpdate_ConcurrentWritersLoseNoKey pins the lock: each writer names its OWN key, so the
+// document is complete only if every read saw every earlier write.
 func TestUpdate_ConcurrentWritersLoseNoKey(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `{"theme":"dark"}`)
@@ -86,10 +80,8 @@ func TestUpdate_ConcurrentWritersLoseNoKey(t *testing.T) {
 	}
 }
 
-// TestUpdate_RefusesAnUnreadableDocument is the refuse-on-unreadable contract every
-// caller depends on: the write replaces the whole file, so merging over the empty
-// map a failed read would hand back replaces config.json with the caller's keys
-// alone and durably destroys the rest.
+// TestUpdate_RefusesAnUnreadableDocument pins refuse-on-unreadable: a merge over an empty map
+// would destroy the rest.
 func TestUpdate_RefusesAnUnreadableDocument(t *testing.T) {
 	tests := []struct {
 		desc string
@@ -179,16 +171,8 @@ func TestUpdate_ANewValueIsVisibleToTheNextRead(t *testing.T) {
 	}
 }
 
-// TestUpdate_RefusesAFifoInsteadOfBlockingForever is the FIFO-wedge property, and
-// it moved here with the lock. Update holds the per-configDir lock across its read,
-// and os.Open on a FIFO blocks in open(2) with no context deadline to rescue it —
-// so one FIFO planted at config.json would hold that lock for the life of the
-// process and wedge every later settings write. /config is a granted browse mount
-// and the agent has a shell there, so one mkfifo is the whole attack.
-//
-// Bounded rather than direct, because reverting the OpenRegular read does not make
-// this FAIL, it makes it HANG. The timer is what turns that into a report; the
-// goroutine is left blocked, which is acceptable in a binary about to exit.
+// TestUpdate_RefusesAFifoInsteadOfBlockingForever pins the FIFO refusal under Update's lock.
+// Bounded: a revert HANGS rather than fails.
 func TestUpdate_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	dir := t.TempDir()
 	if err := syscall.Mkfifo(filepath.Join(dir, Filename), 0o600); err != nil {
@@ -203,8 +187,7 @@ func TestUpdate_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 
 	select {
 	case err := <-done:
-		// Named rather than any error: the refusal has to come from the file being
-		// the wrong KIND, not from a read that happened to fail some other way.
+		// Named: the refusal must come from the file's KIND.
 		if !errors.Is(err, atomicfile.ErrNotRegular) {
 			t.Errorf("Update over a FIFO = %v, want atomicfile.ErrNotRegular", err)
 		}

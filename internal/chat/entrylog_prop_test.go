@@ -17,18 +17,9 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Property 4: a crash after any seal leaves every sealed entry on disk.
-//
-// The crash is modelled as a TRUNCATION at a drawn line boundary, optionally leaving
-// a partial line, rather than as a failing sync: a write that reached the page cache
-// and whose fsync then failed is still visible to the next open in this process, so a
-// failing sync models a write ERROR and not a crash. That arm is
-// TestEntryLog_AWriteErrorRefusesFurtherAppends, which drives the same package-var
-// seam the design names.
-//
-// The third arm — every turn closed with interrupted/unterminated, which IS the
-// reconcile signal, aborted results, seq continuing after — is folded in here, because
-// a truncated prefix is exactly a log with turns nothing can close.
+// A crash after any seal leaves every sealed entry on disk. The crash is a truncation at a line boundary, optionally
+// leaving a partial line: a failed fsync is a write error, covered by TestEntryLog_AWriteErrorRefusesFurtherAppends.
+// Also checked: every turn closed interrupted/unterminated with aborted results, and seq continuing.
 func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 	ctx := t.Context()
 	base := t.TempDir()
@@ -65,8 +56,8 @@ func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 	})
 }
 
-// writeUnterminatedLog builds a log of one or two turns with nothing closed, which is
-// what a crash mid-turn leaves, and answers the entries it appended in order.
+// writeUnterminatedLog builds a log of one or two turns with nothing closed, as a mid-turn crash leaves, and returns
+// the entries in append order.
 func writeUnterminatedLog(rt *rapid.T, ctx context.Context, root string, h EntryHeader) []marotte.Entry {
 	lg, err := OpenEntryLog(ctx, root, h)
 	if err != nil {
@@ -100,8 +91,7 @@ func writeUnterminatedLog(rt *rapid.T, ctx context.Context, root string, h Entry
 	return written
 }
 
-// drawEntry is one sealed entry of a kind the crash arm cares about: a tool_call
-// leaves work the closer must abort, and the rest are ordinary body entries.
+// drawEntry is one sealed entry the crash arm cares about: a tool_call the closer must abort, or a body entry.
 func drawEntry(rt *rapid.T, turn, tag string) *marotte.Entry {
 	lane := rapid.SampledFrom([]string{"", "d1"}).Draw(rt, "lane"+tag)
 	switch rapid.IntRange(0, 2).Draw(rt, "kind"+tag) {
@@ -116,8 +106,7 @@ func drawEntry(rt *rapid.T, turn, tag string) *marotte.Entry {
 	}
 }
 
-// crash truncates the log after the durable-th line, optionally leaving a partial
-// line, which is what a host crash mid-write leaves.
+// crash truncates the log after the durable-th line, optionally leaving a partial line.
 func crash(rt *rapid.T, path string, lines [][]byte, durable int, torn bool) {
 	var buf bytes.Buffer
 	for _, line := range lines[:durable] {
@@ -151,8 +140,7 @@ func readLogLines(rt *rapid.T, path string) [][]byte {
 	return out
 }
 
-// checkDurablePrefix is the property: every entry whose seal returned before the
-// crash is on disk, in order, with the seq it took.
+// checkDurablePrefix pins that every entry sealed before the crash is on disk, in order, with its seq.
 func checkDurablePrefix(rt *rapid.T, survived, want []marotte.Entry) {
 	if len(survived) < len(want) {
 		rt.Fatalf("the log holds %d entries after the crash, want at least the %d durable ones: %v",
@@ -177,8 +165,7 @@ func checkFileEndsAtALineBoundary(rt *rapid.T, path string) {
 	}
 }
 
-// checkEveryTurnIsClosed holds the invariant an open turn in the log always belongs
-// to a live process: after an open, none does.
+// checkEveryTurnIsClosed pins that an open turn belongs to a live process, so after an open none remains.
 func checkEveryTurnIsClosed(rt *rapid.T, entries []marotte.Entry) {
 	open := map[string]bool{}
 	unsettled := map[string]bool{}
@@ -223,17 +210,15 @@ func checkEveryTurnIsClosed(rt *rapid.T, entries []marotte.Entry) {
 	}
 }
 
-// checkReconcileSignalIsInTheLog holds that the crash the closer repaired is still
-// ASKED about: the synthesized closer's "unterminated" stop reason IS the signal, so
-// the predicate answers true off the log with no header flag written beside it.
+// checkReconcileSignalIsInTheLog pins that the synthesized closer's "unterminated" is the signal, so the predicate answers true
+// from the log alone.
 func checkReconcileSignalIsInTheLog(rt *rapid.T, lg *EntryLog) {
 	if !lg.NeedsReconcile() {
 		rt.Fatal("NeedsReconcile() is false after a crash the closer had to repair")
 	}
 }
 
-// checkSeqContinues holds that the next append picks up after the closer rather than
-// reusing a seq the crash removed.
+// checkSeqContinues pins that the next append follows the closer rather than reusing a removed seq.
 func checkSeqContinues(rt *rapid.T, ctx context.Context, lg *EntryLog, entries []marotte.Entry) {
 	newest := entries[len(entries)-1].Turn
 	want := entries[len(entries)-1].Seq + 1
@@ -254,10 +239,8 @@ func tailOf(data []byte) string {
 	return string(data)
 }
 
-// The store half of property 9: a run's log holds one turn per node path, their
-// entries interleave, each turn's seq is contiguous on its own, a crash closes the
-// open step turn with the placeholder, and the resumed run's next frame for the same
-// path opens a NEW turn. The run root creates no chats/ directory.
+// A run's log holds one turn per node path: entries interleave, each turn's seq is contiguous, a crash closes the
+// open step turn, and a resumed run's next frame for the path opens a new turn. No chats/ directory is created.
 func TestRunLogHoldsOneTurnPerNodePath(t *testing.T) {
 	ctx := t.Context()
 	configDir := t.TempDir()
@@ -278,7 +261,7 @@ func TestRunLogHoldsOneTurnPerNodePath(t *testing.T) {
 	wantShapes(t, mustRunRange(t, ctx, lg, test),
 		[]string{"0:/turn_open", "1:/text", "2:/text", "3:/text"}, "the test step's turn")
 
-	// node_complete closes one path's turn and leaves the other open.
+	// node_complete closes one path's turn, leaving the other open.
 	if err := lg.Append(ctx, entryOf(build, "", build+":close", marotte.EntryKindTurnClose,
 		marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})); err != nil {
 		t.Fatalf("close the build turn: %v", err)
@@ -360,13 +343,10 @@ func nodePathOf(t *testing.T, lg *EntryLog, turn string) string {
 	return open.NodePath
 }
 
-// Property 6: a revert is a RECORD, and the range it names is unreadable through every
-// surface but the merge's own. The generator is the COMPOSITION: k turns with bodies, one
-// of which may STRADDLE the revert (open before it, closed after, an unsettled tool_call
-// inside), a revert at j — the oldest turn included, so the no-survivor path is drawn —
-// further turns, then a SECOND revert drawn from the SURVIVING view. The model beside it
-// applies the skip rule independently of the index, so an implementation that merely
-// agrees with itself still fails.
+// A revert is a record, and its range is unreadable through every surface but the merge's. Generated: k turns, one
+// possibly straddling the revert with an unsettled tool_call, a revert at j (oldest included, the no-survivor path),
+// more turns, then a second revert drawn from the surviving view. An independent model applies the skip rule, so
+// self-agreement fails.
 func TestEntryLogARevertIsARecordAndTheRangeIsUnreadable(t *testing.T) {
 	ctx := t.Context()
 	base := t.TempDir()
@@ -380,8 +360,7 @@ func TestEntryLogARevertIsARecordAndTheRangeIsUnreadable(t *testing.T) {
 		oldest := 0
 		if rapid.Bool().Draw(rt, "straddler") {
 			straddler = s.openStraddler()
-			// Its own turn_open is the file's first, so every revertible turn lies
-			// above it and the straddle is a property of the drawn j, not of luck.
+			// Its turn_open is the file's first, so the straddle follows from j.
 			oldest = 1
 		}
 		for i := range rapid.IntRange(1, 4).Draw(rt, "turns") {
@@ -392,8 +371,7 @@ func TestEntryLogARevertIsARecordAndTheRangeIsUnreadable(t *testing.T) {
 			s.closeTurn(turn)
 		}
 		if straddler != "" {
-			// Closed AFTER every prompt turn's own closer, which is what makes its
-			// byte range straddle whatever the revert takes.
+			// Closed after every prompt turn's closer, so its range straddles whatever the revert takes.
 			s.closeTurn(straddler)
 		}
 
@@ -422,9 +400,8 @@ func TestEntryLogARevertIsARecordAndTheRangeIsUnreadable(t *testing.T) {
 	})
 }
 
-// revertScene is one generated log beside the MODEL property 6 reads it against: every
-// turn in FILE order, the ordinal each took at its open, the reverted set the skip rule
-// produces, and the record ids appended so far.
+// revertScene is one generated log beside its model: every turn in file order, each ordinal, the reverted set, and
+// the record ids so far.
 type revertScene struct {
 	rt       *rapid.T
 	ctx      context.Context
@@ -437,10 +414,8 @@ type revertScene struct {
 	records  []recordedRevert
 }
 
-// recordedRevert is one record the model wrote, beside the CARRIER it lives in: a later
-// revert that takes that carrier hides the record with it, which is the honest answer
-// rather than a lost boundary row — the older cut is inside the range the newer rewind
-// removed, so the transcript draws one row at the newer cut.
+// recordedRevert is one record with its carrier. A later revert taking that carrier hides the record too: the older
+// cut is inside the newer range, so one boundary row shows.
 type recordedRevert struct{ id, carrier string }
 
 func openRevertScene(rt *rapid.T, ctx context.Context, root string) *revertScene {
@@ -457,9 +432,8 @@ func openRevertScene(rt *rapid.T, ctx context.Context, root string) *revertScene
 
 func (s *revertScene) close() { _ = s.log.Close() }
 
-// reopen is what runs the scan, the incomplete-carrier rule and the store-open closer
-// again, so every arm is asserted against the append path AND against the index a
-// fresh process builds from the same bytes.
+// reopen reruns the scan, the incomplete-carrier rule and the store-open closer, so every arm is checked against a
+// fresh process's index too.
 func (s *revertScene) reopen() {
 	if err := s.log.Close(); err != nil {
 		s.rt.Fatalf("Close(): %v", err)
@@ -483,9 +457,8 @@ func (s *revertScene) openPrompt(tag string) string {
 	return e.Turn
 }
 
-// openStraddler is the agent-initiated turn the straddler arm needs, holding one
-// UNSETTLED tool_call: it is closed before the revert, so nothing is owed an aborted
-// result and the arm asserts that nothing writes one.
+// openStraddler opens the agent-initiated turn with one unsettled tool_call, closed before the revert, so nothing may
+// write an aborted result for it.
 func (s *revertScene) openStraddler() string {
 	e, err := s.log.OpenTurn(s.ctx, &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart})
 	if err != nil {
@@ -499,9 +472,7 @@ func (s *revertScene) openStraddler() string {
 	return e.Turn
 }
 
-// observeOpen records the turn the log just opened AND asserts its ordinal: every
-// turn takes the surviving high-water plus one, which after a revert is the reverted
-// turn's own n and after a no-survivor revert is 1.
+// observeOpen records the turn the log opened and asserts its ordinal: the surviving high-water plus one.
 func (s *revertScene) observeOpen(e *marotte.Entry, want uint64, tag string) {
 	var open marotte.EntryTurnOpen
 	if err := json.Unmarshal(e.Payload, &open); err != nil {
@@ -534,8 +505,7 @@ func (s *revertScene) isReverted(turn string) bool {
 	return gone
 }
 
-// survivingOrder is the model's own surviving view: file order with every turn the
-// rule marked dropped.
+// survivingOrder is the model's surviving view: file order minus marked turns.
 func (s *revertScene) survivingOrder() []string {
 	order := make([]string, 0, len(s.order))
 	for _, id := range s.order {
@@ -546,8 +516,7 @@ func (s *revertScene) survivingOrder() []string {
 	return order
 }
 
-// newestOutside is the carrier rule computed by the model: the newest turn in FILE
-// order that is neither in this window nor already taken by an earlier record.
+// newestOutside is the model's carrier rule: the newest turn in file order outside this window and earlier windows.
 func (s *revertScene) newestOutside(window map[string]struct{}) (string, bool) {
 	for _, id := range slices.Backward(s.order) {
 		if _, in := window[id]; in || s.isReverted(id) {
@@ -579,9 +548,8 @@ func (s *revertScene) fileBytes() []byte {
 	return data
 }
 
-// revert drives one revert and asserts the arms that are about the WRITE: the carrier
-// is the newest survivor against the union of every window, a minted carrier is n = 1
-// and CLOSED, the record states its own window, and the file is append-only.
+// revert drives one revert and asserts the write: the carrier is the newest survivor of every window, a minted
+// carrier is n = 1 and closed, the record states its window, and the file is append-only.
 func (s *revertScene) revert(idx int) {
 	from := s.order[idx]
 	before := s.fileBytes()
@@ -651,9 +619,8 @@ func (s *revertScene) revert(idx int) {
 	}
 }
 
-// betweenTurns is the between-turns arm: after a revert the newest turn in FILE order is
-// inside the window, so a lane-less append must land in the newest SURVIVING turn and
-// continue THAT turn's seq.
+// betweenTurns pins that after a revert the newest turn in file order is inside the window, so a lane-less append lands in the
+// newest surviving turn and continues its seq.
 func (s *revertScene) betweenTurns(tag string) {
 	turn, ok := s.newestOutside(nil)
 	if !ok {
@@ -691,7 +658,7 @@ func (s *revertScene) betweenTurns(tag string) {
 	}
 }
 
-// check is every READ surface against the model, live and after a reopen alike.
+// check compares every read surface with the model, live and after a reopen.
 func (s *revertScene) check(when string) {
 	surviving := s.survivingOrder()
 	entries, err := s.log.All()
@@ -701,8 +668,7 @@ func (s *revertScene) check(when string) {
 	if got := turnsIn(entries); !slices.Equal(got, surviving) {
 		s.rt.Fatalf("%s: All() holds turns %v, want the surviving view %v", when, got, surviving)
 	}
-	// Every generated turn is drawn — a prompt by its source, the straddler by its
-	// tool_call, a carrier by the record it carries — so the rail IS the surviving view.
+	// Every generated turn is drawn, so the rail is the surviving view.
 	if got := railIDs(s.log); !slices.Equal(got, surviving) {
 		s.rt.Fatalf("%s: RailRows() names %v, want %v", when, got, surviving)
 	}
@@ -752,9 +718,7 @@ func (s *revertScene) check(when string) {
 	if !maps.Equal(reverted, s.reverted) {
 		s.rt.Fatalf("%s: the index marks %v reverted, want the rule's own set %v", when, reverted, s.reverted)
 	}
-	// Every record whose CARRIER survives is visible, and the newest one always is: a
-	// carrier chosen against this window alone files the second record into a turn the
-	// first took, where no reader ever meets it.
+	// Every record whose carrier survives is visible, the newest always.
 	seen := make(map[string]struct{}, len(s.records))
 	for _, e := range entries {
 		if e.Kind == marotte.EntryKindTurnRevert {
@@ -780,9 +744,8 @@ func (s *revertScene) check(when string) {
 	}
 }
 
-// checkStraddlerSurvivedWhole is property 6's STRADDLER arm, and every clause is an
-// absence: the turn a revert reached across survives with its own three entries, its
-// own closer, no aborted result and no second closer.
+// checkStraddlerSurvivedWhole pins that the straddled turn keeps its three entries and its closer, with no aborted result or
+// second closer.
 func (s *revertScene) checkStraddlerSurvivedWhole(when, turn string) {
 	entries, err := s.log.TurnRange(turn, 0)
 	if err != nil {
@@ -819,8 +782,7 @@ func (s *revertScene) checkStraddlerSurvivedWhole(when, turn string) {
 	}
 }
 
-// checkNoSynthesizedCloser reads the FILE rather than the index: a rewind leaves no
-// closer behind anywhere, which is why it raises no reconcile signal.
+// checkNoSynthesizedCloser reads the file, not the index: a rewind leaves no closer anywhere.
 func (s *revertScene) checkNoSynthesizedCloser(when string) {
 	for _, line := range readLogLines(s.rt, filepath.Join(s.root, entriesFileName)) {
 		var e marotte.Entry

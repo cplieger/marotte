@@ -34,6 +34,9 @@ interface SubagentBox {
   setStatus(status: ToolStatus): void;
   /** Update the delegate's display name. */
   setName(name: string): void;
+  /** Secondary identity beside the name (an inline helper's model and effort);
+   *  empty removes it. */
+  setDetail(detail: string): void;
   /** Swap the identity glyph (SVG string; roles.ts iconForSubagent). The
    *  spinner still owns the slot while the delegate is active. */
   setIcon(svg: string): void;
@@ -126,6 +129,7 @@ function buildShell(
   // without it a settled delegate keeps the running accent forever.
   const icon = el("span", { className: "subagent-icon tool-icon" });
   const nameEl = el("span", { className: "subagent-name" }, name);
+  const detailEl = el("span", { className: "subagent-detail" });
   // ONE owner for the state word, chosen by which head was built: an anchor names
   // itself, so building both would announce the word twice.
   const stateEl = opener === undefined ? el("span", { className: "sr-only" }) : null;
@@ -145,6 +149,7 @@ function buildShell(
     },
     icon,
     nameEl,
+    detailEl,
     stateEl,
     chevron,
   );
@@ -171,6 +176,7 @@ function buildShell(
   let iconSvg = ICON_TAB_AGENT;
   let lastStatus = status;
   let displayName = name;
+  let displayDetail = "";
 
   /** Write the name and its state word into whichever channel this head has. */
   const refreshName = (s: ToolStatus): void => {
@@ -180,9 +186,10 @@ function buildShell(
       }
       return;
     }
-    // `<thing>, <state word>` and nothing else: the role already says the head
-    // opens something (run-card.ts's `.run-step-head` records the same call).
-    headLink.setAttribute("aria-label", `${displayName}, ${stateWord(s)}`);
+    // `<thing>, <state word>`, plus the detail when there is one: the role already
+    // says the head opens something (run-card.ts's `.run-step-head` makes the same call).
+    const parts = displayDetail === "" ? [displayName] : [displayName, displayDetail];
+    headLink.setAttribute("aria-label", `${parts.join(", ")}, ${stateWord(s)}`);
   };
 
   const applyIcon = (s: ToolStatus): void => {
@@ -220,6 +227,11 @@ function buildShell(
       setName(n: string): void {
         displayName = n;
         nameEl.textContent = n;
+        refreshName(lastStatus);
+      },
+      setDetail(d: string): void {
+        displayDetail = d;
+        detailEl.textContent = d;
         refreshName(lastStatus);
       },
       setIcon(svg: string): void {
@@ -277,7 +289,18 @@ export function buildSubagentCard(
       if (!live) {
         return;
       }
-      tail.replaceChildren(...lines.map((l) => el("div", { className: "subagent-tail-line" }, l)));
+      // No lines leaves the tail EMPTY, which its `:empty` resting state keys on.
+      tail.replaceChildren(
+        ...(lines.length === 0
+          ? []
+          : [
+              el(
+                "div",
+                { className: "subagent-tail-window" },
+                ...lines.map((l) => el("div", { className: "subagent-tail-line" }, l)),
+              ),
+            ]),
+      );
     },
   };
 }

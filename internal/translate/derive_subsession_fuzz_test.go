@@ -27,7 +27,6 @@ func FuzzDeriveSubSession(f *testing.F) {
 
 		got := tr.deriveSubSession(chatID, sessionID)
 
-		// Apply the same logic to derive expected result.
 		var want string
 		if sessionID != "" && parentSession != "" && sessionID != parentSession {
 			want = sessionID

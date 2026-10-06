@@ -1,25 +1,11 @@
 #!/usr/bin/env bash
-# prune_superseded_kas_runtimes(): reclaim the ~240 MB agent-server runtime each
-# kiro-cli version unpacks under <data-dir>/kas/<version>-<hash>/, keeping only
-# the pinned one.
-#
-# This is the entrypoint's only root `rm -rf`, and its target is derived entirely
-# from the environment (XDG_DATA_HOME, else $HOME/.local/share), so the REFUSALS
-# carry the weight: a symlinked store or data dir, a path realpath cannot confirm
-# inside the data dir, an entry the pruner has never seen. It is hygiene and never
-# an integrity gate — it warns and returns 0 either way, which is exactly why an
-# exit code proves nothing here and every case below asserts the on-disk tree plus
-# the specific warning line.
-# Lint directives for this whole file, each against a stated guarantee rather than
-# an assumption:
-#   SC2015 - the assertion form `[ cond ] && ok "..." || no "..."` cannot mis-fire,
-#     because lib.sh's ok/no return 0 unconditionally by design (see their comment).
-#   SC2034 - the variables set below are the INPUTS to entrypoint.sh code that is
-#     extracted and sourced at RUNTIME, so shellcheck cannot see the reads.
-#   SC2329 - the two external-command stubs (realpath, rm) are invoked by that same
-#     runtime-sourced code, never from this file, so shellcheck sees a definition
-#     with no caller. Every other function here is called directly, so the disable
-#     cannot hide a dead helper.
+# prune_superseded_kas_runtimes(): reclaim the ~240 MB agent-server runtime each kiro-cli version
+# unpacks under <data-dir>/kas/<version>-<hash>/, keeping only the pinned one. The entrypoint's only
+# root `rm -rf`, its target derived from the environment, so the REFUSALS carry the weight. It warns
+# and returns 0 either way, so every case asserts the on-disk tree plus the warning line. Lint:
+#   SC2015 - `[ cond ] && ok || no` cannot mis-fire: lib.sh's ok/no always return 0.
+#   SC2034 - these variables are inputs to entrypoint.sh code sourced at RUNTIME.
+#   SC2329 - the realpath and rm stubs are called only by that runtime-sourced code.
 # shellcheck disable=SC2015,SC2034,SC2329
 set -u
 
@@ -51,9 +37,8 @@ prune_superseded_kas_runtimes >/dev/null 2>&1
 [ ! -e "$KAS/2.13.0-def.lock" ] && ok "the superseded .lock sibling pruned too" \
   || no ".lock sibling" "still present"
 
-# Both streams go to files rather than /dev/null: the refusals are on stderr and the
-# skip/prune narration is on stdout, and several cases below can only distinguish
-# the guard that fired by reading one of them.
+# Both streams to files: refusals are on stderr, skip/prune narration on stdout, and several cases
+# tell the firing guard apart only by reading one.
 prune_quietly() {
   prune_superseded_kas_runtimes >"$WORK/out.log" 2>"$WORK/warn.log"
 }
@@ -75,10 +60,8 @@ else
   no "unrecognized entries" "the pruner deleted another program's state"
 fi
 
-# The version-keyed test is an ANCHORED three-component match, and the anchor is
-# what separates "a runtime tree" from "a name that merely contains a version".
-# Neither near-miss below is prunable, and the skip is narrated rather than silent
-# so a kas/ layout change shows up in the boot log instead of being absorbed.
+# An ANCHORED three-component version match: neither near-miss is prunable, and the skip is
+# narrated so a kas/ layout change shows in the boot log.
 setup
 mkdir -p "$KAS/2.14.2-abc" "$KAS/2.13-def" "$KAS/v2.13.0-def"
 prune_quietly
@@ -87,9 +70,8 @@ prune_quietly
   && ok "a two-component and a v-prefixed name are not version-keyed, kept and narrated" \
   || no "near-miss names" "deleted, or the skip was not narrated"
 
-# The keep-pattern is "$KIRO_CLI_VERSION"-*, and the dash is load-bearing: without
-# it a LONGER version sharing the pin's digits would read as the pin and survive
-# forever, which is the leak this function exists to stop.
+# The dash in "$KIRO_CLI_VERSION"-* is load-bearing: without it a LONGER version sharing the pin's
+# digits would survive forever.
 setup
 mkdir -p "$KAS/2.14.2-abc" "$KAS/2.14.20-xyz"
 prune_quietly
@@ -99,24 +81,15 @@ prune_quietly
 
 # --- 3. THE SECURITY CASE: a symlinked store must not redirect a root rm -rf ----
 #
-# The victim tree's contents are DELIBERATELY version-keyed and non-pinned
-# ("2.13.0-victim"), i.e. exactly the shape the pruner deletes. A non-version-keyed
-# victim is skipped by the loop anyway, so it would pass with every symlink guard
-# removed and prove nothing. Bait has to satisfy the EARLIER guards too: the
-# function returns at `[ -d "$kas_dir" ]` before it looks at any symlink, so each
-# case below plants the version-keyed entries at the exact path the resolved
-# $kas_dir names. Verified against THIS entrypoint by neutralising both guards in a
-# /tmp copy and watching each bait get deleted.
+# The bait is DELIBERATELY version-keyed and non-pinned ("2.13.0-victim"), the shape the pruner
+# deletes, and planted where the resolved $kas_dir points, past the `[ -d "$kas_dir" ]` return.
+# Verified by neutralising both guards in a /tmp copy and watching each bait go.
 plant_victim() {
   mkdir -p "$1/2.13.0-victim" && : >"$1/2.13.0-victim/data"
 }
 
-# Survival alone cannot say WHICH guard refused, and for this threat the two are
-# redundant: realpath resolves a symlink away, so every redirect the -L check
-# catches ALSO fails the containment check. No input isolates -L by outcome —
-# removing it alone leaves the tree intact. What the guards do not share is what
-# they SAY, so each case asserts its own refusal line; drop the -L check and the
-# symlink cases report the containment refusal instead, and fail here.
+# realpath resolves symlinks, so every redirect -L catches also fails containment; outcome cannot
+# isolate -L. Each case asserts its own refusal LINE instead.
 setup
 VICTIM="$ROOT/victim"
 plant_victim "$VICTIM"
@@ -130,9 +103,7 @@ prune_quietly
 
 setup
 VICTIM="$ROOT/victim2"
-# The victim's version-keyed entries sit under a real `kas` child, because that is
-# what $kas_dir resolves to once `kiro-cli` is the symlink -- without it the `-d`
-# check returns first and no guard is exercised at all.
+# A real `kas` child under the symlinked `kiro-cli`, or the `-d` check returns first.
 plant_victim "$VICTIM/kas"
 rm -rf "$XDG_DATA_HOME/kiro-cli"
 ln -s "$VICTIM" "$XDG_DATA_HOME/kiro-cli" # the data dir itself is the symlink
@@ -141,12 +112,8 @@ prune_quietly
   && ok "symlinked data dir refused BY the symlink guard; the victim tree survived" \
   || no "symlinked data dir" "the pruner deleted through the symlink, or a different guard caught it"
 
-# The containment check is a SECOND, independent guard, and this case isolates it:
-# NO symlink is involved anywhere, so the -L guard above cannot fire. A
-# non-canonical XDG_DATA_HOME (one carrying "..", which an operator env var
-# legitimately can) makes realpath disagree with the literal path the case pattern
-# is built from, and the pruner refuses rather than deleting against a path it
-# cannot confirm.
+# The containment guard alone, with no symlink: a ".." in XDG_DATA_HOME makes realpath disagree
+# with the literal path, and the pruner refuses.
 setup
 mkdir -p "$ROOT/real-share"
 XDG_DATA_HOME="$ROOT/real-share/../real-share"
@@ -158,12 +125,8 @@ prune_quietly
   && ok "non-canonical data-dir path refused BY the containment guard (no symlink involved)" \
   || no "containment check" "pruned against a path realpath could not confirm, or a different guard caught it"
 
-# The same guard's OTHER input: realpath itself failing. `kas_real=""` must not
-# collapse into "resolved fine" -- an empty answer has to refuse, and say so
-# ("unknown") rather than printing an empty target nobody can act on. realpath is an
-# external command, so a shell function shadows it -- inside a SUBSHELL, so the stub
-# cannot outlive the one call and cannot shadow this file's own use of the same
-# command name.
+# realpath itself failing: an empty answer must refuse and say "unknown". Stubbed inside a SUBSHELL
+# so it cannot shadow this file's own realpath.
 setup
 plant_victim "$KAS"
 (
@@ -176,10 +139,8 @@ plant_victim "$KAS"
   || no "unresolvable kas path" "pruned anyway, or reported an empty target"
 
 # --- 4. a failed delete warns; it never fails the boot ---------------------------
-# Root cannot be denied a directory it owns, so the rm failure this branch exists
-# for (an immutable attribute, EPERM on a foreign mount) is provoked by shadowing
-# the external rm, again scoped to a subshell. The contract is warn-and-continue:
-# hygiene must not brick a container whose /config the operator is free to reshape.
+# An rm failure (immutable attribute, EPERM) is provoked by shadowing rm in a subshell. The contract
+# is warn-and-continue: hygiene must not brick the container.
 setup
 mkdir -p "$KAS/2.13.0-def"
 (
@@ -206,12 +167,9 @@ setup
 unset XDG_DATA_HOME
 HOME_SAVED="${HOME:-}"
 unset HOME
-# "Without touching anything" needs the EXECUTION to be observable, not just the
-# status: with the HOME guard deleted, bash expands the next line to
-# data_home=/.local/share and the function still returns 0 because that store does
-# not exist -- a false green over an environment-derived root path in the same
-# function that runs a root rm -rf. The xtrace log is the observable: the guard's
-# return must fire before any data_home assignment is reached.
+# The EXECUTION must be observable: with the HOME guard deleted the function derives
+# data_home=/.local/share and still returns 0, a false green before a root rm -rf. The xtrace log
+# shows whether the guard returned before any data_home assignment.
 _trace="$WORK/unset-home-trace"
 {
   BASH_XTRACEFD=7
@@ -222,23 +180,16 @@ _trace="$WORK/unset-home-trace"
   unset BASH_XTRACEFD
 } 7>"$_trace"
 export HOME="$HOME_SAVED"
-# The first assignment (data_home="${XDG_DATA_HOME:-}") legitimately runs and is
-# empty; what the guard must prevent is the HOME-fallback DERIVATION, whose trace
-# line carries .local/share (from an unset HOME it would derive /.local/share, a
-# root-relative path in the same function that runs a root rm -rf).
-# The `data_home=` anchor proves the CAPTURE IS LIVE. Without it the assertion is
-# purely negative, so a trace that never landed (a lost BASH_XTRACEFD, output going
-# to the discarded stderr instead) would satisfy it vacuously -- and would satisfy
-# it while the guard was broken too.
+# The empty XDG assignment legitimately runs; the guard must prevent the HOME-fallback DERIVATION
+# (its trace carries .local/share). The `data_home=` anchor proves the capture is LIVE, or a lost
+# BASH_XTRACEFD would pass vacuously.
 grep -q 'data_home=' "$_trace" && [ "$rc" -eq 0 ] && ! grep -q '\.local/share' "$_trace" \
   && ok "neither XDG_DATA_HOME nor HOME set returns 0 before the HOME fallback is derived" \
   || no "unset HOME" "rc=$rc, trace lines=$(wc -l <"$_trace"), derivations: $(grep '\.local/share' "$_trace" | head -2 | tr '\n' ';')"
 
 # --- 6. data-dir resolution must match kiro-cli's own ---------------------------
-# Pruning a directory the CLI does not use is a silent no-op, the one failure mode a
-# hygiene step must not have. Both halves of the resolution are asserted with a
-# prunable tree on BOTH candidate paths, so a swapped precedence deletes the wrong
-# one and is visible from either side.
+# Pruning a directory the CLI does not use is a silent no-op. A prunable tree sits on BOTH candidate
+# paths, so a swapped precedence deletes the wrong one visibly.
 setup
 HOME_SAVED="${HOME:-}"
 export HOME="$ROOT/home"

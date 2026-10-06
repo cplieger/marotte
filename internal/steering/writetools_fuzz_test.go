@@ -6,11 +6,7 @@ import (
 	"unicode/utf8"
 )
 
-// FuzzWriteTools verifies writeTools never panics on arbitrary JSON bytes and
-// produces valid UTF-8 output.
-//
-// Bug class: panic on malformed JSON, type assertion failure on unexpected
-// map entry types, unbounded slice growth.
+// FuzzWriteTools verifies writeTools never panics on arbitrary JSON and writes valid UTF-8.
 func FuzzWriteTools(f *testing.F) {
 	f.Add([]byte(`{"runtimes":{"node":{"version":"20.1"}}}`))
 	f.Add([]byte(`{}`))
@@ -24,12 +20,11 @@ func FuzzWriteTools(f *testing.F) {
 		writeTools(&b, data)
 		result := b.String()
 
-		// Invariant 1: output is valid UTF-8.
 		if !utf8.ValidString(result) {
 			t.Fatalf("writeTools produced invalid UTF-8 for input %q", data)
 		}
 
-		// Invariant 2: if output is non-empty, starts with the header.
+		// Non-empty output starts with the header.
 		if result != "" && !strings.HasPrefix(result, "## Installed tools\n") {
 			t.Fatalf("writeTools output doesn't start with expected header: %q", result[:min(50, len(result))])
 		}

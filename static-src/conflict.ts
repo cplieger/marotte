@@ -1,17 +1,5 @@
-// ---------------------------------------------------------------------------
-// Merge-conflict parser. Extracts <<<<<<< / ======= / >>>>>>> hunks from
-// file content and supports resolution operations that rewrite the file
-// back without markers.
-//
-// We only handle the classic 3-marker form for RESOLUTION. `|||||||` base
-// sections from git's diff3 style are recognized and EXCLUDED from the
-// ours side (they are common-ancestor content that belongs in no 2-way
-// resolution); the inline resolution UI stays 2-way. Folding the base
-// section into "ours" — the previous behavior — corrupted the buffer on
-// every "Ours"/"Both" click in a `merge.conflictStyle=diff3` repo: the
-// `||||||| base` marker line and the ancestor lines were spliced into
-// the resolved output and persisted on save.
-// ---------------------------------------------------------------------------
+// Merge-conflict parser and 2-way resolution. diff3 `|||||||` base sections are recognized and excluded from ours:
+// folding them in spliced the base marker and ancestor lines into the resolved file on save.
 
 export interface ConflictHunk {
   /** 0-based line index of the `<<<<<<<` line in the file. */
@@ -41,8 +29,7 @@ const BASE_RX = /^\|{7}( .*)?$/;
 const SEP_RX = /^={7}$/;
 const END_RX = /^>{7}( .*)?$/;
 
-/** Parse a file's content into conflict hunks. Returns an empty hunks
- *  list when no markers are found. Safe to call on any text. */
+/** Parse content into conflict hunks; empty when there are no markers. Safe on any text. */
 export function parseConflicts(content: string): ConflictFile {
   const trailing = content.endsWith("\n");
   const text = trailing ? content.slice(0, -1) : content;
@@ -57,8 +44,7 @@ export function parseConflicts(content: string): ConflictFile {
       i++;
       continue;
     }
-    // Find (optional) diff3 base marker, separator, and end. The base
-    // marker is only meaningful between the head and the separator.
+    // The diff3 base marker only counts between the head and the separator.
     let base = -1;
     let sep = -1;
     let end = -1;
@@ -72,13 +58,8 @@ export function parseConflicts(content: string): ConflictFile {
         end = j;
         break;
       } else if (sep === -1 && HEAD_RX.test(l)) {
-        // A second opener before this hunk's separator: the first one is
-        // malformed, so stop and let the outer loop re-enter at the real
-        // opener. Absorbing it into the ours side means resolveHunk splices a
-        // conflict marker back into the file and save persists it.
-        //
-        // The `sep === -1` guard is what keeps this from truncating a
-        // well-formed hunk whose THEIRS side legitimately quotes an opener.
+        // A second opener before the separator: the first is malformed, so stop and let the outer loop re-enter there
+        // (absorbing it splices a marker into the file). `sep === -1` keeps a theirs side that quotes an opener intact.
         break;
       }
     }
@@ -97,9 +78,7 @@ export function parseConflicts(content: string): ConflictFile {
       endLine: end,
       ourLabel,
       theirLabel,
-      // A diff3 base section (`||||||| base` through the separator) is
-      // ancestor content: cut ours at the base marker so no resolution
-      // ever writes the marker line or the ancestor lines into the file.
+      // Cut ours at the base marker so no resolution writes the marker or ancestor lines.
       oursLines: lines.slice(i + 1, base === -1 ? sep : base),
       theirsLines: lines.slice(sep + 1, end),
     });
@@ -111,8 +90,7 @@ export function parseConflicts(content: string): ConflictFile {
 
 export type Resolution = "ours" | "theirs" | "both";
 
-/** Rewrite the file with one hunk resolved. Returns the new file content.
- *  Does not modify input. */
+/** Content with one hunk resolved; does not modify `file`. */
 export function resolveHunk(file: ConflictFile, hunkIndex: number, resolution: Resolution): string {
   const hunk = file.hunks[hunkIndex];
   if (hunk === undefined) {

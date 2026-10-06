@@ -1,16 +1,9 @@
 package marotte
 
-// MCP elicitation types. When an MCP server needs structured input
-// mid-tool-execution it sends elicitation/create to kiro-cli (its MCP
-// client); kiro-cli forwards it to us over ACP. We render a form from
-// RequestedSchema, collect the user's answer, and reply with an
-// ElicitationResult ({action, content}).
-//
-// The schema shapes mirror kiro-cli's wire contract (verified against
-// the kiro-cli 2.6.0 agent + the Kiro IDE 0.3.607 acp-type-covenant
-// zod schemas). ElicitationPropertySchema is modelled as one flat
-// struct with a Type discriminator rather than a Go union; the client
-// branches on Type when rendering each field.
+// MCP elicitation: an MCP server's elicitation/create reaches us over ACP via kiro-cli; we render a
+// form from RequestedSchema and reply with an ElicitationResult ({action, content}). Shapes mirror
+// kiro-cli 2.6.0 and the Kiro IDE 0.3.607 zod schemas; ElicitationPropertySchema is one flat struct
+// with a Type discriminator.
 
 import "encoding/json"
 

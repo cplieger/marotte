@@ -1,29 +1,4 @@
-// ---------------------------------------------------------------------------
 // ONE MARK SIZE PER STATE COLUMN, measured rather than read.
-//
-// Three surfaces render the same column — the exec tree's `.ev-state`, the run
-// card's `.run-step-glyph` and the composer band's `.run-bar-glyph` — and each
-// slot holds either a SETTLED silhouette (`icons.ts` `outcomeIcon`, whose disc
-// spans 12 of its 24 viewBox units) or an IN-FLIGHT ring drawn as a
-// pseudo-element. The two must measure the same, or the mark resizes at the
-// moment a step settles and the column reads as three sizes.
-//
-// WHY THIS FILE EXISTS RATHER THAN A SOURCE ASSERTION. `outcome-mark.test.ts`
-// already pins that every one of those rings sizes itself off `--dot-size`, and
-// it passed for as long as the defect existed: the reset's `*` does not reach a
-// pseudo-element, so each ring defaulted to content-box and its border landed
-// OUTSIDE the token. Measured before the fix — settled disc 8px against a
-// 12px exec ring, a 12px run-bar ring and a 16px run-step ring, the last of them
-// filling its whole slot at twice its own settled mark. Every one of those rules
-// contained the string the source test looks for. So the oracle here is the
-// RENDERED extent of both marks, and nothing below restates the stylesheet's
-// arithmetic: the disc's size comes from its own path bbox scaled by its viewBox,
-// and the ring's from its computed box.
-//
-// `tool-group-mark-css.test.ts` measures the same equality for the tool-group
-// header's slot, which is the one that already stated `box-sizing` and the one
-// that was already right.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { outcomeIcon } from "./icons.js";
@@ -52,23 +27,23 @@ afterEach(() => {
   host.replaceChildren();
 });
 
-/** The three columns, each as the selector chain its own stylesheet requires. The
- *  scaffolding is hand-built because what is under test is the CSS geometry a state
- *  produces, and the state is a wire string either way; the MARK is not hand-built
- *  — it comes from `outcomeIcon`, the one resolver all three surfaces write. */
+/** The three columns, each as the selector chain its own stylesheet requires. The scaffolding is
+ *  hand-built because what is under test is the CSS geometry a state produces, and the state is
+ *  a wire string either way; the MARK is not hand-built — it comes from `outcomeIcon`, the one
+ *  resolver all three surfaces write. */
 interface Column {
   readonly name: string;
   readonly slot: string;
   /** Build the row for a state and return the mark slot inside it. */
   readonly mount: (state: string) => HTMLElement;
-  /** The in-flight states this column can paint, in ITS OWN vocabulary: two of the
-   *  three read the exec vocabulary (`running`), and the run bar reads the workflow
-   *  mark's (`working`) because its subject is a RUN rather than a step. */
+  /** The in-flight states this column can paint, in ITS OWN vocabulary: two of the three read
+   *  the exec vocabulary (`running`), and the run bar reads the workflow mark's (`working`)
+   *  because its subject is a RUN rather than a step. */
   readonly inFlight: readonly string[];
-  /** Whether the in-flight ring is a PSEUDO-element over the slot or the slot
-   *  itself. The bar's mark is the slot: it shares the workflow mark's rules, whose
-   *  ::before is spent on the beat, so there is no second layer to draw a ring on
-   *  and the reserved column is the mark's own box. */
+  /** Whether the in-flight ring is a PSEUDO-element over the slot or the slot itself. The bar's
+   *  mark is the slot: it shares the workflow mark's rules, whose ::before is spent on the beat,
+   *  so there is no second layer to draw a ring on and the reserved column is the mark's own
+   *  box. */
   readonly markIsPseudo: boolean;
 }
 
@@ -119,9 +94,9 @@ const COLUMNS: readonly Column[] = [
   {
     name: "the run bar",
     slot: ".run-bar-glyph",
-    // `data-status` on the GLYPH, not `data-state` on the row: the bar's mark is the
-    // workflow mark, so its state rides the attribute that mark reads. The row keeps
-    // its own `data-state` for the word and the ordering, which paint no mark.
+    // `data-status` on the GLYPH, not `data-state` on the row: the bar's mark is the workflow mark,
+    // so its state rides the attribute that mark reads. The row keeps its own `data-state` for the
+    // word and the ordering, which paint no mark.
     mount: (state) => {
       const bar = el("div", "run-bar");
       const row = el("div", "run-bar-row", { "data-state": state });
@@ -138,9 +113,9 @@ const COLUMNS: readonly Column[] = [
   },
 ];
 
-/** The painted diameter of a settled silhouette: its path's own bbox scaled by its
- *  viewBox into the box the stylesheet gave it. Never the ratio the CSS uses, so a
- *  wrong ratio on either side fails here. */
+/** The painted diameter of a settled silhouette: its path's own bbox scaled by its viewBox into
+ *  the box the stylesheet gave it. Never the ratio the CSS uses, so a wrong ratio on either side
+ *  fails here. */
 function paintedDisc(col: Column): number {
   const slot = col.mount("ok");
   slot.appendChild(iconEl(outcomeIcon("ok")));
@@ -178,13 +153,12 @@ describe("a state column's mark", () => {
       expect(disc, "the settled disc has a real extent").toBeGreaterThan(0);
       host.replaceChildren();
 
-      // Every in-flight state in that column, so a rule added for one of them
-      // cannot pick its own diameter. Declared per column rather than derived from
-      // the slot's name, because the run bar reads a different state vocabulary.
+      // Every in-flight state in that column, so a rule added for one of them cannot pick its own
+      // diameter. Declared per column rather than derived from the slot's name, because the run bar
+      // reads a different state vocabulary.
       for (const state of col.inFlight) {
         const { outer, boxSizing } = paintedRing(col, state);
-        // Named, because it is the property whose absence caused the defect and a
-        // content-box ring is off by exactly its border on both sides.
+        // Named, because a content-box ring is off by exactly its border on both sides.
         expect(boxSizing, `${col.name}: ${state} states box-sizing`).toBe("border-box");
         expect(outer, `${col.name}: ${state} matches the settled disc`).toBeCloseTo(disc, 2);
         host.replaceChildren();
@@ -195,13 +169,9 @@ describe("a state column's mark", () => {
   it.each(COLUMNS.filter((c) => c.markIsPseudo).map((c) => [c.name, c] as const))(
     "fits inside the slot it is centred in, in %s",
     (_name, col) => {
-      // The run-step ring used to fill its slot edge to edge, which is what its
-      // `margin: 0 auto` was compensating for; a mark that exactly fills its slot
-      // has no room to be centred in and reads as a different component.
-      //
-      // The RUN BAR is excluded rather than exempted: its mark is the slot now, so
-      // "room inside the slot" is not a property it has — the reserved column IS the
-      // mark's 8px box, and the case above is what holds that box to one size.
+      // The RUN BAR is excluded rather than exempted: its mark is the slot now, so "room inside the
+      // slot" is not a property it has — the reserved column IS the mark's 8px box, and the case
+      // above is what holds that box to one size.
       const slot = col.mount("running");
       const slotWidth = slot.getBoundingClientRect().width;
       const outer = Number.parseFloat(getComputedStyle(slot, "::before").width);

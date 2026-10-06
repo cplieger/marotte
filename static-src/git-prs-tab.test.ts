@@ -1,6 +1,3 @@
-// The PR tab's listing over the inventory: loading, reconciliation, row identity,
-// partial inventories and the contributions group.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { prIdentity } from "./push-subject.js";
 import type { Forge } from "./__test-helpers__/git-prs-tab-harness.js";
@@ -87,13 +84,13 @@ describe("PRs tab loading state", () => {
     const { refreshPRs } = await load();
     const done = refreshPRs();
 
-    // The show delay is 150ms, so nothing is painted before it elapses.
+    // The show delay is 150ms, so nothing paints before it.
     expect(mount().querySelector(".git-repo-skeleton")).toBeNull();
     await vi.advanceTimersByTimeAsync(150);
 
     const skel = mount().querySelector(".git-repo-skeleton");
     expect(skel).not.toBeNull();
-    // aria-hidden: the mount is aria-live, so placeholders must not be announced.
+    // The mount is aria-live, so placeholders must not be announced.
     expect(skel?.getAttribute("aria-hidden")).toBe("true");
     expect(skel?.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
 
@@ -119,9 +116,8 @@ describe("PRs tab loading state", () => {
   });
 
   it("arms nothing for an inventory with NO open PRs once it has answered", async () => {
-    // No open PRs anywhere is an ANSWER, and the container cannot tell it from a set
-    // this client has never read. A gap reaches this refresh with no tab switch behind
-    // it, so without the answered flag it would shimmer over a settled pane.
+    // No open PRs is an answer the container cannot tell from an unread set; a gap refreshes with no tab switch, so
+    // without the answered flag it would shimmer over a settled pane.
     routeAPI();
     serveRows([]);
     const { refreshPRs } = await load();
@@ -140,8 +136,7 @@ describe("PRs tab loading state", () => {
 
     await expect(refreshPRs()).rejects.toThrow(/forges/i);
 
-    // The action's toast is transient, so a blank pane would be the only lasting
-    // record of the failure.
+    // The toast is transient, so a blank pane would be the only lasting record of the failure.
     const err = mount().querySelector(".git-multirepo-error");
     expect(err?.textContent).toContain("Could not load pull requests");
   });
@@ -282,8 +277,7 @@ describe("PRs tab over the inventory", () => {
   });
 
   it("adopts the inventory whole on a reconcile, whatever the held cycle", async () => {
-    // A server that restarted counts its cycles from 1 again, and the reconcile is
-    // the stream saying the held entries cannot be trusted.
+    // A restarted server counts cycles from 1 again; the reconcile says the held entries cannot be trusted.
     routeAPI();
     serveRows([pr(1)], githubForge, "500");
     const { refreshPRs, initPRsTab } = await load();
@@ -354,8 +348,7 @@ describe("PRs tab row identity across paints", () => {
     serveRows([pr(7)]);
     const { refreshPRs } = await load();
 
-    // Arriving at the tab, then any second paint at all: pressing refresh, one
-    // keystroke in the filter, a forges_changed frame, leaving and coming back.
+    // Any second paint: refresh, a filter keystroke, a forges_changed frame, leaving and coming back.
     await refreshPRs();
     expect(mount().querySelectorAll(".git-pr-row")).toHaveLength(1);
 
@@ -363,8 +356,7 @@ describe("PRs tab row identity across paints", () => {
     await refreshPRs();
     expect(mount().querySelectorAll(".git-pr-row")).toHaveLength(1);
 
-    // A row reconcile cannot see, match or remove a row that carries no key,
-    // so an unkeyed row is a row the next paint duplicates.
+    // Reconcile cannot match or remove an unkeyed row, so the next paint duplicates it.
     for (const row of mount().querySelectorAll(".git-pr-row")) {
       expect(row.getAttribute("data-reconcile-key")).toBe("github:github.com:7");
     }
@@ -372,9 +364,8 @@ describe("PRs tab row identity across paints", () => {
 
   it("repaints a surviving row from the newer entry", async () => {
     routeAPI();
-    // merge_blocked is per-cycle: the forge answers `unknown` while it is still
-    // computing mergeability and `none` once the PR is mergeable. `:not(.btn-danger)`
-    // excludes Close, and Merge is the first button appended to the actions row.
+    // merge_blocked is per cycle: `unknown` while computing, `none` once mergeable. `:not(.btn-danger)` excludes Close,
+    // and Merge is the first button in the actions row.
     serveRows([pr(7, 0, {}, { merge_blocked: "unknown" })]);
     const { refreshPRs, initPRsTab } = await load();
     initPRsTab();
@@ -388,9 +379,8 @@ describe("PRs tab row identity across paints", () => {
     expect(merge()?.disabled).toBe(false);
   });
 
-  // The Gitea family names no block cause on any row, so the verdict decides:
-  // reading `unknown` alone as blocked would disable Merge on every Gitea and
-  // Codeberg row.
+  // The Gitea family names no cause, so the verdict decides; `unknown` alone as blocked would disable Merge on every
+  // Gitea and Codeberg row.
   it("enables Merge on a Gitea row that names no cause and reads mergeable", async () => {
     routeAPI({ forges: [giteaForge] });
     serveRows([pr(7, 0, {}, { merge_blocked: "unknown", mergeable: "yes" })], giteaForge);

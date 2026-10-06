@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import fc from "fast-check";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
+import { makeToolCall } from "./__test-helpers__/model.js";
+import type { EntryToolCall } from "./types.js";
 
 // The root is module state, and every case but one asserts the pass-through form.
 // Here rather than at the end of that case, which a failed assertion would skip.
@@ -59,7 +61,10 @@ const {
   expandToolDetails,
   refreshToolDisclosure,
   insertDiffPreview,
+  syncInteractionFact,
+  syncOffloadLink,
 } = await import("./tool-card.js");
+const { toolCardOptsFor } = await import("./tool-card-opts.js");
 
 // ---------------------------------------------------------------------------
 // extractSubtitle — table-driven
@@ -1572,5 +1577,334 @@ describe("the spec door on a file chip", () => {
     });
     expect(bare.querySelector(".tool-file-link")).toBeNull();
     expect(bare.querySelector(".tool-spec-link")).toBeNull();
+  });
+});
+
+describe("a card's title", () => {
+  function channels(card: HTMLElement): string[] {
+    const header = card.querySelector<HTMLElement>(".tool-header")!;
+    return [
+      card.querySelector(".tool-title")?.textContent ?? "",
+      header.title,
+      card.dataset["title"] ?? "",
+    ];
+  }
+
+  // KAS sends the static "Run Command" whenever the model wrote no description,
+  // which is most shell calls, so the placeholder told a reader nothing.
+  it("titles a description-less shell card with its command and drops the repeat row", () => {
+    const card = buildToolCard({
+      id: "title-shell",
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      input: { command: "go test ./..." },
+      live: false,
+    });
+    expect(channels(card)).toEqual(["go test ./...", "go test ./...", "go test ./..."]);
+    expect(card.querySelector(".tool-subtitle")).toBeNull();
+    expect(card.getAttribute("aria-label")).toBe("go test ./..., succeeded");
+  });
+
+  it("keeps the command's hyphens and underscores byte for byte", () => {
+    const card = buildToolCard({
+      id: "title-shell-flags",
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      input: { command: "go test -run Test_parse ./internal/x-y" },
+      live: false,
+    });
+    expect(card.querySelector(".tool-title")?.textContent).toBe(
+      "go test -run Test_parse ./internal/x-y",
+    );
+  });
+
+  it("lets a model-written description outrank the command, which stays below it", () => {
+    const card = buildToolCard({
+      id: "title-described",
+      title: "Check vet output",
+      kind: "execute",
+      status: "completed",
+      input: { command: "go vet ./..." },
+      live: false,
+    });
+    expect(card.querySelector(".tool-title")?.textContent).toBe("Check vet output");
+    expect(card.querySelector(".tool-subtitle")?.textContent).toBe("go vet ./...");
+  });
+
+  it("collapses a multi-line command to one bounded line", () => {
+    const card = buildToolCard({
+      id: "title-heredoc",
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      input: { command: "cat <<'EOF' > out.txt\n" + "x".repeat(300) + "\nEOF\n" },
+      live: false,
+    });
+    expect(card.dataset["title"]).toBe("cat <<'EOF' > out.txt " + "x".repeat(95) + "\u2026");
+  });
+
+  it("keeps the placeholder when the call carries no command", () => {
+    const card = buildToolCard({
+      id: "title-no-input",
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      live: false,
+    });
+    expect(channels(card)).toEqual(["Run Command", "Run Command", "Run Command"]);
+  });
+
+  // KAS titles a described shell call with the model's own sentence, and that
+  // sentence is full of paths and flags a name humanizer would turn into spaces.
+  it("renders a described title verbatim on all three channels", () => {
+    const card = buildToolCard({
+      id: "title-prose",
+      title: "Run go test with --dry-run in ./internal/foo_bar",
+      kind: "execute",
+      status: "completed",
+      input: { command: "go test --dry-run ./internal/foo_bar" },
+      live: false,
+    });
+    expect(channels(card)).toEqual([
+      "Run go test with --dry-run in ./internal/foo_bar",
+      "Run go test with --dry-run in ./internal/foo_bar",
+      "Run go test with --dry-run in ./internal/foo_bar",
+    ]);
+  });
+
+  it("keeps a hook card's own hook name", () => {
+    const card = buildToolCard({
+      id: "title-hook",
+      title: "Hook fired: lint-on-save",
+      kind: "hook",
+      status: "completed",
+      live: false,
+    });
+    expect(card.querySelector(".tool-title")?.textContent).toBe("Hook fired: lint-on-save");
+  });
+
+  it("samples the commands, not the placeholder, in a group of shell calls", async () => {
+    const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("./tool-group.js");
+    const group = buildToolGroupShell();
+    for (const [id, command] of [
+      ["group-a", "git status"],
+      ["group-b", "go test ./..."],
+    ] as const) {
+      groupBody(group).appendChild(
+        buildToolCard({
+          id,
+          title: "Run Command",
+          kind: "execute",
+          status: "completed",
+          input: { command },
+          live: false,
+        }),
+      );
+    }
+    document.body.appendChild(group);
+    refreshGroupHeader(group);
+    expect(group.querySelector(".tool-group-count")?.textContent).toBe(
+      "Ran 2 commands: git status, go test ./...",
+    );
+    group.remove();
+  });
+});
+
+describe("a tool output KAS offloaded to a file", () => {
+  const offload = {
+    path: "/config/.kiro/sessions/cli/sess_1/tool-outputs/shell-0a1b2c3d.txt",
+    total_chars: 812345,
+  };
+  const card = (): HTMLDivElement =>
+    buildToolCard({
+      id: "tc-off",
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      input: { command: "cat big.log" },
+      output: "head of the log\n",
+      live: false,
+      offload,
+    });
+
+  it("links the full file from the card's details region", async () => {
+    const { parseRoute } = await import("./route-path.js");
+    const link = card().querySelector<HTMLAnchorElement>(".tool-details .tool-offload-link");
+    expect(link?.textContent).toBe("Open full output (812,345 chars)");
+    const href = link?.getAttribute("href") ?? "";
+    expect(parseRoute(href, "")).toEqual({ kind: "file", path: offload.path });
+  });
+
+  it("opens the absolute path in the editor on a plain click", () => {
+    opened.length = 0;
+    const link = card().querySelector<HTMLAnchorElement>(".tool-offload-link");
+    link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(opened).toEqual([`file:${offload.path}`]);
+  });
+
+  it("leaves a modified click to the browser", () => {
+    opened.length = 0;
+    const link = card().querySelector<HTMLAnchorElement>(".tool-offload-link");
+    const e = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      ctrlKey: true,
+    });
+    link?.dispatchEvent(e);
+    expect(opened).toEqual([]);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("adds one link however often the field arrives", () => {
+    const c = card();
+    syncOffloadLink(c, offload);
+    syncOffloadLink(c, offload);
+    expect(c.querySelectorAll(".tool-offload-link")).toHaveLength(1);
+  });
+
+  it("links a claim-only read card from its claim row", () => {
+    const read = buildToolCard({
+      id: "tc-ls",
+      title: "List Directory",
+      kind: "read",
+      status: "completed",
+      input: { path: "/workspace", recursive: true },
+      live: false,
+      offload,
+    });
+    expect(read.querySelector(".tool-details")).toBeNull();
+    const link = read.querySelector<HTMLAnchorElement>(".tool-summary > .tool-offload-link");
+    expect(link?.textContent).toBe("Open full output (812,345 chars)");
+    opened.length = 0;
+    link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(opened).toEqual([`file:${offload.path}`]);
+  });
+
+  it("adds none without an offload", () => {
+    const plain = buildToolCard({
+      id: "tc-plain",
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      input: { command: "ls" },
+      output: "a\n",
+      live: false,
+    });
+    expect(plain.querySelector(".tool-offload-link")).toBeNull();
+  });
+});
+
+describe("a hook card", () => {
+  const hookCall = (over: Partial<EntryToolCall> = {}): HTMLDivElement =>
+    buildToolCard(
+      toolCardOptsFor(
+        makeToolCall({
+          id: "hook-1",
+          title: "Hook fired: lint",
+          kind: "hook",
+          status: "completed",
+          ...over,
+        }),
+        false,
+        "c-1",
+      ),
+    );
+
+  const click = (target: Element | null | undefined): void => {
+    target?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+  };
+  const press = (target: Element | null | undefined, key: string): void => {
+    target?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  };
+
+  it("makes the claim row the one control that opens the hook's file", () => {
+    const card = hookCall({ source_path: ".kiro/hooks/lint.kiro.hook" });
+    const row = card.querySelector<HTMLElement>(".tool-summary");
+    expect(row?.getAttribute("role")).toBe("button");
+    expect(row?.tabIndex).toBe(0);
+    expect(row?.getAttribute("aria-label")).toBe("Open the hook file lint.kiro.hook");
+    expect(row?.dataset["tooltip"]).toBe(".kiro/hooks/lint.kiro.hook");
+    // The chip is the row's label, not a second control nested inside it.
+    expect(row?.querySelector("button, a, [role='button'], [tabindex]")).toBeNull();
+    expect(row?.querySelector(".tool-file-link")?.hasAttribute("data-tooltip-anchor")).toBe(true);
+  });
+
+  it("opens the hook's file read-only from anywhere on the row", () => {
+    setWorkspaceRoot("/workspace");
+    const card = hookCall({ source_path: ".kiro/hooks/lint.kiro.hook" });
+    opened.length = 0;
+    click(card.querySelector(".tool-title"));
+    expect(opened).toEqual(["file:/workspace/.kiro/hooks/lint.kiro.hook"]);
+    opened.length = 0;
+    click(card.querySelector(".tool-file-link"));
+    expect(opened, "the chip opens it once, through the row").toEqual([
+      "file:/workspace/.kiro/hooks/lint.kiro.hook",
+    ]);
+  });
+
+  it("opens the hook's file from the keyboard on Enter and Space", () => {
+    setWorkspaceRoot("/workspace");
+    const row = hookCall({ source_path: ".kiro/hooks/lint.kiro.hook" }).querySelector(
+      ".tool-summary",
+    );
+    opened.length = 0;
+    press(row, "Enter");
+    press(row, " ");
+    press(row, "a");
+    expect(opened).toEqual([
+      "file:/workspace/.kiro/hooks/lint.kiro.hook",
+      "file:/workspace/.kiro/hooks/lint.kiro.hook",
+    ]);
+  });
+
+  it("offers no control when KAS named no file", () => {
+    const card = hookCall();
+    expect(card.querySelector("button, a, [role='button'], [tabindex]")).toBeNull();
+    expect(card.querySelector(".tool-summary")?.classList.contains("opens-file")).toBe(false);
+    opened.length = 0;
+    click(card.querySelector(".tool-summary"));
+    expect(opened).toEqual([]);
+  });
+});
+
+describe("a tool call whose ask was answered", () => {
+  const build = (interaction?: {
+    type: string;
+    outcome: string;
+    choice?: string;
+  }): HTMLDivElement =>
+    buildToolCard({
+      id: "tc-ask",
+      title: "Read File",
+      kind: "read",
+      status: "completed",
+      input: { path: "/workspace/a.txt" },
+      live: false,
+      ...(interaction !== undefined && { interaction }),
+    });
+
+  it("states the answer on the claim row, which a claim-only card has", () => {
+    const c = build({ type: "tool_approval", outcome: "selected", choice: "allow_always" });
+    expect(c.querySelector(".tool-details")).toBeNull();
+    expect(c.querySelector(".tool-summary > .tool-fact")?.textContent).toBe("Always allowed");
+  });
+
+  it("rewrites the one line in place when the field arrives on an update", () => {
+    const c = build();
+    expect(c.querySelector(".tool-fact")).toBeNull();
+    syncInteractionFact(c, { type: "user_input", outcome: "answered", choice: "Use Go" });
+    syncInteractionFact(c, { type: "user_input", outcome: "answered", choice: "Use Rust" });
+    expect([...c.querySelectorAll(".tool-fact")].map((e) => e.textContent)).toEqual([
+      "Answered: Use Rust",
+    ]);
+  });
+
+  it("leaves a stated answer standing when a later frame carries none", () => {
+    const c = build({ type: "tool_approval", outcome: "selected", choice: "reject_once" });
+    syncInteractionFact(c, undefined);
+    expect(c.querySelector(".tool-fact")?.textContent).toBe("Rejected");
   });
 });

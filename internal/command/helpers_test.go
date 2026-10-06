@@ -53,15 +53,8 @@ func FuzzTruncateRunes(f *testing.F) {
 	})
 }
 
-// errText renders a handler's returned error the way the dispatcher writes it,
-// so a test asserting on the client-visible message asserts on the same string
-// ServeHTTP would send. It is rpcerr.Text, not err.Error(): four handlers forward
-// a bridge Call failure verbatim, and on a -32603 err.Error() is KAS's literal
-// "Internal error" while the cause sits in error.data.
-//
-// It replaced reading w.Body.String() off a recorder. The handlers no longer
-// write a response, so there is no body to read — which is the point: a test that
-// wants the message asks the error for it.
+// errText renders a handler's error as the dispatcher writes it (rpcerr.Text, not err.Error()), so
+// a test asserts on the string ServeHTTP would send.
 func errText(err error) string {
 	if err == nil {
 		return ""

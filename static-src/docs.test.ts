@@ -1,88 +1,72 @@
-// Tests for the Kiro configuration browser's pure pieces: the repo/path split
-// that makes a git letter resolvable, and the per-category metadata shaping.
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import type * as GitStatusStore from "./git-status-store.js";
 
 type GitStatusStoreModule = typeof GitStatusStore;
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-// `apiGetTypedOrError` is present-but-inert for the reason the two mocks below
-// state: Browser Mode links a mock as real ESM, so a name any module in this graph
-// imports has to exist on the factory or COLLECTION fails. `run-step-transcript.js`
-// is that importer, reached through the run surfaces; no case here calls it.
+// Browser Mode links a mock as real ESM, so every name this graph imports must exist on the factory.
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
   apiGetTypedOrError: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds; nothing here calls it. A
-  // partial factory links for real, so a name this file's graph reaches and this
-  // object lacks is a `SyntaxError` at import that costs the WHOLE file's
-  // collection rather than one assertion. `actions/notify.test.ts` carries the
-  // fuller record of the class.
+  // Present-but-inert for real-ESM linking; a missing name fails the whole file's collection.
   apiGetOrError: vi.fn(),
 }));
 vi.mock("./editor-openers.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined for real-ESM linking; the node runner gave the same.
   openFileGitDiff: undefined,
   openFileDiff: undefined,
   openFile: vi.fn(),
 }));
 
 const DOCS_PATH = "/api/workspace/kiro-docs";
+const ISSUES_PATH = "/api/steering/issues";
 
-/** The page's two GETs, served off the one `apiGetTyped` mock. The inventory reply
- *  goes through the caller's own decoder so a staged reply is held to the wire
- *  shape; the hook list is answered empty. `mockReset` runs between tests, so
- *  every case re-arms this. */
+/**
+ * Served off one mock: the inventory through the caller's decoder, hooks empty, steering issues by `issues`.
+ * `mockReset` runs between tests, so every case re-arms.
+ */
 function serveDocsPage(
   inventory: Promise<unknown> | unknown = { docs: [], truncated: false },
+  issues: unknown = { issues: {} },
 ): (path: string, decode: (v: unknown) => unknown) => Promise<unknown> {
   return (path, decode) =>
-    path === DOCS_PATH ? Promise.resolve(inventory).then(decode) : Promise.resolve({ hooks: [] });
+    path === DOCS_PATH
+      ? Promise.resolve(inventory).then(decode)
+      : path === ISSUES_PATH
+        ? Promise.resolve(issues).then(decode)
+        : Promise.resolve({ hooks: [] });
 }
-// toggleDocsView RUNS its onShow callback, because that callback is what wires
-// the page (initDocsView) and loads it. A mock that swallowed it would leave the
-// SSE cases below asserting against a page that was never opened.
+// toggleDocsView runs onShow, which wires and loads the page; swallowing it leaves the SSE cases on an unopened page.
 vi.mock("./tabs.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined for real-ESM linking.
   getActiveTabRoute: undefined,
   openRunTab: undefined,
   setGitTab: undefined,
   setSettingsTab: undefined,
   openGitView: undefined,
   openSettingsView: undefined,
-  // Reached through run-view.js → run-dots.js, the run tab's dot and its name.
+  // Reached through run-view.js → run-dots.js.
   hasTab: undefined,
   tabIdFor: undefined,
   tabSetVersion: undefined,
   openRunRefs: undefined,
   renameTab: undefined,
-  // Also reached through run-view.js, via the run card's markdown bubble and the
-  // linkifier behind it.
+  // Reached through run-view.js's run card linkifier.
   closeTab: undefined,
   getActiveTabId: undefined,
   setTabStatus: undefined,
-  // Also run-view.js: the launching chat a run tab nests under (the detail pane's
-  // "Open the conversation" note reads it) and the door that link dispatches through.
+  // Reached through run-view.js's parent-chat note.
   parentChatRef: undefined,
   openTab: undefined,
-  // navigate.js's `openSpec`, reached from this page's own spec-group door.
+  // navigate.js's `openSpec`, from this page's spec-group door.
   activateTab: undefined,
   setTabParent: undefined,
   setDocsTab: vi.fn(),
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("./bus.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined for real-ESM linking.
   BUS_RUNS_CHANGED: undefined,
   BUS_USER_INPUT_ANSWERED: undefined,
   BUS_ACTIVATE_CHAT: undefined,
@@ -99,11 +83,8 @@ vi.mock("./bus.js", () => ({
   onBus: undefined,
   onSSE: vi.fn(() => () => undefined),
 }));
-// Only the SUBSCRIPTION is replaced, because subscribing is what makes the store
-// read /api/git/status-all through the actions transport — which the api-client
-// mock above does not cover — so the request outlived the window teardown and
-// printed an unhandled AbortError. The store itself stays real: these tests seed
-// it with _setReposForTest and assert on the letter statusFor derives.
+// Only the subscription is replaced: subscribing fetches through the transport, which outlived teardown as an
+// unhandled AbortError. The store stays real.
 vi.mock("./git-status-store.js", async (importOriginal) => ({
   ...(await importOriginal<GitStatusStoreModule>()),
   onGitStatusChange: vi.fn(() => () => undefined),
@@ -128,8 +109,7 @@ beforeEach(() => {
 
 describe("splitRepoPath", () => {
   it("treats the workspace-root .kiro as its own repo", () => {
-    // The root .kiro IS a git repo (cplieger/.kiro), so the repo name is
-    // ".kiro" and the path inside it drops that prefix.
+    // The root .kiro is its own git repo, so the repo is ".kiro" and the path drops that prefix.
     expect(_splitRepoPathForTest("workspace/.kiro/steering/actions.md")).toEqual({
       repo: ".kiro",
       rel: "steering/actions.md",
@@ -137,7 +117,7 @@ describe("splitRepoPath", () => {
   });
 
   it("treats a per-repo .kiro as part of that repo", () => {
-    // Here the repo is the directory HOLDING .kiro, and .kiro is inside it.
+    // Here the repo is the directory holding .kiro.
     expect(_splitRepoPathForTest("workspace/myrepo/.kiro/steering/x.md")).toEqual({
       repo: "myrepo",
       rel: ".kiro/steering/x.md",
@@ -189,7 +169,7 @@ describe("row rendering", () => {
     expect(row.textContent).toContain("actions");
     expect(row.textContent).toContain("fileMatch");
     expect(row.textContent).toContain("The actions framework");
-    // The class is lowercased; the visible label keeps the camelCase spelling.
+    // The class is lowercased; the label keeps the camelCase spelling.
     const badge = row.querySelector(".docs-badge-filematch");
     expect(badge?.getAttribute("data-tooltip")).toBe("actions/**");
   });
@@ -329,7 +309,6 @@ describe("row rendering", () => {
   });
 });
 
-// D65 / D67a: the delete affordance and the provenance gate that decides it.
 describe("row affordances", () => {
   it("gives a writable row a delete button", () => {
     const row = _renderRowForTest({
@@ -354,9 +333,7 @@ describe("row affordances", () => {
   });
 
   it("makes no read-only claim, because the surface still opens the file", () => {
-    // D67a is withdrawn. The badge that used to sit here said "read-only" while
-    // the activation surface opened a file the editor could save — the row and
-    // its own control contradicted each other. A row states what it can back up.
+    // A row states what it can back up: no "read-only" badge on a file the editor can save.
     const row = _renderRowForTest({
       category: "steering",
       name: "locked",
@@ -368,9 +345,7 @@ describe("row affordances", () => {
   });
 
   it("keeps a symlinked row's edit and withholds only its delete", () => {
-    // The two questions are separate: editing through a link writes the target
-    // (which is what following a link means), while deleting through it removes a
-    // file listed under its own name elsewhere on the page.
+    // Editing through a link writes the target; deleting it would remove a file listed elsewhere on the page.
     const row = _renderRowForTest({
       category: "steering",
       name: "alias",
@@ -385,8 +360,7 @@ describe("row affordances", () => {
   });
 
   it("treats absent provenance fields as unrestricted", () => {
-    // The direction matters as much as the value: a restriction is asserted by the
-    // server, never inferred from a field failing to arrive.
+    // A restriction is asserted by the server, never inferred from an absent field.
     const row = _renderRowForTest({
       category: "hook",
       name: "h",
@@ -396,9 +370,23 @@ describe("row affordances", () => {
     expect(row.querySelector(".docs-edit")).not.toBeNull();
   });
 
+  it("offers an agent row a Run control, and only when its name is addressable", () => {
+    const row = _renderRowForTest({
+      category: "agent",
+      name: "reviewer",
+      path: "workspace/.kiro/agents/reviewer.json",
+    });
+    expect(row.querySelector(".docs-agent-run")?.getAttribute("aria-label")).toBe("Run reviewer");
+    const spaced = _renderRowForTest({
+      category: "agent",
+      name: "code reviewer",
+      path: "workspace/.kiro/agents/code.md",
+    });
+    expect(spaced.querySelector(".docs-agent-run")).toBeNull();
+  });
+
   it("keeps the actions OUTSIDE the open button", () => {
-    // A button cannot hold another: nested interactive content is invalid HTML
-    // and gets flattened by assistive tech. The two are siblings.
+    // A button cannot hold another (invalid HTML), so the two are siblings.
     const row = _renderRowForTest({
       category: "agent",
       name: "a",
@@ -407,22 +395,14 @@ describe("row affordances", () => {
     const door = row.querySelector<HTMLElement>("button.entry-open");
     const actions = row.querySelector<HTMLElement>(".entry-actions");
     expect(door).not.toBeNull();
-    expect(actions?.querySelectorAll("button")).toHaveLength(2);
+    expect(actions?.querySelectorAll("button")).toHaveLength(3);
     expect(door?.contains(actions ?? null)).toBe(false);
     expect(door?.querySelector("button")).toBeNull();
   });
 });
 
-// ---------------------------------------------------------------------------
-// D66: hooks moved here from Settings, so the Hooks tab is the one tab that is
-// not a pure projection of /api/workspace/kiro-docs. It JOINS the scan's rows
-// against GET /api/hooks for the state a file scan cannot see, and synthesizes
-// rows for the global hooks the scan cannot see at all.
-//
-// These cases are the ones that came with the move (the old hooks.test.ts is
-// deleted): the toggle, the global-scope gate, the disabled reason, and the join
-// itself.
-// ---------------------------------------------------------------------------
+// The Hooks tab joins the scan's rows against GET /api/hooks for state a file scan cannot see, and synthesizes rows
+// for global hooks the scan cannot reach.
 
 interface HookLike {
   id: string;
@@ -451,11 +431,8 @@ function wsHook(over: Partial<HookLike> = {}): HookLike {
   };
 }
 
-// The fixture with one optional field genuinely ABSENT. `decodeHook` copies only
-// the keys the payload carries, so a hook whose server JSON omitted a field has no
-// such key at all — `{ scope: undefined }` is a shape production cannot produce,
-// and a fixture that writes it tests against a state the decoder never hands the
-// page. Rest-destructured rather than deleted so the key is gone by construction.
+// The key genuinely absent: `decodeHook` copies only present keys, so `{ scope: undefined }` is a shape production
+// never produces.
 
 function withoutScope(hook: HookLike): HookLike {
   const { scope: _scope, ...rest } = hook;
@@ -467,9 +444,7 @@ function withoutCommand(hook: HookLike): HookLike {
   return rest;
 }
 
-/** The docs row the server emits for the same file. Its path carries the work
- *  directory; the hook's does not, which is the whole reason the join
- *  normalizes. */
+/** The hook's path lacks the work directory the row's carries, which is why the join normalizes. */
 function wsHookDoc(over: Partial<Parameters<typeof _renderRowForTest>[0]> = {}) {
   return {
     category: "hook",
@@ -484,18 +459,14 @@ function wsHookDoc(over: Partial<Parameters<typeof _renderRowForTest>[0]> = {}) 
 
 describe("the Hooks tab: joining state onto a scanned row", () => {
   it("joins across the two path SHAPES the endpoints use", () => {
-    // hookInfo.FilePath is workDir-relative (".kiro/hooks/x.json"); kiroDoc.Path
-    // carries the workdir without its leading slash. A join on the raw strings
-    // matches nothing, and the row silently loses its toggle.
+    // hookInfo.FilePath is workDir-relative; kiroDoc.Path carries the workdir. A raw join loses the toggle.
     _setHooksForTest([wsHook()]);
     const row = _renderRowForTest(wsHookDoc());
     expect(row.querySelector(".hook-toggle")).not.toBeNull();
   });
 
   it("keys the join on (path, NAME), because one file can hold several hooks", () => {
-    // kiro_docs.go expands one v1 envelope into one row per hook, all sharing a
-    // Path. Keyed on path alone, the first hook's toggle would be applied to
-    // every hook in its file.
+    // One v1 envelope expands to one row per hook sharing a Path; keyed on path alone, one toggle would apply to all.
     _setHooksForTest([
       wsHook({ id: "id-a", name: "first", enabled: true }),
       wsHook({ id: "id-b", name: "second", enabled: false }),
@@ -529,24 +500,18 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
   });
 
   it("renders the matcher as the first line under the title, the command as the second", () => {
-    // A trigger says WHEN and its matcher says WHICH, so the row shows both. The
-    // two have DIFFERENT sources: the trigger comes from the docs scan (the
-    // file's own front matter), while the matcher can only come from the joined
-    // endpoint row — marotte's own hook parser is matcher-blind. The fixture sets
-    // both sides for that reason.
+    // Trigger says when, matcher says which. The trigger comes from the scan, the matcher only from the joined row.
     _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher: "fsWrite" })]);
     const row = _renderRowForTest(wsHookDoc({ trigger: "PreToolUse" }));
     expect(row.querySelector(".docs-badge-trigger")?.textContent).toBe("PreToolUse");
     const lines = [...(row.querySelector(".entry-lines")?.children ?? [])];
     expect(lines.map((l) => l.textContent)).toEqual(["fsWrite", "echo hello"]);
-    // Mono on both: a regex and a command are read character for character.
+    // Mono on both: a regex and a command are read character by character.
     expect(lines.every((l) => l.classList.contains("entry-sub-mono"))).toBe(true);
   });
 
   it("keeps the trigger and drops the tail when a row has more than two badges", () => {
-    // The title line holds two badges, most important first: the trigger, then
-    // the scope, then a matcher defect, then the disabled reason. Every label
-    // stays in the filter's haystack whether or not it is painted.
+    // Two badges, most important first: trigger, scope, matcher defect, disabled reason. All stay in the haystack.
     _setHooksForTest([
       wsHook({
         scope: "global",
@@ -575,8 +540,7 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
   });
 
   it("badges a hook that runs on every tool call", () => {
-    // The server computes this; the client must not derive it, because a second
-    // trigger-to-subject table could disagree with the Go one.
+    // Server-computed: a second trigger-to-subject table could disagree with the Go one.
     _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher_warning: "missing_tool_matcher" })]);
     const row = _renderRowForTest(wsHookDoc());
     const badge = row.querySelector(".docs-badge-warn");
@@ -591,17 +555,14 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
   });
 
   it("renders no warning badge for a value it does not recognise", () => {
-    // The field is a server-side enum, so a marotte build older than the server
-    // that added a third value has to stay quiet rather than paint a blank chip.
+    // A server-side enum: an older client must stay quiet about an unknown value.
     _setHooksForTest([wsHook({ matcher_warning: "someFutureDefect" })]);
     const row = _renderRowForTest(wsHookDoc());
     expect(row.querySelector(".docs-badge-warn")).toBeNull();
   });
 
   it("repaints when only the matcher or its warning changed", () => {
-    // The reconcile key is the row's path plus name, neither of which moves when a
-    // matcher is edited on disk, so without both fields in the row signature the
-    // badge would show the state it mounted with forever.
+    // Path and name do not move when a matcher is edited, so the row signature carries both fields.
     _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher: "fsWrite" })]);
     const row = _renderRowForTest(wsHookDoc());
     const first = row.getAttribute("data-sig");
@@ -616,8 +577,7 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
   });
 
   it("keeps a workspace hook's open surface and its delete", () => {
-    // A hook is a `.kiro` file, so it gets exactly what every other document gets
-    // — plus the toggle. That is the whole of D69's "three affordances, not four".
+    // A hook gets every document affordance plus the toggle.
     _setHooksForTest([wsHook()]);
     const row = _renderRowForTest(wsHookDoc());
     expect(row.querySelector("button.entry-open")?.getAttribute("aria-label")).toBe("Open greet");
@@ -636,28 +596,20 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
   });
 
   it("renders a hook with no state as a plain document row", () => {
-    // The hooks fetch is best-effort and separate, so a row can legitimately
-    // arrive with no state. It degrades to open + delete rather than showing a
-    // toggle whose position it cannot know.
+    // The hooks fetch is best-effort, so a row with no state degrades to open + delete.
     const row = _renderRowForTest(wsHookDoc());
     expect(row.querySelector(".hook-toggle")).toBeNull();
     expect(row.querySelector(".entry-delete")).not.toBeNull();
   });
 });
 
-// The THIRD gate. `read_only` and `delete_protected` govern the control slot;
-// this one governs the activation surface too, because the file is not reachable
-// at all — the container HOME is deny-listed by the file surface
-// (internal/filebrowse), and a `~`-prefixed display path would not resolve
-// first. The three must AGREE rather than stack: a row whose controls are
-// withheld must not still open an editable file on click.
+// The third gate: a global hook's file is unreachable (container HOME is deny-listed by internal/filebrowse), so the
+// activation surface goes too. The three gates must agree, not stack.
 describe("the Hooks tab: a global hook is unreachable, not merely read-only", () => {
   const globalHook = (over: Partial<HookLike> = {}) =>
     wsHook({ scope: "global", file_path: "~/.kiro/hooks/greet.json", ...over });
 
-  // `hook_scope` is what a synthesized global row carries, so the fixture carries
-  // it too — the join keys on scope, and a row claiming to be global while keyed
-  // as workspace is not a row the page can produce.
+  // A synthesized global row carries `hook_scope`, which the join keys on.
   const globalDoc = () => wsHookDoc({ path: "~/.kiro/hooks/greet.json", hook_scope: "global" });
 
   it("gives it neither an open surface nor a delete", () => {
@@ -668,8 +620,7 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
   });
 
   it("makes the body INERT, not a disabled-looking button", () => {
-    // A row whose controls are withheld must not still open a file on click, and
-    // a disabled button would still announce itself as one.
+    // A withheld row must not open a file on click, and a disabled button still announces itself.
     _setHooksForTest([globalHook()]);
     const row = _renderRowForTest(globalDoc());
     expect(row.querySelector(".entry-open")).toBeNull();
@@ -692,9 +643,7 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
   });
 
   it("STILL offers the toggle, which is the point of the three gates agreeing", () => {
-    // The toggle goes through POST /api/hooks/{id}/enabled and KAS writes the
-    // file, so it never touches marotte's file surface. An unreachable row is
-    // exactly the row that proves the distinction.
+    // The toggle goes through POST /api/hooks/{id}/enabled (KAS writes the file), never the file surface.
     _setHooksForTest([globalHook({ enabled: true })]);
     const row = _renderRowForTest(globalDoc());
     expect((row.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(true);
@@ -709,16 +658,14 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
   });
 
   it("carries no git letter, whose lookup its path cannot answer", () => {
-    // splitRepoPath would resolve "~/.kiro/..." to a plausible repo name and look
-    // up a file that is not in any repo the poll walks.
+    // splitRepoPath would resolve "~/.kiro/..." to a plausible repo name.
     _setReposForTest([repoStatus(".kiro", "hooks/greet.json", "M")]);
     _setHooksForTest([globalHook()]);
     expect(_renderRowForTest(globalDoc()).querySelector(".docs-git-letter")).toBeNull();
   });
 
   it("treats an absent scope as workspace, which is the safe direction", () => {
-    // An older server sends no scope field. Defaulting to global would strip a
-    // workspace hook of affordances it legitimately has.
+    // An older server sends no scope; defaulting to global would strip a workspace hook's affordances.
     _setHooksForTest([withoutScope(wsHook())]);
     const row = _renderRowForTest(wsHookDoc());
     expect(row.querySelector("button.entry-open")).not.toBeNull();
@@ -726,9 +673,7 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
   });
 });
 
-// A GLOBAL hook has no docs row at all: kiroRoots() scans the workspace's .kiro
-// trees and nothing else, so without a synthesized row the move would have LOST
-// every global hook from the UI.
+// Global hooks have no docs row: kiroRoots() scans only the workspace, so they would vanish without synthesis.
 describe("the Hooks tab: rows the file scan cannot see", () => {
   it("synthesizes a row for a global hook", () => {
     _setDocsForTest([]);
@@ -746,7 +691,6 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
     expect(rows[0]?.name).toBe("format");
     expect(rows[0]?.trigger).toBe("PostFileSave");
     expect(rows[0]?.action).toBe("make fmt");
-    // The file name groups it, matching how the scanned rows group.
     expect(rows[0]?.group).toBe("format.json");
   });
 
@@ -755,8 +699,7 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
     _setHooksForTest([wsHook()]);
     const rows = _hookRowsForTest();
     expect(rows).toHaveLength(1);
-    // The SCANNED row wins, so the row keeps the path the editor and the delete
-    // action accept.
+    // The scanned row wins, keeping a path the editor and delete accept.
     expect(rows[0]?.path).toBe("workspace/.kiro/hooks/greet.json");
   });
 
@@ -775,21 +718,15 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
   });
 
   it("synthesizes nothing for a workspace hook the scan missed", () => {
-    // A workspace hook outside the scan's reach means the two surfaces disagree
-    // about the workspace. Inventing a row would paper over that with one whose
-    // affordances would then be wrong.
+    // An unscanned workspace hook means the surfaces disagree; inventing a row would get its affordances wrong.
     _setDocsForTest([]);
     _setHooksForTest([wsHook()]);
     expect(_hookRowsForTest()).toHaveLength(0);
   });
 
   it("keeps a global hook whose relative path and name a workspace hook shares", () => {
-    // THE COLLISION. `hookPathKey` strips both scopes to the same `.kiro/...`
-    // tail, so before scope joined the key these two were one entry — and the
-    // endpoint loads workspace first then global, so the global state won it. Two
-    // failures at once: the scanned workspace row joined to the global state (its
-    // toggle addressed the global hook's id, and the global gate took its open and
-    // delete away), and the real global row was dropped as already claimed.
+    // `hookPathKey` reduces both scopes to one tail, so without scope in the key the global state would win the workspace
+    // row and the real global row would be dropped.
     _setDocsForTest([wsHookDoc()]);
     _setHooksForTest([
       wsHook({ id: "id-ws", enabled: true }),
@@ -811,24 +748,19 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
     const ws = _renderRowForTest(rows[0] as Parameters<typeof _renderRowForTest>[0]);
     const global = _renderRowForTest(rows[1] as Parameters<typeof _renderRowForTest>[0]);
 
-    // Each row toggles its OWN hook, at its own state.
     expect(ws.querySelector("[data-hook-id]")?.getAttribute("data-hook-id")).toBe("id-ws");
     expect(global.querySelector("[data-hook-id]")?.getAttribute("data-hook-id")).toBe("id-global");
     expect((ws.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(true);
     expect((global.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(false);
 
-    // The workspace row keeps the affordances a workspace file legitimately has.
     expect(ws.querySelector("button.entry-open")).not.toBeNull();
     expect(ws.querySelector(".entry-delete")).not.toBeNull();
-    // The global row has neither, because its file is outside the file surface.
     expect(global.querySelector("button.entry-open")).toBeNull();
     expect(global.querySelector(".entry-delete")).toBeNull();
   });
 
   it("uses an askAgent hook's prompt as its subtitle", () => {
-    // kiro_docs.go's hookRows sets Action from the COMMAND only, so an askAgent
-    // hook's scanned row has an empty subtitle. The join fills it for a global
-    // one, which is the only row it builds outright.
+    // The scan sets Action from the command only, so the join fills an askAgent global hook's subtitle.
     _setDocsForTest([]);
     _setHooksForTest([
       withoutCommand(
@@ -844,10 +776,7 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
   });
 });
 
-// A kept row is LEFT ALONE by reconcile unless something repaints it, and a
-// row's key is its path plus its name — neither of which moves when a hook is
-// toggled. Without the update pass the toggle would show its mount-time state
-// forever, however many times the server was refetched.
+// Reconcile keeps a row by path+name, which a toggle does not move, so the update pass must repaint it.
 describe("the Hooks tab: a kept row repaints when its state changes", () => {
   it("changes its signature when the hook's enabled flag flips", () => {
     _setHooksForTest([wsHook({ enabled: true })]);
@@ -873,32 +802,15 @@ describe("the Hooks tab: a kept row repaints when its state changes", () => {
   });
 
   it("distinguishes two rows whose text could forge one signature", () => {
-    // Every component is arbitrary text from a file on disk, so a separator
-    // inside one must not be able to impersonate a field boundary. keyenc's join
-    // is what makes that true; a template literal was not.
+    // Every component is arbitrary text, so keyenc's join stops a separator impersonating a field boundary.
     const a = _renderRowForTest(wsHookDoc({ name: "a:b", action: "c" })).getAttribute("data-sig");
     const b = _renderRowForTest(wsHookDoc({ name: "a", action: "b:c" })).getAttribute("data-sig");
     expect(a).not.toBe(b);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The live tab: the SSE wiring and the toggle round-trip.
-//
-// The SSE half is the half D66 explicitly asks to verify, and it is not the same
-// event the rest of the page uses. `settings_updated` does not fire for a hook
-// file, and the docs scan is memoized behind a signature of each category
-// directory's mtime AND its entry names — so an IN-PLACE body edit changes
-// neither and that endpoint alone would serve the old trigger forever. KAS
-// watches the tree and emits `_kiro/hooks/didChange`, which the server turns into
-// `hooks_changed`; subscribing to it is what keeps a hand-edited FILE reaching
-// this tab.
-//
-// The page is wired ONCE for this block, deliberately: initDocsView is guarded by
-// an `inited` flag and its change listener is delegated on #docs-view, so
-// re-seeding the DOM per test would hand every case after the first an element
-// nothing is listening to — a false green rather than a failure.
-// ---------------------------------------------------------------------------
+// `settings_updated` does not fire for a hook file, and the scan is memoized on directory mtime and names, so an
+// in-place edit needs `hooks_changed` (from KAS's `_kiro/hooks/didChange`). Wired once: initDocsView has an `inited` flag.
 
 describe("the Hooks tab: staying current", () => {
   let sseHandlers: Map<string, () => void>;
@@ -918,9 +830,7 @@ describe("the Hooks tab: staying current", () => {
         <div data-docs-panel="hooks" class="docs-panel hidden"></div>
         <div data-docs-panel="specs" class="docs-panel hidden"></div>
       </div>`;
-    // offsetParent is null for a detached host, and both SSE handlers gate on it to skip
-    // work while the page is closed. Force it truthy so the OPEN case is what
-    // these tests exercise.
+    // Both SSE handlers skip work while offsetParent is null; forced truthy to exercise the open page.
     Object.defineProperty(document.getElementById("docs-view"), "offsetParent", {
       get: () => document.body,
       configurable: true,
@@ -929,14 +839,44 @@ describe("the Hooks tab: staying current", () => {
     const { apiGetTyped } = await import("./api-client.js");
     vi.mocked(apiGetTyped).mockImplementation(serveDocsPage());
     const { onSSE } = await import("./bus.js");
-    // The three jobs the retired `loadDocsView` conflated, spelled apart: the
-    // activation's one-shot init, the router's sub-tab correction, and the fetch.
-    // Not `toggleDocsView`, which only TOGGLES the tab.
+    // Activation init, sub-tab correction and fetch are separate doors; `toggleDocsView` only toggles the tab.
     const { showDocsTab, forceDocsTab, refreshDocsView } = await import("./docs.js");
     showDocsTab();
     forceDocsTab("hooks");
     refreshDocsView();
     sseHandlers = new Map(vi.mocked(onSSE).mock.calls.map((c) => [c[0], c[1] as () => void]));
+  });
+
+  it("badges a steering doc KAS reported an issue for, and refetches on steering_issues_changed", async () => {
+    const { apiGetTyped } = await import("./api-client.js");
+    const path = "workspace/.kiro/steering/api.md";
+    vi.mocked(apiGetTyped)
+      .mockClear()
+      .mockImplementation(
+        serveDocsPage(
+          { docs: [{ category: "steering", name: "api", path }], truncated: false },
+          {
+            issues: {
+              [path]: [
+                { code: "contextReferenceUnresolved", remediation: "Fix the #[[file:x]] path" },
+              ],
+            },
+          },
+        ),
+      );
+    const { forceDocsTab, refreshDocsView } = await import("./docs.js");
+    forceDocsTab("steering");
+    refreshDocsView();
+    sseHandlers.get("steering_issues_changed")?.();
+    const panel = document.querySelector('[data-docs-panel="steering"]');
+    await vi.waitFor(() => {
+      expect(panel?.querySelector(".docs-badge-warn")?.textContent).toBe("1 issue");
+    });
+    expect(panel?.querySelector(".docs-badge-warn")?.getAttribute("data-tooltip")).toBe(
+      "Fix the #[[file:x]] path",
+    );
+    expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith(ISSUES_PATH, expect.anything());
+    forceDocsTab("hooks");
   });
 
   it("subscribes to hooks_changed, not only to settings_updated", () => {
@@ -945,11 +885,9 @@ describe("the Hooks tab: staying current", () => {
   });
 
   it("refetches BOTH halves when a hook file changes underneath it", async () => {
-    // Both, because a hand edit can change either: the body (the inventory's) or
-    // the enabled flag (the endpoint's).
+    // Both: a hand edit can change the body or the enabled flag.
     const { apiGetTyped } = await import("./api-client.js");
-    // Re-arm after clearing: this project's vitest resets the implementation with
-    // the call log, and an unresolved fetch throws inside the handler.
+    // This project's vitest resets the implementation with the call log, and an unresolved fetch throws.
     vi.mocked(apiGetTyped).mockClear().mockImplementation(serveDocsPage());
 
     sseHandlers.get("hooks_changed")?.();
@@ -966,8 +904,7 @@ describe("the Hooks tab: staying current", () => {
     const { setHookEnabled } = await import("./actions/hooks.js");
     const { _setDocsForTest, _setHooksForTest, _renderActiveForTest } = await import("./docs.js");
     vi.mocked(setHookEnabled.dispatch).mockClear().mockResolvedValue(undefined);
-    // The handler chains into loadHookState on success, so its fetch has to be
-    // armed too or the reconcile refetch rejects after the assertion has passed.
+    // The handler chains into loadHookState, so its fetch is armed too.
     const { apiGetTyped } = await import("./api-client.js");
     vi.mocked(apiGetTyped).mockImplementation(serveDocsPage());
 
@@ -989,24 +926,16 @@ describe("the Hooks tab: staying current", () => {
   });
 
   it("ignores a change event that is not a hook toggle", () => {
-    // The listener is delegated on the whole page, so it has to be selective:
-    // every future control on any docs tab dispatches change events through it.
+    // The listener is delegated on the whole page, so it must ignore other controls.
     const other = document.createElement("input");
     other.type = "checkbox";
     document.getElementById("docs-view")?.appendChild(other);
     other.dispatchEvent(new Event("change", { bubbles: true }));
-    // No throw, and nothing dispatched beyond the previous case's one call.
     expect(true).toBe(true);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The activation half and the fetch half.
-//
-// `loadDocsView` did three jobs — force the canonical sub-tab, run the one-shot
-// init, and fetch — and the forcing is what discarded the reader's sub-tab on every
-// switch back to the page.
-// ---------------------------------------------------------------------------
+// Forcing the sub-tab on every activation discarded the reader's sub-tab, so activation and fetch are separate.
 
 describe("showDocsTab and refreshDocsView", () => {
   function panel(tab: string): HTMLElement | null {
@@ -1046,15 +975,12 @@ describe("showDocsTab and refreshDocsView", () => {
   });
 
   it("arms no placeholder for a category with no documents once the inventory answered", async () => {
-    // `docs` initialises to `[]`, so an empty category and an unread one look
-    // identical in the container — and a gap reaches this refresh with no tab switch
-    // behind it, so without the answered flag it shimmers over a settled panel.
+    // An empty category and an unread one look identical, and a gap reaches this refresh with no tab switch.
     const { apiGetTyped } = await import("./api-client.js");
     let settle = (_v: unknown): void => {
       /* replaced below */
     };
-    // PENDING across the show delay, or the answer lands first and cancels the timer
-    // whatever the arm decided — which is the shape that made this pass either way.
+    // Pending across the show delay, or the answer cancels the timer whatever the arm decided.
     vi.mocked(apiGetTyped).mockImplementation(
       serveDocsPage(
         new Promise((resolve) => {
@@ -1079,10 +1005,7 @@ describe("showDocsTab and refreshDocsView", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Groups are SECTIONS: a label on the page rung followed by that group's own
-// list card, so a header stops reading as a short row with the rows' own fill.
-// ---------------------------------------------------------------------------
+// A group is a label plus its own list card, so a header does not read as a row.
 
 describe("grouped tabs render one section per group", () => {
   function panel(tab: string): HTMLElement {
@@ -1130,9 +1053,7 @@ describe("grouped tabs render one section per group", () => {
   });
 
   it("keeps a root-level spec out of the feature above it", async () => {
-    // The server's "." marks a document directly in the category root. It gets a
-    // section of its own rather than sitting under the previous feature's label,
-    // and two unlabelled runs are two sections, not one key twice.
+    // "." marks a document in the category root; two unlabelled runs are two sections.
     const { _setDocsForTest, forceDocsTab, _renderActiveForTest } = await import("./docs.js");
     _setDocsForTest([
       { category: "spec", name: "Loose", path: "workspace/.kiro/specs/loose.md", group: "." },
@@ -1146,7 +1067,6 @@ describe("grouped tabs render one section per group", () => {
       (s) => s.querySelector(".entry-section-label")?.textContent ?? "",
     );
     expect(labels).toEqual(["", "f", ""]);
-    // And a repaint keeps every section rather than orphaning a same-key twin.
     _renderActiveForTest();
     expect(panel("specs").querySelectorAll(":scope > .docs-section")).toHaveLength(3);
   });
@@ -1163,7 +1083,6 @@ describe("grouped tabs render one section per group", () => {
 
     _setHooksForTest([wsHook({ enabled: false })]);
     _renderActiveForTest();
-    // Same element, new contents: reconcile kept the node and the signature repainted it.
     expect(panel("hooks").querySelector<HTMLElement>(".entry")).toBe(row);
     expect((row?.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(false);
   });

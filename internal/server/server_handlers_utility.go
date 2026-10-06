@@ -90,8 +90,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 	sb.WriteString("\n```\n\nTheirs:\n```\n")
 	sb.WriteString(body.Theirs)
 	sb.WriteString("\n```\n\nMerged:")
-	// Medium effort: merging two divergent code edits is the hardest
-	// utility task; a low-effort merge tends to just pick one side.
+	// Medium effort: a low-effort merge tends to just pick one side.
 	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), marotte.EffortMedium)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))

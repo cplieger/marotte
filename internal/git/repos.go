@@ -64,9 +64,7 @@ func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)
 	for _, e := range entries {
-		// Only ".git" itself: a dot-NAMED repo (".github", ".kiro") is a legitimate
-		// clone target, and skipping every dot-dir made such a clone invisible here
-		// while the Sources row kept offering Clone into the non-empty directory.
+		// Only ".git" itself: a dot-named repo (".github", ".kiro") is a legitimate clone target.
 		if !e.IsDir() || e.Name() == ".git" {
 			continue
 		}
@@ -97,14 +95,9 @@ func (h *Handler) cachedDiscoverRepos(ctx context.Context) []repoEntry {
 	return r
 }
 
-// ownerOf resolves which discovered repository owns a WORKSPACE-relative path,
-// returning the repo name and the path rewritten repo-relative; ok is false when
-// no repo owns it. Longest name first, so a nested repo wins over its ancestor,
-// and the workspace-root repo (".") owns whatever no subdirectory repo claims.
-//
-// Server-side because the server owns the repo inventory: a client-side split
-// needs a second copy of this rule, and the one that existed got it wrong and
-// showed no status at all.
+// ownerOf resolves which discovered repository owns a workspace-relative path, returning the repo
+// name and the repo-relative path; ok is false when none owns it. Longest name first, so a nested
+// repo wins, and the root repo (".") owns whatever no subdirectory repo claims.
 func (h *Handler) ownerOf(ctx context.Context, relPath string) (repo, inRepo string, ok bool) {
 	repos := h.cachedDiscoverRepos(ctx)
 	best := -1

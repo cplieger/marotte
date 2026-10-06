@@ -1,22 +1,13 @@
-// ---------------------------------------------------------------------------
 // The run store: the fetch discipline, and the derived reads over one state.
-//
-// Two properties carry the whole module. The COALESCING one is why it exists at
-// all — KAS emits a `run_progress` per node event, so a twenty-step run produces
-// dozens of invalidations and the only state that matters is the one after the
-// last of them. The DERIVED reads are functions rather than stored fields on
-// purpose: a second copy of "how many steps finished" is a second thing that can
-// be wrong, so they are tested as arithmetic over a tree.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 
 const fetches: string[] = [];
-// Deliberately looser than `RunState`: `status` stays a bare string so a case can
-// spell an off-enum word an engine ahead of this build would send, and `root` stays
-// `unknown` so a case can spell a malformed tree.
+// Deliberately looser than `RunState`: `status` stays a bare string so a case can spell an off-enum
+// word an engine ahead of this build would send, and `root` stays `unknown` so a case can spell a
+// malformed tree.
 let responses: (
   | {
       workflowId: string;
@@ -28,9 +19,9 @@ let responses: (
   | undefined
 )[] = [];
 let resolvers: (() => void)[] = [];
-// The HTTP status each FAILED read answers with, in order. 502 by default — a read that
-// never reached the engine, which is what every case predating the status means by an
-// absent response, and the arm that keeps the retry ladder.
+// The HTTP status each FAILED read answers with, in order. 502 by default — a read that never
+// reached the engine, which is what every case predating the status means by an absent response,
+// and the arm that keeps the retry ladder.
 let failStatuses: number[] = [];
 let liveRunsReply: {
   runs: { workflow_id: string; chat_id: string; executing: boolean }[];
@@ -38,12 +29,12 @@ let liveRunsReply: {
 let controlsReplies: RunControlsResponse[] = [];
 
 vi.mock("./api-client.js", () => ({
-  // The OrError variant, because the store reads a failed read's STATUS: the collapsing
-  // `apiGet` answers null for a settled 404 and a dead network alike.
+  // The OrError variant, because the store reads a failed read's STATUS: the collapsing `apiGet`
+  // answers null for a settled 404 and a dead network alike.
   apiGetOrError: vi.fn(async (path: string) => {
     fetches.push(path);
-    // A deferred resolve, so a test can invalidate again WHILE one is in flight —
-    // which is the whole case the coalescing exists for.
+    // A deferred resolve, so a test can invalidate again WHILE one is in flight — which is the
+    // whole case the coalescing exists for.
     await new Promise<void>((r) => resolvers.push(r));
     const state = responses.shift();
     if (state === undefined) {
@@ -56,18 +47,17 @@ vi.mock("./api-client.js", () => ({
       error: "",
     };
   }),
-  // The live-runs rebuild and the affordance both go through the typed GET; the
-  // decoder is the generated one and is not under test here, so the mock answers
-  // typed values directly (null is the degrade arm: non-2xx / network / decode
-  // failure).
+  // The live-runs rebuild and the affordance both go through the typed GET; the decoder is the
+  // generated one and is not under test here, so the mock answers typed values directly (null is
+  // the degrade arm: non-2xx / network / decode failure).
   apiGetTyped: vi.fn(async (path: string) => {
     fetches.push(path);
     if (!path.endsWith("/controls")) {
       return liveRunsReply;
     }
-    // Deferred like the state fetch above, so a test can invalidate the
-    // affordance again WHILE one read is open — the run that ends inside the
-    // tab-open read's window, which is the one moment its answer changes.
+    // Deferred like the state fetch above, so a test can invalidate the affordance again WHILE one
+    // read is open — the run that ends inside the tab-open read's window, which is the one moment
+    // its answer changes.
     await new Promise<void>((r) => resolvers.push(r));
     return controlsReplies.shift() ?? null;
   }),
@@ -161,20 +151,17 @@ describe("the fetch is coalesced, because a busy run invalidates dozens of times
     await settle();
     expect(store.runState("r3")?.status).toBe("running");
 
-    // A deleted run answers with no state. Blanking the cell would make a card
-    // that was showing a real run flip to its loading row.
+    // A deleted run answers with no state. Blanking the cell would make a card that was showing a
+    // real run flip to its loading row.
     store.invalidateRun("r3");
     await settle();
     expect(store.runState("r3")?.status).toBe("running");
   });
 });
 
-// The CAUSE token. A transport gap invalidates every cached run and then, a
-// network round trip later, invalidates every LIVE run again from the rebuild's
-// answer — so at 7 live runs the gap cost 14 of its 24 requests. The token says
-// the two are the same event, and the guard has to hold however the pair
-// interleaves, because which response lands first is not something the client
-// controls.
+// The CAUSE token. A transport gap invalidates every cached run and then, a network round trip
+// later, invalidates every LIVE run again from the rebuild's answer — so at 7 live runs the gap
+// cost 14 of its 24 requests.
 describe("one cause costs one request per run", () => {
   it("fetches once when the second invalidation lands AFTER the first answered", async () => {
     responses = [{ workflowId: "r1", status: "running" }];
@@ -183,9 +170,9 @@ describe("one cause costs one request per run", () => {
     await settle();
     expect(fetches).toEqual(["/api/runs/r1"]);
 
-    // This is the interleaving an in-flight-only guard misses: `rebuildLiveRuns`
-    // awaits `/api/runs/live` first, so its invalidation can arrive after the
-    // per-run read it would be duplicating has already come back.
+    // This is the interleaving an in-flight-only guard misses: `rebuildLiveRuns` awaits
+    // `/api/runs/live` first, so its invalidation can arrive after the per-run read it would be
+    // duplicating has already come back.
     store.invalidateRun("r1", "gap:1");
     await settle();
     expect(fetches).toEqual(["/api/runs/r1"]);
@@ -199,8 +186,8 @@ describe("one cause costs one request per run", () => {
     expect(fetches).toHaveLength(1);
 
     await settle();
-    // No trailing fetch either: the read in flight was already answering for this
-    // cause, so there is nothing left to be stale about.
+    // No trailing fetch either: the read in flight was already answering for this cause, so there
+    // is nothing left to be stale about.
     expect(fetches).toEqual(["/api/runs/r1"]);
   });
 
@@ -234,8 +221,8 @@ describe("one cause costs one request per run", () => {
   });
 
   it("claims nothing when the read FAILED, so the same cause retries", async () => {
-    // A cause recorded over an answer nobody got would make the gap's own recovery
-    // a no-op — the one direction this guard must not fail in.
+    // A cause recorded over an answer nobody got would make the gap's own recovery a no-op — the
+    // one direction this guard must not fail in.
     responses = [undefined, { workflowId: "r1", status: "running" }];
 
     store.invalidateRun("r1", "gap:1");
@@ -248,8 +235,8 @@ describe("one cause costs one request per run", () => {
   });
 
   it("threads the gap's token through BOTH of its readers, so each run is read once", async () => {
-    // The production pair: `invalidateCachedRuns` over what is cached, then
-    // `rebuildLiveRuns` over what the server says is live, on one token.
+    // The production pair: `invalidateCachedRuns` over what is cached, then `rebuildLiveRuns` over
+    // what the server says is live, on one token.
     responses = [
       { workflowId: "r1", status: "running" },
       { workflowId: "r2", status: "running" },
@@ -319,8 +306,8 @@ describe("leafNodes walks to the work and skips the scaffolding", () => {
   });
 
   it("treats a childless container as a leaf, so nothing vanishes", () => {
-    // A `parallel` whose branches KAS has not expanded yet has no children. It is
-    // still a row a reader must see, or the plan silently shrinks.
+    // A `parallel` whose branches KAS has not expanded yet has no children. It is still a row a
+    // reader must see, or the plan silently shrinks.
     const root: RunNode = { nodeId: "fan", type: "parallel", status: "pending" };
     expect(store.leafNodes(root).map((n) => n.nodeId)).toEqual(["fan"]);
   });
@@ -330,10 +317,8 @@ describe("leafNodes walks to the work and skips the scaffolding", () => {
   });
 });
 
-// KAS describes one node two ways: a repeat's iteration container is
-// `<repeatId>#<n>` in the state tree these fixtures reproduce and `iter-<n>` in
-// the `nodePath` it stamps on a step FRAME. The frame's spelling is the key both
-// row producers have to land on, so the tree is translated into it.
+// KAS describes one node two ways: a repeat's iteration container is `<repeatId>#<n>` in the state
+// tree these fixtures reproduce and `iter-<n>` in the `nodePath` it stamps on a step FRAME.
 describe("nodePathOf separates two iterations that share a node id", () => {
   it("builds the same path the server joins into a step's subtask id", () => {
     const first = step("work");
@@ -375,10 +360,10 @@ describe("nodePathOf separates two iterations that share a node id", () => {
   });
 
   it("falls back to a repeat child's own id when it carries no iteration", () => {
-    // Every one of the 27 iteration containers on this machine's real runs carries
-    // an `iteration`, so this is the unobserved branch: it must degrade to a row in
-    // the wrong place rather than to `iter-undefined`, which is the same call the
-    // server's own runNodePath makes for a frame with no path.
+    // Every one of the 27 iteration containers on this machine's real runs carries an `iteration`,
+    // so this is the unobserved branch: it must degrade to a row in the wrong place rather than to
+    // `iter-undefined`, which is the same call the server's own runNodePath makes for a frame with
+    // no path.
     const target = step("work");
     const root: RunNode = {
       nodeId: "wf",
@@ -390,9 +375,9 @@ describe("nodePathOf separates two iterations that share a node id", () => {
   });
 
   it("leaves a parallel BRANCH container spelled as its own id", () => {
-    // Real data: a parallel's branches are named `plan-a`…`plan-d` on both sides and
-    // match byte-for-byte today, so rewriting one would break a working case. The
-    // rule is a repeat's, not every container's.
+    // Real data: a parallel's branches are named `plan-a`…`plan-d` on both sides and match
+    // byte-for-byte today, so rewriting one would break a working case. The rule is a repeat's, not
+    // every container's.
     const target = step("plan-a", { branchId: "plan-a" });
     const root: RunNode = {
       nodeId: "wf",
@@ -406,8 +391,8 @@ describe("nodePathOf separates two iterations that share a node id", () => {
   });
 
   it("rewrites a step sitting DIRECTLY under a repeat", () => {
-    // The rule keys on the PARENT's type, not on the node being a container, so a
-    // repeat whose body is one bare step is addressed the same way KAS addresses it.
+    // The rule keys on the PARENT's type, not on the node being a container, so a repeat whose body
+    // is one bare step is addressed the same way KAS addresses it.
     const target = step("work", { iteration: 2 });
     const root: RunNode = {
       nodeId: "wf",
@@ -419,11 +404,8 @@ describe("nodePathOf separates two iterations that share a node id", () => {
   });
 });
 
-// The FALLBACK above is a well-formed value and not an address: its first segment is
-// a LEAF id where the endpoint asserts the run id, so a read of it is refused. What
-// separates the two is `placed`, and a consumer that puts the value on the wire or
-// into a focus request is required to read it — the path alone cannot say which it
-// got, which is what let the value be spent as an address.
+// The FALLBACK above is a well-formed value and not an address: its first segment is a LEAF id
+// where the endpoint asserts the run id, so a read of it is refused.
 describe("nodeAddressOf reports whether the walk PLACED the target", () => {
   it("reports placed for a node the tree holds", () => {
     const target = step("work");
@@ -451,8 +433,8 @@ describe("nodeAddressOf reports whether the walk PLACED the target", () => {
     });
   });
 
-  // The wrapper's contract did not move: a row still gets a key for an unplaceable
-  // node, because "a row in the wrong place beats content that vanishes".
+  // The wrapper's contract did not move: a row still gets a key for an unplaceable node, because "a
+  // row in the wrong place beats content that vanishes".
   it("keeps nodePathOf answering the same path either way", () => {
     const target = step("work");
     const root: RunNode = {
@@ -473,8 +455,8 @@ describe("runCounters answers the header's counter", () => {
   });
 
   it("names the RUNNING position, not done + 1", () => {
-    // A skipped leaf would shift a `done + 1` counter, and a parallel node has
-    // several in flight — so "step 3 of 5" has to mean the running one.
+    // A skipped leaf would shift a `done + 1` counter, and a parallel node has several in flight —
+    // so "step 3 of 5" has to mean the running one.
     const c = store.runCounters(
       state(
         step("a", { status: "completed" }),
@@ -517,8 +499,8 @@ describe("the clocks", () => {
   });
 
   it("reads a pending step as nothing, not as the epoch", () => {
-    // Date.parse(undefined) is NaN and Date.parse("") is NaN; either arriving as a
-    // number would render a step that never ran as having taken 56 years.
+    // Date.parse(undefined) is NaN and Date.parse("") is NaN; either arriving as a number would
+    // render a step that never ran as having taken 56 years.
     expect(store.elapsedMs(undefined, undefined)).toBe(0);
     expect(store.elapsedMs("", "")).toBe(0);
     expect(store.elapsedMs("not a date", undefined)).toBe(0);
@@ -578,10 +560,10 @@ describe("the clocks", () => {
 
 describe("runIsLive counts a pause as live", () => {
   it("is true while running or paused, false once terminal", () => {
-    // Built one at a time rather than spread from a list, because
-    // `exactOptionalPropertyTypes` refuses `status: undefined` as a property
-    // value: an absent status and a status whose value is undefined are different
-    // things to this compiler, and the absent one is what a run mid-launch has.
+    // Built one at a time rather than spread from a list, because `exactOptionalPropertyTypes`
+    // refuses `status: undefined` as a property value: an absent status and a status whose value is
+    // undefined are different things to this compiler, and the absent one is what a run mid-launch
+    // has.
     expect(store.runIsLive({ workflowId: "r1", status: "running" })).toBe(true);
     expect(store.runIsLive({ workflowId: "r1", status: "paused" })).toBe(true);
     expect(store.runIsLive({ workflowId: "r1", status: "completed" })).toBe(false);
@@ -593,21 +575,7 @@ describe("runIsLive counts a pause as live", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // isNeedInputPause is tested in `run-store-pause.node.test.ts`, NOT here.
-//
-// The rule exists in Go as well (`needInputPause`, internal/agent/run_ask.go) and
-// neither copy can go, so the cases live in ONE shared fixture that both languages
-// read — `internal/agent/testdata/need_input_pauses.json`, on turn_outcomes.json's
-// pattern. A table here would be a third copy of the same list, which is the
-// duplication the fixture exists to remove, and it could not read the fixture
-// anyway: this file runs in the browser project and the fixture is a disk read.
-//
-// isNeedInputPark IS here, because it is a different question and takes no fixture:
-// it composes that reason rule with the node tree, and the tree half has no Go twin
-// to share a table with (the server's arm decides which node to ADDRESS, this one
-// only whether a person is owed an answer).
-// ---------------------------------------------------------------------------
 describe("isNeedInputPark answers over the reason AND the node tree", () => {
   // The plain-step park: KAS writes the matching sentence on the run itself.
   const byReason: RunState = {
@@ -617,9 +585,9 @@ describe("isNeedInputPark answers over the reason AND the node tree", () => {
     root: { nodeId: "root", type: "sequence", status: "paused" },
   };
 
-  // The parallel-branch park, verbatim from KAS's executeParallel: the branch runs
-  // against a shallow COPY of the run state, so its own sentence is written to a
-  // throwaway object and the run keeps only this wrapper.
+  // The parallel-branch park, verbatim from KAS's executeParallel: the branch runs against a
+  // shallow COPY of the run state, so its own sentence is written to a throwaway object and the run
+  // keeps only this wrapper.
   const branch = (signal?: RunNode["completionSignal"]): RunState => ({
     workflowId: "r2",
     status: "paused",
@@ -650,24 +618,21 @@ describe("isNeedInputPark answers over the reason AND the node tree", () => {
     expect(store.isNeedInputPark(byReason)).toBe(true);
   });
 
-  // The arm the dot exists for and the reason could never reach: without it a branch
-  // parked on a person paints the ordinary blue waiting dot, so the one pause a
-  // reader has to act on is indistinguishable from a network blip.
+  // The arm the dot exists for and the reason could never reach: without it a branch parked on a
+  // person paints the ordinary blue waiting dot, so the one pause a reader has to act on is
+  // indistinguishable from a network blip.
   it("recognises a park inside a parallel branch from the node's own signal", () => {
     expect(store.isNeedInputPark(branch("need_input"))).toBe(true);
   });
 
-  // The negative that keeps the arm honest. KAS emits that SAME wrapper sentence for
-  // an interruption and a permanent failure — pauseDetail is withheld for exactly
-  // those kinds — so a predicate widened to the sentence would claim a person is
-  // owed an answer for a run that only needs a resume.
+  // The negative that keeps the arm honest.
   it("does not fire on a branch parked for any other cause", () => {
     expect(store.isNeedInputPark(branch(undefined))).toBe(false);
     expect(store.isNeedInputPark(branch("error"))).toBe(false);
   });
 
-  // Gated on `paused`, like the dot vocabulary's own arm: a signal outliving its
-  // pause must never paint a finished run as awaiting input.
+  // Gated on `paused`, like the dot vocabulary's own arm: a signal outliving its pause must never
+  // paint a finished run as awaiting input.
   it("withholds it for a run that is no longer paused", () => {
     expect(store.isNeedInputPark({ ...branch("need_input"), status: "completed" })).toBe(false);
     expect(store.isNeedInputPark({ ...byReason, status: "running" })).toBe(false);
@@ -678,9 +643,7 @@ describe("isNeedInputPark answers over the reason AND the node tree", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // noteRunChat: which chat's agent launched a run.
-// ---------------------------------------------------------------------------
 describe("noteRunChat refuses the two spellings of 'no launching chat'", () => {
   it("records a real chat id", () => {
     store.noteRunChat("wf-parented", "chat-7");
@@ -688,10 +651,8 @@ describe("noteRunChat refuses the two spellings of 'no launching chat'", () => {
   });
 
   it("refuses the synthetic run key, which is a surface rather than a chat", () => {
-    // A parentless run's LIFECYCLE frames carry an empty envelope chat id, but its
-    // ASKS are keyed to `run:<workflowId>` because the dock queues per chat. Recorded
-    // as a launching chat, it nests the run's tab under a conversation that does not
-    // exist — and `runChatID`'s callers cannot tell a real id from a synthetic one.
+    // A parentless run's LIFECYCLE frames carry an empty envelope chat id, but its ASKS are keyed
+    // to `run:<workflowId>` because the dock queues per chat.
     store.noteRunChat("wf-parentless", "run:wf-parentless");
     expect(store.runChatID("wf-parentless")).toBe("");
   });
@@ -702,22 +663,9 @@ describe("noteRunChat refuses the two spellings of 'no launching chat'", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The live-runs inventory: the eviction sweep's exemption source. Event-fed,
-// rebuilt from GET /api/runs/live, and degrading toward KEEPING — a stale
-// exemption costs memory, a wrongly-evicted live chat costs correctness.
-// Every case uses its own ids: the inventory is module state, like the runs it
-// describes.
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// runLabelOf: what a run is CALLED.
-//
-// A precedence over cached state, and it lives here because two readers render a
-// tab row from it — the tab factory, which turns "" into its own placeholder, and
-// the per-run effect that corrects a row built before the run's first fetch
-// resolved. A second copy of the order is a second thing that can disagree about
-// what a tab is called.
-// ---------------------------------------------------------------------------
+// The live-runs inventory: the eviction sweep's exemption source. Event-fed, rebuilt from GET
+// /api/runs/live, and degrading toward KEEPING — a stale exemption costs memory, a wrongly-evicted
+// live chat costs correctness.
 
 describe("runLabelOf", () => {
   it("prefers the launcher's label for THIS execution over the recipe's name", async () => {
@@ -734,9 +682,9 @@ describe("runLabelOf", () => {
     expect(store.runLabelOf("r2")).toBe("sweep.yaml");
   });
 
-  // The state at the instant the server's own tab offer arrives: the tab exists and
-  // nothing has been fetched for the run yet. "" rather than a placeholder, because
-  // which placeholder to show is the tab layer's decision, not the store's.
+  // The state at the instant the server's own tab offer arrives: the tab exists and nothing has
+  // been fetched for the run yet. "" rather than a placeholder, because which placeholder to show
+  // is the tab layer's decision, not the store's.
   it("answers empty for a run nothing has been fetched for", () => {
     expect(store.runLabelOf("r3")).toBe("");
   });
@@ -747,11 +695,29 @@ describe("runLabelOf", () => {
     await settle();
     expect(store.runLabelOf("r4")).toBe("");
   });
+
+  // run_started carries the label and its notice can land before the inspect read.
+  it("names a run by its lifecycle frame while the state read is still held", async () => {
+    store.noteRunLabel("r1", "nightly sweep");
+    responses = [{ workflowId: "r1", runLabel: "nightly sweep · resumed" }];
+    store.invalidateRun("r1");
+    expect(fetches).toHaveLength(1);
+    expect(store.runLabelOf("r1")).toBe("nightly sweep");
+
+    await settle();
+    expect(store.runLabelOf("r1")).toBe("nightly sweep · resumed");
+  });
+
+  it("drops the frame's label with the rest of the run", () => {
+    store.noteRunLabel("r2", "sweep.yaml");
+    store.forgetRun("r2");
+    expect(store.runLabelOf("r2")).toBe("");
+  });
 });
 
-/** Whether any live row this chat launched still reports EXECUTING. The store's own
- *  predicate for that question went with the eviction exemption it served; the FLAG
- *  survives, because the chat row's workflow mark reads it as its floor. */
+/** Whether any live row this chat launched still reports EXECUTING. The store's own predicate
+ *  for that question went with the eviction exemption it served; the FLAG survives, because the
+ *  chat row's workflow mark reads it as its floor. */
 function executingForChat(chatID: string): boolean {
   return store.liveRunsForChat(chatID).some((r) => r.executing);
 }
@@ -766,10 +732,7 @@ describe("the live-runs inventory", () => {
     expect(executingForChat("chat-a")).toBe(false);
   });
 
-  // The narrowing Stage 2 exists for, and it is the whole reason the row carries
-  // two facts. A needInput park can sit for hours writing nothing into the
-  // transcript, so `executing` must lapse — while the run stays in the inventory,
-  // because the dot painter and the tab-parent resolver still need it.
+  // The narrowing Stage 2 exists for, and it is the whole reason the row carries two facts.
   it("clears executing for a chat whose run parked, and keeps the run in the inventory", () => {
     store.noteRunLive("wf-parked", "chat-parked", true);
     expect(executingForChat("chat-parked")).toBe(true);
@@ -795,10 +758,7 @@ describe("the live-runs inventory", () => {
     store.noteRunSettled("wf-parentless");
   });
 
-  // The ROW reader C2's floor is built on. `foldRuns` iterates rows and takes the
-  // inventory's `executing` where the state cell is absent, so it needs the whole
-  // row AND the workflow id — and the id is the map's KEY rather than a field, so a
-  // reader handed the row alone cannot name the run it describes.
+  // The ROW reader C2's floor is built on.
   it("answers a row per matching run, carrying the id the map holds it under", () => {
     store.noteRunLive("wf-a", "chat-x", true);
     store.noteRunLive("wf-b", "chat-x", false);
@@ -806,8 +766,8 @@ describe("the live-runs inventory", () => {
 
     const rows = store.liveRunsForChat("chat-x");
 
-    // Sorted, because the answer's ORDER is the map's insertion order and no
-    // consumer depends on it — asserting it would pin a fact nothing reads.
+    // Sorted, because the answer's ORDER is the map's insertion order and no consumer depends on it
+    // — asserting it would pin a fact nothing reads.
     expect([...rows].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
       { id: "wf-a", chat: "chat-x", executing: true },
       { id: "wf-b", chat: "chat-x", executing: false },
@@ -820,10 +780,9 @@ describe("the live-runs inventory", () => {
   });
 
   it("answers the same ids through the ids-only wrapper", () => {
-    // Three callers ask only how many or which (`run-bar.ts` twice,
-    // `chat-settled.ts`'s `.length`), and the wrapper exists so they do not each
-    // map the rows themselves. It reads THROUGH the row reader, so the two cannot
-    // disagree about which runs belong to a chat.
+    // Three callers ask only how many or which (`run-bar.ts` twice, `chat-settled.ts`'s `.length`),
+    // and the wrapper exists so they do not each map the rows themselves. It reads THROUGH the row
+    // reader, so the two cannot disagree about which runs belong to a chat.
     store.noteRunLive("wf-a", "chat-x", true);
     store.noteRunLive("wf-b", "chat-x", false);
     store.noteRunLive("wf-c", "chat-y", true);
@@ -834,9 +793,9 @@ describe("the live-runs inventory", () => {
   });
 
   it("survives the render cache dropping the run's card (forgetRun)", () => {
-    // The disposed-run-card case: forgetRun is the CACHE's bound (last card
-    // unmounted), and a run does not stop being live because nothing renders it —
-    // the row must survive for a chat nobody is looking at.
+    // The disposed-run-card case: forgetRun is the CACHE's bound (last card unmounted), and a run
+    // does not stop being live because nothing renders it — the row must survive for a chat nobody
+    // is looking at.
     store.noteRunLive("wf-carded", "chat-carded", true);
     store.forgetRun("wf-carded");
     expect(executingForChat("chat-carded")).toBe(true);
@@ -844,8 +803,8 @@ describe("the live-runs inventory", () => {
   });
 
   it("rebuilds from the endpoint, replacing the event-fed view", async () => {
-    // Event-fed state is stale in both directions: wf-stale settled while this
-    // client was away, wf-missed started then.
+    // Event-fed state is stale in both directions: wf-stale settled while this client was away,
+    // wf-missed started then.
     store.noteRunLive("wf-stale", "chat-stale", true);
     liveRunsReply = {
       runs: [
@@ -863,9 +822,9 @@ describe("the live-runs inventory", () => {
     store.noteRunSettled("wf-parentless");
   });
 
-  // The endpoint's own answer for a parked run, which is the case a boot lands in:
-  // a run paused across a reload emits no frames at all, so the rebuild is the only
-  // thing that can say whether its chat is still being written to.
+  // The endpoint's own answer for a parked run, which is the case a boot lands in: a run paused
+  // across a reload emits no frames at all, so the rebuild is the only thing that can say whether
+  // its chat is still being written to.
   it("adopts the endpoint's executing verdict, clearing it for a parked run", async () => {
     liveRunsReply = {
       runs: [{ workflow_id: "wf-boot-parked", chat_id: "chat-boot", executing: false }],
@@ -885,12 +844,11 @@ describe("the live-runs inventory", () => {
     store.noteRunSettled("wf-boot-parked");
   });
 
-  // The half that was dropped on the floor. This endpoint is the only place the
-  // (run, launching chat) pairing arrives outside an SSE frame, so without the seed
-  // `runChatID` answered "" for every live run after a reload — and on a run whose
-  // step takes twenty minutes there is no frame to correct it, so the transcript
-  // card's link and a `/run/{id}` deep link both opened the tab at the end of the
-  // strip rather than beside the conversation.
+  // This endpoint is the only place the (run, launching chat) pairing arrives outside an SSE frame,
+  // so without the seed `runChatID` answered "" for every live run after a reload — and on a run
+  // whose step takes twenty minutes there is no frame to correct it, so the transcript card's link
+  // and a `/run/{id}` deep link both opened the tab at the end of the strip rather than beside the
+  // conversation.
   it("seeds which chat launched each live run, not just that it is live", async () => {
     liveRunsReply = {
       runs: [
@@ -902,17 +860,16 @@ describe("the live-runs inventory", () => {
     await store.rebuildLiveRuns();
 
     expect(store.runChatID("wf-reloaded")).toBe("chat-reloaded");
-    // A parentless run has no launching chat, so there is nothing to seed and
-    // nothing for a tab to nest under.
+    // A parentless run has no launching chat, so there is nothing to seed and nothing for a tab to
+    // nest under.
     expect(store.runChatID("wf-scheduled")).toBe("");
     store.noteRunSettled("wf-reloaded");
     store.noteRunSettled("wf-scheduled");
   });
 
-  // The other half a seeded pairing does not cover: a tab row's NAME comes from
-  // the run's own state, which nothing else fetches for a run this client saw no
-  // frames for — a PAUSED run emits none at all, so its row kept the factory's
-  // placeholder until a reader opened the run view.
+  // The other half a seeded pairing does not cover: a tab row's NAME comes from the run's own
+  // state, which nothing else fetches for a run this client saw no frames for — a PAUSED run emits
+  // none at all, so its row kept the factory's placeholder until a reader opened the run view.
   it("resolves each live run's cell, and reports each to the painter", async () => {
     const reported: string[] = [];
     store.registerLiveRunObserver((id) => reported.push(id));
@@ -955,16 +912,9 @@ describe("the live-runs inventory", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// `run_progress` is APPLIED, not answered with a fetch. That is what removes up
-// to five concurrent `GET /api/runs/{id}` round trips per burst of node events,
-// each one a JSON-RPC call to KAS returning the whole state tree.
-//
-// The property that makes it safe is addressability: a frame names ONE execution
-// by node PATH, and a repeat's iterations have distinct paths where they share a
-// node id. Every write is an assignment, so KAS's duplicate frames across a
-// resume cost nothing.
-// ---------------------------------------------------------------------------
+// `run_progress` is APPLIED, not answered with a fetch. That is what removes up to five concurrent
+// `GET /api/runs/{id}` round trips per burst of node events, each one a JSON-RPC call to KAS
+// returning the whole state tree.
 
 /** Seed a run's cached state without a fetch, by resolving one. */
 async function seedRun(id: string, state: RunState): Promise<void> {
@@ -997,9 +947,9 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
   });
 
   it("finds an iteration container by its FRAME spelling, not the tree's", async () => {
-    // KAS spells a repeat's per-iteration container `<repeatId>#<n>` in the state
-    // tree and `iter-<n>` in a node path, so the client translates. Without that
-    // a step inside a loop is unaddressable and every frame for it refetches.
+    // KAS spells a repeat's per-iteration container `<repeatId>#<n>` in the state tree and
+    // `iter-<n>` in a node path, so the client translates. Without that a step inside a loop is
+    // unaddressable and every frame for it refetches.
     await seedRun("r1", {
       workflowId: "r1",
       status: "running",
@@ -1053,9 +1003,8 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
   });
 
   it("keeps the fields the frame does NOT carry", async () => {
-    // A `watch_poll` carries a path and no status, and a `node_complete` carries
-    // no `started_at`. A frame states what changed, so an absent field must not
-    // blank what node_start already left.
+    // A `watch_poll` carries a path and no status, and a `node_complete` carries no `started_at`. A
+    // frame states what changed, so an absent field must not blank what node_start already left.
     await seedRun("r1", {
       workflowId: "r1",
       status: "running",
@@ -1077,9 +1026,9 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
   });
 
   it("drops a status word it does not know rather than writing it into the union", async () => {
-    // The frame forwards KAS's own word as a plain string. Every renderer switches
-    // on the node's status, so a new upstream word landing in the field would
-    // reach those switches with no case; the next refetch carries the truth.
+    // The frame forwards KAS's own word as a plain string. Every renderer switches on the node's
+    // status, so a new upstream word landing in the field would reach those switches with no case;
+    // the next refetch carries the truth.
     await seedRun("r1", {
       workflowId: "r1",
       status: "running",
@@ -1112,15 +1061,9 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     expect(after?.root?.children?.[1]).toBe(untouchedSibling);
   });
 
-  // A frame that moves nothing must cost nothing. The store's value is what every
-  // reader watches and it dedups by IDENTITY, so handing back a new object for an
-  // unchanged tree wakes every subscriber to repaint the same pixels.
-  //
-  // `watch_poll` is the frame that made this reachable — it re-states `running` on a
-  // node already running, once per poll interval for the life of a watch — and a
-  // duplicate frame across a KAS resume is the other. Asserted through the state's
-  // identity rather than a render count, because identity is the thing the
-  // subscribers key on.
+  // A frame that moves nothing must cost nothing. The store's value is what every reader watches
+  // and it dedups by IDENTITY, so handing back a new object for an unchanged tree wakes every
+  // subscriber to repaint the same pixels.
   it("does not reassign the state for a frame that moves nothing", async () => {
     await seedRun("r1", {
       workflowId: "r1",
@@ -1141,15 +1084,14 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
       status: "running",
     });
 
-    // LANDED, so the caller must not refetch — "nothing changed" is not "I could
-    // not apply this", and conflating them would put the HTTP round trip back on
-    // every poll.
+    // LANDED, so the caller must not refetch — "nothing changed" is not "I could not apply this",
+    // and conflating them would put the HTTP round trip back on every poll.
     expect(landed).toBe(true);
     expect(store.peekRunState("r1")).toBe(before);
   });
 
-  // The same claim one level up: an unchanged leaf must not rebuild the spine
-  // above it either, or the root identity changes and the saving is lost.
+  // The same claim one level up: an unchanged leaf must not rebuild the spine above it either, or
+  // the root identity changes and the saving is lost.
   it("leaves the spine alone when the addressed leaf did not move", async () => {
     await seedRun("r1", {
       workflowId: "r1",
@@ -1168,8 +1110,8 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     expect(store.peekRunState("r1")?.root).toBe(root);
   });
 
-  // And the guard must not swallow a real change. A frame carrying a field the node
-  // does not hold is a change, however small.
+  // And the guard must not swallow a real change. A frame carrying a field the node does not hold
+  // is a change, however small.
   it("still reassigns when the frame moves one field", async () => {
     await seedRun("r1", {
       workflowId: "r1",
@@ -1216,10 +1158,8 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
   });
 });
 
-// The affordance is a SECOND cell on its own clock: the state is re-read on every
-// gap and shape change, while what a run offers turns over only when it reaches a
-// terminal status. Two triggers ask for it — a tab opening and that run's own
-// `run_finished` — and they can land together, which is the whole subject here.
+// The affordance is a SECOND cell on its own clock: the state is re-read on every gap and shape
+// change, while what a run offers turns over only when it reaches a terminal status.
 describe("the affordance cell coalesces like the state cell, trailing fetch included", () => {
   const live: RunControlsResponse = {
     verbs: ["pause", "cancel"],
@@ -1233,10 +1173,8 @@ describe("the affordance cell coalesces like the state cell, trailing fetch incl
     return fetches.filter((p) => p.endsWith("/controls"));
   }
 
-  // THE DEFECT. The in-flight guard dropped a coincident call and scheduled
-  // nothing, so a run that ENDED inside the tab-open read's window kept the
-  // pre-terminal row — Pause and Cancel on a run that had already aborted — with
-  // no trigger left to re-ask for the tab's lifetime.
+  // An in-flight guard that drops a coincident call leaves a run that ENDED inside the tab-open
+  // read's window on its pre-terminal row (Pause and Cancel on an aborted run) for the tab's life.
   it("re-asks for a run that ended while the tab-open read was still open", async () => {
     controlsReplies = [live, ended];
     store.invalidateRunControls("r1"); // the tab opening
@@ -1270,8 +1208,8 @@ describe("the affordance cell coalesces like the state cell, trailing fetch incl
     expect(store.runControls("r2")?.verbs).toEqual(["retry"]);
   });
 
-  // A failed read leaves the previous answer standing: degrading to the last known
-  // row beats blanking the controls under a reader about to use them.
+  // A failed read leaves the previous answer standing: degrading to the last known row beats
+  // blanking the controls under a reader about to use them.
   it("keeps the last good answer when a read comes back empty", async () => {
     controlsReplies = [live];
     store.invalidateRunControls("r1");
@@ -1307,29 +1245,12 @@ describe("invalidateCachedRuns is the gap-recovery half of the push contract", (
   });
 });
 
-// ---------------------------------------------------------------------------
 // The retry ladder behind a read that produced nothing.
-//
-// The window it covers is the one nothing else revisits: a `run_progress` frame is
-// answered by ONE read, so a read that came back empty leaves the card sitting on
-// whatever it last showed until the next frame — and a paused run emits none at all.
-// Bounded because a failed read is not always transient: the run endpoint answers 503
-// for an engine with no workflow support, which no number of attempts can move.
-//
-// SKIPPED outright for one status. `handleRun` grades a failed inspect three ways, and a
-// 404 is the narrow arm where the engine answered ABOUT this run and refused — so the
-// answer is the same however often it is asked, and a run the server has forgotten costs
-// one read per event instead of four.
-//
-// Fake timers are installed per case; the module is shared with the rest of this file,
-// so the ladder is dropped by `beforeEach`'s `forgetRun`.
-// ---------------------------------------------------------------------------
 
 describe("the retry ladder behind a run read that produced nothing", () => {
   afterEach(async () => {
-    // Drain anything still in flight before handing the clock back: `forgetRun` does not
-    // clear the in-flight guard, so a straggling read would decide the next case rather
-    // than this one.
+    // Drain anything still in flight before handing the clock back: `forgetRun` does not clear the
+    // in-flight guard, so a straggling read would decide the next case rather than this one.
     await settle();
     vi.useRealTimers();
   });
@@ -1343,8 +1264,8 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     await settle();
     expect(fetches).toHaveLength(1);
 
-    // Each rung is bracketed, because a flat delay produces the same COUNTS: what
-    // separates the two is that nothing is due one millisecond before the doubled delay.
+    // Each rung is bracketed, because a flat delay produces the same COUNTS: what separates the two
+    // is that nothing is due one millisecond before the doubled delay.
     await vi.advanceTimersByTimeAsync(999);
     expect(fetches).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
@@ -1363,17 +1284,17 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     expect(fetches).toHaveLength(4);
     await settle();
 
-    // Bounded: a run the server will never describe stops being asked about rather than
-    // being polled for the life of the document.
+    // Bounded: a run the server will never describe stops being asked about rather than being
+    // polled for the life of the document.
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fetches).toHaveLength(4);
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("arms NOTHING and says nothing for a run the server has settled", async () => {
-    // The whole point of reading the status: before it, a run the server had permanently
-    // forgotten cost three retries and a warn per transport gap — four reads for an
-    // answer that cannot change.
+    // The whole point of reading the status: before it, a run the server had permanently forgotten
+    // cost three retries and a warn per transport gap — four reads for an answer that cannot
+    // change.
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     responses = [undefined];
@@ -1389,9 +1310,9 @@ describe("the retry ladder behind a run read that produced nothing", () => {
   });
 
   it("still climbs for a 503, and the line it gives up on names that status", async () => {
-    // The skip is narrow to ONE status rather than to any failure carrying one: a 503 is
-    // an engine with no workflow verbs, which says nothing about whether this run exists,
-    // so it keeps the bounded ladder it is the reason for.
+    // The skip is narrow to ONE status rather than to any failure carrying one: a 503 is an engine
+    // with no workflow verbs, which says nothing about whether this run exists, so it keeps the
+    // bounded ladder it is the reason for.
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     responses = [undefined, undefined, undefined, undefined];
@@ -1412,10 +1333,9 @@ describe("the retry ladder behind a run read that produced nothing", () => {
   });
 
   it("drops a rung a transient left ARMED once the server settles", async () => {
-    // The coalescing pair, the first half failing transiently and the trailing one
-    // settling: read 1's rung is armed while read 2 runs, so the skip has to CANCEL it
-    // rather than merely decline to arm — otherwise the rung fires and fetches an answer
-    // this read already has.
+    // The coalescing pair, the first half failing transiently and the trailing one settling: read
+    // 1's rung is armed while read 2 runs, so the skip has to CANCEL it rather than merely decline
+    // to arm — otherwise the rung fires and fetches an answer this read already has.
     vi.useFakeTimers();
     responses = [undefined, undefined];
     failStatuses = [502, 404];
@@ -1431,10 +1351,9 @@ describe("the retry ladder behind a run read that produced nothing", () => {
   });
 
   it("re-enters under the read's OWN cause, so the gap's other reader is not charged again", async () => {
-    // `""` would fetch too, and it is the wrong token: the cause the failed read dropped
-    // is what the rung answers for, so the gap's second reader — a round trip behind the
-    // first — finds the question already asked. With `""` the rung would claim nothing and
-    // that reader would issue a third request for one event.
+    // `""` would fetch too, and it is the wrong token: the cause the failed read dropped is what
+    // the rung answers for, so the gap's second reader — a round trip behind the first — finds the
+    // question already asked.
     vi.useFakeTimers();
     responses = [undefined, { workflowId: "r1", status: "running" }];
 
@@ -1451,8 +1370,8 @@ describe("the retry ladder behind a run read that produced nothing", () => {
   });
 
   it("is answered by a read that lands anywhere, not only by its own rung", async () => {
-    // The next SSE frame normally beats the ladder to it, and a read that ANSWERED leaves
-    // nothing to retry.
+    // The next SSE frame normally beats the ladder to it, and a read that ANSWERED leaves nothing
+    // to retry.
     vi.useFakeTimers();
     responses = [undefined, { workflowId: "r1", status: "running" }];
 
@@ -1467,9 +1386,9 @@ describe("the retry ladder behind a run read that produced nothing", () => {
   });
 
   it("lets a trailing read REPLACE the armed rung rather than leaving one beside it", async () => {
-    // The coalescing pair, both halves failing: the first read arms a rung and the
-    // trailing one then fails too. The newest failure owns the rung, and it inherits the
-    // count — two armed timers would fetch twice per rung and widen the ladder.
+    // The coalescing pair, both halves failing: the first read arms a rung and the trailing one
+    // then fails too. The newest failure owns the rung, and it inherits the count — two armed
+    // timers would fetch twice per rung and widen the ladder.
     vi.useFakeTimers();
     responses = [undefined, undefined, undefined];
 
@@ -1500,13 +1419,6 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     expect(fetches).toHaveLength(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// The cache's bound is a REGISTERED DEMAND, and that is the shape rather than a
-// detail: `forgetRun` is reached from ONE call site that cannot enumerate this
-// store's readers, and the enumeration it used to carry went stale the moment a
-// reader was added for the case that guard let it through.
-// ---------------------------------------------------------------------------
 
 describe("forgetRun asks the registered demands before it drops anything", () => {
   const unregisters: (() => void)[] = [];

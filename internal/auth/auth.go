@@ -1,6 +1,5 @@
-// Package auth serves /api/whoami, /api/login and /api/logout by shelling out to
-// the bundled kiro-cli binary, and reports every identity it reads to the
-// registrar that owns live agent sessions. It persists no state of its own.
+// Package auth serves /api/whoami, /api/login and /api/logout by running the bundled kiro-cli, and reports every
+// identity it reads to the registrar that owns live agent sessions. It persists no state.
 package auth
 
 import (
@@ -37,15 +36,14 @@ var DefaultConfig = Config{
 	WhoamiTimeout:   5 * time.Second,
 }
 
-// Scanner caps for scanLoginOutput: the per-line limit absorbs debug dumps in
-// the login banner, and maxLoginLines bounds total memory.
+// Scanner caps for scanLoginOutput: the per-line limit absorbs debug dumps, maxLoginLines bounds total memory.
 const (
 	maxScanLineBytes = 256 * 1024
 	maxLoginLines    = 200
 )
 
-// Subprocess stdout caps: legitimate whoami output is ~150 bytes of JSON, so
-// these exist to stop a hostile kiro-cli replacement OOMing the container.
+// Subprocess stdout caps: whoami emits about 150 bytes, so these stop a hostile kiro-cli replacement OOMing the
+// container.
 const (
 	whoamiMaxOutput = buffer.DefaultOutputCap
 	logoutMaxOutput = 1 << 20 // 1 MiB
@@ -60,37 +58,29 @@ const (
 	maxRegionLen   = 32
 )
 
-// childWaitDelay bounds Wait past the context's deadline. A BACKSTOP only:
-// boundChild's Cancel kills the process group, so this is reached solely by a
-// descendant that escaped the group or sits in uninterruptible sleep.
+// childWaitDelay bounds Wait past the context deadline. A backstop: boundChild kills the process group, so only an
+// escaped or uninterruptible descendant reaches it.
 const childWaitDelay = time.Second
 
-// awsRegionRe matches AWS region ids in every partition (us-east-1,
-// cn-north-1, us-gov-west-1, us-isob-east-1). Interior segments must be
-// non-empty, so it also rejects flag smuggling, shell metacharacters,
-// whitespace, uppercase and `us--east-1`.
+// awsRegionRe matches AWS region ids in every partition (us-east-1, cn-north-1, us-gov-west-1, us-isob-east-1).
+// Non-empty segments also reject flags, shell metacharacters, whitespace, uppercase and `us--east-1`.
 var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 
-// Handler is the /api/whoami + /api/login + /api/logout endpoint bundle.
-//
-// loginSem serialises login subprocesses for the whole device-flow lifetime, so
-// a double-click cannot pin two AWS device codes at once. The reap goroutine
-// releases it when cmd.Wait returns, not when the handler returns, so a second
-// POST arriving after the first URL was emitted still gets 409.
+// Handler is the /api/whoami, /api/login and /api/logout bundle. loginSem serialises logins for the whole
+// device-flow lifetime and is released when cmd.Wait returns, so a second POST after the first URL still gets 409.
 type Handler struct {
 	loginSem chan struct{}
-	// identity is what /api/whoami answers from, so the endpoint's page-load and
-	// SSE-reconnect traffic never triggers a read (see identityCache).
+	// identity is what /api/whoami answers from, so page loads and SSE reconnects never trigger a read.
 	identity *identityCache
-	// registrar is told every identity this package READS, so an account change
-	// reaches the live agent sessions. Optional; nil observes nothing.
+	// registrar is told every identity this package reads, so an account change reaches live sessions. nil observes
+	// nothing.
 	registrar *Identity
-	// cliPath resolves the binary at CALL time: the install manager picks the
-	// active version after the listener binds and can switch it later, and on a
-	// first boot there is nothing installed yet.
+	// cliPath resolves the binary per call: the install manager picks and may switch the active version after the
+	// listener binds, and a first boot has nothing installed.
 	cliPath func() string
-	// trusted is the reverse-proxy set handed to webhttp.ClientIP for the
-	// login/logout audit logs. Nil = log the unspoofable socket peer.
+	// managedSettingsPath is the administrator's file the sign-in controls come from.
+	managedSettingsPath string
+	// trusted is the reverse-proxy set for webhttp.ClientIP in the login/logout audit logs. Nil logs the socket peer.
 	trusted []*net.IPNet
 	cfg     Config
 }
@@ -103,15 +93,13 @@ func WithConfig(cfg Config) Option {
 	return func(h *Handler) { h.cfg = cfg }
 }
 
-// WithTrustedProxies sets the reverse-proxy networks trusted when resolving the
-// client IP for the login/logout audit logs. Empty or nil trusts nothing, so the
-// unspoofable socket peer is logged.
+// WithTrustedProxies sets the reverse-proxy networks trusted when resolving the audit-log client IP. Empty trusts
+// nothing, so the socket peer is logged.
 func WithTrustedProxies(trusted []*net.IPNet) Option {
 	return func(h *Handler) { h.trusted = trusted }
 }
 
-// WithIdentity feeds every identity this package reads into registrar. A nil
-// registrar is refused because it would make account changes invisible.
+// WithIdentity feeds every identity this package reads into registrar. A nil registrar is refused.
 func WithIdentity(registrar *Identity) Option {
 	if registrar == nil {
 		panic("auth: identity registrar is nil")
@@ -122,11 +110,11 @@ func WithIdentity(registrar *Identity) Option {
 // NewHandler returns an auth handler that shells out to whatever binary cliPath
 // resolves to. The resolver is consulted per call, never cached.
 func NewHandler(cliPath func() string, opts ...Option) *Handler {
-	h := &Handler{cliPath: cliPath, loginSem: make(chan struct{}, 1), cfg: DefaultConfig}
+	h := &Handler{cliPath: cliPath, loginSem: make(chan struct{}, 1), cfg: DefaultConfig, managedSettingsPath: managedSettingsPath}
 	for _, o := range opts {
 		o(h)
 	}
-	// After the options: the cache captures the read budget WithConfig sets.
+	// After the options: the cache captures WithConfig's read budget.
 	h.identity = newIdentityCache(h.readIdentity, h.cfg.WhoamiTimeout)
 	return h
 }
@@ -136,12 +124,12 @@ func NewHandler(cliPath func() string, opts ...Option) *Handler {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/whoami", h.handleWhoami)
 	mux.HandleFunc("/api/login", h.handleLogin)
+	mux.HandleFunc("/api/login/options", h.handleLoginOptions)
 	mux.HandleFunc("/api/logout", h.handleLogout)
 }
 
-// stderrAttr returns slog attributes for captured stderr, omitting the key when
-// the buffer is empty: `stderr=""` would read as captured-and-empty rather than
-// unavailable.
+// stderrAttr returns slog attributes for captured stderr, omitting the key when empty so it does not read as
+// captured-and-empty.
 func stderrAttr(stderr *procout.Buffer) []any {
 	s := sanitize.Output(strings.TrimSpace(stderr.String()))
 	if s == "" {
@@ -150,19 +138,14 @@ func stderrAttr(stderr *procout.Buffer) []any {
 	return []any{"stderr", s}
 }
 
-// boundChild makes a subprocess honour ITS CONTEXT'S deadline rather than the
-// child's own lifetime. exec.CommandContext's cancellation SIGKILLs the parent
-// PID only, and every kiro-cli invocation forks helpers inheriting the pipe write
-// ends, so Wait blocks until the LAST descendant exits. Group-killing Cancel and
-// WaitDelay are both load-bearing: under a 50ms context against a child running
-// `sleep 10`, either alone returned in 10.0s and 1.05s, the pair in 50ms.
+// boundChild makes a subprocess honour its context's deadline. CommandContext SIGKILLs only the parent, and kiro-cli
+// forks helpers holding the pipes, so Wait blocks on the last descendant. Group kill and WaitDelay are both needed:
+// against `sleep 10` under a 50ms context, either alone took 10.0s or 1.05s, the pair 50ms.
 func boundChild(cmd *exec.Cmd) {
 	setProcGroup(cmd)
 	cmd.Cancel = func() error {
 		err := killGroup(cmd)
-		// exec treats os.ErrProcessDone from Cancel as nothing to report, so
-		// mirroring os.Process.Kill's mapping keeps Wait's error untouched for an
-		// already-reaped child.
+		// exec ignores os.ErrProcessDone from Cancel, so mapping ESRCH like os.Process.Kill leaves Wait's error untouched.
 		if errors.Is(err, syscall.ESRCH) {
 			return os.ErrProcessDone
 		}
@@ -171,12 +154,8 @@ func boundChild(cmd *exec.Cmd) {
 	cmd.WaitDelay = childWaitDelay
 }
 
-// loginReap is the state handleLogin hands to the reap goroutine, which becomes
-// sole owner of ctx cancellation, cmd.Wait, stderrBuf and the waitDone close.
-//
-// It must wait for stdoutDone (closed by the scanner) before calling cmd.Wait:
-// exec.Cmd forbids Wait before every pipe read has completed, because Wait
-// closes the pipe under the reader.
+// loginReap is what handleLogin hands the reap goroutine, which then owns ctx cancellation, cmd.Wait, stderrBuf
+// and the waitDone close. It waits for stdoutDone first: exec.Cmd forbids Wait before pipe reads complete.
 type loginReap struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -204,8 +183,7 @@ func newLineRing(halfCap, perLineCap int) *lineRing {
 	}
 }
 
-// Push appends line, truncating at perLineCap bytes so an adversarial CLI cannot
-// blow up one log attribute.
+// Push appends line, truncated at perLineCap so a hostile CLI cannot blow up one log attribute.
 func (r *lineRing) Push(line string) {
 	if len(line) > r.perLineCap {
 		line = line[:r.perLineCap]
@@ -220,8 +198,7 @@ func (r *lineRing) Push(line string) {
 	}
 }
 
-// Sample returns the first-N and last-N lines concatenated, for one slog
-// attribute.
+// Sample returns the first-N and last-N lines joined, for one slog attribute.
 func (r *lineRing) Sample() []string {
 	return slices.Concat(r.first, r.last)
 }

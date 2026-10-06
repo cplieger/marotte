@@ -1,13 +1,9 @@
 package chat
 
-// The per-log entry store: one append-only JSONL file of marotte.Entry lines under a
-// ROOT the caller names, so the chat store opens it under chats/<id>/ and the run
-// store under runs/<id>/ with no header beside it. Every rule about the log is both
-// stores'; every rule naming the header is the LogHeader the root supplies, and a run
-// root supplies noHeader.
-//
-// One write(2) plus one sync per seal, so the log is prefix-consistent and a torn tail
-// is one partial line the next open drops. The offset index is never persisted.
+// The per-log entry store: one append-only JSONL file of marotte.Entry lines under a root the caller names
+// (chats/<id>/ or runs/<id>/). Header rules go through the root's LogHeader; a run root supplies noHeader. One
+// write(2) and sync per seal keeps the log prefix-consistent, so a torn tail is one partial line the next open drops.
+// The offset index is never persisted.
 
 import (
 	"bufio"
@@ -33,42 +29,33 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// entriesFileName is the log; headerFileName is the record beside it, which only a
-// chat root has.
+// entriesFileName is the log; headerFileName the record beside it, on chat roots only.
 const (
 	entriesFileName = "entries.jsonl"
 	headerFileName  = "chat.json"
 )
 
-// maxEntryLineBytes bounds ONE entry's line, independently of the whole-log cap
-// and so in force when that cap is unlimited. The tool bounds already cap a call's
-// output and diffs, so a line past this is a bug or a reshaped volume, and reading
-// it would buffer the whole thing looking for its newline.
+// maxEntryLineBytes bounds one entry's line, even when the whole-log cap is unlimited. The tool bounds already cap
+// output and diffs, so a longer line is a bug or a reshaped volume.
 const maxEntryLineBytes = 16 << 20
 
-// entryReadBuf is the line reader's buffer. Below it a line is assembled across
-// reads, which readEntryLine does without a per-line allocation ceiling of its own.
+// entryReadBuf is the line reader's buffer; longer lines are assembled across reads.
 const entryReadBuf = 64 << 10
 
-// syncEntries is the durability barrier after each appended line. A package var so
-// the crash property can fail the k-th one, the way atomicfile's own seams do.
+// syncEntries is the durability barrier after each appended line; a var so the crash property can fail the k-th.
 var syncEntries = func(f *os.File) error { return f.Sync() }
 
-// readEntries is the read surface a window read issues its preads against. A package
-// var because the cost of that read — one pread per byte range rather than one span
-// over the whole page — is not visible in the entries it answers.
+// readEntries is the surface window reads pread against; a var because the per-range read cost is invisible in the
+// entries returned.
 var readEntries = func(f *os.File) io.ReaderAt { return f }
 
-// errEntryLineTooLong reports a line over maxEntryLineBytes, on the read side and
-// the write side alike.
+// errEntryLineTooLong reports a line over maxEntryLineBytes, on read and write alike.
 var errEntryLineTooLong = errors.New("chat: entry line exceeds the per-entry cap")
 
-// errEntryLogFailed is the latch a write error leaves: every further append for
-// this log is refused with it until the process restarts.
+// errEntryLogFailed is the latch a write error leaves: every later append to this log is refused until restart.
 var errEntryLogFailed = errors.New("chat: entry log refused further appends after a write error")
 
-// entryCall is one tool_call the index holds open: its entry id, and the lane its
-// result belongs in, fixed at the create frame.
+// entryCall is one open tool_call in the index: its entry id and its result's lane, fixed at create.
 type entryCall struct {
 	id   string
 	lane string
@@ -80,29 +67,24 @@ type byteRange struct {
 	to   int64
 }
 
-// revertWindow is one turn_revert record as its envelope and payload state it: the
-// carrier holding the record, and the window from..through the skip rule takes.
-// Collected as the line is met and resolved once the index is COMPLETE, because a
-// record can sit BELOW the turns it names — see markRevertedLocked.
+// revertWindow is one turn_revert record: its carrier and the from..through window it takes. Resolved once the index
+// is complete, because a record can sit below the turns it names (markRevertedLocked).
 type revertWindow struct {
 	carrier string
 	from    string
 	through string
 }
 
-// turnState is the offset index's row for one turn: the byte ranges its lines
-// occupy, and the facts the window read, the rail index, the reconcile predicate
-// and a synthesized closer need without opening a payload again.
+// turnState is the offset index's row for one turn: its byte ranges and the facts window reads, rail rows, the
+// reconcile predicate and a synthesized closer need without reopening a payload.
 type turnState struct {
 	results   map[string]struct{}
 	firstLine string
 	source    marotte.TurnOpenSourceName
 	outcome   marotte.TurnOutcome
 	calls     []entryCall
-	// ranges are the turn's lines in file order, one entry per contiguous run.
-	// Two of a chat's turns are open together in one registry state and the merge's
-	// rewrite files a between-turns entry behind later turns, so a turn is not one
-	// span; the window read issues one pread per range.
+	// ranges are the turn's lines in file order, one per contiguous run: turns can be open together and the merge files
+	// between-turns entries behind later turns, so a turn is not one span.
 	ranges  []byteRange
 	openTs  int64
 	lastTs  int64
@@ -111,25 +93,19 @@ type turnState struct {
 	plans   int
 	drawn   bool
 	closed  bool
-	// reverted is the skip rule's answer for this turn: a turn_revert took it, so
-	// every read surface below answers as though it were not there. The line stays
-	// on disk — a rewind is a record, never a truncate.
+	// reverted means a turn_revert took this turn, so every read surface skips it. The lines stay on disk.
 	reverted bool
-	// hasRevert is whether this turn's body holds its own turn_revert record, which
-	// is what tells a COMPLETE revert carrier from the one crash state a minted
-	// carrier can leave behind (its turn_open written, its record not).
+	// hasRevert is whether the turn holds its own turn_revert record, which tells a complete carrier from the crash state
+	// a minted carrier can leave.
 	hasRevert bool
-	// unterminated is this turn's turn_close carrying the synthesized closer's own
-	// stop reason: the reconcile signal a crash leaves, which the scan answers here
-	// so the predicate is a map read rather than a second pass.
+	// unterminated is this turn's turn_close carrying the synthesized closer's stop reason, the crash's reconcile signal,
+	// precomputed so the predicate is a map read.
 	unterminated bool
-	// emptySteer is a steer entry of this turn with no text: words KAS persisted
-	// that this process never received, the same signal read from the other side.
+	// emptySteer is a steer of this turn with no text: words KAS persisted that this process never received.
 	emptySteer bool
 }
 
-// unsettled are the turn's tool_calls with no tool_result, in the order they
-// opened, which is the order a close aborts them in.
+// unsettled are the turn's tool_calls with no tool_result, in open order, which a close aborts them in.
 func (st *turnState) unsettled() []entryCall {
 	var out []entryCall
 	for _, c := range st.calls {
@@ -140,32 +116,24 @@ func (st *turnState) unsettled() []entryCall {
 	return out
 }
 
-// LogHeader is the header policy a log's root supplies. The chat root's is its
-// chat.json; a run's log has no header, so the run root supplies noHeader and every
-// rule naming the header is satisfied without a nil check anywhere in the log.
+// LogHeader is the header policy a log's root supplies: chat.json for a chat, noHeader for a run, so the log needs no
+// nil checks.
 type LogHeader interface {
-	// Counters caches the log's turn_count and last_turn_outcome. The values are the
-	// LOG's, so a header that disagreed after a crash is corrected.
+	// Counters caches the log's turn_count and last_turn_outcome; the log's values correct a header left behind by a
+	// crash.
 	Counters(ctx context.Context, turnCount uint64, last marotte.TurnOutcome) error
-	// CloserModel is the model a synthesized closer stamps. The turn_open payload
-	// carries none and a live closer stamps what its turn latched, so the header is
-	// the only value a later process can honestly supply.
+	// CloserModel is the model a synthesized closer stamps: turn_open carries none, so the header is the only honest
+	// source for a later process.
 	CloserModel() string
-	// Reconcilable reports whether this root's header can name lost history at all.
-	// The chat root answers true; a run root has no session to reconcile against, so
-	// the reconcile predicate's conditions are never asked there and
-	// NeedsReconcile() answers false without an isRunRoot test anywhere.
+	// Reconcilable reports whether this root's header can name lost history. A run root has no session, so its
+	// NeedsReconcile() is false.
 	Reconcilable() bool
-	// SessionID is the ACP session this root's header binds, "" for none: the one
-	// half of the reconcile predicate's condition (i) the LOG cannot hold. The log
-	// holds the rest — whether any turn_bind names that session, and whether a
-	// reconciled record does — so the predicate needs the VALUE, not a bool. A run
-	// root answers "".
+	// SessionID is the ACP session this root's header binds, "" for none: the half of reconcile condition (i) the log
+	// cannot hold. A run root answers "".
 	SessionID() string
 }
 
-// noHeader is the policy of a root with no header file: nothing to cache, no model
-// to stamp, no session to reconcile against.
+// noHeader is the policy of a root with no header: nothing to cache, stamp or reconcile against.
 type noHeader struct{}
 
 // NoHeader is the header policy a run root supplies.
@@ -176,33 +144,25 @@ func (noHeader) CloserModel() string                                         { r
 func (noHeader) Reconcilable() bool                                          { return false }
 func (noHeader) SessionID() string                                           { return "" }
 
-// EntryLog is one log root's append log and its in-memory offset index.
-//
-// Every exported operation takes the log's own mutex, so the appender is the one
-// writer and seq is contiguous per turn by construction. A caller sequencing a
-// lifecycle decision against an append takes its own mutex FIRST and never holds
-// one across a call here.
+// EntryLog is one log root's append log and its in-memory offset index. Every exported operation takes the log's
+// mutex, so seq is contiguous per turn. A caller sequencing a lifecycle decision takes its own mutex first and never
+// holds one across a call here.
 type EntryLog struct {
 	f     *os.File
 	turns map[string]*turnState
-	// header is the policy this root's header supplies, never nil: a run root's is
-	// noHeader, which answers every question the way a root with no header must.
+	// header is this root's header policy, never nil: a run root's is noHeader.
 	header LogHeader
 	failed error
 	root   string
-	// reconciledTurns and reconciledSessions are the turns and the sessions a
-	// reconciled record names: the clearers of the three reconcile conditions.
+	// reconciledTurns and reconciledSessions are what reconciled records name: the clearers of the reconcile conditions.
 	reconciledTurns    map[string]struct{}
 	reconciledSessions map[string]struct{}
-	// boundSessions are the sessions this log's turn_bind entries name, which is
-	// what tells a chat whose own prompts minted its session from a resumed one.
+	// boundSessions are the sessions this log's turn_bind entries name, telling a self-minted session from a resumed one.
 	boundSessions map[string]struct{}
-	// newestRevert is the id of the LAST turn_revert the index met, in the file order
-	// it holds: the provenance the merge's discard gate reads in place of a counter.
+	// newestRevert is the id of the last turn_revert met in file order: the provenance the merge's discard gate reads.
 	newestRevert string
-	// unappliedReverts are the windows met but not yet resolved, drained once the
-	// order they address is complete: after the scan's pass, and after the one
-	// append that adds a record to an index already built.
+	// unappliedReverts are windows met but not resolved, drained once their order is complete: after the scan, and after
+	// an append to a built index.
 	unappliedReverts []revertWindow
 	order            []string
 	size             int64
@@ -211,30 +171,19 @@ type EntryLog struct {
 	removed          bool
 }
 
-// EntryLogOption configures an EntryLog at open. The header policy is NOT one: it is
-// positional on OpenEntryLog, so a root cannot forget it.
+// EntryLogOption configures an EntryLog at open. The header policy is positional on OpenEntryLog instead, so it
+// cannot be forgotten.
 type EntryLogOption func(*EntryLog)
 
-// WithEntryFileCap sets the whole-log byte cap; n <= 0 means unlimited, matching the
-// chat store's own encoding.
-//
-// The log DERIVES nothing: the cap comes from the container's memory limit, which
-// the chat store already reads once per process, so deriving it here would read the
-// same cgroup file and log the same line once per chat directory.
+// WithEntryFileCap sets the whole-log byte cap; n <= 0 is unlimited. The chat store derives it from the memory limit
+// once per process.
 func WithEntryFileCap(n int64) EntryLogOption {
 	return func(l *EntryLog) { l.cap = chatFileCap(n) }
 }
 
-// OpenEntryLog opens the log under root, building the offset index from one
-// sequential envelope-only scan, dropping a tail it cannot read, and closing every
-// turn the scan found open before it serves or appends anything.
-//
-// A directory holding no log is the normal state of a fresh chat: the scan finds no
-// file, the index is empty, every read answers empty, and no descriptor is held
-// until the first append.
-//
-// h is the root's header policy and is positional because every rule naming the
-// header runs through it: a run root passes NoHeader().
+// OpenEntryLog opens the log under root, building the offset index in one envelope-only scan, dropping an unreadable
+// tail, and closing every turn left open before serving anything. A missing log is a fresh chat: empty index, no
+// descriptor until the first append. h is positional; a run root passes NoHeader().
 func OpenEntryLog(ctx context.Context, root string, h LogHeader, opts ...EntryLogOption) (*EntryLog, error) {
 	l := &EntryLog{root: root, header: h, turns: make(map[string]*turnState)}
 	for _, opt := range opts {
@@ -265,17 +214,15 @@ func OpenEntryLog(ctx context.Context, root string, h LogHeader, opts ...EntryLo
 // path is the log file.
 func (l *EntryLog) path() string { return filepath.Join(l.root, entriesFileName) }
 
-// Close releases the write descriptor. The log stays readable and a later append
-// reopens it.
+// Close releases the write descriptor; the log stays readable and a later append reopens it.
 func (l *EntryLog) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.closeDescriptorLocked()
 }
 
-// Remove closes the descriptor and refuses every later append with ErrTombstoned,
-// so a turn still folding into a removed chat cannot re-create its log. The
-// directory itself is the caller's to unlink.
+// Remove closes the descriptor and refuses later appends with ErrTombstoned, so a turn folding into a removed chat
+// cannot recreate its log. Unlinking the directory is the caller's.
 func (l *EntryLog) Remove() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -292,9 +239,8 @@ func (l *EntryLog) closeDescriptorLocked() error {
 	return f.Close()
 }
 
-// TurnSpec is what opening a turn needs beyond the bookkeeping the log owns: n is
-// the log's to assign and the id is minted here, so the registry never holds a turn
-// the log lacks.
+// TurnSpec is what opening a turn needs beyond the log's own bookkeeping: n is assigned and the id minted here, so
+// the registry never holds a turn the log lacks.
 type TurnSpec struct {
 	Prompt    *marotte.EntryPrompt
 	Source    marotte.TurnOpenSourceName
@@ -303,9 +249,8 @@ type TurnSpec struct {
 	SessionID string
 }
 
-// OpenTurn appends a turn_open and answers the entry it wrote, whose ID is the turn
-// id every later entry carries and every closer is handed. n is the newest turn's
-// plus one, assigned at open to EVERY turn, so it never moves under a later read.
+// OpenTurn appends a turn_open and returns it; its ID is the turn id every later entry and closer carries. n is the
+// newest turn's plus one, fixed at open.
 func (l *EntryLog) OpenTurn(ctx context.Context, spec *TurnSpec) (*marotte.Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -316,9 +261,8 @@ func (l *EntryLog) openTurnLocked(ctx context.Context, spec *TurnSpec) (*marotte
 	return l.openTurnWithOrdinalLocked(ctx, spec, l.turnCountLocked()+1)
 }
 
-// openTurnWithOrdinalLocked opens a turn at a STATED ordinal, for the one caller
-// whose ordinal is not the surviving high-water plus one: the carrier a revert mints
-// when no turn survives, whose ordinal is the high-water AFTER the window it hides.
+// openTurnWithOrdinalLocked opens a turn at a stated ordinal, for the revert carrier, whose ordinal is the high-water
+// after the window it hides.
 func (l *EntryLog) openTurnWithOrdinalLocked(ctx context.Context, spec *TurnSpec, ordinal uint64) (*marotte.Entry, error) {
 	raw, err := json.Marshal(marotte.EntryTurnOpen{
 		Prompt:    spec.Prompt,
@@ -339,25 +283,18 @@ func (l *EntryLog) openTurnWithOrdinalLocked(ctx context.Context, spec *TurnSpec
 	return e, nil
 }
 
-// Append persists one sealed entry: it assigns seq — contiguous from 0 per turn,
-// where turn_open is 0 — stamps ts, writes the line and syncs. It is turnlog's Sink,
-// and the descriptor it opens is held for the process's life.
+// Append persists one sealed entry: it assigns seq (contiguous per turn, turn_open is 0), stamps ts, writes and
+// syncs. It is turnlog's Sink; the descriptor is held for the process's life.
 func (l *EntryLog) Append(ctx context.Context, e *marotte.Entry) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.appendLocked(ctx, e)
 }
 
-// AppendBetweenTurns files a lane-less entry belonging to no open turn: it joins the
-// newest SURVIVING turn after that turn's turn_close with that turn's next seq, and
-// when no turn survives it opens a headerless turn_open{source: event} to land in,
-// which it returns so the caller can announce it ahead of the entry; nil otherwise.
-//
-// SURVIVING rather than newest in file order, because after every revert the newest
-// turn in file order is inside the window the record states, so a model switch, a
-// mode switch, a between-turns steer or a steer_ack would land where no reader looks
-// — invisible to All, Window, RailRows, the search filter and the export, with a
-// live frame the client answers as a hole whose repair read this log refuses.
+// AppendBetweenTurns files a lane-less entry belonging to no open turn after the newest surviving turn's turn_close,
+// with its next seq. With no survivor it opens a headerless turn_open{source: event} and returns it for the caller to
+// announce; nil otherwise. Surviving, not newest in file order: after a revert the newest is inside the reverted
+// window, where no read surface looks.
 func (l *EntryLog) AppendBetweenTurns(ctx context.Context, e *marotte.Entry) (*marotte.Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -374,24 +311,10 @@ func (l *EntryLog) AppendBetweenTurns(ctx context.Context, e *marotte.Entry) (*m
 	return nil, l.appendLocked(ctx, e)
 }
 
-// AppendReconciled records that a merge looked at one signal and had nothing to add,
-// which is the only thing that can stop a reconcile signal honestly, and answers the
-// record it wrote. EXACTLY ONE of rec's fields is set: Turn for the per-turn signals
-// (a synthesized unterminated closer, a surviving empty-text steer) and Session for
-// the per-session one, so a rec naming both or neither is refused rather than filed
-// under a signal it does not clear.
-//
-// The TURN form files into the turn its payload NAMES, which lands it after that
-// turn's turn_close with that turn's next seq. Never AppendBetweenTurns: that picks
-// the turn itself, so the record would land in the newest surviving turn and clear
-// nothing. The SESSION form names no turn, so it takes the newest surviving turn as
-// its envelope and, when none survives, mints one and CLOSES it, answering that
-// turn_open so the caller announces it ahead of the record.
-//
-// The carrier's close is load-bearing rather than tidy: an open turn is synthesized
-// `unterminated` at the next open, which IS condition (ii), so the write that clears
-// condition (i) would raise the signal it just cleared. Its source is `event` and
-// never `revert`, which is the scan's incomplete-carrier marker.
+// AppendReconciled records that a merge examined one signal and had nothing to add, the only honest way to clear it,
+// and returns the record. Exactly one of rec's fields is set: Turn (unterminated closer, empty steer) or Session. The
+// turn form files into the named turn. The session form uses the newest surviving turn, or mints one and closes it:
+// an open carrier would be synthesized unterminated, raising condition (ii). Its source is event, never revert.
 func (l *EntryLog) AppendReconciled(ctx context.Context, rec marotte.EntryReconciled) (record, opened *marotte.Entry, err error) {
 	if (rec.Turn == "") == (rec.Session == "") {
 		return nil, nil, fmt.Errorf("entry log: reconciled{turn: %q, session: %q}, want exactly one of them set",
@@ -427,14 +350,9 @@ func (l *EntryLog) AppendReconciled(ctx context.Context, rec marotte.EntryReconc
 	return record, opened, nil
 }
 
-// ReconciledEntryID is DERIVED from the signal the record clears, so a second merge
-// that re-reaches one signal mints the id the log already holds rather than a fresh
-// one the pairing would read as an insertion. The two id spaces cannot collide: a
-// turn's id is this log's own mint and a session's is KAS's.
-//
-// Exported because the merge's REWRITE branch files its own records as members of the
-// entry list it hands Rewrite, so the id rule has to be one rule rather than this
-// log's convention plus a copy of it in internal/agent.
+// ReconciledEntryID derives the record's id from the signal it clears, so a repeat merge mints the existing id
+// rather than an insertion. Turn ids are this log's, session ids KAS's, so they cannot collide. Exported because the
+// merge's rewrite files its own records.
 func ReconciledEntryID(rec marotte.EntryReconciled) string {
 	if rec.Turn != "" {
 		return rec.Turn + ":reconciled"
@@ -442,26 +360,18 @@ func ReconciledEntryID(rec marotte.EntryReconciled) string {
 	return rec.Session + ":reconciled"
 }
 
-// Revert appends this log's record of a rewind and answers it, plus the carrier's
-// own turn_open when no turn survived and one was minted, so the caller announces that
-// open ahead of the record. from is the reverted turn, resolved from the SURVIVING view.
-//
-// Nothing is cut and nothing is re-closed: the reverted range stays on disk, every
-// read surface skips it, and a failed append leaves the surviving view exactly as it
-// was. cause is the record's own, so a later cause needs no second entry point.
+// Revert appends this log's record of a rewind and returns it, plus a minted carrier's turn_open for the caller to
+// announce first. from is the reverted turn, resolved from the surviving view. Nothing is cut or re-closed: the range
+// stays on disk, reads skip it, and a failed append changes nothing.
 func (l *EntryLog) Revert(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record, opened *marotte.Entry, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.appendRevertLocked(ctx, from, cause, kasMessageID)
 }
 
-// appendRevertLocked runs the revert in an order that is the specification: compute the
-// window; choose the carrier against it AND against the turns an earlier record took;
-// when none survives mint a carrier and CLOSE it before the record exists; append the
-// record with its stated Through; and only then mark the index, which the append path's
-// own drain does once the write returned. It is NOT AppendBetweenTurns: that files into
-// the newest SURVIVING turn, inside this window by construction, so reverting turn 1 of 7
-// would revert 1-6 and leave 7 alive.
+// appendRevertLocked runs the revert's ordered steps: compute the window; pick a carrier outside it and outside
+// earlier reverts; with none, mint a carrier and close it before the record; append the record with its Through; and
+// mark the index after the write returns. Not AppendBetweenTurns, whose newest survivor is inside this window.
 func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record, opened *marotte.Entry, err error) {
 	st := l.turns[from]
 	if st == nil || st.reverted {
@@ -470,27 +380,21 @@ func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause ma
 	window, through := l.revertWindowLocked(from)
 	carrier, held := l.newestSurvivingLocked(window)
 	if !held {
-		// The ordinal is the high-water the window leaves behind, so the carrier
-		// cannot share an n with a live turn in the surviving view.
+		// The ordinal the window leaves behind, so the carrier shares no n with a surviving turn.
 		opened, err = l.openTurnWithOrdinalLocked(ctx,
 			&TurnSpec{Source: marotte.TurnOpenNameRevert}, l.survivingHighWaterLocked(window)+1)
 		if err != nil {
 			return nil, nil, err
 		}
-		// A carrier holding no record of its own is what the SCAN marks reverted, so a
-		// revert that fails after minting one leaves the same view in memory: the flags
-		// follow the record, not the attempt. Without it this process answers a
-		// carrier-shaped turn with no body and a turn_count one below the truth, where
-		// the next open answers the pre-revert view.
+		// A carrier without its own record is what the scan marks reverted, so a failed revert leaves the same view in
+		// memory as the next open would.
 		defer func() {
 			if err != nil {
 				l.turns[opened.Turn].reverted = true
 			}
 		}()
-		// Closed BEFORE the record, so the one crash state this step can leave is a
-		// complete turn on disk: an open carrier is synthesized `unterminated` at
-		// the next open, which IS the reconcile signal, so a rewind that lost
-		// nothing would raise it one restart later.
+		// Closed before the record, so a crash here leaves a complete turn: an open carrier would raise the reconcile signal
+		// one restart later.
 		if cerr := l.closeCarrierLocked(ctx, opened.Turn); cerr != nil {
 			return nil, opened, cerr
 		}
@@ -513,9 +417,8 @@ func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause ma
 	return record, opened, nil
 }
 
-// revertWindowLocked is the window a revert to from takes: every turn from it to the
-// newest in FILE order, inclusive, beside that newest turn's id — the Through the
-// record STATES, which is what survives the merge's rewrite.
+// revertWindowLocked is the window a revert to from takes: every turn from it to the newest in file order, with the
+// newest turn's id as the Through the record states.
 func (l *EntryLog) revertWindowLocked(from string) (window map[string]struct{}, through string) {
 	first := slices.Index(l.order, from)
 	window = make(map[string]struct{}, len(l.order)-first)
@@ -525,9 +428,8 @@ func (l *EntryLog) revertWindowLocked(from string) (window map[string]struct{}, 
 	return window, l.order[len(l.order)-1]
 }
 
-// survivingHighWaterLocked is the highest n among the turns that survive excluding,
-// which is the ordinal an ordinary turn opened after the revert takes. Zero when
-// none survives, so step 3's carrier is n = 1.
+// survivingHighWaterLocked is the highest n among turns surviving excluding, the ordinal the next ordinary turn
+// takes; zero when none survive.
 func (l *EntryLog) survivingHighWaterLocked(excluding map[string]struct{}) uint64 {
 	var high uint64
 	for _, id := range l.order {
@@ -541,12 +443,8 @@ func (l *EntryLog) survivingHighWaterLocked(excluding map[string]struct{}) uint6
 	return high
 }
 
-// newestSurvivingLocked is the newest turn in file order that no revert took,
-// skipping the turns in excluding as well — the window a revert is about to take and
-// has not marked yet. False when no turn survives.
-//
-// The ONE implementation of which turn a lane-less entry belongs to, so the revert's
-// carrier and the between-turns append cannot disagree about it.
+// newestSurvivingLocked is the newest turn in file order no revert took, also skipping excluding (a window not yet
+// marked). False when none survives. The one rule for where a lane-less entry belongs.
 func (l *EntryLog) newestSurvivingLocked(excluding map[string]struct{}) (string, bool) {
 	for _, id := range slices.Backward(l.order) {
 		if _, in := excluding[id]; in || l.turns[id].reverted {
@@ -557,10 +455,8 @@ func (l *EntryLog) newestSurvivingLocked(excluding map[string]struct{}) (string,
 	return "", false
 }
 
-// closeCarrierLocked closes a turn this log opened to carry a record of its own:
-// outcome completed, no stop reason, no model and no elapsed, because nothing ran in
-// it. NEVER synthesizeCloseLocked, whose closer is interrupted / unterminated and is
-// the reconcile-needed signal.
+// closeCarrierLocked closes a carrier this log opened: completed, no stop reason, model or elapsed. Never
+// synthesizeCloseLocked, whose closer is the reconcile signal.
 func (l *EntryLog) closeCarrierLocked(ctx context.Context, turn string) error {
 	payload, err := json.Marshal(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})
 	if err != nil {
@@ -572,11 +468,9 @@ func (l *EntryLog) closeCarrierLocked(ctx context.Context, turn string) error {
 	})
 }
 
-// appendLocked is the one write path. A refused write LATCHES: the failed seq is
-// not reused, nothing is handed back for a broadcast, and every further append for
-// this log answers the wrapped error until the process restarts. A tool payload is
-// bounded to what the record keeps before the line is built, on the caller's own
-// entry, so the frame broadcast from that pointer carries the bytes on disk.
+// appendLocked is the one write path. A refused write latches: the seq is not reused, nothing is broadcast, and later
+// appends fail until restart. A tool payload is bounded on the caller's entry before encoding, so the broadcast
+// carries the bytes on disk.
 func (l *EntryLog) appendLocked(ctx context.Context, e *marotte.Entry) error {
 	switch {
 	case l.removed:
@@ -593,8 +487,7 @@ func (l *EntryLog) appendLocked(ctx context.Context, e *marotte.Entry) error {
 	if st != nil {
 		e.Seq = st.nextSeq
 	}
-	// An id-less entry is one filed between turns, outside any accumulator that
-	// could mint one; the position it takes is unique within its turn and stable.
+	// An id-less entry was filed between turns; its position is unique within the turn and stable.
 	if e.ID == "" {
 		e.ID = e.Turn + ":s" + strconv.FormatUint(e.Seq, 10)
 	}
@@ -616,15 +509,13 @@ func (l *EntryLog) appendLocked(ctx context.Context, e *marotte.Entry) error {
 	if err := l.observeLocked(e, start, l.size); err != nil {
 		return err
 	}
-	// The append path's index is already complete, so a record's window resolves on
-	// the spot; the drain is what keeps that one rule in one place.
+	// The index is complete here, so the window resolves at once through the one drain.
 	l.applyRevertsLocked()
 	return nil
 }
 
-// checkBoundsLocked refuses a line over the per-entry cap, and a write that would
-// take the log past the whole-log cap. Refused BEFORE anything reaches disk, so the
-// log stays exactly as it was.
+// checkBoundsLocked refuses a line over the per-entry cap, or one taking the log past the whole-log cap, before
+// anything is written.
 func (l *EntryLog) checkBoundsLocked(lineBytes int64) error {
 	if lineBytes > maxEntryLineBytes {
 		return fmt.Errorf("%w: %d bytes (max %d)", errEntryLineTooLong, lineBytes, int64(maxEntryLineBytes))
@@ -662,8 +553,7 @@ func (l *EntryLog) writeLineLocked(_ context.Context, e *marotte.Entry, line []b
 	return l.failed
 }
 
-// descriptorLocked opens the log for appending on first use, creating it. A fresh
-// chat holds no descriptor until here.
+// descriptorLocked opens the log for appending on first use, creating it.
 func (l *EntryLog) descriptorLocked() (*os.File, error) {
 	if l.f != nil {
 		return l.f, nil
@@ -677,8 +567,8 @@ func (l *EntryLog) descriptorLocked() (*os.File, error) {
 	return f, nil
 }
 
-// observeLocked folds one entry into the offset index, from the open scan and from
-// an append alike, so the two cannot build different indexes.
+// observeLocked folds one entry into the offset index for both the open scan and appends, so they build the same
+// index.
 func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 	if e.Kind == marotte.EntryKindTurnOpen {
 		st, err := newTurnState(e, start, end)
@@ -715,9 +605,8 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 	return nil
 }
 
-// extend folds e's envelope into st: its byte range, its timestamp, the next seq,
-// and whether it draws the turn. Before the kind's own fold, because drawnBy reads the
-// plans counted so far and a plan entry increments that count.
+// extend folds e's envelope into st: byte range, timestamp, next seq and whether it draws the turn. Before the
+// kind's fold, because drawnBy reads the plans counted so far.
 func (st *turnState) extend(e *marotte.Entry, start, end int64) {
 	if last := len(st.ranges) - 1; st.ranges[last].to == start {
 		st.ranges[last].to = end
@@ -801,9 +690,8 @@ func (l *EntryLog) foldTurnRevertLocked(st *turnState, e *marotte.Entry) error {
 	return nil
 }
 
-// applyRevertsLocked resolves every window met since the last drain, in the order
-// the file holds them. Called where the order is COMPLETE: at the end of the scan's
-// pass and after the append that added a record, never from the fold itself.
+// applyRevertsLocked resolves every window met since the last drain, in file order. Called only where the order is
+// complete: after the scan and after the append that added a record.
 func (l *EntryLog) applyRevertsLocked() {
 	windows := l.unappliedReverts
 	l.unappliedReverts = nil
@@ -812,13 +700,10 @@ func (l *EntryLog) applyRevertsLocked() {
 	}
 }
 
-// markRevertedLocked applies the skip rule for one record: every turn whose turn_open
-// lies at or after from's and at or before through's, in file order, except the CARRIER
-// the record's own envelope names. The bound is the turn the record NAMES and it resolves
-// against the COMPLETED order (so the fold queues the window): a rewrite moves the record
-// into its carrier's group, ahead of the window, and an offset-bounded or inline rule
-// would mark nothing and hand the reverted range back. A window this log cannot resolve
-// marks NOTHING: an absent end is another log's record or a torn line.
+// markRevertedLocked applies the skip rule for one record: every turn whose turn_open lies from from through through
+// in file order, except the carrier its envelope names. Bounded by the named turns, not this line's offset, and
+// resolved against the completed order: a rewrite files the record in its carrier's group, below the window. A window
+// naming a turn this log lacks marks nothing.
 func (l *EntryLog) markRevertedLocked(w revertWindow) {
 	first := slices.Index(l.order, w.from)
 	last := slices.Index(l.order, w.through)
@@ -835,9 +720,8 @@ func (l *EntryLog) markRevertedLocked(w revertWindow) {
 	}
 }
 
-// survivingOrderLocked is l.order with every reverted turn dropped: the order every
-// read surface answers over, so a reader that wants the whole file has to name
-// AllWithReverted instead.
+// survivingOrderLocked is l.order without reverted turns, the order every read surface uses; the whole file needs
+// AllWithReverted.
 func (l *EntryLog) survivingOrderLocked() []string {
 	order := make([]string, 0, len(l.order))
 	for _, id := range l.order {
@@ -848,16 +732,9 @@ func (l *EntryLog) survivingOrderLocked() []string {
 	return order
 }
 
-// newTurnState opens the index row for a turn.
-//
-// The scan opens SIX payloads and no others, and the cost is stated per kind because
-// the pass stays one sequential read: turn_open (source, n and the prompt's first
-// line) and turn_close (the outcome, plus the stop reason that IS the reconcile
-// signal) are one line per turn each; turn_revert is one per REVERT and carries the
-// skip rule's window; reconciled is one per reconciled turn or session and carries
-// the clearers; steer is rare inside a turn and gives up its text alone; turn_bind is
-// one per bound turn and gives up its session alone. Every other kind's payload stays
-// a json.RawMessage.
+// newTurnState opens the index row for a turn. The scan decodes only six payload kinds, each cheap: turn_open,
+// turn_close, turn_revert, reconciled, steer (text only) and turn_bind (session only). Every other payload stays a
+// json.RawMessage.
 func newTurnState(e *marotte.Entry, start, end int64) (*turnState, error) {
 	var payload marotte.EntryTurnOpen
 	if err := json.Unmarshal(e.Payload, &payload); err != nil {
@@ -879,9 +756,8 @@ func newTurnState(e *marotte.Entry, start, end int64) (*turnState, error) {
 	return st, nil
 }
 
-// drawnSource reports whether a turn's source draws a header of its own, so the
-// turn has a rail row before its body holds anything. Its negation is the rail's
-// agent_initiated.
+// drawnSource reports whether a turn's source draws its own header, giving it a rail row before its body holds
+// anything. Its negation is the rail's agent_initiated.
 func drawnSource(s marotte.TurnOpenSourceName) bool {
 	switch s {
 	case marotte.TurnOpenNamePrompt, marotte.TurnOpenNameLocalShell, marotte.TurnOpenNameEmptyRetry:
@@ -890,18 +766,10 @@ func drawnSource(s marotte.TurnOpenSourceName) bool {
 	return false
 }
 
-// drawnBy reports whether e makes its turn drawn: an entry rendering at its own
-// position in lane "". The sealed half of the one drawn predicate; the client's
-// open-entry clause has no server twin, because an open entry never reaches the
-// log. The excluded kinds are the ones the client's entryRenders refuses, and a
-// steer_ack is NOT among them: an ack is agent words at its own position, so a
-// turn holding nothing else draws a card and needs its rail row.
-//
-// A reconciled record is excluded because it clears a signal rather than saying
-// anything to a reader, so a turn holding it alone must not take a rail row; a
-// turn_revert is NOT excluded, because it IS the boundary row decision 3 asks for.
-//
-// plans is how many plan entries the turn already holds, so only the first draws.
+// drawnBy reports whether e draws its turn: an entry rendering at its own position in lane "". The sealed half of
+// the drawn predicate; open entries never reach the log. The excluded kinds are those the client's entryRenders
+// refuses, plus reconciled, which says nothing to a reader. steer_ack and turn_revert draw. plans counts the turn's
+// plans so only the first draws.
 func drawnBy(e *marotte.Entry, plans int) bool {
 	if e.Lane != "" {
 		return false
@@ -917,18 +785,14 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 	return true
 }
 
-// firstLineOf is a prompt's first line, whitespace-collapsed, for the rail row's
-// hover label.
+// firstLineOf is a prompt's first line, whitespace-collapsed, for the rail row's hover label.
 func firstLineOf(text string) string {
 	line, _, _ := strings.Cut(text, "\n")
 	return strings.Join(strings.Fields(line), " ")
 }
 
-// rescanLocked rebuilds the index from one sequential pass, decoding each line's
-// envelope and truncating a tail it cannot read, then applies the two rules the pass
-// cannot answer line by line: every turn_revert's window, which can name turns the
-// pass had not reached when it met the record, and an incomplete revert carrier being
-// itself reverted.
+// rescanLocked rebuilds the index in one pass, truncating an unreadable tail, then applies what the pass cannot
+// decide line by line: every turn_revert window, and reverting incomplete carriers.
 func (l *EntryLog) rescanLocked() error {
 	l.turns = make(map[string]*turnState)
 	l.reconciledTurns = make(map[string]struct{})
@@ -939,20 +803,16 @@ func (l *EntryLog) rescanLocked() error {
 	l.unappliedReverts = nil
 	l.size = 0
 	err := l.scanFileLocked()
-	// After the error too: dropTailLocked leaves a prefix-consistent index, and a
-	// scan that stopped early can still hold a carrier whose record is in the tail
-	// it dropped, which is exactly the crash state the clause exists for. A window
-	// naming a turn the dropped tail held resolves to nothing and marks nothing.
+	// After an error too: the index is prefix-consistent, and the dropped tail may have held a carrier's record. A window
+	// naming a dropped turn marks nothing.
 	l.applyRevertsLocked()
 	l.markIncompleteCarriersLocked()
 	return err
 }
 
-// markIncompleteCarriersLocked marks every `source: revert` turn holding no
-// turn_revert of its own. That is a minted carrier's ONE crash state — the carrier's
-// turn_open on disk and the record not — and marking it restores the pre-revert
-// surviving view: every reader skips the turn, openTurnsLocked skips it so no closer
-// is synthesized for it, and the ordinal it reserved is no coordinate any reader reads.
+// markIncompleteCarriersLocked marks every `source: revert` turn without its own turn_revert: a carrier's crash state.
+// Marking it restores the pre-revert view: readers skip it, openTurnsLocked synthesizes no closer for it, and its
+// ordinal is never read.
 func (l *EntryLog) markIncompleteCarriersLocked() {
 	for _, id := range l.order {
 		st := l.turns[id]
@@ -982,17 +842,14 @@ func (l *EntryLog) scanFileLocked() error {
 			return nil
 		}
 		if err := l.observeLineLocked(line, off, rerr); err != nil {
-			// Prefix-consistent: the first line the scan cannot read ends the log,
-			// because an O_APPEND write of one line is either wholly present or a
-			// torn tail, so anything past it is unreachable either way.
+			// The first unreadable line ends the log: an O_APPEND line is whole or a torn tail.
 			return l.dropTailLocked(off, err)
 		}
 		off += int64(len(line))
 	}
 }
 
-// observeLineLocked decodes one complete line and folds it in, reporting why the
-// line is unusable when it is.
+// observeLineLocked decodes one complete line and folds it in, reporting why an unusable line is unusable.
 func (l *EntryLog) observeLineLocked(line []byte, off int64, rerr error) error {
 	if rerr != nil {
 		return rerr
@@ -1004,8 +861,7 @@ func (l *EntryLog) observeLineLocked(line []byte, off int64, rerr error) error {
 	return l.observeLocked(&e, off, off+int64(len(line)))
 }
 
-// dropTailLocked truncates the log at the last complete line and logs one Warn. The
-// index needs no repair: nothing past off was observed.
+// dropTailLocked truncates the log at the last complete line and logs one Warn; nothing past off was observed.
 func (l *EntryLog) dropTailLocked(off int64, cause error) error {
 	l.size = off
 	slog.Warn("entry log: dropped an unreadable tail at the last complete line",
@@ -1016,9 +872,8 @@ func (l *EntryLog) dropTailLocked(off int64, cause error) error {
 	return nil
 }
 
-// readEntryLine reads one line INCLUDING its newline, bounded by maxEntryLineBytes.
-// A complete line answers a nil error; a final line with no newline answers io.EOF
-// with the bytes, which is the torn tail.
+// readEntryLine reads one line including its newline, bounded by maxEntryLineBytes. A final line without a newline
+// returns its bytes with io.EOF: the torn tail.
 func readEntryLine(r *bufio.Reader) ([]byte, error) {
 	var buf []byte
 	for {
@@ -1034,9 +889,8 @@ func readEntryLine(r *bufio.Reader) ([]byte, error) {
 	}
 }
 
-// openTurnsLocked are the turns with no turn_close, oldest first: what a crash or the
-// write-error rule left behind, over the surviving view, so a turn a revert took is
-// never re-closed for having been reverted.
+// openTurnsLocked are the surviving turns with no turn_close, oldest first, left by a crash or the write-error rule.
+// Reverted turns are never re-closed.
 func (l *EntryLog) openTurnsLocked() []string {
 	var open []string
 	for _, id := range l.survivingOrderLocked() {
@@ -1047,9 +901,8 @@ func (l *EntryLog) openTurnsLocked() []string {
 	return open
 }
 
-// closeUnterminatedLocked appends the synthesized closer to each named turn: an
-// aborted tool_result for every unsettled call in its own lane, then
-// turn_close{outcome: interrupted, stop_reason_raw: unterminated}.
+// closeUnterminatedLocked appends the synthesized closer to each named turn: an aborted tool_result per unsettled
+// call in its lane, then turn_close{outcome: interrupted, stop_reason_raw: unterminated}.
 func (l *EntryLog) closeUnterminatedLocked(ctx context.Context, turns []string) error {
 	model := l.header.CloserModel()
 	for _, id := range turns {
@@ -1062,10 +915,8 @@ func (l *EntryLog) closeUnterminatedLocked(ctx context.Context, turns []string) 
 	return nil
 }
 
-// synthesizeCloseLocked writes one unterminated turn's aborted results and its
-// closer. Credits are ABSENT because nothing metered them, and elapsed_ms spans the
-// turn_open's ts to its newest entry's, both metadata read once here for a display
-// value.
+// synthesizeCloseLocked writes one unterminated turn's aborted results and closer. Credits are absent, since nothing
+// metered them; elapsed_ms spans turn_open's ts to the newest entry's.
 func (l *EntryLog) synthesizeCloseLocked(ctx context.Context, turn, model string) error {
 	st := l.turns[turn]
 	for _, c := range st.unsettled() {
@@ -1097,14 +948,9 @@ func (l *EntryLog) synthesizeCloseLocked(ctx context.Context, turn, model string
 	return l.appendLocked(ctx, e)
 }
 
-// Rewrite replaces the log with entries, the merge swap's store half: turns
-// contiguous in n order, entries in seq order within a turn, seq renumbered from 0
-// per turn, renamed into place through atomicfile. A set whose turns are not each
-// led by their own turn_open is refused with the log untouched; groupByTurn owns why.
-//
-// Nothing on the header is stamped by it: the evidence a merge answers is in the log,
-// and this rewrite's own output is what answers it, so a completed swap needs no
-// counter for a later projection to compare against.
+// Rewrite replaces the log with entries, the merge swap's store half: turns contiguous, seq renumbered from 0 per
+// turn, renamed into place through atomicfile. Turns not each led by their own turn_open are refused with the log
+// untouched (groupByTurn). Nothing on the header is stamped.
 func (l *EntryLog) Rewrite(ctx context.Context, entries []marotte.Entry) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1159,13 +1005,9 @@ func (l *EntryLog) writeRewriteLocked(ctx context.Context, groups [][]marotte.En
 	return nil
 }
 
-// groupByTurn partitions entries into one contiguous group per turn, groups in the
-// INPUT's own first-appearance order and entries in seq order within a group; an
-// interleave the input held is not reproduced. The group order is never turn_open.n: a
-// revert reuses ordinals, so an n sort is ambiguous and would interleave reverted turns
-// with surviving ones. It REFUSES a group its own turn_open does not lead, because the
-// rewrite's rescan reads such a first line as a torn tail and would truncate the log to
-// nothing while reporting success.
+// groupByTurn partitions entries into one contiguous group per turn, in the input's first-appearance order, seq order
+// within. Not by turn_open.n: a revert reuses ordinals, so n is ambiguous. A group its own turn_open does not lead is
+// refused, because the rescan would read it as a torn tail and truncate the log.
 func groupByTurn(entries []marotte.Entry) ([][]marotte.Entry, error) {
 	byTurn := make(map[string][]marotte.Entry)
 	var order []string
@@ -1189,9 +1031,7 @@ func groupByTurn(entries []marotte.Entry) ([][]marotte.Entry, error) {
 	return groups, nil
 }
 
-// turnOrdinal is a group's stored n, read off the turn_open that must LEAD it. A
-// group led by anything else is refused rather than sorted first: first is exactly
-// where the rewrite's rescan would cut the file.
+// turnOrdinal is a group's stored n, read off the turn_open that must lead it; any other leader is refused.
 func turnOrdinal(group []marotte.Entry) (uint64, error) {
 	lead := group[0]
 	if lead.Kind != marotte.EntryKindTurnOpen {
@@ -1205,9 +1045,8 @@ func turnOrdinal(group []marotte.Entry) (uint64, error) {
 	return payload.N, nil
 }
 
-// ordinalAsInt is a turn's n as the int the wire's TurnSummary and the header's
-// TurnCount carry. A log holds no more turns than it has lines, so the clamp cannot
-// be reached; it is here so the conversion states its own bound rather than wrapping.
+// ordinalAsInt is a turn's n as the int TurnSummary and TurnCount carry. The clamp is unreachable (a log has no more
+// turns than lines) and states the bound.
 func ordinalAsInt(n uint64) int {
 	if n > math.MaxInt {
 		return math.MaxInt
@@ -1226,8 +1065,7 @@ func cmpUint(a, b uint64) int {
 	return 0
 }
 
-// writeCountersLocked hands the header the LOG's counters, which win on a
-// disagreement: they are caches recomputed from the log whenever the two differ.
+// writeCountersLocked hands the header the log's counters, which win on a disagreement.
 func (l *EntryLog) writeCountersLocked(ctx context.Context) error {
 	count, last := l.countersLocked()
 	if err := l.header.Counters(ctx, count, last); err != nil {
@@ -1236,18 +1074,16 @@ func (l *EntryLog) writeCountersLocked(ctx context.Context) error {
 	return nil
 }
 
-// WriteCounters caches turn_count and last_turn_outcome on the header. A SEPARATE
-// operation because a turn open takes the lifecycle mutex and this write must not:
-// the caller releases lifecycle and then calls this, which takes the log's lock
-// alone.
+// WriteCounters caches turn_count and last_turn_outcome on the header. Separate because a turn open holds the
+// lifecycle mutex and this must not: the caller releases it first, and this takes only the log's lock.
 func (l *EntryLog) WriteCounters(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.writeCountersLocked(ctx)
 }
 
-// Counters are the header's two caches as the log states them: the newest turn's n,
-// and how the newest FINISHED turn ended.
+// Counters are the header's two caches as the log states them: the newest turn's n and how the newest finished turn
+// ended.
 func (l *EntryLog) Counters() (turnCount uint64, last marotte.TurnOutcome) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1264,8 +1100,7 @@ func (l *EntryLog) countersLocked() (uint64, marotte.TurnOutcome) {
 	return l.turnCountLocked(), last
 }
 
-// turnCountLocked is the newest SURVIVING turn's n, so the sidebar counts turns
-// whether they are drawn or not and a rewind shrinks the count it caches.
+// turnCountLocked is the newest surviving turn's n, so the count covers undrawn turns and a rewind shrinks it.
 func (l *EntryLog) turnCountLocked() uint64 {
 	order := l.survivingOrderLocked()
 	if len(order) == 0 {
@@ -1274,9 +1109,8 @@ func (l *EntryLog) turnCountLocked() uint64 {
 	return l.turns[order[len(order)-1]].n
 }
 
-// NewestSeq answers a turn's newest sealed seq, false for a turn the log does not
-// hold. The live_turn stamp's version half; a turn holding its turn_open alone
-// answers 0.
+// NewestSeq returns a turn's newest sealed seq, false for a turn not in the log: the live_turn stamp's version half.
+// A turn with only its turn_open returns 0.
 func (l *EntryLog) NewestSeq(turn string) (uint64, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1287,9 +1121,8 @@ func (l *EntryLog) NewestSeq(turn string) (uint64, bool) {
 	return st.nextSeq - 1, true
 }
 
-// RailRows is the rail index: one marotte.TurnSummary per DRAWN turn, oldest first.
-// A turn becomes drawn at the first append satisfying the predicate, so its row
-// appears then and never afterwards moves.
+// RailRows is the rail index: one marotte.TurnSummary per drawn turn, oldest first. A turn's row appears at the first
+// drawing append and never moves.
 func (l *EntryLog) RailRows() []marotte.TurnSummary {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1316,30 +1149,21 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 	return rows
 }
 
-// Window is a page of the log: the entries of one SET of turns, in file order.
+// Window is a page of the log: the entries of a set of turns, in file order.
 type Window struct {
 	Entries []marotte.Entry
 	// HasMore reports that an older turn exists outside this page.
 	HasMore bool
 }
 
-// Window reads the `turns` turns with the highest n among the SURVIVING turns, or the
-// `turns` surviving turns whose n is below before's when before names one this log
-// holds and no revert took. `turns` is a PAGE SIZE of whole turns, never an entry count,
-// so no turn splits across two pages.
-//
-// One read per byte range of the set, keeping the lines whose turn is in the set: a
-// line of a turn OUTSIDE a range is skipped, which is the interleave the one
-// two-open-turns registry state and a between-turns append both produce.
+// Window reads the `turns` surviving turns with the highest n, or the `turns` surviving turns below before when it
+// names a surviving turn here. `turns` is a page size: the read is a set of whole turns, never split. One pread per
+// byte range; lines of turns outside the set are skipped.
 func (l *EntryLog) Window(turns int, before string) (Window, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// ONE slice for the resolution, the selection and HasMore. A reverted turn stays
-	// in l.order, so resolving `before` against that would succeed for an id this
-	// door must refuse, serve a page holding reverted turns, and read HasMore off a
-	// set no other reader answers over; and indexing two different slices is an
-	// off-by-N page. The error value and its message are unchanged, which is what
-	// keeps the chat route's own 400 arm the answer to a stale cursor.
+	// One slice for resolution, selection and HasMore: resolving `before` against l.order would accept a reverted id
+	// and mix in reverted turns. The error is unchanged, so the route's 400 still answers a stale cursor.
 	order := l.survivingOrderLocked()
 	upper := len(order)
 	if before != "" {
@@ -1357,22 +1181,16 @@ func (l *EntryLog) Window(turns int, before string) (Window, error) {
 	return Window{Entries: entries, HasMore: lower > 0}, nil
 }
 
-// All is every SURVIVING entry of the log in file order: the whole-transcript read.
-// The skip is the default here, so a new caller gets the surviving view and one that
-// wants the whole file has to write AllWithReverted's name instead.
+// All is every surviving entry in file order, the whole-transcript read. The whole file needs AllWithReverted by
+// name.
 func (l *EntryLog) All() ([]marotte.Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.readSetLocked(l.survivingOrderLocked())
 }
 
-// AllWithReverted is the merge's read: every entry in file order, reverted material
-// included, beside the set of turn ids the skip rule marks. The ONE reader that sees
-// past the surviving view, so a grep for the name finds one site.
-//
-// The set is RETURNED rather than recomputed by the caller: the rule has one
-// implementation, the index's own scan, and a second copy in internal/agent is the
-// two-parsers class this project refuses.
+// AllWithReverted is the merge's read: every entry in file order, reverted included, with the set of reverted turn
+// ids. The one reader past the surviving view. The set is returned so the skip rule has one implementation.
 func (l *EntryLog) AllWithReverted() ([]marotte.Entry, map[string]struct{}, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1389,38 +1207,19 @@ func (l *EntryLog) AllWithReverted() ([]marotte.Entry, map[string]struct{}, erro
 	return entries, reverted, nil
 }
 
-// NewestRevert is the id of the LAST turn_revert in FILE order as the index holds it,
-// false when the log holds none. The provenance a projection snapshots and its swap
-// re-reads, in place of the header counter revision was.
-//
-// Never the highest from_n: the two disagree, because a record lives in its CARRIER's
-// group and a later revert's carrier can sit at a lower position, so one rewrite can
-// swap two reverts' file positions. The gate survives that because at most one
-// projection per chat is open and a swap consumes it (load_projection.go), so the only
-// thing it compares is whether a revert appended while THIS projection was in flight,
-// and an append is always at the file's tail.
+// NewestRevert is the id of the last turn_revert in file order, false when none: the provenance a projection
+// snapshots and its swap re-reads. Not the highest from_n: a rewrite can reorder reverts. One projection per chat,
+// consumed by its swap (load_projection.go), so only a tail append can change it.
 func (l *EntryLog) NewestRevert() (string, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.newestRevert, l.newestRevert != ""
 }
 
-// NeedsReconcile is whether this record holds evidence that the session's own log
-// carries something it lacks, which is what makes the replay merge run at all. It is
-// read from the records the log already holds rather than from a header flag: a flag
-// was a second copy of a fact the log states, written first only because it could
-// disagree with it.
-//
-// Three conditions, any one of them: (i) the header names a session and no turn_bind
-// of this log names it and no reconciled record names it — a chat bound to a session
-// whose history this record has never adopted; (ii) a surviving turn closed
-// "unterminated" with no reconciled record naming it — the closer a crash leaves;
-// (iii) a surviving steer entry with no text and no reconciled record naming its turn
-// — words KAS persisted that this process never received.
-//
-// The run root answers false outright, because it names no session, a run turn closed
-// unterminated is ordinary, and no merge runs against it. That is noHeader's
-// Reconcilable doing the work rather than an isRunRoot test anywhere.
+// NeedsReconcile reports whether this record shows the session's own log has something it lacks, which is what runs
+// the replay merge. Read from the log's records, not a header flag. Any of: (i) the header's session has no turn_bind
+// or reconciled record here; (ii) a surviving turn closed unterminated with no reconciled record; (iii) a surviving
+// empty steer with no reconciled record for its turn. A run root answers false through noHeader.
 func (l *EntryLog) NeedsReconcile() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1428,11 +1227,9 @@ func (l *EntryLog) NeedsReconcile() bool {
 	return len(turns) > 0 || session != ""
 }
 
-// ReconcileTargets is what NeedsReconcile is true OF: the surviving turns whose signal
-// no reconciled record clears, in file order, and the session this record has never
-// adopted. ONE predicate with two readers rather than two spellings of it — a merge
-// that decided FROM the predicate and then re-derived WHICH signals to clear would be
-// free to clear a signal the predicate does not hold, or to leave one it does.
+// ReconcileTargets is what NeedsReconcile is true of: the surviving turns whose signal no reconciled record clears,
+// in file order, and the unadopted session. One predicate with two readers, so a merge cannot clear what it does not
+// hold.
 func (l *EntryLog) ReconcileTargets() (turns []string, session string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1458,8 +1255,7 @@ func (l *EntryLog) reconcileTargetsLocked() (turns []string, session string) {
 	return turns, l.unadoptedSessionLocked()
 }
 
-// unadoptedSessionLocked is the header's session when neither a turn_bind nor a
-// reconciled record in the log names it, else "".
+// unadoptedSessionLocked is the header's session when no turn_bind or reconciled record names it, else "".
 func (l *EntryLog) unadoptedSessionLocked() string {
 	s := l.header.SessionID()
 	if s == "" {
@@ -1474,17 +1270,12 @@ func (l *EntryLog) unadoptedSessionLocked() string {
 	return s
 }
 
-// ErrTurnNotInLog is the one TurnRange failure a CALLER can cause: an id this log holds
-// no turn for. Every other error is the log being unreadable, which a route reports as a
-// 500 rather than as a missing turn, so the two classes may not share an answer.
+// ErrTurnNotInLog is the one TurnRange failure a caller can cause: an id with no turn here. Other errors mean the log
+// is unreadable, a 500.
 var ErrTurnNotInLog = errors.New("chat: turn is not in this log")
 
-// TurnRange answers turn's entries from seq from INCLUSIVE, in seq order, so from == 0
-// is the whole turn and the repair read needs no second function and no bool. The wire's
-// ?after= is EXCLUSIVE and is translated at the door (from = after + 1 when present, 0
-// when absent). A REVERTED turn answers the sentinel exactly like an absent one, so both
-// routes render the refusal they already render — 404 for the chat door, found == false
-// for the run's.
+// TurnRange returns turn's entries from seq from inclusive, in seq order; from == 0 is the whole turn. The wire's
+// exclusive ?after= is translated at the door. A reverted turn returns the sentinel like an absent one.
 func (l *EntryLog) TurnRange(turn string, from uint64) ([]marotte.Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1505,15 +1296,9 @@ func (l *EntryLog) turnRangeLocked(turn string, from uint64) ([]marotte.Entry, e
 	return slices.DeleteFunc(entries, func(e marotte.Entry) bool { return e.Seq < from }), nil
 }
 
-// TurnPage is the read both roots share: turn's entries from from inclusive, beside the
-// seq the PAGE speaks for. Each root stamps its own subject kind over it — live_turn for
-// a chat, run_turn for a run — and the read itself is one implementation.
-//
-// newestSeq is the page's own newest entry, or from - 1 for an EMPTY page: the exclusive
-// cursor the caller already held, never the log's own counter, which a seal landing
-// between the two reads would advance so the stamp names a version one ahead of the page
-// and a reconnect never fetches it. from == 0 cannot answer empty for a turn this log
-// holds, since a held turn always carries its turn_open.
+// TurnPage is the read both roots share: turn's entries from from inclusive, plus the seq the page speaks for; each
+// root stamps its own subject kind. newestSeq is the page's newest entry, or from - 1 for an empty page, never the
+// log's counter, which a concurrent seal could advance past the page. A held turn always has its turn_open.
 func (l *EntryLog) TurnPage(turn string, from uint64) (entries []marotte.Entry, newestSeq uint64, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1527,14 +1312,8 @@ func (l *EntryLog) TurnPage(turn string, from uint64) (entries []marotte.Entry, 
 	return entries, from - 1, nil
 }
 
-// readSetLocked reads the set's OWN byte ranges, one pread per range, and answers
-// the entries whose turn is in the set, in file order.
-//
-// One span from the set's lowest offset to its highest is what this replaced, and
-// after a rewind it reads every reverted byte between the page's oldest turn and its
-// newest: a carrier's newest entry is its revert record at the file's tail, so the
-// span reaches EOF even for a page of turns that all predate the revert. One pread
-// per contiguous RUN of turns has the same defect for the same reason.
+// readSetLocked reads the set's own byte ranges, one pread each, returning the set's entries in file order. A span
+// from lowest to highest offset would read every reverted byte up to the carrier's record at the file's tail.
 func (l *EntryLog) readSetLocked(set []string) ([]marotte.Entry, error) {
 	if len(set) == 0 {
 		return nil, nil
@@ -1563,8 +1342,7 @@ func (l *EntryLog) readSetLocked(set []string) ([]marotte.Entry, error) {
 	return out, nil
 }
 
-// decodeEntryRange decodes one byte range's lines, keeping the entries whose turn is
-// wanted.
+// decodeEntryRange decodes one byte range's lines, keeping the wanted turns' entries.
 func decodeEntryRange(r io.Reader, want map[string]struct{}) ([]marotte.Entry, error) {
 	var out []marotte.Entry
 	br := bufio.NewReaderSize(r, entryReadBuf)

@@ -8,23 +8,17 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// runNotice is one finished chat-parented run whose completion notice KAS queued
-// into the launching chat's steering buffer instead of prompting it.
+// runNotice is one finished chat-parented run whose completion notice KAS queued into the launching chat's steering buffer.
 type runNotice struct {
 	workflowID string
 	producedTs int64
 }
 
-// maxRunNoticesPerChat bounds the queue: a notice KAS never delivers (a buffer
-// cleared by a boundary this process did not see) must not grow it forever.
+// maxRunNoticesPerChat bounds the queue against notices KAS never delivers.
 const maxRunNoticesPerChat = 16
 
-// recordRunNotice queues a terminal run behind the notice KAS is about to append.
-//
-// Recorded only for a run parented on a real chat whose turn is LIVE: KAS PROMPTS an
-// idle parent instead of queueing, so a finish recorded while idle would pair with
-// the next unrelated notice. The registry is this process's reading of what KAS
-// tests with hasActiveExecution; a disagreement costs one notice its provenance.
+// recordRunNotice queues a terminal run behind the notice KAS is about to append, only for a real chat
+// whose turn is live: KAS prompts an idle parent instead. This mirrors KAS's hasActiveExecution.
 func (rs *Runs) recordRunNotice(chatID marotte.ChatID, workflowID string) {
 	if workflowIDOf(chatID) != "" || rs.coord == nil || !rs.coord.turns.live(chatID) {
 		return
@@ -42,14 +36,9 @@ func (rs *Runs) recordRunNotice(chatID marotte.ChatID, workflowID string) {
 	rs.notices[chatID] = q
 }
 
-// clearStaleNotices closes KAS's own gate. Its turn-end clear is skipped when a turn
-// ends abnormally, so a notice queued during that turn waits in the buffer until the
-// reader's NEXT prompt drains it and an hours-old result lands as news. Run when a
-// chat's turn closes: while this process still holds a notice for the chat (a finish
-// neither read nor dropped) and the chat has settled, `_session/steer/clear` goes out
-// on the chat's own bridge. The steering_cleared frame KAS answers with is what writes
-// the dropped entries, provenance included. Session-scoped, so an unread user steer
-// queued in the same turn is dropped with it, as at every other boundary.
+// clearStaleNotices closes KAS's gate: KAS skips its turn-end clear when a turn ends abnormally, leaving
+// a notice to ambush the next prompt. On a turn close with a notice held and the chat settled, it sends
+// `_session/steer/clear` on the chat's bridge; that also drops unread user steers.
 func (rs *Runs) clearStaleNotices(ctx context.Context, chatID marotte.ChatID) {
 	if !rs.holdsNotice(chatID) || rs.coord.turns.live(chatID) {
 		return
@@ -70,9 +59,8 @@ func (rs *Runs) holdsNotice(chatID marotte.ChatID) bool {
 	return len(rs.notices[chatID]) > 0
 }
 
-// RunNotice consumes the oldest queued notice for a chat: KAS drains its steering
-// buffer in append order, and observeComplete records in finish order, so the two
-// queues pair FIFO. translate.RunOriginAccess.
+// RunNotice consumes the chat's oldest notice: KAS drains in append order and finishes are recorded in
+// order, so the queues pair FIFO. translate.RunOriginAccess.
 func (rs *Runs) RunNotice(chatID marotte.ChatID) (workflowID string, producedTs int64, ok bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()

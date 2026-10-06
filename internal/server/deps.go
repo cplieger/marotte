@@ -7,41 +7,17 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The interfaces below are declared HERE, at the consumer that calls them,
-// rather than in a shared contract package. Each names only the methods this
-// package invokes, which is what keeps a test double small enough to be
-// obviously correct and stops an unrelated method from widening the contract
-// every consumer then has to satisfy.
-//
-// The width arithmetic is stated per interface. Where a consumer uses ALL of
-// what the implementation offers, that is said too — the placement is still
-// the point, because a contract nothing else reads has no business in a shared
-// package.
-//
-// UNEXPORTED by default. An interface here is exported only when the
-// composition root has to name it, and its doc says so.
+// The interfaces below are declared at their consumer, each naming only the methods this
+// package invokes. Unexported unless the composition root has to name one.
 
-// routeHandler is a component that wires its own routes under a sub-tree of
-// /api/*. This package is the ROUTER, so it is the only consumer: the six
-// packages that satisfy it (auth, filebrowse, forges, git, mcp's Store and its
-// RegistryProxy) implement it, and an implementor is not a consumer. That is
-// why one declaration here replaces the shared marotte.RouteHandler rather than
-// eight copies of it.
-//
-// 1 method, which is the whole of it — there is no narrower statement of "owns
-// a mux subset" available.
+// routeHandler is a component that wires its own routes under a sub-tree of /api/*. This
+// package, the router, is its only consumer.
 type routeHandler interface {
 	RegisterRoutes(mux *http.ServeMux)
 }
 
-// chatEngine is the bridge/SSE hub as this package uses it: it mounts /api/events
-// and /api/command, it is the fan-out this package broadcasts a settings change
-// through, and it is what the shutdown path drains. *agent.Runtime satisfies it.
-//
-// 5 methods against a *agent.Runtime that exports well over a hundred. Exported
-// methods on the concrete type this package must NOT reach — bridge
-// coordination, the utility runtime, the MCP registry, run hosting — are the
-// reason the narrow spelling matters here more than anywhere else in the file.
+// chatEngine is the bridge/SSE hub as this package uses it (/api/events, /api/command, the
+// settings broadcast, the shutdown drain). *agent.Runtime satisfies it.
 type chatEngine interface {
 	routeHandler
 
@@ -52,21 +28,25 @@ type chatEngine interface {
 	Shutdown(ctx context.Context) error
 	// Epoch is the SSE hub's current epoch, stamped on the tabs envelope.
 	Epoch() string
-	// PushAgentIgnoreFiles tells every live bridge which ignore files kiro-cli
-	// should enforce, for a settings write that changed the list. It is here
-	// rather than in the agent's own settings path because a PATCH is the only
-	// thing that changes the value, and the value is per BRIDGE: kiro-cli scopes
-	// it to the connection, so a chat already open learns of an edit no other way.
+	// PushAgentIgnoreFiles tells every live bridge which ignore files kiro-cli should enforce;
+	// kiro-cli scopes the list per connection, so an open chat learns of an edit no other way.
 	PushAgentIgnoreFiles(ctx context.Context)
+	// PushTerminalSettings sends the shell-tool default timeout to every live
+	// bridge; kiro-cli holds it per process.
+	PushTerminalSettings(ctx context.Context)
+	// PushContentCollection sets the resolved content-collection value on every
+	// live bridge; kiro-cli holds it per process and persists none of it.
+	PushContentCollection(ctx context.Context)
 }
 
-// pushService is the push surface this package serves: mount the subscription
-// endpoints, and write the notification toggles a PATCH /api/settings changed.
-// *push.Service satisfies it.
-//
-// 2 of the 8 methods the push service offers. Sending is not among them — that
-// is the runtime's and the PR poller's — and neither is Subscribe/Unsubscribe, which
-// the service's own handlers call on themselves.
+// governanceLocks is the administrator's lock map as this package reads it, to
+// refuse a write to a locked kiro-cli setting. *agent.Settings satisfies it.
+type governanceLocks interface {
+	GovernanceLocks() map[string]marotte.GovernanceLock
+}
+
+// pushService is the push surface this package serves: the subscription endpoints and the
+// toggles a PATCH /api/settings changed. *push.Service satisfies it.
 type pushService interface {
 	routeHandler
 
@@ -74,76 +54,43 @@ type pushService interface {
 	SetPreferences(prefs map[marotte.PushKind]bool)
 }
 
-// SteeringGenerator generates steering files for kiro-cli.
-// *steering.Generator satisfies it.
-//
-// 2 of the 2 methods the generator offers: this package drives the whole of
-// it. Exported because the composition root names it in server.WithSteering
-// and main.go asserts *steering.Generator against it.
+// SteeringGenerator generates steering files for kiro-cli. *steering.Generator satisfies it.
+// Exported because the composition root names it in server.WithSteering.
 type SteeringGenerator interface {
 	Generate(ctx context.Context)
 	CustomPath() string
 }
 
-// AccountUsageProvider fetches account/subscription-level usage (plan,
-// credits, quota) via the KAS _kiro/account/getUsage request on a live bridge,
-// so this package can serve GET /api/account/usage. *agent.Runtime satisfies it via
-// the utility bridge.
-//
-// 1 method against a *agent.Runtime with well over a hundred: the narrowest possible
-// statement of what this endpoint needs. Exported because the composition root
-// names it in server.WithAccountUsage.
+// AccountUsageProvider fetches account usage (plan, credits, quota) via KAS's
+// _kiro/account/getUsage for GET /api/account/usage. Exported for server.WithAccountUsage.
 type AccountUsageProvider interface {
 	AccountUsage(ctx context.Context) (*marotte.AccountUsage, error)
 }
 
-// policyProvider READS kiro-cli's native Cedar policy over a live bridge,// backing GET /api/permissions and the pre-flight simulation at
-// POST /api/permissions/explain. *agent.Runtime satisfies it.
-//
-// 2 methods, and deliberately not a third: policy/check is never called (it
-// can raise a consent prompt), and the rule WRITER at
-// POST /api/permissions/rules needs no provider at all — it is a file write
-// KAS hot-reloads, which is why this contract is read-only.
+// policyProvider READS kiro-cli's native Cedar policy, backing GET /api/permissions and
+// POST /api/permissions/explain. Read-only: policy/check is never called (it can raise a
+// consent prompt), and the rule writer is a file write KAS hot-reloads.
 type policyProvider interface {
 	PolicyList(ctx context.Context, scope string) ([]marotte.PolicyRule, error)
 	PolicyExplain(ctx context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error)
 }
 
-// policyReloader recycles the session whose policy presets a profile change
-// invalidated, so GET /api/permissions stops describing the previous profile.
-//
-// Its OWN 1-method contract rather than a third method on policyProvider, which is
-// deliberately read-only: this one mutates process state, and folding it in would
-// make that contract's comment false. *agent.Runtime satisfies it.
-//
-// Only the utility session, which is the one this package reads the policy through.
-// A chat's presets ride its session door, so a chat picks up a new profile when its
-// session next starts or loads — KAS exposes no way to change a live session's
-// policy, so there is nothing to call for those.
+// policyReloader recycles the utility session whose policy presets a profile change
+// invalidated. Separate from the read-only policyProvider because it mutates process state.
+// A chat picks up a new profile when its session next starts or loads.
 type policyReloader interface {
 	RestartUtilitySession()
 }
 
-// mcpRenderer re-renders KAS's MCP config file, so a security-profile change
-// reaches the auto-approve lists it suspends or restores. *mcp.Store satisfies it.
-//
-// Its OWN 1-method contract beside policyReloader rather than a method on it: that
-// one recycles a SESSION and this one rewrites a FILE, and the two are satisfied by
-// different types. It carries no posture argument, because the decision has one
-// owner — the store resolves the rung from the persisted setting itself, and a
-// posture passed through here would be a second source for one fact.
+// mcpRenderer re-renders KAS's MCP config file, so the MCP wait setting reaches
+// the file KAS reads. *mcp.Store satisfies it. It carries no argument because the
+// store reads the persisted setting itself.
 type mcpRenderer interface {
 	RenderKASConfig(ctx context.Context) error
 }
 
-// utilityPrompter is AI-backed text generation for the two endpoints this
-// package serves with it: explain-an-error and explain-a-diff. *agent.Runtime
-// satisfies it over the long-lived utility bridge.
-//
-// 1 method. internal/git declares its own copy for its own three endpoints
-// rather than importing this one — a 1-method contract is cheaper to restate
-// than to share, and sharing it is what put it in a runtime package in the first
-// place. It is NOT used for chat titles: those come from KAS.
+// utilityPrompter is AI-backed text generation for explain-an-error and explain-a-diff.
+// *agent.Runtime satisfies it over the utility bridge.
 type utilityPrompter interface {
 	UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error)
 }

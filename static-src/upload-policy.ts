@@ -1,79 +1,27 @@
-// ---------------------------------------------------------------------------
-// Upload policy applied before a byte leaves the browser.
-//
-// Two jobs, one module, but they have DIFFERENT audiences and the split is the
-// thing to keep straight:
-//
-//   - WHERE a composer upload goes (UPLOADS_DIR) is the composer's alone. The
-//     file browser and the upload picker upload where the user is looking, which
-//     is the whole point of those surfaces.
-//   - WHICH files are worth sending (screenUploads and the limits under it) is
-//     EVERY door's, because the limit being predicted is the server's and it does
-//     not care which gesture produced the request. It was wired to the composer
-//     only, so the browser drop, the browser's upload dialog and the picker each
-//     transmitted the bytes first and reported a bare 413 afterwards, naming no
-//     file. The server's cap is real either way (this is a diagnosis, not a
-//     gate), so what the wiring buys is the offending file's name up front.
-// ---------------------------------------------------------------------------
+// Upload policy before a byte leaves the browser. WHERE (UPLOADS_DIR) is the composer's alone;
+// WHICH files to send (screenUploads) is EVERY door's, since the limit is the server's. A diagnosis,
+// not a gate: it names the offending file instead of a bare 413.
 
-/** Where a composer upload lands: one folder at the container root, modelled on
- *  an OS Downloads folder. The server creates it at boot, not on the first
- *  upload — it is a granted browse mount now, and an unopenable mount is skipped
- *  rather than created by the upload that needed it.
- *
- *  Container-absolute, matching the paths the file browser and picker already
- *  produce, because this string is used twice with two different consumers: as
- *  the upload target, which the server resolves against its granted mounts, and,
- *  prefixed onto each filename, as the attachment path, which the server resolves
- *  against the workspace-plus-uploads roots. Both are absolute-path questions, so
- *  a relative "uploads" would be refused by the first and resolved under the
- *  workspace by the second — two different directories for one string.
- *
- *  Mirrors DefaultUploadDir in internal/marotte/domain_paths.go;
- *  TestUploadPolicyMatchesClient pins the two together. */
+/** Where a composer upload lands: one container-root folder, like an OS Downloads folder, created
+ *  by the server at boot as a granted browse mount. Absolute, because it is both the upload target
+ *  (resolved against mounts) and the attachment prefix (resolved against workspace-plus-uploads).
+ *  Mirrors DefaultUploadDir (internal/marotte/domain_paths.go); TestUploadPolicyMatchesClient pins. */
 export const UPLOADS_DIR = "/uploads";
 
-/** The server's upload ceiling in bytes. Mirrors maxUploadSize in
- *  internal/filebrowse/filebrowse.go, which applies it to the WHOLE
- *  multipart request body (http.MaxBytesReader) and again to each file inside
- *  it, answering 413 either way.
- *
- *  Duplicated here rather than fetched, because it is a compile-time constant
- *  with no runtime input: an endpoint to report it would be a request per boot
- *  to learn a number that cannot change without a rebuild.
- *  TestUploadPolicyMatchesClient reads this literal and fails on drift, so the
- *  Go const stays the single definition.
- *
- *  It is NOT what the pre-flight enforces — see MAX_UPLOAD_TOTAL_BYTES. */
+/** The server's upload ceiling in bytes: maxUploadSize in internal/filebrowse/filebrowse.go, applied
+ *  to the WHOLE multipart body and to each file (413 either way). A compile-time constant, so
+ *  duplicated rather than fetched; TestUploadPolicyMatchesClient fails on drift. The pre-flight
+ *  enforces MAX_UPLOAD_TOTAL_BYTES. */
 export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 
-/** Bytes held back from MAX_UPLOAD_BYTES so the pre-flight's verdict survives
- *  the request that carries it.
- *
- *  The server's limit is on the whole multipart BODY, and multipart framing is
- *  part of that body: a boundary line, a Content-Disposition header carrying
- *  the filename and a Content-Type header per part, plus the `dir` field and
- *  the closing boundary. So a file of exactly MAX_UPLOAD_BYTES can never fit in
- *  a request of at most MAX_UPLOAD_BYTES, however small the overhead is.
- *
- *  1 MiB is far more than framing costs (roughly a kilobyte per part at the
- *  longest legal filename, times a 25-file cap). It is sized for the HINT
- *  rather than for the overhead: subtracting a whole MiB from a cap that is
- *  itself a whole number of MiB leaves the hint a round whole number to state
- *  exactly (255 MB at the current cap), and an under-promise is the right
- *  direction for a limit a user reads before choosing a file. */
+/** Bytes held back from MAX_UPLOAD_BYTES: the limit covers multipart framing too, so a file of
+ *  exactly the cap never fits. 1 MiB far exceeds framing (~1 KB per part, 25 parts) and leaves the
+ *  hint a round number (255 MB); under-promising is the right direction. */
 const MULTIPART_RESERVE_BYTES = 1024 * 1024;
 
-/** What one composer upload may actually carry, all files together: the
- *  server's whole-request ceiling minus the framing reserve.
- *
- *  This is the number the pre-flight enforces, and it is a TOTAL, not a
- *  per-file allowance. Checking only per-file was the defect: two files at
- *  three fifths of the cap each passed a per-file test against
- *  MAX_UPLOAD_BYTES and then failed together against the one limit the server
- *  actually applies, which is exactly the 413 the pre-flight exists to
- *  predict. A single file is capped at the same number, because one
- *  file is a batch of one and nothing larger can fit in the request either. */
+/** What one composer upload may carry, ALL FILES TOGETHER: the server's request ceiling minus the
+ *  framing reserve. A TOTAL, since two files each under the cap can 413 together; one file is a
+ *  batch of one. */
 export const MAX_UPLOAD_TOTAL_BYTES = MAX_UPLOAD_BYTES - MULTIPART_RESERVE_BYTES;
 
 /** Files one composer gesture may carry. A dropped folder can hand over
@@ -100,34 +48,15 @@ function limitLabel(bytes: number): string {
   return `${String(Math.round(bytes / (1024 * 1024)))} MB`;
 }
 
-/** The composer's one-line statement of the upload limit.
- *
- *  It names the TOTAL, because that is the limit that decides whether a drop
- *  succeeds. A hint naming MAX_UPLOAD_BYTES per FILE was true of no request
- *  the server accepts: a file at that raw ceiling always 413s, and two files
- *  well under it could too. */
+/** The composer's one-line upload limit, naming the TOTAL, the limit that decides a drop. */
 export function uploadLimitHint(): string {
   return `Up to ${limitLabel(MAX_UPLOAD_TOTAL_BYTES)} per upload, all files together`;
 }
 
 /**
- * Decide which files to upload, before any bytes are sent.
- *
- * Worth doing because the composer's drop and paste paths upload without the
- * user consciously picking a file from a dialog: an over-cap file is a full
- * transfer that can only end in a 413, and a dropped folder is a batch nobody
- * chose. The attachment row cannot do this check — it holds paths and names,
- * so by the time a file is a pill its size is already gone.
- *
- * An empty file is accepted: zero bytes is a legal file and the server writes
- * it happily. Only the three limits reject.
- *
- * The size check runs twice on purpose. Once per file, so a single oversize
- * file is refused for being oversize; then against the RUNNING TOTAL, because
- * the server's ceiling is on the whole multipart request and a batch of
- * individually-legal files can still exceed it. The two produce different
- * sentences, which is the whole reason to keep both: "this file is too big" and
- * "this file does not fit in what is left" are different things to tell someone.
+ * Decide which files to upload, before any bytes are sent: drop and paste skip a dialog, and the
+ * attachment row no longer knows sizes. An empty file is legal. The size check runs twice: per file
+ * ("too big") and against the RUNNING TOTAL ("does not fit in what is left"), different sentences.
  */
 export function preflightUploads(files: readonly File[]): PreflightResult {
   const accepted: File[] = [];
@@ -184,18 +113,9 @@ export interface ScreenedUpload {
 }
 
 /**
- * Screen one upload gesture: pre-flight, then hand back a FileList the caller
- * can dispatch as-is.
- *
- * This exists so the four upload doors share one screening step instead of four
- * copies of preflight + message + FileList rebuild. Each door still owns its own
- * TARGET and its own reporting channel — the message comes back rather than
- * being toasted here, which is what keeps this module free of the DOM and unit
- * testable as policy.
- *
- * The FileList is passed through UNCHANGED when nothing was refused. That is the
- * common path, and rebuilding it there would allocate a DataTransfer per drop to
- * arrive at the same list.
+ * Screen one upload gesture: pre-flight, then hand back a FileList the caller can dispatch. Shared
+ * by the four doors; each owns its TARGET and reporting, so the message is returned, not toasted
+ * (no DOM here). An unrefused FileList passes through UNCHANGED.
  */
 export function screenUploads(files: FileList): ScreenedUpload {
   const { accepted, rejected } = preflightUploads(Array.from(files));

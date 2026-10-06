@@ -1,21 +1,9 @@
-// Package settings provides a single-source-of-truth reader for
-// <configDir>/config.json. All packages that need to extract a key
-// from the user's settings file should use Field or FieldInto rather
-// than implementing their own open+read+unmarshal pattern.
+// Package settings is the one reader for <configDir>/config.json: Field (typed key), FieldInto
+// (pointer target) and FieldStrict (unreadable kept apart from absent, for a caller gating a
+// destructive action), all through one freshness-checked cache capped at MaxBytes.
 //
-// Field extracts a single typed key via generics; FieldInto is its
-// pointer-target variant; FieldStrict is Field with the unreadable-file
-// channel kept separate from absence, for a caller that gates a destructive
-// action on the value. All read through one mtime-keyed cache with a 1 MiB
-// size cap (MaxBytes).
-//
-// There is deliberately no exported raw-bytes reader. The cache OWNS the
-// slice it hands out — one backing array, shared by every caller and
-// retained until the file's mtime or size changes — so an exported
-// accessor for it would let any caller silently corrupt the settings of
-// every other, including the agent_ignore_files list that decides which
-// files the agent may read. Nothing outside this package ever wanted the
-// whole file: the typed getters were the entire production surface.
+// There is no exported raw-bytes reader: the cache's slice is shared by every caller, so an
+// exported accessor would let any caller corrupt every other's settings.
 package settings
 
 import (
@@ -34,27 +22,18 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// MaxBytes caps config.json reads. Real settings files are well
-// under 100 KB; 1 MiB is generous headroom and matches the HTTP PUT
-// path's webhttp.MaxJSONBody limit.
+// MaxBytes caps config.json reads, matching the HTTP path's webhttp.MaxJSONBody.
 const MaxBytes = 1 << 20
 
 // filename is the canonical settings file name.
 const filename = "config.json"
 
-// Filename is the on-disk basename of marotte's primary config file
-// (marotte-managed settings — debug_logs, agent_ignore_files,
-// supervised_default, etc.). Distinct from kiro-cli's cli.json which lives
-// under $KIRO_HOME/settings/. Exported so callers across the codebase
-// (tests, server handler, ignore reader) reference the same canonical
-// name and can't drift.
+// Filename is the basename of marotte's config file (not kiro-cli's cli.json).
 const Filename = filename
 
-// cache provides freshness-checked caching for config.json reads. Staleness is
-// three legs — atomicfile.FileIdentity (mtime AND os.SameFile) plus size —
-// because neither pair alone catches both a rename-published generation of
-// equal length inside one clock tick (same mtime, new inode) and an in-place
-// rewrite of different length (same inode, new size).
+// cache provides freshness-checked caching for config.json reads. Staleness is three legs,
+// atomicfile.FileIdentity (mtime AND os.SameFile) plus size: neither pair alone catches both
+// a same-length rename within one tick and a different-length in-place rewrite.
 type cache struct {
 	id        atomicfile.FileIdentity
 	sfGroup   singleflight.Group
@@ -102,19 +81,15 @@ func (c *cache) load() ([]byte, error) {
 	return r.data, r.err
 }
 
-// reload is the body of the singleflight slot: resolve the path, take the
-// mtime/size fast path, otherwise read and cache. Extracted from load so the
-// slot stays a two-liner and this stays under the cognitive-complexity ceiling.
+// reload is the body of the singleflight slot: resolve the path, take the mtime/size fast
+// path, otherwise read and cache.
 func (c *cache) reload() ([]byte, error) {
-	// Absolute because atomicfile.OpenRegular requires it. os.Open resolved a
-	// relative configDir against the process cwd and filepath.Abs preserves
-	// exactly that, so no deployment's meaning changes.
+	// Absolute because atomicfile.OpenRegular requires it.
 	path, err := filepath.Abs(filepath.Join(c.configDir, filename))
 	if err != nil {
 		return nil, err
 	}
-	// os.Stat, not an open: stat never blocks on a FIFO (measured), so the
-	// freshness fast path stays one syscall.
+	// os.Stat never blocks on a FIFO, so the fast path stays one syscall.
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
@@ -134,22 +109,15 @@ func (c *cache) reload() ([]byte, error) {
 		}
 		return nil, err
 	}
-	// readInfo, not the stat above: the identity must describe the generation
-	// these bytes came from. Stamping the pre-read stat would label them with a
-	// generation that a concurrent publish may already have replaced.
+	// readInfo, not the stat above: the identity must describe the generation these bytes came
+	// from, which a concurrent publish may already have replaced.
 	c.store(data, readInfo)
 	return data, nil
 }
 
-// readRegular reads path under MaxBytes, refusing anything that is not a regular
-// file, and returns the FileInfo of the descriptor the bytes came from so the
-// caller can cache them under that generation's identity.
-//
-// OpenRegular, not os.Open: os.Open on a FIFO blocks in open(2) until a writer
-// appears with no context deadline rescuing it (measured on go1.27.0). Since the
-// caller runs inside a singleflight slot, one mkfifo would wedge every concurrent
-// settings reader behind it. OpenRegular refuses a FIFO, directory, device node
-// or socket with ErrNotRegular, and refuses a symlink at the final component.
+// readRegular reads path under MaxBytes, refusing anything but a regular file (and a final
+// symlink), and returns the FileInfo of the descriptor read. OpenRegular because os.Open
+// blocks forever on a FIFO, which inside the singleflight slot would wedge every reader.
 func readRegular(path string) (data []byte, info os.FileInfo, err error) {
 	f, info, err := atomicfile.OpenRegular(path)
 	if err != nil {
@@ -163,10 +131,8 @@ func readRegular(path string) (data []byte, info os.FileInfo, err error) {
 	return data, info, nil
 }
 
-// hit reports the cached bytes when info matches what they were read from.
-//
-// A zero identity reports Changed, so the "nothing loaded yet" case needs no
-// separate guard.
+// hit reports the cached bytes when info matches what they were read from; a zero identity
+// reports Changed.
 func (c *cache) hit(info os.FileInfo) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -186,10 +152,8 @@ func (c *cache) store(data []byte, info os.FileInfo) {
 	c.gen++
 }
 
-// forget drops the cached bytes for a file that is no longer there, and bumps the
-// generation so parsedMap re-derives instead of serving the parse of a file that
-// has since been deleted. It replaces two byte-identical inline copies, which is
-// one place fewer for the two to disagree.
+// forget drops the cached bytes for a vanished file and bumps the generation so parsedMap
+// re-derives.
 func (c *cache) forget() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -199,14 +163,8 @@ func (c *cache) forget() {
 	c.gen++
 }
 
-// readBytes returns the raw config.json content for configDir with mtime-based
-// caching. Returns (nil, nil) when the file is missing or configDir is empty.
-//
-// UNEXPORTED: the returned slice IS the cache's own, shared process-wide, so an
-// exported accessor would let any caller corrupt every other reader's view —
-// including the agent_ignore_files list that decides which files the agent may
-// read. Held to the one caller that provably only reads it (parsedMap hands it
-// to json.Unmarshal).
+// readBytes returns the raw config.json content for configDir, cached; (nil, nil) when the
+// file is missing or configDir is empty. UNEXPORTED: the slice IS the shared cache's own.
 func readBytes(ctx context.Context, configDir string) ([]byte, error) {
 	if configDir == "" {
 		return nil, nil
@@ -217,20 +175,12 @@ func readBytes(ctx context.Context, configDir string) ([]byte, error) {
 	return getCache(configDir).load()
 }
 
-// errKeyParse marks the one failure FieldStrict reports that is about a single
-// key rather than the whole document: the value is present and does not decode
-// into the caller's type. Field reports the two classes under different
-// messages, and nothing outside this package needs to tell them apart.
+// errKeyParse marks the one FieldStrict failure about a single key: present, and not decoding
+// into the caller's type.
 var errKeyParse = errors.New("settings: parse")
 
-// FieldStrict is Field with the unreadability channel kept separate from
-// absence. found reports that the key was PRESENT and decoded; err reports that
-// config.json exists and could not be read or parsed. Exactly one of them is
-// ever meaningful.
-//
-// The split exists because a caller gating a destructive action cannot treat
-// those two the same; Field folds them, which is correct only for a caller
-// whose fallback is a display default.
+// FieldStrict is Field with unreadability kept apart from absence: found reports the key was
+// PRESENT and decoded; err reports config.json exists and could not be read or parsed.
 func FieldStrict[T any](ctx context.Context, configDir, key string) (value T, found bool, err error) {
 	var zero T
 	raw, err := parsedMap(ctx, configDir)
@@ -251,15 +201,9 @@ func FieldStrict[T any](ctx context.Context, configDir, key string) (value T, fo
 	return out, true, nil
 }
 
-// Field reads config.json, extracts the named key, and
-// json-unmarshals it into the target type T. Returns the zero value
-// and false when the file is missing, the key is absent, or parsing
-// fails. Parse failures are logged at Warn level naming the key.
-//
-// The two-value signature is deliberate: a caller whose fallback is a display
-// default does not need absence and unreadability apart, and two of them
-// document the conflation and accept it. FieldStrict is for the caller that
-// does, and this is a thin wrapper over it so there is one parse path.
+// Field reads config.json and decodes the named key into T, returning the zero value and
+// false when the file is missing, the key is absent, or parsing fails (logged at Warn
+// naming the key). It wraps FieldStrict for callers whose fallback is a display default.
 func Field[T any](ctx context.Context, configDir, key string) (T, bool) {
 	out, ok, err := FieldStrict[T](ctx, configDir, key)
 	switch {
@@ -271,10 +215,8 @@ func Field[T any](ctx context.Context, configDir, key string) (T, bool) {
 	return out, ok
 }
 
-// FieldInto reads config.json, extracts the named key, and
-// json-unmarshals it into the value pointed to by out. Returns true
-// on success. This is the pointer-based variant of Field for callers
-// that need to unmarshal into an existing variable.
+// FieldInto is the pointer-target variant of Field: it decodes the named key into out and
+// reports success.
 func FieldInto(ctx context.Context, configDir, key string, out any) bool {
 	raw, err := parsedMap(ctx, configDir)
 	if err != nil {
@@ -295,9 +237,8 @@ func FieldInto(ctx context.Context, configDir, key string, out any) bool {
 	return true
 }
 
-// parsedMap returns the cached parsed map[string]json.RawMessage for
-// the given configDir. The map is invalidated when the underlying
-// bytes change (mtime-based via readBytes).
+// parsedMap returns the cached parsed map[string]json.RawMessage for configDir, invalidated
+// when the bytes change.
 func parsedMap(ctx context.Context, configDir string) (map[string]json.RawMessage, error) {
 	data, err := readBytes(ctx, configDir)
 	if err != nil {

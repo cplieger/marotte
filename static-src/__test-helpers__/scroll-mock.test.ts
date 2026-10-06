@@ -1,23 +1,8 @@
-// The helper's own drift guard, and it exists because of a measured failure
-// rather than symmetry with tabs-mock.test.ts beside it.
-//
-// `scrollMock` is only useful while it is TOTAL. `scroll.ts` gained
-// `scrollableBy` and this helper did not, and the consequence was NOT a named
-// missing export: the suites that spread it kept passing on their own, while the
-// FULL run aborted after 145 of 220 files with "[vitest] There was an error when
-// mocking a module" and no file, no export and no import chain in the message.
-// Individually green, collectively dead — the worst shape a harness failure can
-// take, because every obvious bisection step reports the file as fine.
-//
-// The helper's header comment already asks a writer to add new exports here.
-// That comment is not a mechanism; this file is.
+// Drift guard: `scrollMock` must stay TOTAL. A missing export fails no single suite but aborts
+// the full run with an unattributed "error when mocking a module".
 import { describe, it, expect, vi } from "vitest";
 
-// `scroll.ts` builds its singleton against $.messages / $.messagesWrap at import
-// and reads $.scrollBottom in init, so importing the REAL module needs those
-// elements to exist. Borrowed verbatim from scroll.test.ts: an auto-creating
-// Proxy answers whatever the module asks for, which is what keeps this guard from
-// carrying a list of element ids that would itself drift.
+// The real `scroll.ts` reads these elements at import; an auto-creating Proxy answers any id.
 vi.mock("../dom.js", () => ({
   $: new Proxy(
     {},
@@ -37,10 +22,8 @@ vi.mock("../dom.js", () => ({
       },
     },
   ),
-  // `skeleton.ts` in this graph imports the name, and Browser Mode links for real
-  // rather than reading properties off a namespace object — so an absent export
-  // fails the whole FILE at collection. `setBusy`'s own body rather than
-  // `undefined`, because a placeholder marks its host busy through it.
+  // Browser Mode links for real, so an export the graph imports must exist. The real body, because
+  // a placeholder marks its host busy through it.
   setBusy: (el: Element, busy: boolean) => {
     if (busy) {
       el.setAttribute("aria-busy", "true");
@@ -53,8 +36,7 @@ vi.mock("../dom.js", () => ({
 import { scrollMock } from "./scroll-mock.js";
 import * as scroll from "../scroll.js";
 
-// Types are erased at runtime, so both sides compare the VALUE surface — exactly
-// what an ESM link needs to resolve, which is what the mock stands in for.
+// Types are erased at runtime, so this compares the value surface an ESM link resolves.
 const real = Object.keys(scroll as Record<string, unknown>).sort();
 const mocked = Object.keys(scrollMock).sort();
 

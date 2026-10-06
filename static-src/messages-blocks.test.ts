@@ -1,18 +1,12 @@
-// The entry dispatcher: what `placeEntry` draws for each kind, and the two grouping rules
-// that are deliberately OPPOSITE. A tool GROUP is contiguous, keyed on the store run its
-// cards started at; a DELEGATE's card is minted by its invocation `tool_call` and by nothing
-// else, because the delegate's own entries carry its uuid as `lane` and every lane predicate
-// compares against the VIEW's root lane.
-//
-// Position is `seq`: an entry that renders nothing does not break a prose run, and one that
-// renders ends it, which is what makes a seal invisible (design 8.5).
+// Two grouping rules are deliberately opposite: a tool group is contiguous, keyed on the run's start `seq`; a
+// delegate's card is minted only by its invocation `tool_call`, since its own entries carry its uuid as `lane`.
+// Position is `seq`: an entry that renders nothing does not break a prose run, one that renders ends it.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Turn } from "./turns.js";
 import type { Entry, EntryToolCall, EntryToolResult, OpenEntry } from "./wire/types.gen.js";
 
-// The dispatcher's import graph reaches the shared DOM registry, which throws on a missing
-// app root. These ids have to exist before the import is evaluated.
+// The import graph reaches the DOM registry, which throws on a missing app root.
 for (const id of [
   "messages",
   "messages-wrap",
@@ -45,9 +39,7 @@ const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
 const { setActive } = await import("./store.js");
 
-/** The chat every render in this file belongs to. It is part of the per-tool signal key, so
- *  a mount and its writer have to name the same one — and it must be the store's ACTIVE
- *  chat: the live-anchor fallback scan only considers the active chat's renders. */
+/** Part of the per-tool signal key, and the store's active chat: the live-anchor fallback scans only that chat. */
 const CHAT_ID = "c-blocks";
 setActive(CHAT_ID);
 
@@ -110,8 +102,7 @@ function thinking(turnID: string, seq: number, s: string, lane?: string): Entry 
   return sealed(turnID, seq, "thinking", { text: s }, lane === undefined ? {} : { lane });
 }
 
-// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a
-// `Partial` widens every required field to include `undefined`, which the target refuses.
+// `Object.assign`, not a spread: under `exactOptionalPropertyTypes` a spread of a `Partial` admits `undefined`.
 function toolCall(id: string, over: Partial<EntryToolCall> = {}): EntryToolCall {
   const base: EntryToolCall = {
     id,
@@ -132,8 +123,7 @@ function callEntry(
   return sealed(turnID, seq, "tool_call", call, { id: `${turnID}-c${String(seq)}`, ...opts });
 }
 
-/** The `tool_result` settling `callSeq`'s call. Its id is derived from the call ENTRY's, so
- *  the pairing is readable off the id with no join table. */
+/** The `tool_result` settling `callSeq`'s call; its id derives from the call entry's, so pairing needs no join. */
 function resultEntry(
   turnID: string,
   seq: number,
@@ -158,8 +148,7 @@ function invocation(turnID: string, seq: number, subtask: string): Entry {
   );
 }
 
-/** A workflow launch plus the `tool_result` that supplies its run id, which is where the
- *  wire actually carries one: a `tool_call` never has a `workflow_id` of its own. */
+/** A workflow launch plus the `tool_result` carrying its run id: a `tool_call` never has a `workflow_id`. */
 function launch(turnID: string, seq: number, runID: string, toolID = `tool-${runID}`): Entry[] {
   return [
     callEntry(turnID, seq, toolCall(toolID, { title: "Run Workflow" })),
@@ -186,8 +175,7 @@ function turnOf(
 
 let hosts: HTMLElement[] = [];
 
-/** A `.turn-body` attached to the document, so a mount that reads geometry or moves focus
- *  behaves as it does in a card. */
+/** A `.turn-body` attached to the document, so geometry reads and focus behave as in a card. */
 function bodyHost(): HTMLElement {
   const host = document.createElement("div");
   host.className = "turn-body";
@@ -202,8 +190,7 @@ interface Render {
   readonly turn: Turn;
 }
 
-/** Re-key `entries` onto `turnID`. The builders spell their ids against the placeholder `t`,
- *  so a case reads without threading a fresh turn id through every fixture call. */
+/** Re-key `entries` onto `turnID`; the builders spell ids against the placeholder `t`. */
 function retarget(entries: Entry[], turnID: string): Entry[] {
   return entries.map((e) => ({
     ...e,
@@ -212,8 +199,7 @@ function retarget(entries: Entry[], turnID: string): Entry[] {
   }));
 }
 
-/** Build one turn's body from `entries`. The turn id is fresh per call, so two renders in
- *  one case cannot share a render slot. */
+/** Build one turn's body from `entries`; a fresh turn id per call, so renders never share a slot. */
 function render(entries: Entry[], opts: { readonly live?: boolean } = {}): Render {
   const turnID = nextTurnID();
   const turn = turnOf(turnID, retarget(entries, turnID));
@@ -312,9 +298,7 @@ describe("a delegate's card is its invocation, and its own entries are dropped",
   });
 
   it("renders the parent's continuation BELOW the card, where it arrived", () => {
-    // The invocation renders at its own `seq`, so prose that arrived after it is below the
-    // card rather than above it. The old model appended the card at the delegate's first
-    // block and every later parent block landed under the whole card, whatever its order.
+    // The invocation renders at its own `seq`, so prose that arrived after it sits below the card.
     const r = render([text("t", 1, "before"), invocation("t", 2, "sub-A"), text("t", 3, "after")]);
     expect(shape(r.body)).toEqual(["text(before)", "card(sub-A)", "text(after)"]);
   });
@@ -371,8 +355,7 @@ describe("a workflow run's card is its launch", () => {
   });
 
   it("re-dispatches the launch in place when the RESULT supplies the id later", () => {
-    // Live, the call is drawn as a tool row and the run id arrives on the entry that
-    // settles it; the row is replaced by the card at the same position.
+    // Live, the call is a tool row until the entry settling it brings the run id; the card replaces it in place.
     const call = callEntry("t", 1, toolCall("tool-late", { title: "Run Workflow" }));
     const r = render([call]);
     expect(shape(r.body)).toEqual(["group(1)"]);
@@ -382,9 +365,8 @@ describe("a workflow run's card is its launch", () => {
   });
 
   it("RE-HOMES the card into a later turn's render, keeping the element", () => {
-    // ONE card per run per TRANSCRIPT rather than per render: a run's frames span turns, and
-    // ownership is derived over the resident window, so the card MOVES rather than being
-    // rebuilt beside itself. Moving the node is what keeps its effect and its clock.
+    // One card per run per transcript: ownership is derived over the resident window, so the card moves rather than
+    // being rebuilt, keeping its effect and clock.
     const a = render(launch("t", 1, "wf-1"));
     const card = blockElement(a.turnID, 1);
     expect(shape(a.body)).toEqual(["run(wf-1)"]);
@@ -426,8 +408,7 @@ describe("only the entry that started a run hosts its card", () => {
   });
 
   it("falls toward the pre-owner behaviour when NO owner is named", () => {
-    // An absent map is what a surface reaching the dispatcher directly leaves: every mention
-    // takes the run branch, so the later one seats on the card instead of drawing a tool row.
+    // With no owner map every mention takes the run branch, so the later one seats on the card.
     const r = render([
       ...launch("t", 1, "wf-1", "tool-launch"),
       callEntry("t", 3, toolCall("tool-inspect", { title: "Inspect Workflow" })),
@@ -528,16 +509,14 @@ describe("sealing is invisible: the prose run", () => {
   });
 
   it("renders a run broken by a FOLD kind identically to one text entry", () => {
-    // Design 8.5's own property: a seal inside a run is invisible, so an entry that renders
-    // nothing between two members leaves the same markup as the concatenated text.
+    // A seal inside a run is invisible: a non-rendering entry between members leaves the concatenated markup.
     const split = render([
       text("t", 1, "one **two** "),
       callEntry("t", 2, toolCall("tool-a")),
       resultEntry("t", 3, 2),
       text("t", 4, "three"),
     ]);
-    // The tool call renders, so it breaks the run; its RESULT does not. Take the run whose
-    // members straddle the result.
+    // The tool call breaks the run; its result does not.
     const whole = render([text("t", 1, "one **two** three")]);
     const straddle = render([
       text("t", 1, "one **two** "),
@@ -595,8 +574,7 @@ describe("four kinds fold into an entry already on screen", () => {
   });
 
   it("marks the steer note acknowledged AND renders the ack's own words as agent content", () => {
-    // ADDENDUM 5: the acknowledgement's words are the model's, so they render as the model's
-    // — in a bubble of their own, since an entry that renders ends the run it interrupted.
+    // The acknowledgement's words are the model's, in their own bubble, since a rendering entry ends the run.
     const steer = sealed(
       "t",
       1,
@@ -645,8 +623,7 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
     return { turnID, body, turn };
   }
 
-  // A LIVE bubble's text arrives over frames (the reveal buffer sees only GROWTH), so these
-  // cases assert the run's own membership rather than the words it has painted so far.
+  // A live bubble's text arrives over frames, so these cases assert run membership, not painted words.
   it("joins the run its lane's tail sits in", () => {
     const r = renderLive([text("t", 1, "sealed ")], [openText("t", "open-1", "growing")]);
     const rows = r.body.querySelectorAll(".msg-row");
@@ -702,8 +679,7 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
     const r = renderLive([text("t", 1, "root")], [openText("t", "open-A", "delegate", "sub-A")]);
     const rows = r.body.querySelectorAll(".msg-row");
     expect(rows).toHaveLength(1);
-    // The membership, not the painted words: a live bubble reveals growth over frames, so a
-    // text assertion here would pass whether or not the delegate's tail had been mounted.
+    // Membership, not painted words: a text assertion would pass whether or not the tail had mounted.
     expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e1`);
   });
 });
@@ -749,8 +725,7 @@ describe("a thinking trace is per LANE, and its disclosure is positional", () =>
   });
 
   it("renders collapsed once the store holds a successor", () => {
-    // Sealed from the STORE rather than from what arrives next, so a trace reaches this
-    // range already finished however the range got here.
+    // Sealed from the store, so a trace reaches this range finished however the range got here.
     const r = render([thinking("t", 1, "weighing it up"), text("t", 2, "answer")]);
     expect(shape(r.body)).toEqual(["thinking", "text(answer)"]);
     expect(trace(r.body).open).toBe(false);
@@ -887,8 +862,7 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
   });
 
   it("derives the group from the STORE run, so a head extension joins it", () => {
-    // The key is the `seq` the run of tool calls STARTED at, not the mount order, so the
-    // earlier calls land in the group the later one already opened.
+    // The key is the `seq` the run of calls started at, not mount order.
     const r = renderWindow(sixCalls(), { from: 4, to: 5 });
     expect(shape(r.body)).toEqual(["group(1)"]);
     mountHeadRange(r.turn, { from: 2, to: 5 }, false);
@@ -907,9 +881,8 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
   });
 
   it("snaps an edge that would CUT a prose run", () => {
-    // Design 8.6: a run cut at an edge would mount as two rows with two markdown streams,
-    // which is the seam 8.5 removes. `from` moves down to the run's first entry and `to` up
-    // past its last, so the budget can overspend by at most one run on each side.
+    // A run cut at a window edge would mount as two rows with two markdown streams, so `from` snaps down to the run's
+    // first entry and `to` past its last; the budget overspends by at most one run per side.
     const turnID = nextTurnID();
     const turn = turnOf(turnID, retarget(sixCalls(), turnID));
     expect(sliceTurn(turn, { from: 6, to: 7 })).toEqual({ from: 5, to: 7 });
@@ -926,8 +899,7 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
   });
 
   it("leaves a run's row to its HEAD's own drop", () => {
-    // Only the head releases the shared element: a later member drops its own registrations
-    // and leaves the row standing, which is what makes the snap above the whole rule.
+    // Only the head releases the shared element; a later member leaves the row standing.
     const r = render(sixCalls());
     const row = blockElement(r.turnID, 5);
     dropTail(r.turn, { from: 0, to: 6 });
@@ -946,8 +918,7 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
 });
 
 describe("a pipeline's stages render inside the orchestrate call that started them", () => {
-  /** An `orchestrate_subagent` DRIVER. `declared` is the `input.stages` length, which is a
-   *  FLOOR on the stage count: it is the only source that knows a stage still on its way. */
+  /** An `orchestrate_subagent` driver. `declared` is the `input.stages` length, a floor on the stage count. */
   function driver(seq: number, id: string, declared: number, status = "completed"): Entry {
     return callEntry(
       "t",
@@ -960,8 +931,7 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     );
   }
 
-  /** One stage of `driverID`. The tool-call ID EMBEDS its driver's, which is the whole
-   *  join: no wire field states it. */
+  /** One stage of `driverID`; its tool-call id embeds the driver's, which is the whole join. */
   function stage(seq: number, driverID: string, name: string, subtask: string): Entry {
     return callEntry(
       "t",
@@ -997,8 +967,7 @@ describe("a pipeline's stages render inside the orchestrate call that started th
   });
 
   it("places a stage whose invocation arrives BEFORE its driver", () => {
-    // `indexPipelines` reads the turn's whole tool-call array, so neither arrival order
-    // leaves a stage stranded beside its own pipeline.
+    // `indexPipelines` reads the whole tool-call array, so neither arrival order strands a stage.
     const r = render([
       stage(1, "orc-1", "review", "sub-A"),
       driver(2, "orc-1", 2),
@@ -1015,8 +984,7 @@ describe("a pipeline's stages render inside the orchestrate call that started th
   });
 
   it("upgrades a promoted stage into a container when a sibling arrives, KEEPING the card", () => {
-    // A re-parent rather than a rebuild: the move carries the disclosure, the observers
-    // and every effect with the node.
+    // A re-parent, not a rebuild: the node carries its disclosure, observers and effects.
     const first = [driver(1, "orc-1", 1), stage(2, "orc-1", "one", "sub-A")];
     const r = render(first);
     const card = blockElement(r.turnID, 2);
@@ -1034,15 +1002,13 @@ describe("a pipeline's stages render inside the orchestrate call that started th
   });
 
   it("withholds that box while the driver is still RUNNING", () => {
-    // Deferring to the settle is what stops the fallback box displacing a live stage
-    // that is about to be promoted into its place.
+    // Deferring to the settle stops the fallback box displacing a live stage about to be promoted.
     const r = render([driver(1, "orc-1", 1, "in_progress")]);
     expect(shape(r.body)).toEqual([]);
   });
 
   it("resolves a stage whose NAME carries the separator to its own driver", () => {
-    // `indexOf`, not `lastIndexOf`: the driver half is machine-minted and the stage name
-    // is author-supplied, so the FIRST occurrence is the seam.
+    // `indexOf`, not `lastIndexOf`: the driver half is machine-minted, the stage name author-supplied.
     const r = render([driver(1, "orc-1", 2), stage(2, "orc-1", "run_stage_two", "sub-A")]);
     expect(inside(r, "orc-1")).toEqual(["card(sub-A)"]);
   });
@@ -1080,8 +1046,7 @@ describe("the newest top-level box renders expanded", () => {
   const pipeline = (r: Render): HTMLElement =>
     r.body.querySelector(".subagent-container") as HTMLElement;
 
-  /** The container's disclosure settles on a microtask (the withdrawal check) and on its
-   *  own MutationObserver, so the verdict is readable a task after the mount. */
+  /** The disclosure settles on a microtask and its own MutationObserver, so the verdict is readable a task later. */
   const settled = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
   it("leaves a pipeline box open while it is the newest top-level element", async () => {
@@ -1091,8 +1056,7 @@ describe("the newest top-level box renders expanded", () => {
   });
 
   it("is BORN folded when the range already holds the entry after it", async () => {
-    // The verdict is resolved before the box is created, so a superseded box is built
-    // closed rather than opened and then animated shut under the reader.
+    // The verdict precedes the box, so a superseded box is built closed rather than animated shut.
     const r = render([
       driver(1, "orc-1", 2),
       stage(2, "orc-1", "a", "sub-A"),
@@ -1113,8 +1077,7 @@ describe("the newest top-level box renders expanded", () => {
   });
 
   it("refuses that fold while the driver is still RUNNING", async () => {
-    // The carve-out, which is a refusal to COLLAPSE rather than a reason to expand: an
-    // open box whose work is in flight stays open when the verdict says superseded.
+    // A refusal to collapse, not a reason to expand: an open box with work in flight stays open.
     const running = callEntry(
       "t",
       1,
@@ -1134,9 +1097,7 @@ describe("the newest top-level box renders expanded", () => {
   });
 
   it("gives a box whose HOST is another box no expanded verdict of its own", () => {
-    // The no-cascade clause, which reads the HOST rather than a flag at the creation site:
-    // only the view's root lane earns the newest-element verdict. A delegate's own page is
-    // rendered in the delegate's lane, so a trace there is never the root lane's newest.
+    // Only the view's root lane earns the newest-element verdict, so a delegate page's trace never does.
     const turnID = nextTurnID();
     const turn = turnOf(turnID, retarget([thinking("t", 1, "on its own page", "sub-A")], turnID));
     const host = bodyHost();
@@ -1185,8 +1146,7 @@ describe("a delegate card's status follows its invocation CALL", () => {
   const cardOf = (r: Render): HTMLElement => r.body.querySelector(".subagent-block") as HTMLElement;
 
   it("says CANCELLED for a persisted aborted invocation", () => {
-    // marotte's own word for a call its turn ended under, matching the turn footer; the
-    // wire value is `aborted`.
+    // marotte's word for a call its turn ended under, matching the footer; the wire value is `aborted`.
     const r = render([
       callEntry(
         "t",
@@ -1217,10 +1177,24 @@ describe("a delegate card's status follows its invocation CALL", () => {
     expect(head.getAttribute("aria-label")).toContain("failed");
   });
 
+  it("shows an inline helper's model and effort on its card", () => {
+    const r = render([
+      callEntry(
+        "t",
+        1,
+        toolCall("tool-sub-A", {
+          title: "Sub-agent: x",
+          agent_subtask_id: "sub-A",
+          input: { name: "x", inlineAgent: { systemPrompt: "p", model: "m", effort: "high" } },
+        }),
+      ),
+    ]);
+    expect(cardOf(r).querySelector(".subagent-name")?.textContent).toBe("x (inline agent)");
+    expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe("m · high");
+  });
+
   it("re-binds a pipeline box whose driver entry the window dropped", () => {
-    // The box survives the drop of the entry that opened it, and that entry's cleanup
-    // released its binding — so without the rebind its header freezes at whatever it
-    // last painted, for as long as the reader stays scrolled past the driver.
+    // The box outlives the entry that opened it, so without the rebind its header freezes.
     const driverCall = toolCall("orc-1", {
       title: "Orchestrate Sub-agent",
       status: "in_progress",
@@ -1280,8 +1254,7 @@ describe("a mounted entry picks up text that arrived after it mounted", () => {
   it("brings a mounted run up to the store's text for its member", async () => {
     const r = render([text("t", 1, "one "), text("t", 2, "two")]);
     const row = r.body.querySelector(".msg-row") as HTMLElement;
-    // The growth ends on a space: the markdown stream holds a trailing partial token
-    // until a boundary decides it, so a bare last word is not an observable.
+    // The markdown stream holds a trailing partial token, so the growth ends on a space.
     update(r, [text("t", 1, "one "), text("t", 2, "two THREE ")]);
     await vi.waitFor(() => {
       expect(row.textContent).toContain("one two THREE");
@@ -1332,8 +1305,7 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
 
 describe("rendering a superseded run animates nothing", () => {
   it("mounts an already-folded group with zero animations and a committed 0px body", () => {
-    // The verdict is resolved before the group's disclosure is created, so the region is
-    // born closed rather than opened and then animated shut under the reader.
+    // The verdict precedes the disclosure, so the region is born closed.
     const r = render([
       callEntry("t", 1, toolCall("tool-a")),
       callEntry("t", 2, toolCall("tool-b")),
@@ -1362,5 +1334,121 @@ describe("legacy internal tool calls are dropped at the dispatcher", () => {
       callEntry("t", 3, toolCall("tool-b")),
     ]);
     expect(shape(r.body)).toEqual(["group(2)"]);
+  });
+});
+
+describe("one entry that fails to render does not take its turn with it", () => {
+  const baseCbs = {
+    pushStreamingEffect: (): void => {
+      /* noop */
+    },
+    pushEntryEffect: (): void => {
+      /* noop */
+    },
+    disposeEntryEffects: (): void => {
+      /* noop */
+    },
+    makeRow: (): HTMLDivElement => {
+      const row = document.createElement("div");
+      row.className = "msg-row";
+      return row;
+    },
+    makeEvent: (e: Entry): HTMLElement => {
+      const row = document.createElement("div");
+      row.className = `event event-${e.kind}`;
+      return row;
+    },
+  };
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => {
+      /* noop */
+    });
+  });
+
+  afterEach(() => {
+    initBlockRenderer(baseCbs);
+    consoleError.mockRestore();
+  });
+
+  function throwOnCompaction(): void {
+    initBlockRenderer({
+      ...baseCbs,
+      makeEvent: (e) => {
+        if (e.kind === "compaction") {
+          throw new Error("boom");
+        }
+        return baseCbs.makeEvent(e);
+      },
+    });
+  }
+
+  function compaction(turnID: string, seq: number): Entry {
+    return sealed(turnID, seq, "compaction", { summary: "s" });
+  }
+
+  it("shows a fallback in place of the failed entry and still mounts every later one", () => {
+    throwOnCompaction();
+    const r = render([text("t", 1, "before"), compaction("t", 2), text("t", 3, "after")]);
+    const kids = [...r.body.children] as HTMLElement[];
+    expect(kids.map((k) => k.className)).toEqual(["msg-row", "entry-fallback", "msg-row"]);
+    expect(kids[0]?.textContent).toContain("before");
+    expect(kids[2]?.textContent).toContain("after");
+    expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps every seq addressable, so a later update mounts only what is new", () => {
+    throwOnCompaction();
+    const r = render([compaction("t", 1), text("t", 2, "two")]);
+    update(r, [compaction("t", 1), text("t", 2, "two"), callEntry("t", 3, toolCall("tool-a"))]);
+    expect(blockElement(r.turnID, 1)?.classList.contains("entry-fallback")).toBe(true);
+    expect(blockElement(r.turnID, 2)?.textContent).toContain("two");
+    expect(blockElement(r.turnID, 3)?.classList.contains("tool-call")).toBe(true);
+    expect(r.body.querySelectorAll(".entry-fallback")).toHaveLength(1);
+  });
+
+  it("carries the entry's text as TEXT, with only the label marked as chrome", () => {
+    let calls = 0;
+    initBlockRenderer({
+      ...baseCbs,
+      makeRow: () => {
+        calls += 1;
+        throw new Error("boom");
+      },
+    });
+    const raw = "see <img src=x onerror=alert(1)> here";
+    const r = render([text("t", 1, raw)]);
+    expect(calls).toBe(1);
+    const fallback = r.body.querySelector(".entry-fallback") as HTMLElement;
+    const label = fallback.querySelector(".entry-fallback-label") as HTMLElement;
+    const body = fallback.querySelector(".entry-fallback-text") as HTMLElement;
+    expect(label.hasAttribute("data-vk-chrome")).toBe(true);
+    expect(body.hasAttribute("data-vk-chrome")).toBe(false);
+    expect(body.textContent).toBe(raw);
+    expect(body.children).toHaveLength(0);
+    expect(r.body.querySelector("img")).toBeNull();
+  });
+
+  it("contains a throw outside every entry, and logs a repeating one once", () => {
+    const turnID = nextTurnID();
+    // Iterating the body throws, so the pass fails before any entry is placed.
+    const body: Entry[] = [];
+    Object.defineProperty(body, Symbol.iterator, {
+      value: (): never => {
+        throw new Error("boom");
+      },
+    });
+    const bad = turnOf(turnID, body);
+    const host = bodyHost();
+    expect(() => {
+      buildAssistantBody(host, bad, CHAT_ID, false);
+    }).not.toThrow();
+    expect(() => {
+      updateAssistantBody(host, bad, CHAT_ID, false);
+    }).not.toThrow();
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const next = render([text("t", 1, "fine")]);
+    expect(next.body.textContent).toContain("fine");
   });
 });

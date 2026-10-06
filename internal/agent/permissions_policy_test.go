@@ -1,11 +1,6 @@
 package agent
 
-// Tests for permissions_policy.go: the _kiro/permissions/list + explain
-// result parse (incl. the camelCase→snake mapping for explain), and the
-// session-scoped bridge-targeting invariant (list/explain DO inject a
-// sessionId, unlike the workspace-global knowledge/spec calls). The utility
-// bridge that serves these calls is the shared fakeBridge from newTestHub,
-// seeded with canned results.
+// list and explain inject the utility sessionId, unlike the workspace-global knowledge calls.
 
 import (
 	"encoding/json"
@@ -36,8 +31,7 @@ func TestPolicyList(t *testing.T) {
 		rules[1].Effect != "deny" || rules[1].Scope != "user" {
 		t.Errorf("rules = %+v", rules)
 	}
-	// list is session-scoped: the sessionId MUST be injected, and the scope
-	// filter forwarded.
+	// list is session-scoped and forwards the scope filter.
 	p := br.paramsFor(methodV3PermissionsList)
 	if p[marotte.KeySessionID] == nil || p[marotte.KeySessionID] == "" {
 		t.Errorf("permissions/list params missing sessionId: %+v", p)
@@ -74,7 +68,7 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 	if res.MatchedRule == nil || res.MatchedRule.Capability != "fs_write" || len(res.MatchedRule.Match) != 1 {
 		t.Errorf("matchedRule = %+v", res.MatchedRule)
 	}
-	// explain forwards capability + resource + sessionId.
+	// explain forwards capability, resource and sessionId.
 	p := br.paramsFor(methodV3PermissionsExplain)
 	if p["capability"] != "fs_write" || p["resource"] != "/x/y" || p[marotte.KeySessionID] == nil {
 		t.Errorf("explain params = %+v", p)

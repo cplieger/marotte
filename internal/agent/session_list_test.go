@@ -25,17 +25,14 @@ func row(id, title, updated string, workflow bool) kasSessionRow {
 	return r
 }
 
-// rowCreated builds a row whose creation instant matters: the picker's tie-break
-// reads it, and `row` above leaves it absent the way a withheld field does.
+// rowCreated builds a row with a creation instant, which the tie-break reads.
 func rowCreated(id, title, updated, created string) kasSessionRow {
 	r := row(id, title, updated, false)
 	r.Meta.Kiro.CreatedAt = created
 	return r
 }
 
-// ownedBy seeds a chat store where each chat id owns its listed session ids in
-// order, so the last is the chat's current session. The picker offers TAB
-// CONVERSATIONS, so a fixture of bare session ids would assert nothing.
+// ownedBy seeds a store where each chat owns its listed session ids in order, the last being current.
 func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 	t.Helper()
 	store := newTestChatStore()
@@ -50,19 +47,14 @@ func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 			t.Fatalf("seed chat %s: %v", chatID, err)
 		}
 	}
-	// The run projection reads bounds state for a run's end reason, so a nil runs
-	// is a nil receiver at the first lookup.
+	// The run projection reads bounds state, so runs must not be nil.
 	return &Runtime{chatStore: store, runs: &Runs{}}
 }
 
-// TestToResumable_ExcludesWorkflowSessions pins the discriminator that makes a
-// KAS-sourced picker usable: measured on 2.16.0, 93 of 399 sessions carried
-// _meta.kiro.workflow, so an unfiltered picker buries the conversations in run
-// machinery. That field is the discriminator — `createdReason` is null on every
-// row.
+// TestToResumable_ExcludesWorkflowSessions pins that _meta.kiro.workflow is the discriminator (93 of 399 sessions on
+// 2.16.0); `createdReason` is always null.
 func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
-	// The step session is CLAIMED on purpose: an agent-launched run's step runs on a
-	// chat-owned session, so the workflow marker has to win over ownership.
+	// Claimed on purpose: an agent run's step uses a chat-owned session, so the workflow marker must win.
 	h := ownedBy(t, map[string][]string{
 		"c1": {"sess_a"}, "c2": {"sess_b"}, "c3": {"sess_wf"},
 	})
@@ -86,9 +78,7 @@ func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 	}
 }
 
-// TestToResumable_NewestFirst pins the ordering and the RFC3339 → epoch-millis
-// conversion. KAS reports timestamps as strings, so an unconverted sort orders them
-// lexically, which works for same-format dates until precision or zone differs.
+// TestToResumable_NewestFirst pins the order and the RFC3339 conversion; a lexical sort breaks across precisions and zones.
 func TestToResumable_NewestFirst(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"old"}, "c2": {"new"}, "c3": {"mid"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
@@ -108,11 +98,8 @@ func TestToResumable_NewestFirst(t *testing.T) {
 	}
 }
 
-// TestToResumable_MarksSessionsAChatAlreadyOwns keys the claim on the whole
-// session CHAIN, not the current id: RecordSession retires the old id into
-// PriorACPSessionIDs, so keying on ACPSessionID alone offers a chat its own
-// retired sessions back as separate resumable conversations. However many a chat
-// has held, it is one conversation and earns one row.
+// TestToResumable_OffersOneRowPerOwningChat keys the claim on the whole chain: RecordSession retires the old id
+// into PriorACPSessionIDs, and a chat earns one row however many it held.
 func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	store := newTestChatStore()
 	ctx := t.Context()
@@ -140,8 +127,7 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 		t.Fatalf("rows = %d, want 1 (one per chat; the orphan is not a tab conversation): %+v",
 			len(got), got)
 	}
-	// The NEWEST member survives: UpdatedAt is what the row displays and the list
-	// sorts on, and it is the chat's live session in every case producing a chain.
+	// The newest member survives.
 	if byID["sess_current"].ChatID != "c1" {
 		t.Errorf("current session chat_id = %q, want c1", byID["sess_current"].ChatID)
 	}
@@ -153,14 +139,11 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	}
 }
 
-// Two members of one chain can tie on UpdatedAt (parseKASTime sinks an absent or
-// unparseable timestamp to 0), and the surviving row is what the page shows. The
-// tie breaks towards the later-CREATED session: a chain is produced by retiring a
-// session for a fresh one, so the newer one is the chat's live member.
+// An UpdatedAt tie breaks toward the later-created session, the chat's live member.
 func TestToResumable_TiedRowsKeepTheLaterCreatedSession(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_live"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
-		// Listed first AND created first, so nothing but creation separates the two.
+		// Listed and created first, so only creation separates them.
 		rowCreated("sess_retired", "retired", "2026-08-02T12:00:00.000Z", "2026-08-02T09:00:00.000Z"),
 		rowCreated("sess_live", "live", "2026-08-02T12:00:00.000Z", "2026-08-02T11:00:00.000Z"),
 	})
@@ -174,11 +157,7 @@ func TestToResumable_TiedRowsKeepTheLaterCreatedSession(t *testing.T) {
 	}
 }
 
-// With nothing but their ids to separate two rows, the same row must survive
-// whichever order KAS listed them in — while the outcome followed arrival order,
-// one chat's row changed title and timestamp between two polls. Neither row
-// carries a createdAt, the state a withheld field leaves them in, so the session
-// id is the only key left.
+// With only ids to separate them, the survivor must not depend on arrival order.
 func TestToResumable_TieBreakIgnoresArrivalOrder(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_a", "sess_b"}})
 	a := row("sess_a", "listed first", "2026-08-02T12:00:00.000Z", false)
@@ -200,20 +179,15 @@ func TestToResumable_TieBreakIgnoresArrivalOrder(t *testing.T) {
 	}
 }
 
-// The population is TAB CONVERSATIONS, and ownership is the only test that can
-// separate them: session/list carries NO message count, and a utility turn (a
-// commit message, an error explanation) gives its session real messages and a
-// derived title, so an unclaimed row can look exactly like a conversation.
-// `createdAt` and `lastModifiedAt` differ by ~30ms even on an unused session, so
-// equality does not separate them either. Untreated, the utility bridge's own
-// session sorted to the top of the page and adopting it left a blank chat behind.
+// Only ownership separates conversations: session/list carries no message count, and a utility turn gives its
+// session a title; unfiltered, the utility session sorted to the top.
 func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_real"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
-		// Newest, so without the rule it sorts first — which is where the user met it.
+		// Newest, so it would sort first.
 		row("sess_utility_live", "New Session", "2026-08-02T13:00:00.000Z", false),
 		row("sess_real", "A real conversation", "2026-08-02T12:00:00.000Z", false),
-		// A retired utility session keeps the title of whatever turn it ran.
+		// A retired utility session keeps its last turn's title.
 		row("sess_utility_retired", "Write a commit message", "2026-08-02T11:00:00.000Z", false),
 		row("sess_tui", "Started from the terminal", "2026-08-02T10:00:00.000Z", false),
 	})
@@ -230,11 +204,7 @@ func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
 	}
 }
 
-// TestToResumable_SanitizesAndBoundsTheDescription pins the SECOND channel carrying the
-// agent's self-declared description. translate's focus door treats the live chat_status
-// copy; this one arrives on session/list, read back out of KAS's persisted session.json,
-// so nothing upstream of here bounds it or rewrites a bidi control before the History row
-// renders it.
+// TestToResumable_SanitizesAndBoundsTheDescription pins that this copy comes from KAS's session.json, which nothing upstream bounds or sanitizes.
 func TestToResumable_SanitizesAndBoundsTheDescription(t *testing.T) {
 	tests := []struct {
 		name string
@@ -280,8 +250,7 @@ func TestToResumable_SanitizesAndBoundsTheDescription(t *testing.T) {
 	}
 }
 
-// TestParseKASTime covers the conversion's failure mode: a bad value must sink
-// in the sort rather than float to "now".
+// TestParseKASTime pins that a bad value sinks rather than floats to now.
 func TestParseKASTime(t *testing.T) {
 	cases := map[string]int64{
 		"2026-08-02T13:32:21.286Z": 1785677541286,
@@ -296,10 +265,7 @@ func TestParseKASTime(t *testing.T) {
 	}
 }
 
-// TestWorkflowRunAttribution attributes a run through the launching session's
-// CHAIN, not its current id: a chat that has since changed session leaves the
-// recorded `parentSessionId` retired, so matching on ACPSessionID alone reads the
-// run as parentless and no tab can say which conversation started it.
+// TestWorkflowRunAttribution attributes a run through the chain: the recorded parentSessionId may be retired.
 func TestWorkflowRunAttribution(t *testing.T) {
 	store := newTestChatStore()
 	ctx := t.Context()
@@ -325,10 +291,7 @@ func TestWorkflowRunAttribution(t *testing.T) {
 	}
 }
 
-// TestStepSessionsAreNotRuns keeps step sessions out of the run list: measured,
-// 93 workflow-tagged rows spanned only 6 runs (one loop contributed 76), so
-// presenting them as runs puts dozens of entries in the history for one run —
-// and a step's status is idle regardless of the run's outcome.
+// TestStepSessionsAreNotRuns pins that 93 workflow rows spanned 6 runs (one loop gave 76), and a step's status is always idle.
 func TestStepSessionsAreNotRuns(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_chat"}})
 	rows := make([]kasSessionRow, 0, 77)
@@ -360,17 +323,14 @@ func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
 	}
 }
 
-// A chat-launched run is LISTED, not dropped: reaching it through the transcript
-// needs that tab open and resident, while retry is legal only from `failed` and
-// `aborted` and kiro-cli's restore pass considers neither, so dropping it leaves an
-// aborted agent-launched run no door anywhere. Attribution is what the row's nesting
-// reads, and the chain claim resolves a run launched from a since-retired session.
+// A chat-launched run is listed: retry is legal only from failed and aborted, which kiro-cli's restore skips,
+// so this row is its only door.
 func TestToWorkflowRuns_ListsEveryRunAndAttributesTheChatLaunchedOnes(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_now"}})
 	got := h.runs.toWire(h.claimedSessions(t.Context()), []kasWorkflowRun{
 		wfRun("wf_manual", "nightly", "completed", "", "2026-08-02T12:00:00.000Z"),
 		wfRun("wf_agent", "goal", "completed", "sess_now", "2026-08-02T11:00:00.000Z"),
-		// Launched from a session the chat has since RETIRED.
+		// Launched from a session the chat since retired.
 		wfRun("wf_agent_retired", "goal", "aborted", "sess_retired", "2026-08-02T10:00:00.000Z"),
 		wfRun("wf_scheduled", "backup", "failed", "", "2026-08-02T09:00:00.000Z"),
 	})
@@ -397,11 +357,8 @@ func TestToWorkflowRuns_ListsEveryRunAndAttributesTheChatLaunchedOnes(t *testing
 	}
 }
 
-// TestHandleSessionList_SaysWhichListFailed pins the endpoint's honesty about a
-// degraded read: 200 with `[]` for both a failed read and a workspace with
-// nothing to resume left the picker unable to tell a first boot from a dead
-// bridge. The two lists are asserted INDEPENDENTLY because they are separate
-// verbs on one bridge: one failing must neither blank nor discredit the other.
+// TestHandleSessionList_SaysWhichListFailed pins that a failed read and an empty workspace must differ, and each list
+// stands independently.
 func TestHandleSessionList_SaysWhichListFailed(t *testing.T) {
 	cases := map[string]struct {
 		arm          func(*fakeBridge)

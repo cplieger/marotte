@@ -1,8 +1,7 @@
 // Marotte for Kiro: ACP-based web interface for kiro-cli.
 //
-// One kiro-cli subprocess per active chat; multiple browsers on the same
-// chat share the same bridge and context. Server is the source of truth;
-// the browser projects server state via SSE + GET /api/chats.
+// One kiro-cli subprocess per active chat; browsers on the same chat share its bridge.
+// The server is the source of truth; the browser projects its state via SSE + GET /api/chats.
 package main
 
 import (
@@ -18,27 +17,8 @@ import (
 	"github.com/cplieger/toolbelt/v3"
 )
 
-// There are no compile-time interface assertions here any more, and no `var _ =`
-// pair standing in for them either. Every assertion this file carried named a
-// type the composition root already passes to the option that consumes it —
-// server.WithGit, WithFiles, WithAuth, WithMCPConfig, WithMCPRegistry,
-// WithSteering — so the compiler checked each satisfaction at the call site
-// whether or not it was also written down. An assertion is worth keeping only
-// where nothing in the build already forces the check, and after that refactor
-// there is no such place left in main.
-//
-// What survived it was `var (_ = forges.NewManager; _ = server.New)`, under a
-// comment pointing at "the compile-time var block above" that no longer existed.
-// It asserted nothing — naming a function proves only that the identifier
-// exists, which the compiler knows — and it was the sole reason main imported
-// either package.
-
-// requiredToolsList is the same required-tools.txt the image build
-// verifies the baked catalog against, embedded so the RUNTIME catalog
-// refresh applies the identical gate to every fetched catalog: one
-// source of truth, two enforcement points. Parsed by
-// toolbelt.ParseRequireList (the same format cmd/toolcatalog verify
-// reads).
+// requiredToolsList is the required-tools.txt the image build verifies the baked catalog
+// against, embedded so every runtime catalog refresh applies the same gate.
 //
 //go:embed required-tools.txt
 var requiredToolsList string
@@ -47,20 +27,15 @@ func main() {
 	os.Exit(runMain())
 }
 
-// runMain performs the actual startup sequence. Isolated from main()
-// so that `defer app.Shutdown()` fires on normal exit paths (os.Exit
-// in main itself would skip the defer).
+// runMain is the startup sequence, split from main so deferred shutdown runs (os.Exit skips defers).
 func runMain() int {
-	// Ahead of ConfigFromEnv, whose warnings reach stderr: git shows a helper's
-	// stderr to the user as the reason a credential was declined.
+	// Ahead of ConfigFromEnv, whose warnings reach stderr: git shows a helper's stderr to the user.
 	if len(os.Args) > 1 && os.Args[1] == forges.HelperCommand {
 		return forges.RunCredentialHelper(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
 	}
 	cfg := composition.ConfigFromEnv()
 	cfg.ToolCatalogRequire = toolbelt.ParseRequireList(requiredToolsList)
 
-	// Wire the kiro home resolver into the workspace package so it doesn't
-	// need to read os.Getenv directly (library-composition principle).
 	workspace.SetKiroHomeResolver(func() string {
 		if h := os.Getenv("KIRO_HOME"); h != "" {
 			return h

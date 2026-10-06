@@ -1,13 +1,11 @@
 package agent
 
-// The MCP OAuth loopback relay. KAS's OAuth redirect listener binds the container's
-// localhost, which a remote browser cannot reach, so marotte replays the pasted
-// address from INSIDE the container. Rewriting redirect_uri to marotte's origin
-// instead breaks the token exchange, which must repeat it (RFC 6749 §4.1.3).
-//
-// The pasted address is UNTRUSTED. The stored authorization URL (written by KAS) is
-// the trust anchor: the dial target comes from its `redirect_uri` and `state` must
-// match its `state`, so request data never chooses a host or injects a code.
+// The MCP OAuth loopback relay. KAS runs the flow and binds its redirect listener on
+// `http://localhost:<ephemeral>/oauth/callback` in the container, which a remote browser cannot
+// reach. The user pastes the dead page's address and marotte replays the GET from inside.
+// The pasted address is untrusted; the stored authorization URL KAS wrote is the anchor: the
+// dial target comes from its `redirect_uri` and `state` must match, or this unauthenticated
+// route injects authorization codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
 
 import (
 	"context"
@@ -29,33 +27,22 @@ import (
 )
 
 const (
-	// relayURLCap bounds the pasted address; an authorization code is a
-	// few hundred bytes at the outside.
+	// relayURLCap bounds the pasted address.
 	relayURLCap = 4096
 
-	// relayMinPort refuses a privileged port. KAS binds an EPHEMERAL port
-	// for its redirect listener, so nothing legitimate lands below 1024.
+	// relayMinPort refuses a privileged port: KAS's listener is ephemeral.
 	relayMinPort = 1024
 
-	// relayDialTimeout and relayTotalTimeout bound the replay: the
-	// listener is in this container and either answers immediately or is
-	// gone.
+	// relayDialTimeout and relayTotalTimeout bound the replay to a listener in this container.
 	relayDialTimeout  = 3 * time.Second
 	relayTotalTimeout = 8 * time.Second
 
-	// relayBodyCap bounds the response we read and discard.
+	// relayBodyCap bounds the response read and discarded.
 	relayBodyCap = 64 << 10
 )
 
-// relayQueryKeys is the allowlist of query parameters forwarded to the
-// loopback listener: `code`/`state` are the flow, `scope` is RFC 6749
-// §4.1.2, `iss` is RFC 9207 issuer identification, `session_state` is OIDC
-// session management. Anything else is refused, since this request is
-// replayed verbatim into KAS's own handler and an unrecognised parameter is
-// one neither side vouched for.
-//
-// An error redirect (`error`, `error_description`) is deliberately absent:
-// it carries no code, so there is nothing to relay.
+// relayQueryKeys allowlists the forwarded query keys: `code`/`state`, `scope` (RFC 6749
+// §4.1.2), `iss` (RFC 9207) and OIDC `session_state`. An error redirect carries no code, so it is absent.
 var relayQueryKeys = map[string]struct{}{
 	"code":          {},
 	"state":         {},
@@ -64,8 +51,7 @@ var relayQueryKeys = map[string]struct{}{
 	"session_state": {},
 }
 
-// Refusal reasons. Each is its own value so the handler can map it to a status
-// and the tests can assert the specific rejection rather than "an error".
+// Refusal reasons, one value each so the handler maps a status and tests assert the reason.
 var (
 	errRelayNoFlow      = errors.New("no sign-in is waiting for this server")
 	errRelayAlreadyDone = errors.New("this sign-in's callback was already delivered")
@@ -85,18 +71,10 @@ var (
 	errRelayStateDrift  = errors.New("that address belongs to a different sign-in")
 )
 
-// relayClientFor returns the client for ONE validated callback target,
-// pinned to that target's port. Built per attempt rather than once at
-// init: the destination is not known until a callback is pasted and
-// checked.
-//
-// ssrf.SafeTransport re-validates the ACTUALLY-CONNECTED address in a
-// dialer Control hook, which a hand-rolled loopback check cannot do —
-// closing DNS rebinding, live here because `localhost` is an accepted host
-// and is a DNS name.
+// relayClientFor returns a client pinned to one validated callback's port, built per attempt.
+// ssrf.SafeTransport re-validates the connected address, closing DNS rebinding via `localhost`.
 func relayClientFor(target *url.URL) (*http.Client, error) {
-	// parseLoopbackCallback already accepted this port; a mismatch here
-	// means the two disagree, so refuse rather than guess.
+	// parseLoopbackCallback already accepted this port; a mismatch is refused.
 	port, err := strconv.ParseUint(target.Port(), 10, 16)
 	if err != nil || port < relayMinPort {
 		return nil, errRelayBadPort
@@ -110,8 +88,7 @@ func relayClientFor(target *url.URL) (*http.Client, error) {
 	return &http.Client{
 		Timeout:   relayTotalTimeout,
 		Transport: tr,
-		// Do not follow a redirect: return it as the response instead, so
-		// KAS's handler cannot steer the relay onward.
+		// Never follow a redirect, so KAS's handler cannot steer the relay onward.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}, nil
 }
@@ -122,17 +99,13 @@ type mcpOAuthRelayReq struct {
 }
 
 type mcpOAuthRelayResp struct {
-	// Status is the loopback listener's HTTP status. Surfaced so the UI can say
-	// what answered rather than only that something did.
+	// Status is the loopback listener's HTTP status, so the UI says what answered.
 	Status int `json:"status"`
 }
 
-// handleOAuthRelay: POST /api/mcp/oauth-relay {server, redirect_url} →
-// replay a stranded loopback callback into KAS's waiting listener.
-//
-// Registered by RegisterRoutes. NOT wrapped in webhttp.LoopbackOnly: the
-// whole point is that a REMOTE browser reaches it. The loopback constraint
-// belongs on the outbound half instead (relayClientFor's address policy).
+// handleOAuthRelay serves POST /api/mcp/oauth-relay {server, redirect_url}, replaying a stranded
+// callback into KAS's listener. Not LoopbackOnly: a remote browser must reach it; the loopback
+// constraint is on the outbound dial.
 func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -143,14 +116,8 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// RESERVE FIRST, and derive everything downstream from the reservation:
-	// the authorization URL travels on the attempt rather than being
-	// re-read later, since recordOAuth can replace the record at any point
-	// while this request is out, and a code validated against attempt A
-	// must never be replayed under attempt B's reservation.
-	//
-	// A refusal here also covers an unknown server name, since a server
-	// with no authorization in flight has nothing to relay either way.
+	// Reserve first and derive everything from the reservation: recordOAuth can replace the record
+	// meanwhile, and a code validated against attempt A must never replay under B. An unknown server is refused here too.
 	attempt, err := reg.beginOAuthRelay(body.Server)
 	if err != nil {
 		httpreply.Conflict(w, err.Error())
@@ -174,8 +141,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	if status >= http.StatusBadRequest {
-		// Delivered, and refused. The reservation goes back so a
-		// corrected paste can still be tried.
+		// Refused: give the reservation back so a corrected paste can retry.
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
 			"server", body.Server, "port", target.Port(), "status", status)
@@ -186,8 +152,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
 		"server", body.Server, "port", target.Port(), "status", status)
-	// KAS still owns reporting the connected state over _kiro/mcp/status;
-	// the client refetches status and waits for that frame.
+	// KAS reports the connected state over _kiro/mcp/status; the client waits for that frame.
 	webhttp.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 
@@ -206,39 +171,24 @@ func replayCallback(ctx context.Context, target *url.URL) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// Drain a bounded prefix so a hostile listener cannot stream forever; the
-	// body itself is not read for meaning. Connection reuse is NOT a reason
-	// here — keep-alives are off — so the cap is the whole point.
+	// Drain a bounded prefix so a hostile listener cannot stream forever; keep-alives are off.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, relayBodyCap))
 	return resp.StatusCode, nil
 }
 
-// dialErrWithoutURL strips the request URL out of an http.Client error
-// before it is logged. REQUIRED: net/http wraps a transport failure in a
-// *url.Error whose Error() begins `Get "<the full URL>"`, and that URL's
-// query is the authorization code.
+// dialErrWithoutURL strips the request URL from a client error before logging: *url.Error's
+// message embeds the URL, whose query is the authorization code.
 func dialErrWithoutURL(err error) error {
-	// errors.AsType (Go 1.26); `go fix -errorsastype` and gocritic's
-	// modernize both skip this site because it is a clause of a boolean
-	// expression, one of their documented blind spots.
+	// `go fix -errorsastype` and gocritic skip this site: a clause of a boolean expression.
 	if ue, ok := errors.AsType[*url.Error](err); ok && ue.Err != nil {
 		return ue.Err
 	}
 	return err
 }
 
-// validateRelayAddress checks a pasted callback address against the
-// authorization URL KAS advertised, and returns the URL to replay.
-//
-// Pure, so it is unit-testable and fuzzable without a listener. Every
-// check is a refusal rather than a repair — this function never rewrites
-// the pasted address.
-//
-// The replay URL is assembled from the ADVERTISED callback (KAS's own
-// scheme, host, path) carrying the PASTED query, so the host is never read
-// off the paste at all. It also fixes a spelling problem: `localhost` and
-// `127.0.0.1` are both loopback but different dial targets, and KAS's
-// listener is bound to whichever it named.
+// validateRelayAddress checks a pasted callback against KAS's advertised authorization URL and
+// returns the URL to replay: the advertised scheme, host and path with the pasted query, so the
+// host is never read off the paste. Pure, and it only refuses, never repairs.
 func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	u, err := parseLoopbackCallback(strings.TrimSpace(pasted))
 	if err != nil {
@@ -257,17 +207,13 @@ func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	return advertised, nil
 }
 
-// parseLoopbackCallback checks a raw address is a plain-http,
-// credential-free, fragment-free loopback URL on an unprivileged port.
-// Shared by the paste and by the advertised redirect_uri, so both are held
-// to the same shape.
+// parseLoopbackCallback checks for a plain-http, credential-free, fragment-free loopback URL on
+// an unprivileged port; the paste and the advertised redirect_uri share it.
 func parseLoopbackCallback(raw string) (*url.URL, error) {
 	if len(raw) > relayURLCap {
 		return nil, errRelayTooLong
 	}
-	// Checked before parsing, not after: url.Parse accepts control bytes
-	// and percent-decoding can reintroduce them, and this address is
-	// replayed into another program's HTTP handler.
+	// Before parsing: url.Parse accepts control bytes, and percent-decoding can reintroduce them.
 	if !isPrintableASCII(raw) {
 		return nil, errRelayBadBytes
 	}
@@ -294,8 +240,7 @@ func parseLoopbackCallback(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// validateCallbackQuery checks the query is a callback's: every key
-// allowlisted, and a non-empty code present.
+// validateCallbackQuery requires every key allowlisted and a non-empty code.
 func validateCallbackQuery(rawQuery string) (url.Values, error) {
 	q, err := url.ParseQuery(rawQuery)
 	if err != nil {
@@ -312,22 +257,9 @@ func validateCallbackQuery(rawQuery string) (url.Values, error) {
 	return q, nil
 }
 
-// matchAdvertisedCallback binds a pasted callback to the authorization URL
-// KAS advertised and returns the advertised callback to dial. This is the
-// whole security argument for the route.
-//
-// The advertised `redirect_uri` is itself validated as an unprivileged
-// loopback http address, so a corrupt or hostile stored URL cannot aim the
-// dial elsewhere.
-//
-// PORT and PATH must agree with the paste (which listener, which handler);
-// HOST is not compared, since it is taken from the advertisement rather
-// than the paste — `localhost` and `127.0.0.1` are both legitimate
-// spellings.
-//
-// The `state` match is the CSRF/injection binding. A missing state in the
-// stored URL is a REFUSAL, not a waiver: relaying without it would accept
-// any code anyone posted.
+// matchAdvertisedCallback binds a paste to KAS's authorization URL and returns the advertised
+// callback to dial: the route's whole security argument. Port and path must agree; host is
+// the advertisement's. A missing stored `state` is a refusal, never a waiver.
 func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url.URL, error) {
 	auth, err := url.Parse(authURL)
 	if err != nil {
@@ -339,9 +271,7 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 	if redirect == "" {
 		return nil, errRelayNoRedirect
 	}
-	// Held to the SAME shape as the paste, because the dial goes here. Any
-	// refusal collapses to errRelayNoRedirect rather than the specific
-	// one: the user did not write this value and cannot fix it.
+	// Held to the paste's shape because the dial goes here; any refusal is errRelayNoRedirect, which the user cannot fix.
 	want, err := parseLoopbackCallback(redirect)
 	if err != nil {
 		return nil, errRelayNoRedirect
@@ -354,26 +284,17 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 	if wantState == "" {
 		return nil, errRelayNoState
 	}
-	// Constant-time: the comparison is against a secret-equivalent value,
-	// and a byte-at-a-time early exit would leak it a byte at a time to a
-	// caller that can retry.
+	// Constant-time: an early exit would leak a secret-equivalent value to a retrying caller.
 	if len(wantState) != len(pastedState) ||
 		subtle.ConstantTimeCompare([]byte(wantState), []byte(pastedState)) != 1 {
 		return nil, errRelayStateDrift
 	}
-	// A deep copy: the caller overwrites RawQuery, and the parsed
-	// advertisement must not become a shared mutable value. url.Clone
-	// (Go 1.27) rather than `dial := *want`, which shares the User
-	// pointer — safe here only because parseLoopbackCallback refuses
-	// userinfo, but Clone makes the claim true by construction.
+	// url.Clone: the caller overwrites RawQuery, and a struct copy would share User.
 	return want.Clone(), nil
 }
 
-// isLoopbackHost reports whether host is one of the three spellings a
-// loopback redirect uses. A fixed set rather than resolve-and-check: the
-// resolved address is re-validated at socket time by relayClientFor's
-// policy, so this gate exists to reject the whole class of remote hosts
-// before any lookup happens.
+// isLoopbackHost reports whether host is one of the three loopback spellings. A fixed set, not a
+// lookup: relayClientFor re-validates at socket time.
 func isLoopbackHost(host string) bool {
 	switch strings.ToLower(host) {
 	case "127.0.0.1", "::1", "localhost":
@@ -382,9 +303,7 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// isPrintableASCII reports whether s is entirely printable ASCII with no space.
-// Excludes C0 controls, DEL, the high bit, and 0x20 — every byte that could
-// split or truncate the request line this address becomes.
+// isPrintableASCII reports whether s is printable ASCII without space: any other byte could split the request line.
 func isPrintableASCII(s string) bool {
 	for i := range len(s) {
 		if s[i] <= 0x20 || s[i] >= 0x7f {

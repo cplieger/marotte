@@ -1,17 +1,12 @@
 package agent
 
-// The completion condition a `session/load` replay closes on, shared by the chat
-// twin (load_projection.go) and the step route (step_replay.go). Each route keeps
-// its own map, mutex and settle EFFECTS; only the condition is shared.
+// The completion condition a `session/load` replay closes on, shared by load_projection.go and
+// step_replay.go; each keeps its own map, mutex and effects.
 
-// THE CONDITION is that the consumer has folded every frame preceding the
-// `session/load` RESULT, which `observed >= loadSeq` states exactly. So a replay
-// that drained early settles on the reader's own attempt, and a frame arriving
-// after the result has a HIGHER position and cannot close the barrier early.
+// The condition: the consumer has folded every frame preceding the `session/load` result
+// (`observed >= loadSeq`). A frame after the result has a higher position and cannot close early.
 
-// drainPoint is a position on a bridge's read loop plus the consumer attachment it
-// belongs to. A value rather than two uint64 parameters: gen and seq are counters
-// of one type, so a transposed pair compiles and settles against the wrong number.
+// drainPoint is a read-loop position plus its consumer attachment, a struct so gen and seq cannot be transposed.
 type drainPoint struct {
 	// gen is the attachment: a position is only comparable within one.
 	gen uint64
@@ -19,18 +14,15 @@ type drainPoint struct {
 	seq uint64
 }
 
-// replayDrain is one replay's progress against the condition in this file's header.
-// Guarded by the OWNER's mutex; the fields are not independently safe.
+// replayDrain is one replay's progress against the condition. Guarded by the owner's mutex.
 type replayDrain struct {
-	// gen is the attachment both positions below belong to. A NEW one invalidates the
-	// load position: its frames are on a channel nobody will drain.
+	// gen is the attachment both positions belong to; a new one invalidates the load position.
 	gen uint64
 	// observed is how far the consumer has folded on that attachment.
 	observed uint64
 	// loadSeq is where the `session/load` response arrived; read only when loaded.
 	loadSeq uint64
-	// loaded, rather than `loadSeq != 0`, because 0 is a LEGAL position: the sequence
-	// pre-increments, so a response ahead of every frame is genuinely 0.
+	// loaded, not `loadSeq != 0`: the sequence pre-increments, so 0 is a legal position.
 	loaded bool
 }
 
@@ -58,16 +50,13 @@ func (d *replayDrain) markLoadedAt(at drainPoint) {
 	d.loadSeq, d.loaded = at.seq, true
 }
 
-// reattach adopts a new consumer attachment, dropping everything the previous one
-// established: its sequence restarts at zero, so neither position still means anything.
+// reattach adopts a new attachment, whose sequence restarts at zero, dropping both positions.
 func (d *replayDrain) reattach(gen uint64) {
 	d.gen, d.observed, d.loadSeq, d.loaded = gen, 0, 0, false
 }
 
-// complete reports whether the replay may be settled from the attachment at gen.
-// `sealed` is the bridge-exit call: that channel is closed and drained, so no frame
-// can advance the position again. It bypasses the POSITION and never the LOAD — a
-// load that never returned has no transcript to adopt, and is DISCARDED instead.
+// complete reports whether the replay may settle from the attachment at gen. `sealed` (bridge exit)
+// bypasses the position, never the load: a load that never returned is discarded.
 func (d *replayDrain) complete(gen uint64, sealed bool) bool {
 	if gen != d.gen {
 		return false // this caller is not the attachment the positions describe

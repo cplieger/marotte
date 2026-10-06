@@ -1,16 +1,10 @@
-// The reload bound. What is under test is the COUNT across documents, so every
-// case boots a fresh module instance against one shared store: that is what a
-// reload is, and module state re-evaluated is the only honest way to model it
-// (`vi.resetModules()` does not re-evaluate a module in Browser Mode).
-//
-// The store is stubbed with `vi.stubGlobal`, never `vi.spyOn(Storage.prototype,
-// ...)`, which is hollow once another test in the file has run.
+// The reload bound.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as Guard from "./reload-guard.js";
 
-/** A `Storage`-shaped map, so a case can read back what production wrote without
- *  restating the key it wrote it under. */
+/** A `Storage`-shaped map, so a case can read back what production wrote without restating the
+ *  key it wrote it under. */
 function fakeStore(): { readonly entries: Map<string, string> } & Storage {
   const entries = new Map<string, string>();
   return {
@@ -49,19 +43,17 @@ function throwingStore(): Storage {
   };
 }
 
-/** One boot. A busted specifier is what mints a new module instance; the `.ts`
- *  extension is load-bearing for coverage attribution. */
+/** One boot. A busted specifier is what mints a new module instance; the `.ts` extension is
+ *  load-bearing for coverage attribution. */
 let seq = 0;
 async function boot(): Promise<typeof Guard> {
   seq++;
   return (await import(/* @vite-ignore */ `./reload-guard.ts?boot=${seq}`)) as typeof Guard;
 }
 
-/** `n` boots, `gap` apart, each one ASKING for its verdict — which is what records
- *  it, exactly as a document does on its first consumer. Returns the last instance.
- *
- *  A helper rather than a loop per case, because the two loop cases below differ only
- *  in how many boots they run. */
+/** `n` boots, `gap` apart, each one ASKING for its verdict — which is what records it, exactly
+ *  as a document does on its first consumer. Returns the last instance. A helper rather than a
+ *  loop per case, because the two loop cases below differ only in how many boots they run. */
 async function bootRun(n: number, gap: number): Promise<typeof Guard> {
   let guard = await boot();
   guard.bootMode();
@@ -120,12 +112,7 @@ describe("the reload guard counts one tab's boots", () => {
   });
 
   it("stays reduced through a SUSTAINED loop, past the window's own length", async () => {
-    // Eight boots 1500ms apart: the run lasts 10.5s, past WINDOW_MS. Anchored on the
-    // run's first boot it is the EIGHTH that crosses — t=10500 against the 10000
-    // window, where the seventh is still inside it at t=9000 with n=7 — so the eighth
-    // reset to 1 and read FULL: a full boot, with every suppression lifted, in the
-    // middle of the loop the bound exists to end. The assertion below is on that
-    // eighth boot, which is why the red check reads `['full', 1]`.
+    // Eight boots 1500ms apart: the run lasts 10.5s, past WINDOW_MS.
     const latest = await bootRun(8, LOOP_GAP_MS);
 
     expect([latest.bootMode(), latest.reloadCount()]).toEqual(["reduced", 8]);
@@ -134,15 +121,14 @@ describe("the reload guard counts one tab's boots", () => {
   it("does not cap the count, so a long loop reports what it cost", async () => {
     const latest = await bootRun(30, LOOP_GAP_MS);
 
-    // The banner names this number, so a cap would understate it. 30 boots is 45s of
-    // reloading, which the anchored window would have reset four times over.
+    // The banner names this number, so a cap would understate it. 30 boots is 45s of reloading,
+    // which the anchored window would have reset four times over.
     expect([latest.bootMode(), latest.reloadCount()]).toEqual(["reduced", 30]);
   });
 
   it("reads a record another build wrote before the window slid", async () => {
-    // A tab that picks up a new bundle mid-loop: the retired anchor is the only stamp
-    // it has, so it is read as the previous boot. Costs that one tab a wrong gap,
-    // never the count.
+    // A tab that picks up a new bundle mid-loop: the retired anchor is the only stamp it has, so it
+    // is read as the previous boot. Costs that one tab a wrong gap, never the count.
     store.setItem("marotte.reload-guard", JSON.stringify({ n: 2, first: Date.now() }));
 
     const guard = await boot();
@@ -151,8 +137,8 @@ describe("the reload guard counts one tab's boots", () => {
   });
 
   it("answers every consumer of one document the same way", async () => {
-    // The record is written once per document however many consumers ask, or the
-    // four suppression sites would each count their own boot.
+    // The record is written once per document however many consumers ask, or the four suppression
+    // sites would each count their own boot.
     const first = await boot();
     expect(first.bootMode()).toBe("full");
     expect(first.bootMode()).toBe("full");
@@ -164,8 +150,8 @@ describe("the reload guard counts one tab's boots", () => {
 
 describe("the count is cleared", () => {
   it("by a page that stays alive, and by nothing else at that age", async () => {
-    // Ageing out is not a REMOVAL: the record is still there, which is what makes
-    // the assertion below about the timer rather than about the window.
+    // Ageing out is not a REMOVAL: the record is still there, which is what makes the assertion
+    // below about the timer rather than about the window.
     (await boot()).bootMode();
     expect(store.entries.size).toBe(1);
     vi.advanceTimersByTime(STABLE_MS);
@@ -188,8 +174,7 @@ describe("the count is cleared", () => {
     expect(store.entries.size).toBe(0);
     expect(second.reloadCount()).toBe(0);
 
-    // Still inside the window, so a fresh boot reading 1 is the clear rather than
-    // an expiry.
+    // Still inside the window, so a fresh boot reading 1 is the clear rather than an expiry.
     vi.advanceTimersByTime(500);
     expect((await boot()).reloadCount()).toBe(1);
   });

@@ -1,6 +1,3 @@
-// Tests for tools.ts action configuration: scope, retry, dedupe,
-// idempotencyKey, and the v2 wire shapes (202 + job envelopes, the
-// delete 409 pass-through, the ensure create->install fallback).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
@@ -206,10 +203,8 @@ describe("tools.ensure", () => {
 });
 
 describe("tools.search", () => {
-  // The engine this build pins states neither additive field, so ABSENT has to
-  // read as unstated rather than as a zero or a negative: a `matched: 0` would
-  // make every reply look cut to nothing, and an `apt_state: "unavailable"` would
-  // assert a permanent condition the engine never claimed.
+  // The pinned engine states neither additive field, so ABSENT must read as unstated, not as
+  // `matched: 0` or `apt_state: "unavailable"`.
   it("leaves both additive fields absent when the engine states neither", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ results: [], apt_available: true, truncated: false }), {
@@ -243,10 +238,7 @@ describe("tools.search", () => {
     expect(d?.matched).toBe(6627);
   });
 
-  // Neither field is in the generated wire type yet, so the body is the only
-  // thing vouching for them: a value of the wrong shape is unstated, never
-  // rendered. A string `matched` would print as a denominator, and an unknown
-  // apt state would fall off the exhaustive switch.
+  // Not in the generated wire type yet, so a wrong-shaped value is unstated, never rendered.
   it("treats a wrong-shaped additive field as unstated", async () => {
     mockFetch.mockResolvedValue(
       new Response(
@@ -358,9 +350,7 @@ describe("tools.seed_mcp", () => {
 });
 
 describe("tools.apply_manifest", () => {
-  // The engine answers 202 {"job": null} when the manifest and the volume already
-  // agree, and no other surface reports that: no job means no SSE frame, no output
-  // line and no pill busy state, so the toast is the only channel left.
+  // 202 {"job": null} (already converged) produces no SSE frame or busy state: the toast is all.
   it("says so when the run produced no job", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ job: null }), { status: 202 }));
     await applyManifest.dispatch(undefined);

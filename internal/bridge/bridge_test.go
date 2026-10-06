@@ -20,6 +20,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/slogx/capture"
@@ -27,10 +28,7 @@ import (
 
 func TestNew_FieldsAndAccessors(t *testing.T) {
 	b := New("/opt/kiro", "/work")
-	// cliPath and workDir are copy-ins from New; no accessor exists,
-	// so pin them directly. Channel/map init is implicitly verified
-	// by TestStop_Idempotent (Stop closes notifCh; closing a nil
-	// channel panics) and TestNew_AccessorsReturnZeroValues.
+	// cliPath and workDir have no accessor, so pin them directly; TestStop_Idempotent covers channel init.
 	if b.cliPath != "/opt/kiro" {
 		t.Errorf("cliPath = %q", b.cliPath)
 	}
@@ -39,10 +37,7 @@ func TestNew_FieldsAndAccessors(t *testing.T) {
 	}
 }
 
-// TestNew_AccessorsReturnZeroValues pins the zero-value contract for a
-// freshly-constructed bridge that has never run through session/new or
-// session/load: accessor strings are empty, slice accessors return
-// non-nil zero-length slices safe to range over.
+// TestNew_AccessorsReturnZeroValues pins a fresh bridge's zero values: empty strings, and non-nil empty slices.
 func TestNew_AccessorsReturnZeroValues(t *testing.T) {
 	b := New("/opt/kiro", "/work")
 	if got := b.SessionID(); got != "" {
@@ -62,8 +57,6 @@ func TestNew_AccessorsReturnZeroValues(t *testing.T) {
 	}
 }
 
-// --- Pure helpers ---
-
 func TestIsDeprecatedOrLegacy(t *testing.T) {
 	cases := []struct {
 		desc string
@@ -77,12 +70,9 @@ func TestIsDeprecatedOrLegacy(t *testing.T) {
 		{desc: "Claude 3.5 Sonnet [DEPRECATED]", want: true},
 		{desc: "Claude 3.5 Sonnet [Legacy]", want: true},
 		{desc: "Claude 3.5 Sonnet [LEGACY]", want: true},
-		// Bare "deprecated" in prose must NOT trigger the filter —
-		// kiro-cli descriptions are free to reference older models
-		// by name ("Successor to the deprecated Claude 2 family").
+		// "deprecated" in prose must not trigger the filter.
 		{desc: "Successor to the deprecated Claude 2 family", want: false},
 		{desc: "Old model, deprecated 2024-10-01", want: false},
-		// Same for "legacy".
 		{desc: "Model for legacyapi users", want: false},
 	}
 	for _, tc := range cases {
@@ -113,9 +103,7 @@ func TestValidIdent(t *testing.T) {
 		{in: "agent\nname", want: false},
 		{in: "agent\x00name", want: false},
 		{in: "agent$(whoami)", want: false},
-		// Defense-in-depth: path-adjacent values that match identRe
-		// but would read as "current/parent dir" or "hidden entry"
-		// to any downstream consumer must be rejected.
+		// Values matching identRe that read as current/parent dir or a hidden entry are rejected.
 		{in: ".", want: false},
 		{in: "..", want: false},
 		{in: "...", want: false},
@@ -129,13 +117,9 @@ func TestValidIdent(t *testing.T) {
 	}
 }
 
-// --- applySessionResultLocked: modes/models translation + deprecation filter ---
-
 func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 	b := &Bridge{}
-	// v3 shape: modes block + the model catalog carried inside the
-	// configOptions "model" select (currentValue + options[] with each
-	// choice's rate multiplier under _meta.kiro).
+	// v3 shape: a modes block plus the catalog inside the configOptions "model" select, multipliers under _meta.kiro.
 	var r sessionCreated
 	if err := json.Unmarshal([]byte(`{
 		"sessionId": "sess-1",
@@ -166,7 +150,6 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 	if got := b.ModelID(); got != "claude-sonnet" {
 		t.Errorf("modelID = %q, want claude-sonnet", got)
 	}
-	// Deprecated and legacy dropped; internal kept.
 	models := b.Models()
 	if len(models) != 2 {
 		t.Errorf("models len = %d, want 2 (1 kept + 1 internal), got %v", len(models), models)
@@ -183,8 +166,7 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 	}
 }
 
-// When the response has no modes or models blocks and the bridge has
-// no model id yet, the fallback model wins.
+// With no modes or models block and no model id yet, the fallback model wins.
 func TestApplySessionResult_FallbackModelWhenMissing(t *testing.T) {
 	b := &Bridge{}
 	b.mu.Lock()
@@ -201,7 +183,7 @@ func TestApplySessionResult_FallbackModelWhenMissing(t *testing.T) {
 	}
 }
 
-// Fallback does NOT overwrite a current model set by the response.
+// The fallback does not overwrite a current model from the response.
 func TestApplySessionResult_FallbackIgnoredWhenCurrentPresent(t *testing.T) {
 	b := &Bridge{}
 	r := sessionCreated{
@@ -217,10 +199,7 @@ func TestApplySessionResult_FallbackIgnoredWhenCurrentPresent(t *testing.T) {
 	}
 }
 
-// TestModes_ReturnedSliceIsDefensiveCopy asserts the Modes accessor
-// returns a copy. A future refactor that drops the copy (e.g. returns
-// b.modes directly) would pass every other test in this file; this
-// one pins the behaviour-contract.
+// TestModes_ReturnedSliceIsDefensiveCopy pins that Modes returns a copy.
 func TestModes_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 	b := &Bridge{}
 	r := sessionCreated{
@@ -240,16 +219,14 @@ func TestModes_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 	if len(first) != 2 {
 		t.Fatalf("first Modes() len = %d, want 2", len(first))
 	}
-	// Verify the slice is consistent across calls (same pointer —
-	// no allocation on the read path).
+	// Same backing array across calls: no allocation on the read path.
 	second := b.Modes()
 	if &first[0] != &second[0] {
 		t.Errorf("Modes() returned different backing arrays; expected same frozen slice")
 	}
 }
 
-// TestModels_ReturnedSliceIsDefensiveCopy mirrors the Modes test for
-// the Models accessor.
+// TestModels_ReturnedSliceIsDefensiveCopy pins the same for Models.
 func TestModels_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 	b := &Bridge{}
 	var r sessionCreated
@@ -277,27 +254,19 @@ func TestModels_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 	}
 }
 
-// --- Stop idempotency ---
-
 func TestStop_Idempotent(t *testing.T) {
 	b := New("/nonexistent/cli", "/work")
-	// Don't Start (no subprocess); Stop should be safe on an
-	// unstarted bridge and safe to call multiple times.
+	// Never started: Stop must be safe, repeatedly.
 	b.Stop()
 	b.Stop() // would panic on close of closed channel without sync.Once
 	b.Stop()
 }
 
-// TestCall_ReturnsBridgeExitedAfterStop pins Call's post-Stop contract:
-// a Call parked on the select returns errBridgeExited when Stop closes
-// b.done. Without this test a future refactor that drops the done
-// branch could silently regress "Stop races a fresh Call" into a
-// permanent hang.
+// TestCall_ReturnsBridgeExitedAfterStop pins that a Call parked on the select returns errBridgeExited when Stop
+// closes b.done, rather than hanging.
 func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	// Wire a pipe so writeFrame succeeds. Nothing plays readLoop, so no
-	// response ever reaches the pending channel and Call parks on
-	// select{ch, b.done}.
+	// A pipe so writeFrame succeeds; nothing plays readLoop, so Call parks on select{ch, b.done}.
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -317,13 +286,8 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 		done <- result{r, e}
 	}()
 	waitPending(t, b, 1)
-	// Read the framed request before stopping. Call registers its pending
-	// entry BEFORE it marshals and writes, so waitPending alone proves only
-	// registration: Stop closing stdin inside that window makes writeFrame
-	// fail with "file already closed" and Call returns that transport error
-	// instead of ever reaching the select this test is about. Draining the
-	// frame is the handshake that proves the write landed. Nothing answers
-	// on the pending channel, so Call stays parked on b.done.
+	// Read the frame first: Call registers before writing, and Stop closing stdin in that window would fail the write
+	// instead of reaching the select under test.
 	readFrame(t, pr)
 	b.Stop()
 	select {
@@ -339,10 +303,7 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 	}
 }
 
-// --- Respond tests (g59) ---
-
-// respondBridge returns a Bridge wired to a pipe so Respond output can
-// be read back. The caller must close pr when done.
+// respondBridge returns a Bridge wired to a pipe so Respond output can be read back. Close pr when done.
 func respondBridge(t *testing.T) (*Bridge, *os.File) {
 	t.Helper()
 	pr, pw, err := os.Pipe()
@@ -441,16 +402,14 @@ func TestRespond_BoundsAndFlattensGenericErrorMessage(t *testing.T) {
 	if strings.ContainsRune(got.Error.Message, '\u202e') {
 		t.Errorf("generic error message contains a bidi override: %q", got.Error.Message)
 	}
-	// SanitizeSingleLineBounded carries its "..." marker OUTSIDE the cap
-	// (settled runesafe contract), so a truncated message is cap+3 bytes.
+	// SanitizeSingleLineBounded's "..." sits outside the cap, so a truncated message is cap+3 bytes.
 	if maxLen := maxRespondErrorBytes + len("..."); len(got.Error.Message) > maxLen {
 		t.Errorf("generic error message length = %d, want at most %d bytes", len(got.Error.Message), maxLen)
 	}
 }
 
-// TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic pins the three write verbs
-// against a bridge with no stdin handle. Before the guard each one called a method
-// on a nil interface, which webhttp.Recoverer turned into an opaque 500.
+// TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic pins the three write verbs without a stdin handle; each once
+// panicked on a nil interface into an opaque 500.
 func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
 	cases := map[string]func(*Bridge) error{
 		"Call": func(b *Bridge) error {
@@ -470,8 +429,7 @@ func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
 	}
 	for name, write := range cases {
 		t.Run(name, func(t *testing.T) {
-			// New, never Start: the state a chat bridge is registered in, and the
-			// state a failed Start leaves behind.
+			// New without Start: a registered chat bridge's state, and a failed Start's.
 			err := write(New("/nonexistent", "/work"))
 			if !errors.Is(err, marotte.ErrBridgeNotStarted) {
 				t.Errorf("%s on an unstarted bridge = %v, want ErrBridgeNotStarted", name, err)
@@ -480,9 +438,8 @@ func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
 	}
 }
 
-// TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter guards the other half: a
-// refused write must deregister the request it registered, or the id accumulates
-// and a later response could be delivered to a caller that is gone.
+// TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter pins that a refused write deregisters its request, or a later response
+// could reach a caller that is gone.
 func TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	if _, err := b.Call(t.Context(), marotte.MethodSetMode, nil); err == nil {
@@ -526,8 +483,6 @@ func TestRespond_TypedRPCError(t *testing.T) {
 	}
 }
 
-// --- Call tests (g60) ---
-
 func TestCall_HappyPath(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	pr, pw, err := os.Pipe()
@@ -549,7 +504,6 @@ func TestCall_HappyPath(t *testing.T) {
 
 	waitPending(t, b, 1)
 
-	// Simulate readLoop dispatching a successful response.
 	b.pendingMu.Lock()
 	var id int64
 	var ch chan pendingReply
@@ -653,7 +607,6 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 
 	waitPending(t, b, 1)
 
-	// Simulate readLoop drain: send bridgeExitedResp to the pending channel.
 	b.pendingMu.Lock()
 	var ch chan pendingReply
 	for _, v := range b.pending {
@@ -677,13 +630,9 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 	}
 }
 
-// BenchmarkBridgeReadLoop measures throughput of the JSON-RPC message
-// parsing hot path in readLoop. It feeds pre-serialized JSON-RPC
-// messages (a mix of responses and notifications) through a pipe into
-// a Bridge's readLoop and measures dispatch throughput, catching
-// allocation regressions from json.Unmarshal or map operations.
+// BenchmarkBridgeReadLoop measures readLoop's parse and dispatch throughput over a pipe of mixed responses and
+// notifications.
 func BenchmarkBridgeReadLoop(b *testing.B) {
-	// Pre-build message payloads: half responses, half notifications.
 	respID := int64(1)
 	respMsg, _ := json.Marshal(marotte.RPCResponse{
 		JSONRPC: "2.0",
@@ -710,18 +659,14 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 			done:    make(chan struct{}),
 		}
 
-		// Pre-register pending entries for response messages.
-		// We'll write msgCount messages total: alternate resp/notif.
 		const msgCount = 500
 		for id := int64(1); id <= msgCount/2; id++ {
 			br.pending[id] = make(chan pendingReply, 1)
 		}
 
-		// Write all messages into the pipe, then close to signal EOF.
 		go func() {
 			for j := range msgCount {
 				if j%2 == 0 {
-					// Response with incrementing ID.
 					id := int64(j/2 + 1)
 					msg, _ := json.Marshal(marotte.RPCResponse{
 						JSONRPC: "2.0",
@@ -736,7 +681,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 			pw.Close()
 		}()
 
-		// Drain notifCh so readLoop doesn't block.
+		// Drain notifCh so readLoop does not block.
 		drainDone := make(chan struct{})
 		go func() {
 			for range br.notifCh {
@@ -748,18 +693,13 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 		br.readLoop()
 		<-drainDone
 	}
-	// Prevent compiler from optimizing away.
 	_ = respLine
 	_ = notifLine
 }
 
-// TestRealBridge_Contract runs BridgeContractTest against the real bridge.Bridge over a
-// pipe-based fake kiro-cli script, so interface drift between the fake and the real
-// implementation fails at the Start/Stop/NotifCh lifecycle level without a real binary. The
-// script answers initialize, session/new, session/load and session/prompt; any other id'd
-// request gets a generic empty result via the default case.
+// TestRealBridge_Contract runs BridgeContractTest against the real Bridge over a fake kiro-cli script, so drift
+// fails at the lifecycle level without a real binary. Unknown id'd requests get an empty result.
 func TestRealBridge_Contract(t *testing.T) {
-	// Write a fake kiro-cli script that speaks minimal JSON-RPC.
 	script := `#!/bin/sh
 # Fake kiro-cli ACP subprocess for contract testing.
 # Reads JSON-RPC requests from stdin, responds with minimal valid results.
@@ -794,9 +734,7 @@ done
 		t.Fatalf("write fake script: %v", err)
 	}
 
-	// The concrete type, not an interface: this package's own test has no
-	// reason to go through one, and the contract suite that does is
-	// bridge_contract_test.go.
+	// The concrete type; bridge_contract_test.go goes through the interface.
 	newBridge := func() *Bridge {
 		return New(scriptPath, dir)
 	}
@@ -879,14 +817,8 @@ done
 	})
 }
 
-// --- parseErrTracker state machine tests (tarch-b7-c3-p4, consolidated tarch-b4-c4-p4) ---
-//
-// The count-driven cases are a table; the two CLOCK-driven ones are synctest
-// bubbles below it. The window case used to sit in this table and reach in to
-// assign tr.windowStart directly, which asserted the branch without ever
-// exercising the comparison that selects it; the decay branch had no case at all,
-// because a real-clock test for it costs five minutes. Both are now driven
-// through time.Now on the bubble's synthetic clock at zero real cost.
+// Count-driven parseErrTracker cases are a table; the clock-driven ones are synctest bubbles below, exercising the
+// real comparisons at no real-time cost.
 
 func TestParseErrTracker(t *testing.T) {
 	cases := []struct {
@@ -944,7 +876,6 @@ func TestParseErrTracker(t *testing.T) {
 		})
 	}
 
-	// SummaryCount sub-test: after burst + N more, count should be N.
 	t.Run("summary count tracks suppressed errors", func(t *testing.T) {
 		var tr parseErrTracker
 		for range parseErrBurst {
@@ -960,13 +891,8 @@ func TestParseErrTracker(t *testing.T) {
 	})
 }
 
-// TestParseErrTracker_WindowCadenceIsDrivenByTheClock exercises the comparison
-// that selects parseErrSummarize, rather than assigning the field it reads.
-//
-// The case this replaces did `tr.windowStart = time.Now().Add(-parseErrWindow -
-// time.Second)`, which reaches past the state machine to stage its own answer: a
-// Record that stopped consulting windowStart at all would still have passed.
-// Here the clock moves and Record decides.
+// TestParseErrTracker_WindowCadenceIsDrivenByTheClock moves the clock and lets Record decide, rather than staging
+// windowStart.
 func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var tr parseErrTracker
@@ -975,13 +901,12 @@ func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
 				t.Fatalf("burst Record() = %v, want parseErrLog", got)
 			}
 		}
-		// Inside the window: suppressed, however many arrive.
+		// Inside the window: suppressed.
 		synctest.Sleep(parseErrWindow / 2)
 		if got := tr.Record(); got != parseErrSuppress {
 			t.Errorf("Record() inside the window = %v, want parseErrSuppress", got)
 		}
-		// Past it: exactly one summary line, then suppressed again — the window
-		// restarts from this instant, so a second summary must not follow.
+		// Past it: one summary, then suppressed again as the window restarts.
 		synctest.Sleep(parseErrWindow)
 		if got := tr.Record(); got != parseErrSummarize {
 			t.Errorf("Record() past the window = %v, want parseErrSummarize", got)
@@ -990,10 +915,7 @@ func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
 			t.Errorf("Record() straight after a summary = %v, want parseErrSuppress: "+
 				"the window must restart at the summary, or a storm emits one line per frame", got)
 		}
-		// The edge belongs to the window it closes: an error arriving exactly one
-		// cadence after the last summary is still inside it, and only the instant
-		// after that is due for the next line. A strict comparison is what keeps
-		// the cadence a floor rather than an approximation.
+		// The edge belongs to the window it closes: the comparison is strict, so the cadence is a floor.
 		synctest.Sleep(parseErrWindow)
 		if got := tr.Record(); got != parseErrSuppress {
 			t.Errorf("Record() exactly %v after the summary = %v, want parseErrSuppress", parseErrWindow, got)
@@ -1005,11 +927,7 @@ func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
 	})
 }
 
-// The summary window opens when the verbatim burst ENDS, not when the storm
-// began. A storm that trickles — most of the burst, a long quiet spell, then the
-// last verbatim line — must still get a full window before its first summary; a
-// window anchored earlier would summarize the very next line and lose the
-// cadence for the rest of the storm.
+// The window opens when the burst ends, not when the storm began, so a trickling storm still gets a full window.
 func TestParseErrTracker_TheWindowOpensWhenTheBurstEnds(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var tr parseErrTracker
@@ -1018,8 +936,7 @@ func TestParseErrTracker_TheWindowOpensWhenTheBurstEnds(t *testing.T) {
 				t.Fatalf("burst Record() = %v, want parseErrLog", got)
 			}
 		}
-		// Long enough that a window anchored at the storm's start is already
-		// stale, short enough that the storm has not decayed.
+		// Long enough to stale a window anchored at the start, short of decay.
 		synctest.Sleep(parseErrWindow + time.Second)
 		if got := tr.Record(); got != parseErrLog {
 			t.Fatalf("the last verbatim Record() = %v, want parseErrLog", got)
@@ -1031,12 +948,8 @@ func TestParseErrTracker_TheWindowOpensWhenTheBurstEnds(t *testing.T) {
 	})
 }
 
-// TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker: decay resets the storm WINDOW,
-// so a bridge that saw a storm hours ago gets its verbatim burst back instead of staying
-// summary-only for the life of the process. It deliberately leaves `consecutive` alone —
-// Reset clears that on every frame that parses, so parseErrMaxConsecutive frames with no
-// valid frame between them is a dead stream at any pace, and decaying the count would stop
-// the breaker firing on a stream that fails totally but slowly.
+// TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker pins that decay resets the window, restoring the verbatim burst,
+// and leaves consecutive alone so a slow total failure still trips.
 func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var tr parseErrTracker
@@ -1047,9 +960,7 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 			t.Fatalf("Record() past the burst = %v, want parseErrSuppress", got)
 		}
 
-		// The edge belongs to the storm: quiet for exactly parseErrDecay is not yet
-		// a decayed storm, so this line is still part of it and gets a summary
-		// rather than the verbatim treatment a fresh burst would earn.
+		// Quiet for exactly parseErrDecay is not yet decayed: this line is summarized.
 		synctest.Sleep(parseErrDecay)
 		if got := tr.Record(); got != parseErrSummarize {
 			t.Errorf("Record() after exactly %v of quiet = %v, want parseErrSummarize: "+
@@ -1058,8 +969,7 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 
 		synctest.Sleep(parseErrDecay + time.Second)
 
-		// The burst is back: the storm window was reset, so this line is emitted
-		// verbatim rather than suppressed.
+		// The burst is back: emitted verbatim.
 		if got := tr.Record(); got != parseErrLog {
 			t.Errorf("Record() after %v of quiet = %v, want parseErrLog: "+
 				"decay must restart the burst", parseErrDecay, got)
@@ -1068,8 +978,7 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 			t.Errorf("total = %d after decay, want 1", tr.total)
 		}
 
-		// The breaker is NOT back. consecutive has counted every error, decay
-		// included, so one more than the ceiling away from it still trips.
+		// The breaker is not reset: consecutive counted every error.
 		if tr.consecutive != parseErrBurst+8 {
 			t.Fatalf("consecutive = %d, want %d: decay must not touch the breaker's count",
 				tr.consecutive, parseErrBurst+8)
@@ -1085,13 +994,8 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 	})
 }
 
-// --- tarch-b11-c7-p7: Bridge lifecycle contract test ---
-
-// TestBridge_LifecycleContract verifies the accessor stability guarantee
-// across the full state machine: New → Start → Running → Stop.
-// Accessors must retain last-known values after Stop (no reset to zero).
+// TestBridge_LifecycleContract pins that accessors keep their last values across New, Start and Stop.
 func TestBridge_LifecycleContract(t *testing.T) {
-	// Write a fake kiro-cli script that speaks minimal JSON-RPC.
 	script := `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -1119,7 +1023,7 @@ done
 
 	b := New(scriptPath, dir)
 
-	// Pre-start: all accessors return zero values.
+	// Pre-start: zero values.
 	if id := b.SessionID(); id != "" {
 		t.Errorf("pre-start SessionID = %q, want empty", id)
 	}
@@ -1130,11 +1034,8 @@ done
 		t.Errorf("pre-start CurrentMode = %q, want empty", m)
 	}
 
-	// Start: accessors populated.
-	// No Model is requested, so the session/new result is the only model source
-	// and "sonnet" is the value under test. A requested model would legitimately
-	// override it via session/set_config_option — see
-	// TestNewSession_AppliesRequestedModelAndEffort.
+	// No Model requested, so session/new's "sonnet" is the value under test
+	// (TestNewSession_AppliesRequestedModelAndEffort covers the override).
 	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -1154,7 +1055,7 @@ done
 		t.Errorf("post-start Models len = %d, want 1", len(models))
 	}
 
-	// Stop: accessors retain last-known values.
+	// After Stop: last values retained.
 	b.Stop()
 	if id := b.SessionID(); id != "lifecycle-001" {
 		t.Errorf("post-stop SessionID = %q, want lifecycle-001 (must not reset)", id)
@@ -1166,14 +1067,11 @@ done
 		t.Errorf("post-stop CurrentMode = %q, want agent (must not reset)", m)
 	}
 
-	// Double-Stop: no panic.
+	// Double Stop: no panic.
 	b.Stop()
 }
 
-// --- tarch-b7-c7-p5: RPC error classification table test ---
-
-// TestBridgeRPC_ErrorClassification verifies that Call classifies
-// JSON-RPC error codes into the correct sentinel/category.
+// TestBridgeRPC_ErrorClassification pins how Call maps JSON-RPC error codes to sentinels.
 func TestBridgeRPC_ErrorClassification(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1214,7 +1112,6 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 
 			waitPending(t, b, 1)
 
-			// Inject error response.
 			b.pendingMu.Lock()
 			var ch chan pendingReply
 			for _, v := range b.pending {
@@ -1256,14 +1153,8 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 }
 
 func BenchmarkBridgeRespond(b *testing.B) {
-	// A pipe-based writer (no real process), and its read end MUST be drained.
-	// This used to discard it (`_, pw, err := os.Pipe()`), so writeFrame filled
-	// the 64 KiB pipe buffer and blocked forever in os.(*File).Write —
-	// measured: the benchmark completes at -benchtime=10x and HANGS at 50x and
-	// above, so `go test -bench .` on this package never terminated. Nothing
-	// caught it because `go test` without -bench never runs a benchmark.
-	// Draining is also the faithful fixture: a real bridge's stdin is drained by
-	// kiro-cli.
+	// Drain the read end, as kiro-cli does: discarded, writeFrame filled the 64 KiB buffer and the benchmark hung at
+	// -benchtime=50x and above.
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		b.Fatalf("os.Pipe: %v", err)
@@ -1287,7 +1178,7 @@ func BenchmarkBridgeRespond(b *testing.B) {
 	br.stdin.Store(&stdinPipe{w: pw})
 
 	ctx := b.Context()
-	// Typical tool result payload (~500 bytes).
+	// A typical tool result, about 500 bytes.
 	result := map[string]any{
 		"content": strings.Repeat("x", 400),
 		"status":  "success",
@@ -1302,14 +1193,7 @@ func BenchmarkBridgeRespond(b *testing.B) {
 	}
 }
 
-// --- shared mutation-guard test doubles ---
-
-// logCapture is a slog.Handler that records emitted record messages so a
-// test can assert whether a particular log line was (or was not) produced
-// by the code under test.
-// captureWriter is an io.WriteCloser standing in for the bridge's stdin.
-// It records whether (and what) was written, and can be configured to
-// fail every Write with a sentinel error.
+// captureWriter stands in for the bridge's stdin, recording what was written, optionally failing every Write.
 type captureWriter struct {
 	failErr error
 	buf     bytes.Buffer
@@ -1335,9 +1219,7 @@ func (w *captureWriter) wrote() bool {
 	return w.writes > 0
 }
 
-// errReader yields the configured error on the first Read. A non-EOF error
-// surfaces from readFrame and is logged by logReadError; io.EOF terminates the
-// read loop as the ordinary teardown and logs nothing.
+// errReader yields its error on the first Read; non-EOF is logged by logReadError, io.EOF ends the loop quietly.
 type errReader struct{ failErr error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
@@ -1352,9 +1234,8 @@ func readLoopBridge(r io.Reader) *Bridge {
 	}
 }
 
-// readFrame drains one newline-delimited frame the bridge wrote to the pipe, so a test can
-// synchronize on the write itself rather than on a state the write only follows. Bounded: a
-// missing write fails with a diagnostic instead of hanging until the package timeout.
+// readFrame reads one frame the bridge wrote, so a test syncs on the write itself; bounded, failing with a
+// diagnostic.
 func readFrame(t *testing.T, pr *os.File) []byte {
 	t.Helper()
 	if err := pr.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
@@ -1367,9 +1248,7 @@ func readFrame(t *testing.T, pr *os.File) []byte {
 	return line
 }
 
-// waitPending polls until Call has registered at least n pending requests. An empty map
-// leaves ch nil and a send on a nil channel blocks forever, so a test injecting a response
-// too early fails as an unexplained "Call did not return" instead of naming the cause.
+// waitPending polls until Call has registered n pending requests; injecting earlier blocks on a nil channel.
 func waitPending(t *testing.T, b *Bridge, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -1387,7 +1266,7 @@ func waitPending(t *testing.T, b *Bridge, n int) {
 	}
 }
 
-// runLoadSession drives loadSession against an injected RPC response and returns its error.
+// runLoadSession drives loadSession against an injected response and returns its error.
 func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *marotte.RPCResponse) error {
 	t.Helper()
 	_, err := runLoadSessionOpts(t, b,
@@ -1395,10 +1274,8 @@ func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *marotte.RPCR
 	return err
 }
 
-// runNewSession drives newSession the way runLoadSessionOpts drives loadSession:
-// answers the session/new with resp, answers every follow-up repair with a bare
-// success, and returns every frame the bridge wrote so a test can assert what the
-// session door carried and what it did NOT have to send afterwards.
+// runNewSession drives newSession like runLoadSessionOpts: answers session/new with resp and every repair with
+// success, returning every frame written.
 func runNewSession(
 	t *testing.T, b *Bridge, opts *marotte.StartOpts, resp *marotte.RPCResponse,
 ) ([]byte, error) {
@@ -1408,9 +1285,7 @@ func runNewSession(
 	})
 }
 
-// runLoadSessionOpts is runLoadSession with the whole StartOpts in the test's
-// hands, returning every frame the bridge wrote so a test can assert WHICH
-// config options the post-load re-assert sent.
+// runLoadSessionOpts is runLoadSession with the whole StartOpts, returning every frame written.
 func runLoadSessionOpts(
 	t *testing.T, b *Bridge, opts *marotte.StartOpts, resp *marotte.RPCResponse,
 ) ([]byte, error) {
@@ -1420,14 +1295,9 @@ func runLoadSessionOpts(
 	})
 }
 
-// driveSessionCall runs one session-creating call against an injected first
-// response, answering every LATER request with a bare success and returning
-// everything the bridge wrote to stdin.
-//
-// The answer-everything half is load-bearing: neither verb makes exactly one call
-// any more (the chat's model and level are repaired against what the result
-// reported), and a helper that answers only the first one hangs the test with
-// "did not return" while naming nothing about the cause.
+// driveSessionCall runs one session-creating call against an injected first response, answers every later request
+// with success, and returns everything written. Both verbs make follow-up repair calls, so answering only the first
+// hangs.
 func driveSessionCall(
 	t *testing.T, b *Bridge, resp *marotte.RPCResponse, run func(context.Context) error,
 ) ([]byte, error) {
@@ -1463,10 +1333,7 @@ func driveSessionCall(
 		}
 		b.pendingMu.Unlock()
 		if ch != nil {
-			// Stamped with the bridge's own delivered count, exactly as dispatch
-			// stamps a real reply. A test that pre-sets deliveredSeq is then saying
-			// "this many notifications preceded the response on the wire", which is
-			// the position loadSession records.
+			// Stamped like dispatch: a preset deliveredSeq means that many notifications preceded the response.
 			ch <- pendingReply{resp: answer, seq: b.deliveredSeq}
 			answer = &marotte.RPCResponse{Result: json.RawMessage(`{}`)}
 			continue
@@ -1478,10 +1345,7 @@ func driveSessionCall(
 	}
 }
 
-// --- bridge_parse_err.go: parseErrTracker.Record ---
-
-// The burst-th Record() sets the window start; the next call falls inside
-// the window and is suppressed.
+// The burst-th Record sets the window start; the next call is inside the window and suppressed.
 func TestParseErrTracker_WindowStartSetAtBurst(t *testing.T) {
 	var tr parseErrTracker
 	var got parseErrAction
@@ -1493,8 +1357,6 @@ func TestParseErrTracker_WindowStartSetAtBurst(t *testing.T) {
 	}
 }
 
-// --- bridge_process.go: Stop ---
-
 // Stop must not dereference a nil Process (an unstarted command).
 func TestStop_SkipsKillWhenProcessNil(t *testing.T) {
 	b := New("cli", "work")
@@ -1505,8 +1367,7 @@ func TestStop_SkipsKillWhenProcessNil(t *testing.T) {
 	}
 }
 
-// Stop emits no "kill kiro-cli" error log when killing a live process
-// succeeds.
+// Stop logs no "kill kiro-cli" error when killing a live process succeeds.
 func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 	if _, err := exec.LookPath("sleep"); err != nil {
 		t.Skip("sleep binary not available")
@@ -1532,14 +1393,11 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 	}
 }
 
-// --- bridge_process.go: startProcess ---
-
-// startProcess reports a spawn failure rather than swallowing it.
+// startProcess reports a spawn failure.
 func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
-	// Not t.Context(): lifecycleCtx is what CommandContext binds the subprocess
-	// to, and it must outlive the t.Cleanup(b.Stop) teardown below.
+	// Not t.Context(): CommandContext binds the subprocess to lifecycleCtx, which must outlive t.Cleanup(b.Stop).
 	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
 	err := b.startProcess("")
@@ -1552,9 +1410,7 @@ func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
-	// Not t.Context(): lifecycleCtx is what CommandContext binds the subprocess
-	// to, and it must outlive the t.Cleanup(b.Stop) teardown below —
-	// t.Context() is already cancelled by the time cleanup funcs run.
+	// Not t.Context(), which is cancelled before cleanups run: lifecycleCtx must outlive t.Cleanup(b.Stop).
 	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
 	_ = b.startProcess("")
@@ -1566,10 +1422,7 @@ func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
 	}
 }
 
-// --- bridge_process.go: classifyStderrLevel ---
-
-// A structured JSON line maps to its declared level; an unknown or
-// missing level and plain text fall back to keyword classification.
+// A JSON line maps to its declared level; an unknown or missing level and plain text fall back to keywords.
 func TestClassifyStderrLevel(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1594,11 +1447,8 @@ func TestClassifyStderrLevel(t *testing.T) {
 	}
 }
 
-// --- bridge_process.go: matchesKeyword ---
-
-// matchesKeyword matches the keyword only at a real word boundary: a
-// preceding letter makes it a substring (no match); a non-letter before,
-// the string end, or a separator after, all count as boundaries.
+// matchesKeyword matches only at a word boundary: a preceding letter is a substring; a non-letter before, the end,
+// or a separator after are boundaries.
 func TestMatchesKeyword(t *testing.T) {
 	const kw = "error"
 	cases := []struct {
@@ -1625,8 +1475,7 @@ func TestMatchesKeyword(t *testing.T) {
 	}
 }
 
-// Each of '[', ']', ' ' and '=' is a word-boundary separator after the
-// keyword.
+// '[', ']', ' ' and '=' each end the keyword.
 func TestMatchesKeyword_SeparatorChain(t *testing.T) {
 	const kw = "error"
 	cases := []struct {
@@ -1648,15 +1497,8 @@ func TestMatchesKeyword_SeparatorChain(t *testing.T) {
 	}
 }
 
-// --- bridge_rpc.go: what a dying bridge says about the calls it stranded ---
-
-// The exit drain reports HOW MANY in-flight calls it answered, and stays quiet
-// when it answered none.
-//
-// The number is the difference between a bridge that exited idle and one that
-// stranded a turn, and it is otherwise unobtainable from the logs: session/prompt
-// carries no client-side deadline, so a wedged kiro-cli's whole on-the-wire
-// signature is one prompt line followed by silence.
+// The exit drain logs how many in-flight calls it answered, and nothing when none: session/prompt has no deadline,
+// so a wedged kiro-cli is otherwise one prompt line then silence.
 func TestDrainPendingAndClose_ReportsTheStrandedCalls(t *testing.T) {
 	t.Run("names the count", func(t *testing.T) {
 		c := capture.Default(t)
@@ -1685,10 +1527,7 @@ already computes is being discarded`)
 	})
 }
 
-// --- bridge_rpc.go: readLoop end-of-scan error log ---
-
-// readLoop logs "ACP read" on a real (non-EOF) scanner error and reaps
-// the bridge.
+// readLoop logs "ACP read" on a non-EOF scanner error and reaps the bridge.
 func TestReadLoop_LogsACPReadOnScanError(t *testing.T) {
 	c := capture.Default(t)
 	b := readLoopBridge(errReader{failErr: errors.New("read boom")})
@@ -1722,10 +1561,7 @@ func TestReadLoop_NoACPReadOnCleanEOF(t *testing.T) {
 	}
 }
 
-// --- bridge_rpc.go: Notify ---
-
-// Notify returns the context error and writes nothing when ctx is already
-// canceled.
+// Notify returns the context error and writes nothing when ctx is already canceled.
 func TestNotify_CanceledCtxReturnsErrNoWrite(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	w := &captureWriter{}
@@ -1757,8 +1593,7 @@ func TestNotify_GoodCtxValidParamsWritesFrame(t *testing.T) {
 	}
 }
 
-// Notify returns the marshal error and writes nothing for unmarshalable
-// params.
+// Notify returns the marshal error and writes nothing for unmarshalable params.
 func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	w := &captureWriter{}
@@ -1773,8 +1608,6 @@ func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
 	}
 }
 
-// --- bridge_rpc.go: writeFrame ---
-
 // writeFrame surfaces the underlying writer's error verbatim.
 func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 	sentinel := errors.New("write boom")
@@ -1788,9 +1621,7 @@ func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Errorf("writeFrame err = %v, want the underlying write error %v", err, sentinel)
 	}
-	// A plain write error is NOT a framing loss: nothing partial reached the
-	// scanner, and readLoop reaps on the EOF a dead peer produces. Reaping here
-	// would take a bridge down on a transient error the caller can retry.
+	// A plain write error is not a framing loss: nothing partial reached the scanner, and a dead peer's EOF reaps.
 	select {
 	case <-b.done:
 		t.Errorf("writeFrame reaped the bridge on a plain write error; only a partial frame is unrecoverable")
@@ -1798,11 +1629,8 @@ func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 	}
 }
 
-// shortenWriteDeadline replaces the shipped stdin write deadline for one test. The budget is
-// a package var for this reason and no other: driving the expiry through the SHIPPED value
-// means the assertion fails when the timer is removed, where a test arranging its own
-// deadline would pass with the deadline deleted. Nothing in production writes it, so a caller
-// must not run in parallel with anything that writes a frame.
+// shortenWriteDeadline replaces the shipped stdin write deadline for one test, so removing the timer fails the
+// assertion. Callers must not run in parallel with anything that writes a frame.
 func shortenWriteDeadline(t *testing.T, d time.Duration) {
 	t.Helper()
 	orig := writeDeadline
@@ -1810,9 +1638,7 @@ func shortenWriteDeadline(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { writeDeadline = orig })
 }
 
-// waitReaped polls until the bridge's done channel closes. Bounded, so a missing
-// reap reports rather than hanging: Stop runs asynchronously, because it waits on
-// cmd.Wait which is downstream of the read loop.
+// waitReaped polls until the bridge's done channel closes, bounded. Stop runs asynchronously behind cmd.Wait.
 func waitReaped(t *testing.T, b *Bridge, what string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -1829,18 +1655,14 @@ func waitReaped(t *testing.T, b *Bridge, what string) {
 	}
 }
 
-// TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining pins both halves of the write bound:
-// the write is bounded at all, and its expiry kills the bridge. The reap is the load-bearing
-// half — an expiry leaves a PARTIAL frame in kiro-cli's stdin scanner (measured: 65,536 of
-// 1,048,576 bytes on a 64 KiB pipe buffer), an unrecoverable desync, so a deadline that
-// returned an error and left the bridge running is worse than the stall it replaces.
+// TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining pins that the write is bounded and that expiry kills the
+// bridge: it leaves a partial frame (65,536 of 1,048,576 bytes on a 64 KiB pipe), an unrecoverable desync.
 func TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining(t *testing.T) {
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	// pr is deliberately NEVER drained: that is the wedge under test, a peer that
-	// keeps the read end open and stops reading.
+	// pr is never drained: the wedge under test.
 	t.Cleanup(func() {
 		_ = pw.Close()
 		_ = pr.Close()
@@ -1849,8 +1671,7 @@ func TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining(t *testing.T) {
 
 	b := New("/nonexistent", "/work")
 	b.stdin.Store(&stdinPipe{w: pw})
-	// Larger than the pipe buffer, so the write cannot complete however long it
-	// waits.
+	// Larger than the pipe buffer, so the write cannot complete.
 	err = b.writeFrame(make([]byte, 256*1024))
 	if !errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("writeFrame against an undrained pipe err = %v, want %v; the write is unbounded",
@@ -1859,17 +1680,13 @@ func TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining(t *testing.T) {
 	waitReaped(t, b, "a write deadline expired, leaving a partial frame on the wire")
 }
 
-// shortWriter reports fewer bytes than it was given with a nil error, which
-// io.Writer's contract permits on some pipe edge conditions and which leaves the
-// same partial frame a deadline expiry does.
+// shortWriter reports fewer bytes than given with a nil error, which io.Writer permits, leaving a partial frame.
 type shortWriter struct{}
 
 func (shortWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
 func (shortWriter) Close() error                { return nil }
 
-// TestWriteFrame_ReapsTheBridgeOnAShortWrite pins that the short-write branch
-// reaps too. It detected the desync and then left the bridge running, which is the
-// same unrecoverable state a deadline expiry produces by a different route.
+// TestWriteFrame_ReapsTheBridgeOnAShortWrite pins that a short write reaps too.
 func TestWriteFrame_ReapsTheBridgeOnAShortWrite(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.stdin.Store(&stdinPipe{w: shortWriter{}})
@@ -1880,14 +1697,8 @@ func TestWriteFrame_ReapsTheBridgeOnAShortWrite(t *testing.T) {
 	waitReaped(t, b, "a short write left a partial frame on the wire")
 }
 
-// TestWriteFrame_WritesThroughAWriterWithNoDeadline pins that the deadline is
-// applied only where the writer supports one.
-//
-// cmd.StdinPipe returns an *os.File, which does; the package's own fixtures are a
-// bytes.Buffer and an error injector, which do not. An unconditional
-// SetWriteDeadline call would make every one of them a compile-time or runtime
-// failure, so the interface check is what keeps the production path bounded
-// without the fixtures having to impersonate a file.
+// TestWriteFrame_WritesThroughAWriterWithNoDeadline pins that the deadline applies only where the writer supports
+// one; the fixtures are not files.
 func TestWriteFrame_WritesThroughAWriterWithNoDeadline(t *testing.T) {
 	shortenWriteDeadline(t, time.Nanosecond)
 	w := &captureWriter{}
@@ -1902,16 +1713,8 @@ func TestWriteFrame_WritesThroughAWriterWithNoDeadline(t *testing.T) {
 	}
 }
 
-// --- bridge_session.go: the session/new door ---
-
-// session/new carries the chat's model and reasoning-effort level inside
-// _meta.kiro, so the session is created already correct.
-//
-// This is not only two saved round trips. The `auto` model KAS starts a session on
-// has NO effort tiers, so a level sent afterwards was silently dropped (probed on
-// 2.19.1: success, no effortLevel option, `effortLevel: null` persisted), and
-// KAS's own first-prompt model pin then applied that model's DEFAULT tier. Choosing
-// the model before the session exists closes that window.
+// session/new carries the chat's model and effort level in _meta.kiro. KAS starts on `auto`, which has no tiers, so a
+// level set later is dropped (2.19.1) and the first prompt runs the default tier.
 func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
@@ -1931,20 +1734,18 @@ func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 			t.Errorf("session/new params carry no %s; the frame was:\n%s", want, first)
 		}
 	}
-	// And nothing follows: the result reported both back, so each repair sees a
-	// match. A second frame here would be a round trip the door already paid for.
+	// Nothing follows: the result reported both, so neither repair sends.
 	if _, rest, found := bytes.Cut(sent, []byte("\n")); found && len(bytes.TrimSpace(rest)) != 0 {
 		t.Errorf("session/new made follow-up calls after the door reported a match:\n%s", rest)
 	}
 }
 
-// A build that ignores the meta keys still converges: the repair sees the result
-// reporting a different level and sends it.
+// A build that ignores the meta keys still converges through the repair.
 func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
 		&marotte.StartOpts{Effort: "max"},
-		// The session came back at the model's default rather than at max.
+		// The session came back at the model's default, not max.
 		&marotte.RPCResponse{Result: json.RawMessage(
 			`{"sessionId":"acp-session-xyz","configOptions":[{"id":"effortLevel","currentValue":"high","options":[{"value":"high"},{"value":"max"}]}]}`,
 		)})
@@ -1958,9 +1759,8 @@ func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
 	}
 }
 
-// A malformed level never reaches the session door, for the same reason SetEffort
-// drops one: config.json is user-editable. Shape only — an unknown-but-well-formed
-// tier flows, because the vocabulary is per model and KAS's to judge.
+// A malformed level never reaches the door (config.json is user-editable). Shape only: a well-formed unknown tier
+// flows.
 func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
@@ -1974,9 +1774,8 @@ func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
 	}
 }
 
-// A well-formed tier marotte's own constants do not name still reaches the door:
-// gpt-luna ships a "none" tier, and a closed local set rejecting it is the bug
-// (the catalog is upstream-owned, so a model shipped after this build must work).
+// A well-formed tier marotte does not name still reaches the door: gpt-luna ships "none", and the catalog is
+// upstream's.
 func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
@@ -1990,10 +1789,7 @@ func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
 	}
 }
 
-// --- bridge_session.go: loadSession ---
-
-// loadSession applies a well-formed result (the parsed model, not the
-// fallback).
+// loadSession applies a well-formed result: the parsed model, not the fallback.
 func TestLoadSession_AppliesParsedResult(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{
@@ -2007,18 +1803,11 @@ func TestLoadSession_AppliesParsedResult(t *testing.T) {
 	}
 }
 
-// loadSession records the read-loop POSITION its response arrived at, and that is
-// the only thing a consumer can order a replay against.
-//
-// KAS answers a load by replaying the session as notifications that precede the
-// result on the wire, so the result's own arrival says nothing about how far the
-// consumer has folded. Recording 0 here — or reading the position off the bridge
-// afterwards instead of off the reply — would make the consumer's completion
-// condition trivially true and adopt a partial transcript.
+// loadSession records the read-loop position of its response, the only thing a replay can be ordered against. 0,
+// or a position read afterwards, would make completion trivially true and adopt a partial transcript.
 func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	// Seven replay frames delivered before the result, which is what a real
-	// session/load of a short transcript looks like.
+	// Seven replay frames before the result, as a short transcript's load.
 	b.deliveredSeq = 7
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
@@ -2029,8 +1818,7 @@ func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
 	}
 }
 
-// A session/new leaves the load position at zero: there is no replay to bound, so
-// a consumer must not be handed a number that looks like one.
+// session/new leaves the load position at zero: there is no replay.
 func TestNewSession_LeavesTheLoadPositionUnset(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.deliveredSeq = 7
@@ -2043,7 +1831,7 @@ func TestNewSession_LeavesTheLoadPositionUnset(t *testing.T) {
 	}
 }
 
-// loadSession warns and falls back when the result can't be parsed.
+// loadSession warns and falls back when the result cannot be parsed.
 func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 	c := capture.Default(t)
 	b := New("/nonexistent", "/work")
@@ -2056,11 +1844,7 @@ func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 	}
 }
 
-// loadSession with an unparseable result must fill an empty model from
-// the provided fallback. The `b.modelID == ""` gate in loadSession is
-// what applies the fallback on the parse-failure path;
-// TestLoadSession_WarnsOnUnparseableResult only checks the warn log, so
-// this pins the model that actually ends up applied.
+// An unparseable result fills an empty model from the fallback (the `b.modelID == ""` gate).
 func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
@@ -2072,21 +1856,14 @@ func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	}
 }
 
-// A session that resolves settings.workflows against what marotte declared says
-// so in the log, because nothing else would.
-//
-// The session door works only because KiroSessionMetaSchema ends in
-// `.passthrough()`, which is somebody else's schema property. If it goes, marotte
-// keeps sending the key and every send-side test keeps passing while the agent
-// loses its whole workflowChatTools array with no error and no -32601 — the exact
-// defect the workflows row exists to fix, recurring with no signal.
+// A session resolving settings.workflows against marotte's declaration is logged. The door depends on
+// KiroSessionMetaSchema's `.passthrough()`; if that goes, the agent silently loses workflowChatTools.
 func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 	for name, tc := range map[string]struct {
 		result   string
 		wantWarn bool
 	}{
-		// The declared value is true by default (the row is send:true with no env
-		// override set), so a resolved false is the failure.
+		// Workflows is declared on, so a resolved false is the failure.
 		"resolved false against a declared true": {
 			result:   `{"sessionId":"s","_meta":{"workflowsEnabled":false}}`,
 			wantWarn: true,
@@ -2095,8 +1872,7 @@ func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 			result:   `{"sessionId":"s","_meta":{"workflowsEnabled":true}}`,
 			wantWarn: false,
 		},
-		// A build that does not report the member says nothing about it, and a
-		// warning there would fire on every session against every older KAS.
+		// An absent member says nothing; warning would fire against every older KAS.
 		"an absent member is not a disagreement": {
 			result:   `{"sessionId":"s","_meta":{}}`,
 			wantWarn: false,
@@ -2105,6 +1881,7 @@ func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			c := capture.Default(t)
 			b := New("/nonexistent", "/work")
+			b.features.Workflows = true
 			if err := runLoadSession(t, b, "fb-model",
 				&marotte.RPCResponse{Result: json.RawMessage(tc.result)}); err != nil {
 				t.Fatalf("loadSession returned error: %v", err)
@@ -2118,17 +1895,13 @@ func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 	}
 }
 
-// A load result that omits the `model` option leaves the previous catalog standing, and so
-// does one that omits the `modes` block. This is the common case: KAS resolves
-// ListAvailableModels asynchronously, so a session/load result routinely carries `mode`,
-// `autopilot` and `contentCollection` with `model` ABSENT and the catalog arrives on the
-// config_option_update notification afterwards (measured on kiro-cli 2.20.0); an EXPIRED
-// auth token produces the same shape. The keep is implemented by `continue`ing past every
-// other option id and never reaching the body, which a refactor removes without noticing.
+// A load result omitting the `model` option or the `modes` block keeps the previous catalog. Common: KAS resolves
+// models asynchronously, so the catalog arrives later on config_option_update (kiro-cli 2.20.0), and an expired
+// token gives the same shape. The keep rests on a `continue` a refactor could drop.
 func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 	b := New("/nonexistent", "/work")
 
-	// Seed the catalog the way a live session does, then resume.
+	// Seed the catalog as a live session does, then resume.
 	seeded := &marotte.RPCResponse{
 		Result: json.RawMessage(`{"sessionId":"acp-session-xyz",` +
 			`"modes":{"currentModeId":"vibe","availableModes":[{"id":"vibe","name":"Default"}]},` +
@@ -2143,17 +1916,14 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 		t.Fatalf("seed did not take: models=%v catalog=%v modes=%v", b.Models(), b.Catalog(), b.Modes())
 	}
 
-	// Two resume shapes, because ABSENT and PRESENT-BUT-EMPTY are guarded by
-	// different code and only the first is reachable by deleting a gate: the
-	// modes block is guarded by `r.Modes != nil` when it is missing and by the
-	// length check when it arrives empty.
+	// Absent and empty are guarded by different code: `r.Modes != nil` and the length check.
 	for name, result := range map[string]string{
-		// The measured 2.20.0 shape: three options, `model` absent, no modes block.
+		// The measured 2.20.0 shape: three options, no `model`, no modes block.
 		"no block at all": `{"sessionId":"acp-session-xyz","configOptions":[` +
 			`{"id":"mode","currentValue":"vibe"},` +
 			`{"id":"autopilot","currentValue":"on"},` +
 			`{"id":"contentCollection","currentValue":"on"}]}`,
-		// A block that reports no catalog rather than an empty catalog.
+		// A block reporting no catalog rather than an empty one.
 		"empty block": `{"sessionId":"acp-session-xyz",` +
 			`"modes":{"currentModeId":"vibe","availableModes":[]},` +
 			`"configOptions":[{"id":"model","currentValue":"seeded-model","options":[]}]}`,
@@ -2178,12 +1948,8 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 	}
 }
 
-// A resumed session gets the chat's reasoning-effort level re-applied.
-//
-// Nothing reconciles Chat.Effort against what a loaded session reports (unlike
-// the mode and the model, which tryLoadSession copies back onto the record), so
-// without this a chat at max resumed at whatever level KAS had while the record
-// and the pill both still read max.
+// A resume re-applies the chat's effort: nothing reconciles Chat.Effort, so a max chat resumed at KAS's level while
+// the pill said max.
 func TestLoadSession_ReAppliesTheChatsEffort(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
@@ -2202,8 +1968,7 @@ func TestLoadSession_ReAppliesTheChatsEffort(t *testing.T) {
 	}
 }
 
-// A chat that has chosen no level costs a resume nothing: no effort option is
-// sent, so an ordinary reopen is one round trip as before.
+// A chat with no level sends no effort option on resume.
 func TestLoadSession_SendsNoEffortWhenTheChatChoseNone(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
@@ -2219,11 +1984,7 @@ func TestLoadSession_SendsNoEffortWhenTheChatChoseNone(t *testing.T) {
 	}
 }
 
-// --- bridge.go: EnsureEffort ---
-
-// A malformed level never reaches the wire: config.json is user-editable, so the
-// shape guard is at the one door every effort call goes through. Well-formed
-// tiers flow whatever their name — the vocabulary is per model and KAS's.
+// A malformed level never reaches the wire (config.json is user-editable); well-formed tiers flow whatever their name.
 func TestEnsureEffort_DropsAMalformedLevel(t *testing.T) {
 	for _, level := range []string{"", "HIGH", "max ", "9max"} {
 		t.Run(level, func(t *testing.T) {
@@ -2240,8 +2001,7 @@ func TestEnsureEffort_DropsAMalformedLevel(t *testing.T) {
 	}
 }
 
-// A level the session already reports costs no round trip, which is what lets the
-// prompt path call this per prompt.
+// A level the session already reports costs no round trip, so the prompt path can call this per prompt.
 func TestEnsureEffort_SkipsTheLevelTheSessionReports(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.mu.Lock()
@@ -2258,10 +2018,8 @@ func TestEnsureEffort_SkipsTheLevelTheSessionReports(t *testing.T) {
 	}
 }
 
-// A model swap invalidates the cached level, so the next EnsureEffort asserts
-// instead of matching a level KAS may have replaced. Measured on 2.19.1: a swap to
-// a model offering the same tiers keeps the level, a swap to `auto` destroys it,
-// and the bridge sees neither outcome.
+// A model swap clears the cached level so the next EnsureEffort asserts. On 2.19.1 a same-tier swap keeps it, a
+// swap to `auto` drops it, and the bridge sees neither.
 func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.mu.Lock()
@@ -2285,14 +2043,8 @@ func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
 	}
 }
 
-// ObserveEffort is the OTHER channel the session reports its level on, and
-// without it the differs-only comparison becomes a refusal to repair.
-//
-// The fixture is the live defect: the session door asked for max and the result
-// agreed, so the cache says max; then KAS's own first-prompt model pin moves the
-// session to high and announces it only on the config_option_update notification,
-// which this bridge forwards unread. Comparing max against max, EnsureEffort skips
-// the very call that would put the level back.
+// ObserveEffort is the other channel the level is reported on. Here the door asked max and got it, then KAS's
+// first-prompt pin moved the session to high on config_option_update; comparing max to max skipped the repair.
 func TestObserveEffort_MakesTheNextEnsureAssert(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.mu.Lock()
@@ -2311,10 +2063,7 @@ func TestObserveEffort_MakesTheNextEnsureAssert(t *testing.T) {
 	}
 }
 
-// An ABSENT report leaves the previous value standing, matching
-// applyEffortConfigOptionLocked: KAS omits the option for a model with no tiers,
-// and "unknown" must not read as "empty" or the next repair would assert against
-// nothing.
+// An absent report keeps the previous value, matching applyEffortConfigOptionLocked.
 func TestObserveEffort_IgnoresAnEmptyReport(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.mu.Lock()
@@ -2331,17 +2080,11 @@ func TestObserveEffort_IgnoresAnEmptyReport(t *testing.T) {
 	}
 }
 
-// TestInitialize_HooksCapabilityOptIn verifies that StartOpts.EnableHooks
-// controls the _meta.kiro.hooks opt-in in the initialize handshake. When true
-// the bridge declares {enabled:true,v2:true} so KAS's v2 hook engine autofires
-// the workspace's .kiro/hooks/*.json hooks during a turn (chat bridges set this
-// in agent/bridge_coord.go; KAS then loads and runs the hooks internally, with no
-// executeHook callback to the client). When false (the zero value) the opt-in
-// is omitted, while the always-on openExternalUrl + infrastructureSafety kiro
-// capabilities are still declared either way.
+// TestInitialize_HooksCapabilityOptIn pins that StartOpts.EnableHooks controls _meta.kiro.hooks: true declares
+// {enabled:true,v2:true} so KAS autofires .kiro/hooks/*.json itself; false omits it. openExternalUrl and
+// infrastructureSafety are declared either way.
 func TestInitialize_HooksCapabilityOptIn(t *testing.T) {
-	// Fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE
-	// so the test can assert on the exact clientCapabilities marotte sent.
+	// A fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE.
 	script := `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -2373,10 +2116,7 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		// Knowledge on, because this test asserts the base capabilities survive the
-		// hooks gate and both knowledge keys are gated on their own field now. The
-		// key still has to appear with a true for the per-key loop below to be
-		// checking anything.
+		// Knowledge on, so the per-key loop below has a true to check.
 		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks, Knowledge: true}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
@@ -2396,26 +2136,16 @@ done
 		if !strings.Contains(got, `"openExternalUrl":true`) || !strings.Contains(got, `"infrastructureSafety":true`) {
 			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
 		}
-		// Each settings key is asserted INDEPENDENTLY rather than as one exact
-		// `"settings":{...}` substring: Go marshals map keys sorted so an exact match
-		// breaks whenever a key is added, the exact form is what hid two MISSING keys,
-		// and each key gates a different KAS subsystem so a per-key assertion says
-		// which one broke. All are read with an absent-key-means-false resolver, so
-		// dropping one costs a whole capability with nothing in any log to say so.
-		// `workflows` is deliberately absent: KAS resolves it per session, so it moved
-		// to the session door and has its own fixture there.
+		// Each settings key is asserted separately: an exact substring breaks on additions and once hid two missing keys,
+		// and each key gates a different KAS subsystem, silently when absent. `workflows` is per session and lives on the
+		// session door.
 		for _, key := range []string{"codeIntelligence", "knowledge", "subagentOrchestration", "goal"} {
 			if !strings.Contains(got, `"`+key+`":{"enabled":true}`) {
 				t.Errorf("initialize missing the %s settings opt-in; got: %s", key, got)
 			}
 		}
-		// Both flags are read by KAS with a strict `=== true` against the TOP
-		// level of _meta.kiro, and both fail SILENTLY when absent: without
-		// backgroundProcesses the agent simply has no control_bash_process /
-		// list_processes / get_process_output tool (probed: it answers "no such
-		// tool" instead of erroring), and without knowledge the system prompt
-		// carries no knowledge-base listing. Nesting either one or dropping it
-		// costs the capability with nothing in any log to say so.
+		// KAS reads both flags with a strict `=== true` at _meta.kiro's top level and fails silently: without
+		// backgroundProcesses the process tools vanish, without knowledge the prompt lists no knowledge base.
 		if !strings.Contains(got, `"backgroundProcesses":true`) {
 			t.Errorf("initialize missing the background-process opt-in; got: %s", got)
 		}
@@ -2435,22 +2165,8 @@ done
 	})
 }
 
-// --- The session door ---
-
-// envAgentWorkflows is the operator off switch for the workflows capability,
-// declared in internal/kascap/table.go. Named here as a literal because the
-// declaration is unexported and this package must not widen kascap's surface to
-// reach it. Every test below pins it EMPTY, which envx reads as unset: without
-// that the assertions depend on the ambient environment, and a machine carrying
-// the variable would fail them for a reason the diff does not show.
-const envAgentWorkflows = "MAROTTE_AGENT_WORKFLOWS"
-
-// sessionDoorScript is a fake kiro-cli that appends EVERY request to
-// $RPC_CAPTURE, one JSON line each, so a test can pick out the session call
-// rather than matching anywhere in the stream. That distinction is the point:
-// initialize carries an _meta.kiro block of its own, so a substring search over
-// the whole capture would pass on the connection door's payload and prove
-// nothing about the session door.
+// sessionDoorScript is a fake kiro-cli that appends every request to $RPC_CAPTURE, one JSON line each, so a test
+// inspects the session call itself: initialize carries its own _meta.kiro.
 const sessionDoorScript = `#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$RPC_CAPTURE"
@@ -2470,11 +2186,8 @@ while IFS= read -r line; do
 done
 `
 
-// captureRequest starts a bridge against sessionDoorScript and returns the raw request line
-// for one method, failing rather than returning empty on a miss: "the call did not happen"
-// and "the call carried nothing" are different defects. alsoContains narrows the match for a
-// method one start sends more than once — session/set_config_option carries the model, the
-// effort level and autopilot on the same method name, so a caller names the configId too.
+// captureRequest starts a bridge against sessionDoorScript and returns one method's raw request line, failing on a
+// miss. alsoContains narrows a repeated method (set_config_option carries model, effort and autopilot).
 func captureRequest(t *testing.T, method string, opts *marotte.StartOpts, alsoContains ...string) string {
 	t.Helper()
 	data := captureRequests(t, opts)
@@ -2495,9 +2208,7 @@ func captureRequest(t *testing.T, method string, opts *marotte.StartOpts, alsoCo
 	return ""
 }
 
-// captureRequests is captureRequest's whole capture, for an assertion about a call the
-// start must NOT make: captureRequest fails on a miss, which is right for "the call
-// carried the wrong shape" and cannot express "the call did not happen".
+// captureRequests returns the whole capture, for asserting a call the start must not make.
 func captureRequests(t *testing.T, opts *marotte.StartOpts) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -2506,7 +2217,6 @@ func captureRequests(t *testing.T, opts *marotte.StartOpts) string {
 		t.Fatalf("write fake script: %v", err)
 	}
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv(envAgentWorkflows, "")
 	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
 	t.Setenv("RPC_CAPTURE", capturePath)
 
@@ -2523,11 +2233,8 @@ func captureRequests(t *testing.T, opts *marotte.StartOpts) string {
 	return string(data)
 }
 
-// digObject walks a captured request down a chain of nested objects, failing at the first
-// level that is absent or not an object. A walk rather than a substring match, because the
-// failure this guards is a key nested at the wrong depth: `settings` beside `kiro` instead of
-// inside it satisfies a strings.Contains and resolves to nothing on the KAS side. Each
-// missing level is named, and `what` names the subject.
+// digObject walks a captured request down nested objects, failing at the first absent level: a key at the wrong
+// depth passes strings.Contains and resolves to nothing in KAS.
 func digObject(t *testing.T, what, line string, levels ...string) map[string]any {
 	t.Helper()
 	var req map[string]any
@@ -2546,46 +2253,38 @@ func digObject(t *testing.T, what, line string, levels ...string) map[string]any
 	return node
 }
 
-// metaKiroSettings digs _meta.kiro.settings out of a captured SESSION request.
+// metaKiroSettings digs _meta.kiro.settings out of a captured session request.
 func metaKiroSettings(t *testing.T, line string) map[string]any {
 	t.Helper()
 	return digObject(t, "the session door's block", line, "params", "_meta", "kiro", "settings")
 }
 
-// TestSessionNewCarriesWorkflowsAtSessionDoor pins that session/new carries the workflows
-// settings opt-in at the exact depth KAS reads it from. KAS resolves this key ONLY per
-// session — createNewSessionState calls resolveWorkflows over the call's own _meta, with no
-// connection-level fallback — so while it rode initialize it resolved absent-to-false on
-// every session and the agent had no run_workflow, inspect_workflow, update_workflow,
-// validate_workflow or send_message tool. Nothing logged it and no method 404'd.
+// TestSessionNewCarriesWorkflowsAtSessionDoor pins the workflows opt-in on session/new at KAS's depth. KAS resolves
+// it only per session, so on initialize it resolved false and the workflow tools silently vanished.
 func TestSessionNewCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/new", &marotte.StartOpts{Lifetime: t.Context(), Model: "m"})
+	line := captureRequest(t, "session/new", &marotte.StartOpts{
+		Lifetime: t.Context(), Model: "m", Features: marotte.AgentFeatures{Workflows: true},
+	})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
-		t.Fatalf(`session/new carried no workflows settings entry (%T). If %s is set to a false
-value in this environment that is the cause; otherwise the row left the session
+		t.Fatalf(`session/new carried no workflows settings entry (%T); the row left the session
 door. Captured:
-%s`, settings["workflows"], envAgentWorkflows, line)
+%s`, settings["workflows"], line)
 	}
-	// The object, not a bare true: isSettingEnabled returns val.enabled for an
-	// object and false for everything else, so `workflows: true` reads as
-	// DISABLED and looks correct in a diff.
+	// An object: isSettingEnabled reads val.enabled, so `workflows: true` reads as disabled.
 	if got["enabled"] != true {
 		t.Errorf("session/new sent workflows=%v, want {\"enabled\":true}", got)
 	}
 }
 
-// TestSessionLoadCarriesWorkflowsAtSessionDoor pins the same key on session/load.
-//
-// Not a duplicate of the test above. KAS resolves a session key from the call's
-// own _meta first and falls back to what the session persisted when it was
-// CREATED, so every session created before this row existed carries
-// workflowsEnabled false on disk. Sending it only on session/new would mean a
-// fresh chat has the workflow tools and a resumed one silently does not, which is
-// the worst shape of the two: it looks like the fix landed.
+// TestSessionLoadCarriesWorkflowsAtSessionDoor pins the same key on session/load: KAS falls back to the value
+// persisted at creation, so a new-only key leaves resumed chats without the tools.
 func TestSessionLoadCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/load", &marotte.StartOpts{Lifetime: t.Context(), Model: "m", SessionID: "sess_resume_door"})
+	line := captureRequest(t, "session/load", &marotte.StartOpts{
+		Lifetime: t.Context(), Model: "m", SessionID: "sess_resume_door",
+		Features: marotte.AgentFeatures{Workflows: true},
+	})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
@@ -2598,81 +2297,131 @@ lose a capability a fresh one has. Captured:
 	}
 }
 
-// TestSessionDoorOmitsSettingsWhenDisabled pins two properties of the session door on the
-// REAL wire: the operator off switch reaches these bytes rather than only the projection its
-// own package tests, and the settings container is DERIVED from the rows rather than always
-// emitted — with workflows off there is no session-door settings row left, so the container
-// must be absent, not `{}`. It supplies a policyPreset below to keep a second row present,
-// which is what makes the assertions a statement about the OVERRIDE's blast radius rather
-// than about a door that happens to be empty.
-func TestSessionDoorOmitsSettingsWhenDisabled(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "fake-kiro-cli")
-	if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
-		t.Fatalf("write fake script: %v", err)
-	}
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv(envAgentWorkflows, "false")
-	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
-	t.Setenv("RPC_CAPTURE", capturePath)
-
-	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &marotte.StartOpts{
-		Lifetime: t.Context(), Model: "m",
-		// A non-empty set so the policyPreset row rides. Without it the door
-		// carries only workflows, the env override empties the whole projection,
-		// and the assertion below would pass for the wrong reason.
-		Presets: []string{"read-workspace"},
-	}); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	b.Stop()
-
-	data, err := os.ReadFile(capturePath)
-	if err != nil {
-		t.Fatalf("read rpc capture: %v", err)
-	}
-	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
-		if !strings.Contains(line, `"method":"session/new"`) {
-			continue
+// TestSessionDoorCarriesDisableAutoCompaction pins StartOpts.DisableAutoCompaction on both verbs in both states, and
+// that the bridge reports what it sent.
+func TestSessionDoorCarriesDisableAutoCompaction(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		for _, disabled := range []bool{false, true} {
+			opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m", DisableAutoCompaction: disabled}
+			if method == "session/load" {
+				opts.SessionID = "sess_resume_door"
+			}
+			settings := metaKiroSettings(t, captureRequest(t, method, opts))
+			got, ok := settings["disableAutoCompaction"].(map[string]any)
+			if !ok || got["enabled"] != disabled {
+				t.Errorf("%s with DisableAutoCompaction=%v sent disableAutoCompaction=%v, want {\"enabled\":%v}",
+					method, disabled, settings["disableAutoCompaction"], disabled)
+			}
 		}
-		// The env override reached the wire: no workflows key anywhere in the
-		// request. Asserted on the raw line rather than the parsed settings
-		// object, because the object is what must be ABSENT.
-		if strings.Contains(line, `"workflows"`) {
-			t.Errorf("session/new carried a workflows key with the override set to false:\n%s", line)
-		}
-		// The container is derived, so with its last member gone it must not
-		// appear at all.
-		if strings.Contains(line, `"settings"`) {
-			t.Errorf(`session/new carried an empty settings container with its only
-session-door member disabled; buildDoor adds the key only when a row landed in
-it, so this is bytes on every session start that read as a door carrying
-something:
-%s`, line)
-		}
-		// The preset row still rides, which is what makes the two
-		// assertions above a statement about the OVERRIDE rather than about the
-		// door being empty.
-		if !strings.Contains(line, `"policyPreset"`) {
-			t.Errorf(`session/new lost policyPreset when the workflows override was set to
-false. The override is per-row; if it can empty the whole door, a custom-agent
-chat silently loses every search result on a deployment that set it, and every
-security profile stops reaching the session:
-%s`, line)
-		}
-		return
 	}
-	t.Fatalf("no session/new request in the capture; got:\n%s", data)
 }
 
-// --- supervised mode: the autopilot config-option VALUE ---
+func TestAutoCompactionDisabled_ReportsTheSentValue(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		dir := t.TempDir()
+		scriptPath := filepath.Join(dir, "fake-kiro-cli")
+		if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
+			t.Fatalf("write fake script: %v", err)
+		}
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("RPC_CAPTURE", filepath.Join(t.TempDir(), "rpc.jsonl"))
+		b := New(scriptPath, dir)
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", DisableAutoCompaction: disabled}); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if got := b.AutoCompactionDisabled(); got != disabled {
+			t.Errorf("AutoCompactionDisabled() after Start(DisableAutoCompaction=%v) = %v", disabled, got)
+		}
+		b.Stop()
+	}
+}
 
-// TestApplySupervised_SendsTheStringKASDeclares pins that autopilot travels as the string
-// KAS's select declares. A boolean is REFUSED: probed on the pinned kiro-cli 2.20.0,
-// {"configId":"autopilot","value":false} answers -32602 Invalid params and the session stays
-// in autopilot, so a supervised chat ran every turn without asking. Asserted on the captured
-// bytes, because `false` and `"off"` are both a legal map value.
+// TestSessionDoorWorkflowsFollowsTheSetting pins the Workflows setting on both verbs; off is sent as
+// {"enabled":false}, since on load an absent key keeps the persisted value.
+func TestSessionDoorWorkflowsFollowsTheSetting(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		for _, on := range []bool{false, true} {
+			opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m", Features: marotte.AgentFeatures{Workflows: on}}
+			if method == "session/load" {
+				opts.SessionID = "sess_resume_door"
+			}
+			settings := metaKiroSettings(t, captureRequest(t, method, opts))
+			got, ok := settings["workflows"].(map[string]any)
+			if !ok || got["enabled"] != on {
+				t.Errorf("%s with Workflows=%v sent workflows=%v, want {\"enabled\":%v}",
+					method, on, settings["workflows"], on)
+			}
+		}
+	}
+}
+
+// TestSessionDoorCarriesBackgroundExecution pins settings.backgroundExecution as {"enabled":true} on both verbs.
+func TestSessionDoorCarriesBackgroundExecution(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}
+		if method == "session/load" {
+			opts.SessionID = "sess_resume_door"
+		}
+		settings := metaKiroSettings(t, captureRequest(t, method, opts))
+		got, ok := settings["backgroundExecution"].(map[string]any)
+		if !ok || got["enabled"] != true {
+			t.Errorf("%s sent backgroundExecution=%v, want {\"enabled\":true}", method, settings["backgroundExecution"])
+		}
+	}
+}
+
+// TestSessionVerbs_CarryClientSteering pins client steering on both verbs inside the door's _meta.kiro: KAS
+// persists none of it.
+func TestSessionVerbs_CarryClientSteering(t *testing.T) {
+	doc := marotte.ClientSteeringDoc{Name: "marotte", Inclusion: "always", Content: "probe"}
+	for _, method := range []string{"session/new", "session/load"} {
+		opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m", Steering: []marotte.ClientSteeringDoc{doc}}
+		if method == "session/load" {
+			opts.SessionID = "sess_resume_door"
+		}
+		line := captureRequest(t, method, opts)
+		kiro := digObject(t, "the session door", line, "params", "_meta", "kiro")
+		docs, ok := kiro["steering"].([]any)
+		if !ok || len(docs) != 1 {
+			t.Fatalf("%s carried steering=%v, want one doc:\n%s", method, kiro["steering"], line)
+		}
+		got, _ := docs[0].(map[string]any)
+		if got["name"] != "marotte" || got["inclusion"] != "always" || got["content"] != "probe" {
+			t.Errorf("%s steering[0] = %v, want the marotte doc", method, got)
+		}
+		if _, ok := kiro["settings"].(map[string]any); !ok {
+			t.Errorf("%s lost the door's settings beside the steering:\n%s", method, line)
+		}
+	}
+}
+
+// TestSessionVerbs_NoSteeringSendsNoKey pins that a bridge without client steering sends no key, not [].
+func TestSessionVerbs_NoSteeringSendsNoKey(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}
+		if method == "session/load" {
+			opts.SessionID = "sess_resume_door"
+		}
+		line := captureRequest(t, method, opts)
+		if strings.Contains(line, `"steering"`) {
+			t.Errorf("%s carried a steering key with none set:\n%s", method, line)
+		}
+	}
+}
+
+// TestSessionDoor_ShellTypeMatchesTheResponder pins the door's shellType to the shell_type responder's answer.
+func TestSessionDoor_ShellTypeMatchesTheResponder(t *testing.T) {
+	if got := kascap.SessionMeta(&kascap.Spawn{})["shellType"]; got != marotte.HostShellType {
+		t.Errorf("session door shellType = %v, want marotte.HostShellType %q", got, marotte.HostShellType)
+	}
+	line := captureRequest(t, "session/new", &marotte.StartOpts{Lifetime: t.Context(), Model: "m"})
+	if kiro := digObject(t, "the session door", line, "params", "_meta", "kiro"); kiro["shellType"] != marotte.HostShellType {
+		t.Errorf("session/new shellType = %v, want %q", kiro["shellType"], marotte.HostShellType)
+	}
+}
+
+// TestApplySupervised_SendsTheStringKASDeclares pins autopilot as the declared string. On kiro-cli 2.20.0 a boolean
+// gets -32602 and the session stays in autopilot. Asserted on bytes.
 func TestApplySupervised_SendsTheStringKASDeclares(t *testing.T) {
 	line := captureRequest(t, "session/set_config_option",
 		&marotte.StartOpts{Lifetime: t.Context(), Model: "m", Supervised: true},
@@ -2682,9 +2431,7 @@ func TestApplySupervised_SendsTheStringKASDeclares(t *testing.T) {
 shape with -32602 and leaves the session in autopilot. Captured:
 %s`, marotte.ConfigValueAutopilotOff, line)
 	}
-	// And the decoded value is a STRING, so a future spelling that happens to
-	// contain the same characters (a "off" nested somewhere else, a boolean with a
-	// type discriminator) cannot satisfy the byte check above alone.
+	// And the decoded value is a string, so a look-alike spelling cannot pass the byte check alone.
 	params := digObject(t, "the autopilot set_config_option params", line, "params")
 	if got, ok := params[keyConfigValue].(string); !ok || got != marotte.ConfigValueAutopilotOff {
 		t.Errorf("autopilot value = %#v (%T), want the string %q",
@@ -2692,10 +2439,8 @@ shape with -32602 and leaves the session in autopilot. Captured:
 	}
 }
 
-// autopilotScript is sessionDoorScript with one arm added: with AUTOPILOT_REFUSE set it
-// answers the autopilot set_config_option with -32602, which is what KAS really does for
-// every value shape it does not accept. One script rather than two so the accepted and
-// refused arms differ only in the environment.
+// autopilotScript is sessionDoorScript plus an arm: with AUTOPILOT_REFUSE set it answers the autopilot
+// set_config_option with -32602, as KAS does for unaccepted values.
 const autopilotScript = `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -2720,14 +2465,8 @@ while IFS= read -r line; do
 done
 `
 
-// TestApplySupervised_RecordsWhetherTheSessionTookIt pins the OUTCOME half of the assert,
-// which is the input the coordinator's refusal report reads. applySupervised is
-// best-effort by decision — a declined config option must not refuse to open a usable
-// chat — so before the flag existed a refusal left only a log line, and the record plus
-// every client's checkbox went on claiming supervised over a session in autopilot.
-//
-// The third case is the flag's honest zero: false also means nobody asked, which is why
-// the report cannot key on it alone.
+// TestApplySupervised_RecordsWhetherTheSessionTookIt pins the outcome the coordinator's refusal report reads. The
+// third case is the honest zero: false also means nobody asked.
 func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -2747,7 +2486,6 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 				t.Fatalf("write fake script: %v", err)
 			}
 			t.Setenv("HOME", t.TempDir())
-			t.Setenv(envAgentWorkflows, "")
 			if tc.refuse {
 				t.Setenv("AUTOPILOT_REFUSE", "1")
 			}
@@ -2758,8 +2496,7 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 			}
 			defer b.Stop()
 
-			// A refused option never fails the session: the chat is usable, it just
-			// will not ask before writing, which is what the report exists to say.
+			// A refusal never fails the session.
 			if got := b.SupervisedApplied(); got != tc.want {
 				t.Errorf("SupervisedApplied() = %v, want %v; the coordinator reads this to decide "+
 					"whether to tell the user the chat is running unsupervised", got, tc.want)
@@ -2768,13 +2505,8 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 	}
 }
 
-// TestLoadSession_ReAssertsSupervised pins the resume half of the same gate. A resume
-// looks like it should not need it — KAS persists `autopilot` per session — and a FORKED
-// session is the case that falsifies that: forkSession's new-metadata literal copies no
-// autopilot, and hydrateSessionForLoad applies it only when the metadata defines it, so a
-// supervised chat's tangent runs in AUTOPILOT while marotte's record says supervised.
-// Measured on the pinned kiro-cli: the parent's load reports `autopilot: "off"`, the
-// fork's reports `"on"`.
+// TestLoadSession_ReAssertsSupervised pins that a forked session copies no autopilot, so a supervised chat's tangent ran in
+// autopilot (parent load reports "off", fork "on").
 func TestLoadSession_ReAssertsSupervised(t *testing.T) {
 	line := captureRequest(t, "session/set_config_option",
 		&marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_forked", Supervised: true},
@@ -2786,9 +2518,7 @@ every turn without asking. Captured:
 	}
 }
 
-// And the no-op half, which is what makes the line above safe on every OTHER resume: an
-// unsupervised chat must send nothing, or a restart would pin autopilot off for a reader
-// who never asked to review a write.
+// An unsupervised resume sends nothing, or a restart would pin autopilot off unasked.
 func TestLoadSession_LeavesAnUnsupervisedResumeAlone(t *testing.T) {
 	data := captureRequests(t, &marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_plain"})
 	if strings.Contains(data, `"`+marotte.ConfigOptionAutopilot+`"`) {
@@ -2796,14 +2526,8 @@ func TestLoadSession_LeavesAnUnsupervisedResumeAlone(t *testing.T) {
 	}
 }
 
-// --- _meta.title: the wire shape KAS actually sends ---
-
-// TestApplySessionResult_TakesFlatMetaTitle pins that the session title is read from a FLAT
-// `_meta.title`, not from `_meta.kiro.title`. Every other `_meta` marotte decodes on this
-// wire is nested under `kiro`, so that is the shape a reader expects — and moving the tag
-// there compiles cleanly and silently yields "". Probed 2026-08-02: session/new and
-// session/load both spread KAS's session-metadata object directly onto `_meta`, so `title`
-// sits at its top level alongside `id` and `agentMode`.
+// TestApplySessionResult_TakesFlatMetaTitle pins `_meta.title` as flat: every other `_meta` here is under `kiro`,
+// and moving it there compiles and yields "". KAS spreads session metadata onto `_meta` (probed 2026-08-02).
 func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2848,43 +2572,35 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 	}
 }
 
-// --- _meta.contextUsage: the compaction thresholds, on the same flat path ---
-
-// TestApplySessionResult_TakesFlatMetaContextUsage pins that the session's compaction
-// thresholds are read from a FLAT `_meta.contextUsage`, the same shape as `_meta.title`
-// above, and that the nested `_meta.kiro.contextUsage` a reader would expect yields
-// nothing.
+// TestApplySessionResult_TakesFlatMetaContextUsage pins the threshold at flat `_meta.contextUsage`; nested yields
+// nothing, and the sibling truncationThreshold must decode.
 func TestApplySessionResult_TakesFlatMetaContextUsage(t *testing.T) {
 	cases := []struct {
-		name          string
-		body          string
-		wantSummarize float64
-		wantTruncate  float64
+		name string
+		body string
+		want float64
 	}{
 		{
-			name:          "flat _meta.contextUsage is adopted",
-			body:          `{"sessionId":"s1","_meta":{"id":"s1","contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}`,
-			wantSummarize: 80,
-			wantTruncate:  95,
+			name: "flat _meta.contextUsage is adopted",
+			body: `{"sessionId":"s1","_meta":{"id":"s1","contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}`,
+			want: 80,
 		},
 		{
 			name: "nested _meta.kiro.contextUsage is NOT the wire shape",
 			body: `{"sessionId":"s1","_meta":{"kiro":{"contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}}`,
 		},
 		{
-			name: "absent _meta leaves both thresholds unknown",
+			name: "absent _meta leaves the threshold unknown",
 			body: `{"sessionId":"s1"}`,
 		},
 		{
-			name:          "a block carrying one member adopts that one alone",
-			body:          `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":75}}}`,
-			wantSummarize: 75,
+			name: "a block carrying only truncationThreshold adopts nothing",
+			body: `{"sessionId":"s1","_meta":{"contextUsage":{"truncationThreshold":95}}}`,
 		},
 		{
-			name:          "non-integer percentages survive the decode",
-			body:          `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":80.5,"truncationThreshold":95.25}}}`,
-			wantSummarize: 80.5,
-			wantTruncate:  95.25,
+			name: "non-integer percentages survive the decode",
+			body: `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":80.5,"truncationThreshold":95.25}}}`,
+			want: 80.5,
 		},
 	}
 	for _, tc := range cases {
@@ -2897,21 +2613,15 @@ func TestApplySessionResult_TakesFlatMetaContextUsage(t *testing.T) {
 			b.mu.Lock()
 			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()
-			gotSummarize, gotTruncate := b.ContextThresholds()
-			if gotSummarize != tc.wantSummarize {
-				t.Errorf("summarization = %v, want %v", gotSummarize, tc.wantSummarize)
-			}
-			if gotTruncate != tc.wantTruncate {
-				t.Errorf("truncation = %v, want %v", gotTruncate, tc.wantTruncate)
+			if got := b.SummarizationThreshold(); got != tc.want {
+				t.Errorf("SummarizationThreshold() = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestApplySessionResult_KeepsContextThresholdsOnAbsent pins that a result which says
-// nothing about the thresholds leaves the previous pair standing. A resume is the only
-// channel that carries them, so a zero written here would never heal.
-func TestApplySessionResult_KeepsContextThresholdsOnAbsent(t *testing.T) {
+// TestApplySessionResult_KeepsSummarizationThresholdOnAbsent pins that only a resume carries it, so a zero would never heal.
+func TestApplySessionResult_KeepsSummarizationThresholdOnAbsent(t *testing.T) {
 	cases := map[string]string{
 		"no contextUsage block at all": `{"sessionId":"s1","_meta":{"title":"x"}}`,
 		"a block with absent members":  `{"sessionId":"s1","_meta":{"contextUsage":{}}}`,
@@ -2927,35 +2637,23 @@ func TestApplySessionResult_KeepsContextThresholdsOnAbsent(t *testing.T) {
 			b := &Bridge{}
 			b.mu.Lock()
 			b.summarizationPct = 80
-			b.truncationPct = 95
 			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()
-			gotSummarize, gotTruncate := b.ContextThresholds()
-			if gotSummarize != 80 || gotTruncate != 95 {
-				t.Errorf("ContextThresholds() = (%v, %v), want (80, 95)", gotSummarize, gotTruncate)
+			if got := b.SummarizationThreshold(); got != 80 {
+				t.Errorf("SummarizationThreshold() = %v, want 80", got)
 			}
 		})
 	}
 }
 
-// --- R1: the bridge's Cancel must close stdin, not just signal the head ---
-
-// TestCancelClosesStdinSoTheTreeSeesEOF: marotte runs `kiro-cli acp` on pipes and the head
-// passes its stdio down, so the tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) stays in
-// ONE session with no setsid(). Closing marotte's write end delivers EOF to the whole chain,
-// and that — not the signal — is what reclaims it: WaitDelay's SIGKILL escalation targets the
-// head only, and measured on kiro-cli 2.16.0 signal-without-close leaked 2/2 trials at ~250
-// MB each. The bait isolates the close: the head IGNORES SIGTERM, so only stdin EOF reclaims
-// the grandchild.
+// TestCancelClosesStdinSoTheTreeSeesEOF pins that the kiro-cli tree shares marotte's pipes in one session, and closing the
+// write end is what reclaims it; WaitDelay's SIGKILL hits only the head (kiro-cli 2.16.0 leaked about 250 MB in 2/2
+// trials). The head ignores SIGTERM, so only EOF reclaims the grandchild.
 func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "grandchild.pid")
-	// The head IGNORES SIGTERM and blocks forever. Its child reads marotte's stdin pipe
-	// and `head -c 1` returns the moment that pipe closes with no data, so the
-	// grandchild's death proves an EOF reached the TREE: WaitDelay's 5s SIGKILL is past
-	// the deadline and Wait is not called until Stop. `exec 3<&0` is required — POSIX
-	// redirects an asynchronous command's stdin from /dev/null when job control is off, so
-	// a plain `head &` would read EOF instantly and pass vacuously (observed).
+	// The head ignores SIGTERM and blocks; its child's `head -c 1` returns when the pipe closes, proving EOF reached the
+	// tree. `exec 3<&0`: without job control a background command's stdin is /dev/null and would pass vacuously.
 	script := "#!/bin/sh\ntrap '' TERM\nexec 3<&0\nhead -c 1 <&3 >/dev/null &\n" +
 		"echo $! > " + pidFile + "\nwhile :; do sleep 0.05; done\n"
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
@@ -2963,15 +2661,10 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 		t.Fatalf("write bait script: %v", err)
 	}
 
-	// Not t.Context(): this context is the subprocess lifetime and the cancel
-	// below fires from inside t.Cleanup, which runs after t.Context() is
-	// already cancelled.
+	// Not t.Context(): the cancel fires from t.Cleanup, after t.Context() is cancelled.
 	ctx, cancel := context.WithCancel(context.Background())
 	b := New(scriptPath, dir)
-	// Start's ACP handshake never completes (the bait speaks no ACP), so drive
-	// the spawn directly — this test is about teardown, not the handshake.
-	// lifecycleCtx is what CommandContext binds to, which is the path Cancel
-	// fires from.
+	// The bait speaks no ACP, so drive the spawn directly; Cancel fires from lifecycleCtx.
 	b.lifecycleCtx = ctx
 	if err := b.startProcess(""); err != nil {
 		t.Fatalf("startProcess: %v", err)
@@ -2997,13 +2690,9 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	}
 }
 
-// processAlive reports whether pid is a live (non-zombie) process, read from
-// /proc/<pid>/stat. A null-signal poll is NOT usable: `kill(pid, 0)` answers "alive" for a
-// zombie, and the pid here is the bait shell's backgrounded child, so such a poll asserts the
-// SHELL's reaping latency on top of the property — and one fixture edit letting the shell die
-// orphans the child onto a PID 1 that never reaps in this container. A zombie already proves
-// the EOF reached the tree. The state field follows the LAST ')', because comm is
-// parenthesized and may itself contain spaces or parens.
+// processAlive reports whether pid is a live, non-zombie process, from /proc/<pid>/stat. kill(pid, 0) calls a
+// zombie alive, adding the shell's reaping latency, and a zombie already proves the EOF. The state follows the last
+// ')' because comm may contain parens.
 func processAlive(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
 	if err != nil {
@@ -3035,19 +2724,14 @@ func waitForBridgePID(t *testing.T, path string) int {
 	}
 }
 
-// TestSessionParams_CarryNoMCPServers pins BOTH halves of the MCP session param contract on
-// the wire. PRESENCE: kiro-cli 2.16's session/new schema requires `mcpServers` as a
-// non-optional array, so omitting the key fails every session. EMPTINESS: KAS merges client
-// entries over file entries PER NAME, so a surviving inline entry OUTRANKS the hot-reloading
-// config file — the file would still reload, the agent would keep the inline copy, and every
-// edit in the UI would look like it did nothing. It asserts on the RAW request bytes because
-// the bug it guards is a re-added or re-dropped map key, which a typed assertion misses.
+// TestSessionParams_CarryNoMCPServers pins `mcpServers` present (required since kiro-cli 2.16) and empty: KAS merges
+// client entries over the file per name, so an inline entry would make UI edits look like nothing. Raw bytes, since
+// the bug is a map key.
 func TestSessionParams_CarryNoMCPServers(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
 
-	// The fake logs every line it receives, then answers the three methods Start
-	// needs. `tee -a` is the whole instrumentation.
+	// `tee -a` logs every received line.
 	script := `#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "` + logPath + `"
@@ -3116,25 +2800,14 @@ done
 	}
 }
 
-// coreIOToolIDs is KAS's own CORE_IO_TOOL_IDS set, read off the 2.16.1 bundle
-// (acp-server.js:464015-464022).
-//
-// KAS ships TWO ExecuteBash implementations and picks between them with
-// `hasClientIOTools = clientTools.some(t => CORE_IO_TOOL_IDS.has(t.id))`. marotte
-// gets the CLAMPED one — `min(input.timeout ?? 120000, 1800000)`, a 30 minute
-// ceiling on every agent shell command — precisely because it declares none of
-// these ids.
+// coreIOToolIDs is KAS's CORE_IO_TOOL_IDS, from the 2.16.1 bundle (acp-server.js:464015-464022). KAS picks the
+// clamped ExecuteBash (a 30-minute ceiling) only while the client declares none of these.
 var coreIOToolIDs = []string{
 	"execute_bash", "read_file", "fs_write", "str_replace", "grep_search", "file_search",
 }
 
-// TestInitialize_DeclaresNoCoreIOTool guards a bound marotte does not own and cannot see:
-// registering any client tool named above flips `hasClientIOTools` and silently promotes the
-// agent to the UNBOUNDED ExecuteBash. Nothing logs the switch and no behaviour changes until
-// some command runs long, so the 30 minute ceiling would vanish as a side effect of an
-// unrelated feature. A change that genuinely wants one of these tools has to delete this
-// test. Asserts on the RAW initialize bytes: the ids can reach KAS through
-// clientCapabilities or through _meta, and only the wire sees both.
+// TestInitialize_DeclaresNoCoreIOTool pins that a client tool named above silently unbounds ExecuteBash. Wanting one means
+// deleting this test. Raw initialize bytes, since the ids could arrive via clientCapabilities or _meta.
 func TestInitialize_DeclaresNoCoreIOTool(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "init.log")
@@ -3196,51 +2869,43 @@ initialize was:
 	}
 }
 
-// --- The initialize wire contract ---
-
-// initializeGoldenPath is the committed byte-for-byte capture of every
-// initialize request marotte can put on the wire.
+// initializeGoldenPath is the committed byte-for-byte capture of every initialize request marotte can send.
 const initializeGoldenPath = "testdata/initialize.golden"
 
-// initializeGoldenCmd is the regeneration command, quoted in every failure
-// message this fixture can produce.
+// initializeGoldenCmd is the regeneration command quoted in this fixture's failure messages.
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
-// initGateCases is the COMPLETE matrix of runtime gates on the _meta.kiro block, and there
-// are four different mechanisms: SecretStorage decides secretStorage's VALUE (the key is
-// present either way), EnableHooks decides whether the hooks key is present AT ALL,
-// ToolSearch decides presence for settings.toolSearch, and Knowledge decides the VALUE of
-// two keys at once. Exhaustive over the two original booleans, representative over the two
-// added ones: they key on their own fields, so a full 16-row product would add twelve rows
-// differing by one key. Presets is absent — it rides the session door. The slice order IS
-// the golden's line order, so reordering rewrites the fixture without changing the wire.
+// initGateCases is the complete matrix of _meta.kiro runtime gates: SecretStorage sets a value, EnableHooks key
+// presence, Knowledge two values; ToolSearch must change nothing here. Presets ride the session door. The order is the
+// golden's line order.
 var initGateCases = []struct {
 	name          string
+	features      marotte.AgentFeatures
 	secretStorage bool
 	enableHooks   bool
 	toolSearch    bool
 	knowledge     bool
 }{
-	{"gates off", false, false, false, false},
-	{"secret storage only", true, false, false, false},
-	{"hooks only", false, true, false, false},
-	{"both gates on", true, true, false, false},
-	{"tool search on", false, false, true, false},
-	{"knowledge on", false, false, false, true},
-	{"every gate on", true, true, true, true},
+	{"gates off", marotte.AgentFeatures{}, false, false, false, false},
+	{"secret storage only", marotte.AgentFeatures{}, true, false, false, false},
+	{"hooks only", marotte.AgentFeatures{}, false, true, false, false},
+	{"both gates on", marotte.AgentFeatures{}, true, true, false, false},
+	{"tool search on", marotte.AgentFeatures{}, false, false, true, false},
+	{"knowledge on", marotte.AgentFeatures{}, false, false, false, true},
+	// Proves spawn() copies StartOpts.Features.
+	{"agent capabilities on", marotte.AgentFeatures{
+		InlineAgents: true, SteeringReminders: true,
+		InfraSafetyMonitor: "on", TerminalCommandTimeoutMs: 300000,
+	}, false, true, false, false},
+	{"every gate on", marotte.AgentFeatures{}, true, true, true, true},
 }
 
-// TestInitializeDeclaresExactly pins the exact bytes of every initialize request marotte can
-// send against a committed golden, because every failure mode it guards is silent on the
-// wire: a settings key dropped to a bare true resolves false, a capability renamed by a KAS
-// bump never matches, and a key nested one level wrong is ignored. The capture is the raw
-// JSON-RPC line written to the subprocess's stdin, so it cannot agree with the code while
-// disagreeing with the wire. Regenerate with:
+// TestInitializeDeclaresExactly pins every initialize request's exact bytes against a golden, since each failure is
+// silent on the wire. The capture is the raw stdin line. Regenerate with:
 //
 //	UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly
 func TestInitializeDeclaresExactly(t *testing.T) {
-	// Fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE
-	// and answers the rest of Start's handshake with the minimum KAS shape.
+	// A fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE and answers the rest minimally.
 	script := `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -3278,6 +2943,7 @@ done
 			EnableHooks:   tc.enableHooks,
 			ToolSearch:    tc.toolSearch,
 			Knowledge:     tc.knowledge,
+			Features:      tc.features,
 		})
 		if err != nil {
 			t.Fatalf("%s: Start: %v", tc.name, err)
@@ -3293,8 +2959,7 @@ done
 		got.Write(data)
 	}
 
-	// Write-then-compare rather than write-and-return: the comparison below is
-	// what proves the write landed, so there is one code path either way.
+	// Write then compare, so the comparison proves the write.
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.MkdirAll(filepath.Dir(initializeGoldenPath), 0o750); err != nil {
 			t.Fatalf("create testdata dir: %v", err)
@@ -3397,18 +3062,8 @@ func TestForwardStderr_TruncatesOneLineAndContinues(t *testing.T) {
 	}
 }
 
-// TestStdinPublication_IsRaceFree drives the one genuine concurrency the stdin
-// handle has: Start assigns it while another goroutine writes through it.
-//
-// This is what ErrBridgeNotStarted's population looks like from the other side —
-// the bridge record is registered BEFORE Start so concurrent opens coalesce, so a
-// command resolving a bridge by chat id can be calling into it mid-spawn. Under
-// -race the unsynchronized field this replaced reports
-// "WARNING: DATA RACE ... Previous write at ... startProcess".
-//
-// The subprocess is deliberately one that exits immediately: what is under test is
-// the handle's PUBLICATION, not the ACP handshake, and Start failing at the
-// handshake still runs startProcess and still assigns the pipe.
+// TestStdinPublication_IsRaceFree races Start assigning stdin against a writer: the bridge is registered before Start,
+// so a command can call into it mid-spawn. The subprocess exits at once; only publication is under test.
 func TestStdinPublication_IsRaceFree(t *testing.T) {
 	b := New("/bin/true", t.TempDir())
 	ctx, cancel := context.WithCancel(t.Context())
@@ -3416,9 +3071,7 @@ func TestStdinPublication_IsRaceFree(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	// The writer races the assignment. Every outcome is legal — the refusal, a
-	// write to a live pipe, a write to a dead one — so nothing is asserted about
-	// the ERROR; the race detector is the assertion.
+	// Every outcome is legal; the race detector is the assertion.
 	go func() {
 		defer wg.Done()
 		for range 200 {
@@ -3427,9 +3080,59 @@ func TestStdinPublication_IsRaceFree(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		// Start assigns stdin inside startProcess. It will fail (the handshake
-		// gets no reply from /bin/true), which is irrelevant to the publication.
+		// Start fails at the handshake after startProcess assigned stdin.
 		_ = b.Start(ctx, &marotte.StartOpts{Lifetime: ctx})
 	}()
 	wg.Wait()
+}
+
+// TestLoadSession_ReAssertsMemoryReflection pins that KAS freezes an explicit session's mode, so a resume re-sends reflection
+// as the string KAS's select takes (a boolean is a no-op).
+func TestLoadSession_ReAssertsMemoryReflection(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		want := marotte.ConfigValueAutopilotOff
+		if on {
+			want = marotte.ConfigValueAutopilotOn
+		}
+		line := captureRequest(t, "session/set_config_option",
+			&marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_mem", Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: on}},
+			`"configId":"`+marotte.ConfigOptionMemoryReflection+`"`)
+		params := digObject(t, "the memoryReflection set_config_option params", line, "params")
+		if got, ok := params[keyConfigValue].(string); !ok || got != want {
+			t.Errorf("Reflection=%v: memoryReflection value = %#v (%T), want the string %q",
+				on, params[keyConfigValue], params[keyConfigValue], want)
+		}
+	}
+	data := captureRequests(t, &marotte.StartOpts{Lifetime: t.Context(), Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: true}})
+	if strings.Contains(data, `"`+marotte.ConfigOptionMemoryReflection+`"`) {
+		t.Errorf("a fresh session/new sent memoryReflection; the session door already carries it:\n%s", data)
+	}
+}
+
+// titleSetByUser is flat beside title.
+func TestApplySessionResult_TakesFlatTitleSetByUser(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"flat latch", `{"sessionId":"s1","_meta":{"title":"X","titleSetByUser":true}}`, true},
+		{"nested under kiro is not the wire shape", `{"sessionId":"s1","_meta":{"kiro":{"titleSetByUser":true}}}`, false},
+		{"absent", `{"sessionId":"s1","_meta":{"title":"X"}}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r sessionCreated
+			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
+				t.Fatalf("unmarshal session result: %v", err)
+			}
+			b := &Bridge{}
+			b.mu.Lock()
+			b.applySessionResultLocked(&r, "")
+			b.mu.Unlock()
+			if got := b.SessionTitleSetByUser(); got != tc.want {
+				t.Errorf("SessionTitleSetByUser() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

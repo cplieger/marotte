@@ -38,11 +38,10 @@ const (
 var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdPrompt: dischargeBySource,
 	marotte.CmdSteer:  dischargeYes,
-	// The agent's OWN structured question (_kiro/userInput), so an answer to it is the
-	// user answering this agent as squarely as a prompt is. Was dischargeNo on the
-	// ground that a menu the agent wrote is not the user's prose — true, and the wrong
-	// line: an agent that asks through a card and gets an answer is not still waiting,
-	// yet nothing invalidated the claim, so the amber dot outlived every such turn.
+	// A message held for the turn's end is the user's prose as squarely as a steer.
+	marotte.CmdQueuePrompt: dischargeYes,
+	// The agent's OWN structured question (_kiro/userInput): an agent that asks through a card and
+	// gets an answer is not still waiting.
 	marotte.CmdUserInputResponse: dischargeByAnswer,
 	// An authorization or a file review rather than a question — but it is one of the
 	// channels an agent that declared waiting_on_user asks on, and selecting an option
@@ -64,12 +63,16 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdDeleteChat:        dischargeNo,
 	marotte.CmdSwitchModel:       dischargeNo,
 	marotte.CmdSetEffort:         dischargeNo,
+	marotte.CmdSetThinking:       dischargeNo,
 	marotte.CmdSetDraft:          dischargeNo,
 	marotte.CmdSetAttachments:    dischargeNo,
 	marotte.CmdSetMode:           dischargeNo,
 	marotte.CmdCreateHook:        dischargeNo,
 	marotte.CmdSetSupervisedMode: dischargeNo,
 	marotte.CmdSteerClear:        dischargeNo,
+	marotte.CmdUnqueuePrompt:     dischargeNo,
+	marotte.CmdSetInterruptMode:  dischargeNo,
+	marotte.CmdRenameChat:        dischargeNo,
 	marotte.CmdSteerRemove:       dischargeNo,
 	marotte.CmdOpenTab:           dischargeNo,
 	marotte.CmdCloseTab:          dischargeNo,
@@ -89,17 +92,11 @@ type ChatStatus interface {
 	DischargeWaiting(ctx context.Context, chatID marotte.ChatID)
 }
 
-// answersAgent reports whether cmd's payload states the user SUPPLYING an answer on one
-// of the structured channels the agent asks on. It is the dischargeByAnswer rule, and it
-// FAILS TOWARD KEEPING the claim: every arm reads one field the payload must state
-// affirmatively, so an absent payload (json.Unmarshal of a nil RawMessage errors), a
-// malformed one, an action value from outside the channel's vocabulary, and a walk-away
-// all answer false and leave the claim standing. A wrongly-kept claim is an amber dot the
-// next prompt clears; a wrongly-cleared one hides that the agent needs somebody.
-//
-// Read only after the handler succeeded, so each arm is reading a payload the handler
-// already validated and forwarded. The checks are not redundant with that: they are what
-// tells an answer from the walk-away the same handler accepts.
+// answersAgent reports whether cmd's payload states the user SUPPLYING an answer on a structured
+// channel the agent asks on. It FAILS TOWARD KEEPING the claim: an absent or malformed payload, an
+// unknown action and a walk-away all answer false, because a wrongly-cleared claim hides that the
+// agent needs somebody while a wrongly-kept one is cleared by the next prompt. Read after the
+// handler succeeded; the checks tell an answer from the walk-away the same handler accepts.
 func answersAgent(cmd *marotte.ClientCommand) bool {
 	switch cmd.Type {
 	case marotte.CmdUserInputResponse:
@@ -147,13 +144,9 @@ func discharges(cmd *marotte.ClientCommand) bool {
 	return false
 }
 
-// noteAnswer discharges the chat's waiting_on_user claim when this command answered
-// the agent. Called only after a handler succeeded: a refused prompt, a dropped steer
-// or a permission answer the tracker rejected answered nothing.
-//
-// The run verbs (Runs.AnswerInput, Runs.SetStepStatus) are NOT commands and reach no
-// row here: a parked step's question belongs to a different agent on a different
-// session, so answering one leaves this chat's claim standing.
+// noteAnswer discharges the chat's waiting_on_user claim when this command answered the agent;
+// called only after a handler succeeded. The run verbs are not commands: a parked step's question
+// belongs to another agent's session.
 func (d *Dispatcher) noteAnswer(ctx context.Context, cmd *marotte.ClientCommand) {
 	if d.status == nil || cmd.ChatID == "" {
 		return

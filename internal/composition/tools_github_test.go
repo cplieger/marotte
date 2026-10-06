@@ -70,7 +70,6 @@ func TestWarnIfGitHubRateLimited_NamesTheResetAndTheFix(t *testing.T) {
 	}{
 		{"without an account", toolbelt.GitHubRateLimit{ResetAt: reset.UnixMilli(), Limit: 60}, "connect a GitHub account in Git -> Sources"},
 		{"with an account", toolbelt.GitHubRateLimit{ResetAt: reset.UnixMilli(), Limit: 5000, Authenticated: true}, "retry after the reset"},
-		// An account does not raise the secondary limit, so the fix is waiting.
 		{"secondary without an account", toolbelt.GitHubRateLimit{ResetAt: reset.UnixMilli(), Secondary: true}, "GitHub's secondary rate limit was reached; retry after the reset"},
 	}
 	for _, tc := range cases {

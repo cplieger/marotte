@@ -44,15 +44,8 @@ func TestHandlePolicyChanged(t *testing.T) {
 	}
 }
 
-// TestHandlePolicyError pins that a _kiro/policy/error notification broadcasts
-// one policy_error event carrying the error list.
-//
-// This is the authority path the rule writer depends on. marotte no longer
-// validates the capability VOCABULARY on write (see policyfile.SanitizeRule and
-// server's TestPolicyRuleUnrecognisedCapabilityRoundTrips): a rule naming a
-// capability KAS does not have is written, KAS rejects it on load, and the
-// rejection reaches the user as this event rendered as a banner. If this handler
-// stops broadcasting, a bad rule becomes silent.
+// TestHandlePolicyError pins one policy_error event carrying the error list, rendered in
+// Settings → Permissions; without it a rule KAS rejects is silent.
 func TestHandlePolicyError(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -89,5 +82,43 @@ func TestHandlePolicyMalformedNoop(t *testing.T) {
 	tr.HandlePolicyError(t.Context(), marotte.ChatID("c1"), &marotte.RPCResponse{Params: []byte("{")})
 	if len(*events) != 0 {
 		t.Errorf("malformed params produced %d events, want 0", len(*events))
+	}
+}
+
+// Governance hears every policy notification with its errors, so a fatal
+// administration error can fail the lock map closed; only policy/changed is a
+// completed reload that may lift it.
+func TestPolicyNotifications_ReachGovernanceWithTheirErrors(t *testing.T) {
+	fatal := []map[string]any{{"scope": "administration", "message": "parse", "fatal": true}}
+	for _, tc := range []struct {
+		handle       func(tr *Translator, msg *marotte.RPCResponse)
+		name         string
+		wantReloaded bool
+	}{
+		{name: "changed", wantReloaded: true, handle: func(tr *Translator, msg *marotte.RPCResponse) {
+			tr.HandlePolicyChanged(t.Context(), "", msg)
+		}},
+		{name: "error", handle: func(tr *Translator, msg *marotte.RPCResponse) {
+			tr.HandlePolicyError(t.Context(), "", msg)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _ := newEventCaptureDeps()
+			var gotErrs []marotte.PolicyErrorItem
+			calls, reloaded := 0, false
+			deps.onPolicyChanged = func(errs []marotte.PolicyErrorItem, r bool) {
+				calls++
+				gotErrs, reloaded = errs, r
+			}
+			tc.handle(New(rolesOf(deps)), &marotte.RPCResponse{
+				Params: mustJSON(t, map[string]any{"sessionId": "s", "status": "failed", "errors": fatal}),
+			})
+			if calls != 1 || len(gotErrs) != 1 || !gotErrs[0].Fatal || gotErrs[0].Scope != "administration" {
+				t.Fatalf("PolicyChanged calls = %d errs = %+v, want one call carrying the fatal administration error", calls, gotErrs)
+			}
+			if reloaded != tc.wantReloaded {
+				t.Errorf("PolicyChanged reloaded = %v, want %v", reloaded, tc.wantReloaded)
+			}
+		})
 	}
 }

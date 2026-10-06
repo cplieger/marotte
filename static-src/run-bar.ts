@@ -1,50 +1,5 @@
-// ---------------------------------------------------------------------------
-// The run bar: one line per LIVE workflow run the active chat launched, in the
-// bottom bar between the interaction dock and the steer stack.
-//
-// WHERE IT SITS, AND WHY. A sibling of `.prompt-box` inside `#prompt-form`,
-// sharing the band's measure with the three regions around it. The ordering rule
-// is by SCOPE: a dock card blocks the turn, so it outranks everything; a run
-// spans turns, so it outranks the steer stack, which is scoped to the turn
-// running now; the box is what comes next. The bar grows upward and
-// `#messages-wrap` shrinks by exactly its height, so it covers nothing — the same
-// mechanical property `26-dock.css` states for the dock.
-//
-// WHY IT EXISTS. `run_workflow` returns as soon as the run is created, so the
-// launching turn ends while the run carries on for minutes: the turn's own card
-// scrolls away, the turn folds, and the chat's dot goes green. Nothing in the
-// composer said a run was still going. This is that surface, and it is
-// PERSISTENT in both directions a reader cares about — across turns, because it
-// is not anchored in the transcript, and across a reload, because the inventory
-// behind it is rebuilt from `GET /api/runs/live` at boot.
-//
-// It REPLACED a duplicate run card mounted into every folded turn's face. That
-// duplicate was lossy (a generic label, no step bodies) and cost one refetch plus
-// one clock hold per folded turn, and it could only ever speak for a run whose
-// launching turn was still resident.
-//
-// SCOPE IS THE ACTIVE CHAT'S RUNS, and nothing else. A run launched from another
-// chat is already surfaced by its own tab's activity dot (`run-dots.ts`), and a
-// PARENTLESS run has no launching chat at all, so `liveRunIDsForChat` excludes
-// both. Every chat shows its own list.
-//
-// A PURE PROJECTION of `run-store.ts` plus the dock's ask queue. It fetches
-// nothing of its own except the one invalidation below, records nothing, and
-// decides nothing about a run: `render` reads store state and paints. A click
-// NAVIGATES to that run's own tab through `openRunView` — the app's one manual
-// door into a run tab — rather than scrolling the transcript or unfolding a turn.
-//
-// THE ROW'S CLICK NEVER BRANCHES ON STATE, including a paused run holding an
-// unanswered ask. Four reasons, strongest first: the dock renders that ask and
-// `#decision-dock` is the sibling immediately above this bar, so "route to the
-// dock" would move the reader a few pixels to a card they are already looking at;
-// one gesture must mean one thing, and a destination that depends on state the
-// pointer cannot see is a gesture nobody can learn; the run tab renders the ask
-// too, so the tab is the ask PLUS the step tree and the run's verbs; and the row
-// already says why to go, because an unanswered ask takes the `input` state's
-// yellow `?` and its own word. Marking is the row's job, answering is the dock's,
-// navigating is the click's.
-// ---------------------------------------------------------------------------
+// The run bar: one line per LIVE workflow run the active chat launched, in the bottom bar between
+// the interaction dock and the steer stack.
 
 import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -67,22 +22,17 @@ import { STATE_WORD, stateOf, withAsk, type ExecState } from "./exec-view/status
 import type { TabRunDotStatus } from "./tabs.js";
 import { formatElapsed } from "./strings.js";
 
-/** The state a row paints when nothing has been fetched for its run yet.
- *
- *  NOT `stateOf(undefined)`, which is `pending` and reads "not started" — a run in
- *  the live inventory has demonstrably started, so that word would be false. The
- *  app's own precedent for "we do not know yet" is `run-dots.ts`, which paints
- *  NOTHING rather than claiming a state: the row shows its name, a reserved empty
- *  glyph box and no word until the first fetch lands. */
+/** The state a row paints when nothing has been fetched for its run yet. NOT
+ *  `stateOf(undefined)`, which is `pending` and reads "not started" — a run in the live
+ *  inventory has demonstrably started, so that word would be false. */
 const UNKNOWN_STATE = "unknown";
 
-/** The label a run with no fetched state carries. The store's `runLabelOf` answers
- *  `""` there, and a row with no name at all is unclickable in practice. */
+/** The label a run with no fetched state carries. The store's `runLabelOf` answers `""` there,
+ *  and a row with no name at all is unclickable in practice. */
 const FALLBACK_NAME = "Workflow run";
 
-/** A row's clock hold. The element is re-pointed on every render rather than
- *  re-registered, so the refcount in `messages-blocks.ts` sees one holder per run
- *  for as long as the bar shows it. */
+/** A row's clock hold. The element is re-pointed on every render rather than re-registered, so
+ *  the refcount in `messages-blocks.ts` sees one holder per run for as long as the bar shows it. */
 interface Hold extends RunClockHolder {
   clock: HTMLElement | null;
 }
@@ -91,8 +41,8 @@ let bound = false;
 let prevCount = 0;
 let prevChatID = "";
 const holds = new Map<string, Hold>();
-/** The render effect's disposer, held only so `_resetRunBarForTest` can stop it.
- *  Production never tears the bar down — it lives as long as the page. */
+/** The render effect's disposer, held only so `_resetRunBarForTest` can stop it. Production
+ *  never tears the bar down — it lives as long as the page. */
 let stopRender: (() => void) | null = null;
 
 /** Wire the reactive render. Idempotent. Called once from app.ts. */
@@ -115,15 +65,7 @@ export function initRunBar(): void {
   });
 }
 
-/** Everything the bar's CONTENT depends on, as one string so the computed dedupes
- *  by value.
- *
- *  `watchActiveId()` rather than `activeSession.value`: the bar needs only the chat
- *  id, and `activeSession` re-derives on every streaming chunk, so reading it would
- *  re-evaluate this computed per chunk for nothing.
- *
- *  The elapsed clock is deliberately NOT in the key. That is the tick's job, and a
- *  per-second key would rebuild every row once a second. */
+/** Everything the bar's CONTENT depends on, as one string so the computed dedupes by value. */
 function key(): string {
   const chatID = watchActiveId();
   const parts: string[] = [chatID];
@@ -147,13 +89,8 @@ function key(): string {
   return parts.join("\u0001");
 }
 
-/** The runs this bar shows for a chat: the live inventory minus anything the store
- *  can PROVE has settled.
- *
- *  An id whose cell is still `undefined` is kept — nothing has been fetched yet,
- *  which is the honest starting case. A fetched non-live state still sitting in the
- *  inventory means a `run_finished` this client missed, and a settled row in a
- *  live-runs bar is the one wrong thing the bar can say. */
+/** The runs this bar shows for a chat: the live inventory minus anything the store can PROVE has
+ *  settled. */
 function rows(chatID: string): string[] {
   return liveRunIDsForChat(chatID).filter((id) => {
     const st = runState(id);
@@ -166,18 +103,12 @@ function render(bar: HTMLUListElement): void {
   const ids = rows(chatID);
 
   bar.classList.toggle("hidden", ids.length === 0);
-  // BEFORE the rows, not after: `buildRow` points its clock span at this run's hold,
-  // so a hold created afterwards would leave the FIRST render's clock unaddressable —
-  // which is every render for a run whose state was already in the store when the bar
-  // started showing it, and the tick would then never write to it.
+  // BEFORE the rows, not after: `buildRow` points its clock span at this run's hold, so a hold
+  // created afterwards would leave the FIRST render's clock unaddressable — which is every render
+  // for a run whose state was already in the store when the bar started showing it, and the tick
+  // would then never write to it.
   reconcileHolds(ids);
-  // KEYED BY RUN ID, and each surviving row is PATCHED rather than rebuilt. Both
-  // halves are needed. `replaceChildren` on the bar rebuilt every row for any change
-  // to any of them — so a twenty-step run dropped `:hover` and restarted its mark's
-  // beat twenty times, and a row's clock span was re-created under the shared tick
-  // each time. And `paintRow` writes text and attributes in place rather than
-  // re-seating the row's children, so even the row whose state actually moved keeps
-  // its glyph, its focus and its clock (see `paint-sig.ts` for what a re-seat costs).
+  // KEYED BY RUN ID, and each surviving row is PATCHED rather than rebuilt. Both halves are needed.
   reconcile(bar, ids, {
     key: (id: string) => id,
     mount: (id: string) => buildRow(id, chatID),
@@ -186,16 +117,15 @@ function render(bar: HTMLUListElement): void {
     },
   });
   if (ids.length === 0) {
-    // Reset the announce baseline so arriving at a chat that already has runs reads
-    // them out fresh, while the empty case stays silent.
+    // Reset the announce baseline so arriving at a chat that already has runs reads them out fresh,
+    // while the empty case stays silent.
     prevCount = 0;
     prevChatID = chatID;
     return;
   }
 
-  // Announce only on the same chat, and only when the COUNT moves — a chat switch
-  // is not news, and a step advancing inside a run the reader already knows about
-  // is not either.
+  // Announce only on the same chat, and only when the COUNT moves — a chat switch is not news, and
+  // a step advancing inside a run the reader already knows about is not either.
   if (chatID === prevChatID && ids.length !== prevCount) {
     announce(
       ids.length === 1
@@ -207,17 +137,9 @@ function render(bar: HTMLUListElement): void {
   prevChatID = chatID;
 }
 
-/** One row: an `<li>` carrying the state, holding the `<button>` that opens the
- *  run's own tab.
- *
- *  The SHELL only — one glyph and four spans, every one of them empty. Everything
- *  that depends on the run's state is written by `paintRow`, which the caller runs
- *  immediately and again on every later render, so a row is built once per run and
- *  patched thereafter. */
+/** One row: an `<li>` carrying the state, holding the `<button>` that opens the run's own tab. */
 function buildRow(id: string, chatID: string): HTMLElement {
-  // The workflow mark, by attribute rather than a painted child: 12-tabs.css paints
-  // this row, a run's own tab row and a chat row's fold mark from one rule, so all
-  // three carry the same mark. No attribute means reserved box, nothing to show.
+  // No attribute means reserved box, nothing to show.
   const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
   const clock = el("span", { className: "run-bar-clock" });
 
@@ -230,18 +152,16 @@ function buildRow(id: string, chatID: string): HTMLElement {
     el("span", { className: "run-bar-steps" }),
     clock,
   );
-  // The NAME is resolved at click time rather than captured here, because this row
-  // outlives its first paint now: a run whose label arrives with its first fetch
-  // would otherwise open a tab called "Workflow run" for the rest of the session.
+  // The NAME is resolved at click time rather than captured here, because this row outlives its
+  // first paint now: a run whose label arrives with its first fetch would otherwise open a tab
+  // called "Workflow run" for the rest of the session.
   btn.addEventListener("click", () => {
     void openRunView(id, runName(runState(id)), chatID);
   });
 
   const row = el("li", { className: "run-bar-row" }, btn);
-  // Point this run's hold at the clock span ONCE. `paintRow` never replaces it, so
-  // the shared tick keeps writing into the row on screen for as long as the bar shows
-  // that run. The hold exists by construction — the caller reconciles holds before it
-  // builds — and the guard is the type's, not a doubt.
+  // Point this run's hold at the clock span ONCE. `paintRow` never replaces it, so the shared tick
+  // keeps writing into the row on screen for as long as the bar shows that run.
   const hold = holds.get(id);
   if (hold !== undefined) {
     hold.clock = clock;
@@ -250,12 +170,7 @@ function buildRow(id: string, chatID: string): HTMLElement {
   return row;
 }
 
-/** Write one row's state into the shell `buildRow` made, IN PLACE.
- *
- *  Text and attributes only: nothing here creates, moves or replaces a node, so a
- *  row being repainted keeps `:hover`, keeps keyboard focus, keeps its mark's beat
- *  running, and keeps the clock element the shared tick holds a pointer to. That is
- *  why the bar needs no signature guard — there is nothing left for one to skip. */
+/** Write one row's state into the shell `buildRow` made, IN PLACE. */
 function paintRow(row: HTMLElement, id: string): void {
   const btn = row.querySelector<HTMLButtonElement>(":scope > .run-bar-open");
   if (btn === null) {
@@ -271,9 +186,9 @@ function paintRow(row: HTMLElement, id: string): void {
   const mark = runMarkStatus(state);
   const glyph = btn.querySelector<HTMLElement>(":scope > .run-bar-glyph");
   if (glyph !== null) {
-    // A run with no fetched state writes NO attribute, which is how the shared rule
-    // says "reserved box, nothing to show" — so leaving a stale one behind would
-    // claim a status this row cannot vouch for.
+    // A run with no fetched state writes NO attribute, which is how the shared rule says "reserved
+    // box, nothing to show" — so leaving a stale one behind would claim a status this row cannot
+    // vouch for.
     if (mark === "") {
       delete glyph.dataset["status"];
     } else {
@@ -284,9 +199,8 @@ function paintRow(row: HTMLElement, id: string): void {
   setText(btn, ".run-bar-state", word);
   setText(btn, ".run-bar-steps", steps);
   setText(btn, ".run-bar-clock", elapsedText(st));
-  // The visible state is a glyph plus a word, both visual, so the name has to carry
-  // it too. The step counter rides along because it is the row's other non-textual
-  // claim about progress.
+  // The visible state is a glyph plus a word, both visual, so the name has to carry it too. The
+  // step counter rides along because it is the row's other non-textual claim about progress.
   btn.setAttribute("aria-label", accessibleName(name, word, steps));
 }
 
@@ -297,12 +211,8 @@ function setText(host: HTMLElement, selector: string, text: string): void {
   }
 }
 
-/** The workflow mark's own status for a row's state, or `""` for a row that has
- *  nothing to show yet.
- *
- *  Total over `ExecState` with no `default`, so a member added to that vocabulary
- *  fails the type check here rather than painting nothing. A settled state answers
- *  `""`: the mark withdraws when a run ends and has no vocabulary for an outcome. */
+/** The workflow mark's own status for a row's state, or `""` for a row that has nothing to show
+ *  yet. */
 function runMarkStatus(state: ExecState | typeof UNKNOWN_STATE): TabRunDotStatus | "" {
   switch (state) {
     case "running":
@@ -321,9 +231,9 @@ function runMarkStatus(state: ExecState | typeof UNKNOWN_STATE): TabRunDotStatus
   }
 }
 
-/** Fold a run's status and its ask onto ONE axis, the way the card's STEP rows and
- *  the exec tree do. The card's ROOT keeps two axes because its rail and its ask
- *  paint at the same time; a single line has one slot. */
+/** Fold a run's status and its ask onto ONE axis, the way the card's STEP rows and the exec tree
+ *  do. The card's ROOT keeps two axes because its rail and its ask paint at the same time; a
+ *  single line has one slot. */
 function execStateOf(st: RunState | undefined, asking: boolean): ExecState | typeof UNKNOWN_STATE {
   if (st === undefined) {
     return UNKNOWN_STATE;
@@ -331,9 +241,9 @@ function execStateOf(st: RunState | undefined, asking: boolean): ExecState | typ
   return withAsk(stateOf(st.status), asking);
 }
 
-/** The run's name, RAW. It is also the run TAB's name and the button's accessible
- *  name, and `.run-bar-name` ellipsizes the visible span responsively — so a length
- *  cut here would travel into the tab strip and into what a screen reader reads. */
+/** The run's name, RAW. It is also the run TAB's name and the button's accessible name, and
+ *  `.run-bar-name` ellipsizes the visible span responsively — so a length cut here would travel
+ *  into the tab strip and into what a screen reader reads. */
 function runName(st: RunState | undefined): string {
   const label = st?.runLabel ?? "";
   const name = label === "" ? (st?.workflowName ?? "") : label;
@@ -367,9 +277,9 @@ function accessibleName(name: string, word: string, steps: string): string {
   return `Open workflow run ${parts.join(", ")}`;
 }
 
-/** Join the shared 1s clock for every run on screen and leave it for every run that
- *  left. ONE holder per run for as long as the bar shows it, so the refcount in
- *  `messages-blocks.ts` is not churned by a repaint. */
+/** Join the shared 1s clock for every run on screen and leave it for every run that left. ONE
+ *  holder per run for as long as the bar shows it, so the refcount in `messages-blocks.ts` is
+ *  not churned by a repaint. */
 function reconcileHolds(ids: readonly string[]): void {
   const wanted = new Set(ids);
   for (const [id, hold] of holds) {
@@ -384,8 +294,8 @@ function reconcileHolds(ids: readonly string[]): void {
       const hold: Hold = {
         clock: null,
         tick(): void {
-          // A tracked read is inert here: a setInterval callback runs outside any
-          // effect's eval context, so nothing subscribes.
+          // A tracked read is inert here: a setInterval callback runs outside any effect's eval
+          // context, so nothing subscribes.
           if (hold.clock !== null) {
             hold.clock.textContent = elapsedText(runState(id));
           }
@@ -394,26 +304,18 @@ function reconcileHolds(ids: readonly string[]): void {
       holds.set(id, hold);
       holdRunClock(id, hold);
     }
-    // The bar's one fetch, and its only non-projection act: when it starts showing a
-    // run, and again whenever a rendered run has NO state to read. Both arms serve a
-    // run nothing else will fetch — a PAUSED run emits no frames, and `runCardFor`'s
-    // disposer forgets the cell of a run whose transcript card ages past TURNS_WARM
-    // with no run tab open, leaving that row nameless and stateless for good. It
-    // cannot loop: an unchanged cell does not move the computed's key.
+    // The bar's one fetch, and its only non-projection act: when it starts showing a run, and again
+    // whenever a rendered run has NO state to read.
     if (!held || runState(id) === undefined) {
       invalidateRun(id);
     }
   }
 }
 
-/** Stop the render effect, release every hold and forget the module state. For tests
- *  only: all of it is module state, and the browser project's module registry is
- *  URL-keyed, so `vi.resetModules()` does not re-evaluate this file.
- *
- *  Stopping the effect is the load-bearing half. Without it a suite that calls
- *  `initRunBar` per case accumulates one live effect per case, all rendering into the
- *  same element — so a row rebuilt by a LATER effect papers over whatever the first
- *  one got wrong, and an assertion about a single render can no longer fail. */
+/** Stop the render effect, release every hold and forget the module state. For tests only: all
+ *  of it is module state, and the browser project's module registry is URL-keyed, so
+ *  `vi.resetModules()` does not re-evaluate this file. Stopping the effect is the load-bearing
+ *  half. */
 export function _resetRunBarForTest(): void {
   stopRender?.();
   stopRender = null;

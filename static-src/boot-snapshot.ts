@@ -1,10 +1,7 @@
-// ---------------------------------------------------------------------------
-// The boot snapshot: a bounded projection of what THIS SCREEN was showing, held
-// in IndexedDB so a resume paints before the network answers. A PAINT-TIME HINT
-// with the standing the theme's localStorage cache has: it advances no tab-set
-// version, and `boot.ts` paints it only while its own chat read has yet to ANSWER,
-// so the server's answer always wins.
-// ---------------------------------------------------------------------------
+// The boot snapshot: a bounded projection of what THIS SCREEN showed, in IndexedDB, so a
+// resume paints before the network answers. A paint-time hint like the theme cache: it
+// advances no tab-set version, and `boot.ts` paints it only until its own chat read
+// answers.
 
 import { effect } from "@cplieger/reactive";
 
@@ -32,21 +29,19 @@ const SNAPSHOT_TURNS = 3;
  *  tool rows, so the turn bound alone is not a bound. */
 const SNAPSHOT_MAX_ENTRIES = 80;
 
-/** THE BOUND THAT ACTUALLY BINDS: a count bound cannot see what grows INSIDE a message.
- *  Measured on the live instance (2026-09-10) at **1,778,339 bytes over SEVEN messages**, one of
- *  them 1,006,210 over 207 tool calls. Its cost is a RELOAD rather than a slow write: the record
- *  is read and JSON-parsed before the FIRST FRAME of every boot, and on WebKit IndexedDB is owned
- *  by the NETWORK process that also owns the page's sockets — so the cost lands in the process
- *  whose death takes the event stream with it and reloads the document, at an interval that
- *  shortened as the conversation grew (~90s -> ~43s). 96 KiB, because the job is one plausible
- *  frame while the network answers. */
+/**
+ * THE BOUND THAT BINDS: a count bound cannot see what grows INSIDE a message. The record is
+ * parsed before the first frame of every boot, and on WebKit IndexedDB lives in the
+ * network process that owns the page's sockets, so an oversized record kills the event
+ * stream and reloads the page. 96 KiB: one plausible frame while the network answers.
+ */
 const SNAPSHOT_MAX_BYTES = 96 * 1024;
 
-/** A tool card's `.tool-details` is born CLOSED, so its output is not on the frame this record
- *  draws. Truncated rather than dropped: `tool-card.ts` decides whether a card has anything to
- *  reveal from the output being non-blank, so dropping it would withdraw the disclosure until
- *  the real payload lands. `output_spans` styles only those bytes, so it goes entirely; `input`
- *  is trimmed because `.tool-subtitle` renders `input.command` on the visible claim line. */
+/**
+ * A tool card's `.tool-details` is born CLOSED, so its output is truncated, not dropped:
+ * `tool-card.ts` offers the disclosure only for non-blank output. `output_spans` goes;
+ * `input` is trimmed (`.tool-subtitle` renders `input.command`).
+ */
 const SNAPSHOT_MAX_TOOL_OUTPUT = 256;
 const SNAPSHOT_MAX_TOOL_INPUT = 256;
 
@@ -59,11 +54,10 @@ const DB_VERSION = 1;
 const STORE_NAME = "snapshot";
 const RECORD_KEY = "current";
 
-/** One chat row, bounded to what the strip and the context bar paint from it.
- *
- *  Not a `ChatHeader`: that wire type requires `created_at`/`updated_at`, which a
- *  `Session` does not carry, so reusing it would mean inventing two timestamps for
- *  fields nothing here reads. */
+/**
+ * One chat row, bounded to what the strip and context bar paint. Not a `ChatHeader`, whose
+ * required timestamps a `Session` does not carry.
+ */
 interface SnapshotChat {
   readonly id: string;
   readonly name: string;
@@ -71,18 +65,18 @@ interface SnapshotChat {
   readonly current_mode_id: string;
   readonly turn_count: number;
   readonly usage: Usage;
-  /** How this chat's newest finished turn ended, and when the chat last moved —
-   *  what a resumed row paints its tab dot and that dot's age from. OPTIONAL on
-   *  purpose: a record written before these fields existed still paints, because a
-   *  hint that rejects itself over a field the strip can do without is worse than a
-   *  row with no dot. */
+  /**
+   * How this chat's newest finished turn ended and when it last moved, for the row's dot and
+   * its age. OPTIONAL, so an older record still paints.
+   */
   readonly last_turn_outcome?: TurnOutcome;
   readonly updated_at?: number;
 }
 
-/** The transcript window a resume paints: the active chat's newest entries in FILE order, whole
- *  turns, `turn_open` first. No segmentation state travels beside them, because a card's ordinal
- *  is its own `turn_open.n` and a window therefore numbers itself. */
+/**
+ * The transcript window a resume paints: the active chat's newest entries in FILE order,
+ * whole turns, `turn_open` first. A card numbers itself from its `turn_open.n`.
+ */
 interface SnapshotWindow {
   readonly chat_id: string;
   readonly entries: readonly Entry[];
@@ -98,17 +92,19 @@ export interface BootSnapshot {
   readonly window: SnapshotWindow | null;
 }
 
-/** Read the persisted snapshot. Resolves `null` for every failure — an absent
- *  record, a browser with no IndexedDB, a corrupt or foreign payload — because a
- *  paint-time hint has no failure a caller could act on. */
+/**
+ * Read the persisted snapshot, `null` for every failure: a hint has no failure a caller
+ * could act on.
+ */
 export async function readBootSnapshot(): Promise<BootSnapshot | null> {
   return decodeSnapshot(await readRecord());
 }
 
-/** Forget what this screen was showing, and stop capturing. It does NOT un-paint the current
- *  frame — those rows are the ones this device already had on screen — so what it buys is that
- *  the NEXT boot paints nothing. Every writer stops, the `pagehide` listener included: a page
- *  transition after this would otherwise re-write the record it just deleted. */
+/**
+ * Forget what this screen showed and stop capturing, so the NEXT boot paints nothing (the
+ * current frame stays). Every writer stops, `pagehide` included, or it would re-write the
+ * record.
+ */
 export async function clearBootSnapshot(): Promise<void> {
   clearTimeout(pending);
   pending = undefined;
@@ -119,12 +115,11 @@ export async function clearBootSnapshot(): Promise<void> {
   await deleteRecord();
 }
 
-/** Paint a snapshot, and report whether it painted anything.
- *
- *  ORDERED: the chat rows go in first because a chat tab's label is read from the store while its
- *  row is built (`tab-materialize.ts` `chatName`). `setSessions` REPLACES the store, so this may
- *  only run BEFORE the boot's own chat list lands; `boot.ts`'s `restoreWorkspace` owns that
- *  ordering, and the transport holds every SSE frame until `markHydrated`. */
+/**
+ * Paint a snapshot and report whether it painted anything. Chat rows go first: a tab's
+ * label is read from the store while its row is built. `setSessions` REPLACES the store, so
+ * this runs only before the boot's own chat list lands (`restoreWorkspace` owns that).
+ */
 export function paintBootSnapshot(snap: BootSnapshot | null): boolean {
   if (snap === null || snap.tabs.length === 0) {
     return false;
@@ -137,12 +132,11 @@ export function paintBootSnapshot(snap: BootSnapshot | null): boolean {
   return true;
 }
 
-/** A chat row and, for the chat the snapshot carried one for, its window.
- *
- *  `residency` is left unset deliberately: `transcriptStale` then reads true, so the activation
- *  this paint enables refetches the window rather than trusting a hint — which is what makes the
- *  server's answer overwrite this and not the reverse. `provisional` covers the rows that answer
- *  does not name; its rule is at `types.ts` `Session.provisional`. */
+/**
+ * A chat row and, where carried, its window. `residency` stays unset so `transcriptStale`
+ * reads true and the activation refetches; `provisional` covers rows the server answer does
+ * not name (see `Session.provisional`).
+ */
 function toProvisionalSession(c: SnapshotChat, win: SnapshotWindow | undefined): Session {
   const window =
     win === undefined
@@ -158,16 +152,13 @@ function toProvisionalSession(c: SnapshotChat, win: SnapshotWindow | undefined):
     turns: window.turns,
     turn_order: window.order,
     turn_count: c.turn_count,
-    // Through the shared derivation, so one rule answers this for every row built
-    // without a window — and the count it reads is the REAL resident count, because
-    // the row and its window are built by this one call.
+    // The shared derivation, over the REAL resident count: row and window are built here.
     has_more: derivedHasMore(c.turn_count, window.order.length),
     thinking: false,
     working_label: "Thinking",
     provisional: true,
-    // CONDITIONAL, both of them: under `exactOptionalPropertyTypes` an explicit `undefined`
-    // is a value rather than an omission, and the outcome is what tells this row's dot from
-    // a chat that has never run a turn.
+    // Conditional: under `exactOptionalPropertyTypes` an explicit `undefined` is a value, and
+    // the outcome tells this row's dot from a chat that never ran a turn.
     ...(c.last_turn_outcome !== undefined && { last_turn_outcome: c.last_turn_outcome }),
     ...(c.updated_at !== undefined && { updated_at: c.updated_at }),
   };
@@ -249,12 +240,11 @@ function projectChat(s: Session): SnapshotChat {
   };
 }
 
-/** The active chat's newest turns as ENTRIES, in file order, capped.
- *
- *  Reads the store's own resident window rather than re-deriving one, newest-first, which is what
- *  makes the entry cap drop WHOLE turns instead of cutting the flattened tail — a body whose
- *  `turn_open` is gone is the headerless card `SNAPSHOT_TURNS` exists to prevent. Open tails are
- *  not carried: an `OpenEntry` has no `seq`, and this record's job is one settled frame. */
+/**
+ * The active chat's newest turns as ENTRIES, in file order, capped by dropping WHOLE turns
+ * (a body without its `turn_open` is a headerless card). Open tails have no `seq` and are
+ * not carried.
+ */
 function newestWindow(chatID: string): SnapshotWindow | null {
   const s = get(chatID);
   if (s === undefined) {
@@ -277,11 +267,8 @@ function newestWindow(chatID: string): SnapshotWindow | null {
       continue;
     }
     if (out.length === 0) {
-      // The newest turn alone over budget is the case both caps exist for, and dropping it
-      // would resume with no transcript. Trimmed to a contiguous PREFIX from `turn_open`
-      // rather than to its newest end, because `TurnState`'s invariant is
-      // `entries[i].seq === i`: a tail cannot be seated at all, where a prefix is a card
-      // with its own header and a short body, and the activation's own refetch fills it.
+      // The newest turn alone over budget is trimmed to a PREFIX from `turn_open`
+      // (`entries[i].seq === i` cannot seat a tail); the activation's refetch fills it.
       out.push(...admitPrefix(state.entries));
     }
     break;
@@ -292,17 +279,18 @@ function newestWindow(chatID: string): SnapshotWindow | null {
   return { chat_id: chatID, entries: out };
 }
 
-/** What one entry costs the record, in the currency the budget is stated in. The store
- *  holds a structured clone rather than JSON, so this is a proxy — and it is the same
- *  proxy the 1,778,339-byte measurement above was taken with, which is what makes the
- *  number and the bound comparable. */
+/**
+ * What one entry costs the record in the budget's currency, a JSON proxy for the store's
+ * structured clone, the same proxy the bound was measured with.
+ */
 function sizeOf(e: Entry): number {
   return JSON.stringify(e).length;
 }
 
-/** As much of one turn as both bounds allow, from its `turn_open` forward and stopping at
- *  the first entry that does not fit. Its own function because the two-bound walk is the
- *  part a `slice` cannot express. */
+/**
+ * As much of one turn as both bounds allow, from its `turn_open` forward, stopping at the
+ * first entry that does not fit.
+ */
 function admitPrefix(entries: readonly Entry[]): Entry[] {
   const out: Entry[] = [];
   let bytes = 0;
@@ -318,11 +306,10 @@ function admitPrefix(entries: readonly Entry[]): Entry[] {
   return out;
 }
 
-/** The turns a persisted window describes, grouped in FILE order.
- *
- *  A turn whose entries are not `seq`-contiguous from 0 is DROPPED rather than seated:
- *  that is `TurnState`'s invariant, this record is a hint nothing repairs, and the store's
- *  own hole path is for a page that has a turn to re-read. */
+/**
+ * The turns a persisted window describes, grouped in FILE order. A turn not `seq`-contiguous
+ * from 0 is DROPPED: nothing repairs a hint.
+ */
 function turnsFromEntries(entries: readonly Entry[]): {
   turns: Map<string, TurnState>;
   order: string[];
@@ -350,14 +337,10 @@ function turnsFromEntries(entries: readonly Entry[]): {
   return { turns, order };
 }
 
-/** One entry with the fields a first frame does not paint cut down to size. A tool entry is
- *  carried trimmed; an entry of any other kind is returned ITSELF, so the ordinary prose row
- *  allocates nothing.
- *
- *  Nothing here DROPS an entry, so what a turn contributes is decided by the admission paths
- *  alone (`newestWindow`, `admitPrefix`), each pricing this lightened copy through `sizeOf`
- *  against the record's own budgets. A turn that does not fit paints its trigger alone, or
- *  nothing, rather than a body whose `seq` run has a hole in it. */
+/**
+ * One entry with what a first frame does not paint cut down: tool entries trimmed, others
+ * returned ITSELF. Nothing here drops an entry; the admission paths price this copy.
+ */
 function lighten(e: Entry): Entry {
   if (e.kind !== "tool_call" && e.kind !== "tool_result") {
     return e;
@@ -365,17 +348,16 @@ function lighten(e: Entry): Entry {
   return { ...e, payload: lightenToolPayload(e.payload) };
 }
 
-/** The two payloads that carry a tool's output, trimmed. ONE function for both because the
- *  three fields it touches are the same three on each — `tool_result` carrying no `input`
- *  simply has nothing there to trim. These payloads are where the bytes measurably are:
- *  686,630 of the 1,006,210 one message came to in the record `SNAPSHOT_MAX_BYTES` measures. */
+/**
+ * The two payloads carrying a tool's output, trimmed by one function: the same three fields
+ * on each. These hold most of the record's bytes.
+ */
 function lightenToolPayload(v: unknown): unknown {
   if (typeof v !== "object" || v === null) {
     return v;
   }
   const out = { ...(v as EntryToolCall & EntryToolResult) };
-  // Styles the output bytes this drops, so it has nothing left to style. Measured as most
-  // of the 137,710 bytes the per-call remainder came to over 207 calls.
+  // Styles the output bytes this drops.
   delete out.output_spans;
   if (out.output !== undefined && out.output.length > SNAPSHOT_MAX_TOOL_OUTPUT) {
     out.output = out.output.slice(0, SNAPSHOT_MAX_TOOL_OUTPUT);
@@ -386,10 +368,10 @@ function lightenToolPayload(v: unknown): unknown {
   return out;
 }
 
-/** Truncate a tool input's own string values. TOP LEVEL only: that is where the keys a
- *  card paints live (`command`, `path`), a tool input is a flat record of scalars in
- *  every shape measured, and a nested value that stays large is caught by the record's
- *  byte budget rather than by a deeper walk here. */
+/**
+ * Truncate a tool input's TOP-LEVEL string values, where a card's painted keys live; the
+ * byte budget catches anything nested.
+ */
 function lightenInput(v: unknown): unknown {
   if (typeof v !== "object" || v === null || Array.isArray(v)) {
     return v;
@@ -406,9 +388,10 @@ function lightenInput(v: unknown): unknown {
   return out;
 }
 
-/** Narrow a persisted record: `unknown` in, every ELEMENT validated through the
- *  generated wire decoders the network path already runs. A rejection is the whole
- *  record, because a half-valid hint is not a hint. */
+/**
+ * Narrow a persisted record, validating every ELEMENT through the generated wire decoders.
+ * A rejection is the whole record: a half-valid hint is not a hint.
+ */
 function decodeSnapshot(v: unknown): BootSnapshot | null {
   try {
     const o = asObject(v, "$.boot_snapshot");
@@ -416,11 +399,8 @@ function decodeSnapshot(v: unknown): BootSnapshot | null {
     return {
       tabs: decodeArray(o["tabs"], decodeTabSubject, "$.boot_snapshot.tabs"),
       chats: decodeArray(o["chats"], decodeSnapshotChat, "$.boot_snapshot.chats"),
-      // `null` is the value; ABSENT is a foreign record and rejects like any other
-      // missing required field, so the first boot after this shape ships paints
-      // nothing and the capture rewrites the record within the debounce. Invariant 5
-      // (no migration code), and `DB_VERSION` stays put: the object store is
-      // unchanged and only the record's own shape moved.
+      // `null` is the value; ABSENT is a foreign record and rejects, so the next capture rewrites
+      // it. No migration, and `DB_VERSION` stays: the store itself is unchanged.
       window: win === null ? null : decodeSnapshotWindow(win),
     };
   } catch {
@@ -428,11 +408,10 @@ function decodeSnapshot(v: unknown): BootSnapshot | null {
   }
 }
 
-/** STRICT, unlike the window decoder on the network path: one undecodable entry there
- *  costs that entry and the range read fills the gap, while here a dropped entry would
- *  leave a `seq` hole in a hint nothing repairs — this record is not a page and has no
- *  turn to re-read. So a refused entry takes the whole record, which is the rule
- *  `decodeSnapshot` already applies to every other field. */
+/**
+ * STRICT, unlike the network window decoder: a dropped entry would leave a `seq` hole in a
+ * hint nothing repairs, so a refused entry takes the whole record.
+ */
 function decodeSnapshotWindow(v: unknown): SnapshotWindow {
   const o = asObject(v, "$.boot_snapshot.window");
   return {
@@ -441,12 +420,10 @@ function decodeSnapshotWindow(v: unknown): SnapshotWindow {
   };
 }
 
-/** The optional twin of `validators.ts` `reqOneOf`, mirroring that file's own `req*`/`opt*`
- *  pairing — anything the vocabulary does not name, a wrong type included, reads as ABSENT
- *  rather than throwing, so a member the union gains later costs this record nothing.
- *
- *  It lives HERE because `validators.ts` is generated output: `go run ./cmd/wire-codegen`
- *  rewrites the whole file, so an addition there is deleted by the next generator run. */
+/**
+ * The optional twin of `validators.ts` `reqOneOf`: anything the vocabulary does not name
+ * reads as ABSENT. Here because `validators.ts` is regenerated by `cmd/wire-codegen`.
+ */
 function optOneOf<T extends string>(
   o: Record<string, unknown>,
   key: string,
@@ -456,12 +433,10 @@ function optOneOf<T extends string>(
   return typeof v === "string" && (vals as readonly string[]).includes(v) ? (v as T) : undefined;
 }
 
-/** The same tolerance for the timestamp beside it: anything that is not a finite
- *  number reads as ABSENT rather than throwing.
- *
- *  Its twin is `validators.ts` `optNum`, which REFUSES a wrong type and takes the whole record
- *  with it — right for a wire payload, wrong for this one. The value is spent as epoch millis by
- *  `relativeTime`, so the failure it prevents is an age of NaN on the dot's tooltip. */
+/**
+ * The same tolerance for the timestamp: a non-finite number reads as ABSENT (unlike
+ * `optNum`), so the dot's tooltip never shows an age of NaN.
+ */
 function optFiniteNum(o: Record<string, unknown>, key: string): number | undefined {
   const v = o[key];
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -591,11 +566,10 @@ async function writeRecord(snap: BootSnapshot): Promise<void> {
   });
 }
 
-/** Forget the pending write, the capture effect and the connection — each is
- *  established once per page, so a test driving two boots needs them dropped.
- *
- *  The connection is DROPPED, not closed: a second one is harmless because the
- *  version never changes, and closing would make this reset async. */
+/**
+ * Forget the pending write, capture effect and connection, for tests driving two boots. The
+ * connection is DROPPED, not closed, keeping this reset synchronous.
+ */
 export function _resetForTest(): void {
   clearTimeout(pending);
   pending = undefined;

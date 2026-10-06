@@ -1,15 +1,7 @@
 package command
 
-// The retention-off close escalation: a close_tab that leaves a chat with no
-// open tab DELETES that chat's record inside the same operation, and the
-// teardown that follows runs on state captured before the record went.
-//
-// Every case drives the coordinator over a REAL tabs.Store (membership_test.go's
-// rule): the doomed-set decision reads the store's subtree and the commit is the
-// store's Close, so a fake store would let the decision and the commit agree
-// while being wrong together. The chat store is the in-memory double, wired to
-// the same recording bus so the tabs_changed / chat_deleted ORDER is observable
-// on one timeline.
+// The retention-off close escalation: a close_tab leaving a chat tabless deletes its record in the
+// same operation, and the teardown runs on state captured before the record went.
 
 import (
 	"context"
@@ -75,7 +67,7 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 			_, exists := store.Get(ctx, chatID)
 			h.recordSeen[chatID] = exists
 			h.teardownCtx = append(h.teardownCtx, ctx.Err())
-			h.teardown.DeleteChatStateByChain(ctx, chatID, chain)
+			h.teardown.DeleteChatStateByChain(ctx, chatID, chain, RunStopTabClosed)
 		},
 		Retention: retention,
 	})
@@ -112,12 +104,8 @@ func eventTypes(bus *tabBus) []marotte.EventType {
 	return out
 }
 
-// TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless is the
-// escalation's happy path, root and child at once: a parent chat tab with a
-// tangent chat under it closes as one mutation, both chats become tabless, and
-// with retention OFF both records are deleted IN the close operation — with the
-// tabs_changed frame first, the captured chains delivered to the delete-grade
-// teardown, and that teardown running after the records are gone.
+// TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless asserts that a parent chat tab and its tangent
+// close as one mutation, and with retention off both records go.
 func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	h := newEscalationHost(t, store, retentionOff)
@@ -142,16 +130,14 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 		t.Fatalf("closed %d tabs, want 2 (parent + child)", len(closed))
 	}
 
-	// Both records went, children included — History (the chat list) agrees.
 	for _, id := range []marotte.ChatID{"c-root", "c-tangent"} {
 		if _, ok := store.Get(t.Context(), id); ok {
 			t.Errorf("chat %q still has a record after a retention-off last-tab close", id)
 		}
 	}
 
-	// The teardown got the DELETE grade with the chain captured BEFORE the
-	// delete — nothing can re-read it off the record now — and ran after the
-	// record was gone. The close grade ran for nobody.
+	// Delete grade, with the chain captured BEFORE the delete, run after the record was gone; the
+	// close grade ran for nobody.
 	wantChains := map[marotte.ChatID][]string{
 		"c-root":    {"sess-root-old", "sess-root-live"},
 		"c-tangent": {"sess-tangent"},
@@ -173,11 +159,6 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 		t.Errorf("close-grade teardown ran for %v alongside the delete grade; a doomed chat gets exactly one grade", h.teardown.closed)
 	}
 
-	// The frame order is the delete path's, cross-device: tabs_changed applies
-	// the removal first, then each chat_deleted is a no-op on a row already gone.
-	// Keyed on the CLOSE's own frame (the one naming removed ids) — the opens
-	// above also emitted tabs_changed, so the first frame of that type proves
-	// nothing.
 	h.bus.mu.Lock()
 	removalAt, deletedAt := -1, -1
 	for i, evt := range h.bus.events {
@@ -296,12 +277,8 @@ func TestCloseTab_SubtreeWithoutTheChatsTabDeletesNothing(t *testing.T) {
 	}
 }
 
-// TestCloseTab_RetentionDecidesWhetherTheRecordSurvives folds the three
-// keep-direction predicates into one table: retention ON, an ABSENT
-// config.json, and an UNREADABLE config.json each delete nothing on a last-tab
-// close — the last two through the REAL settings read, because they ARE the
-// fail-toward-keeping contract — while the close itself still commits and the
-// close-grade teardown still runs.
+// TestCloseTab_RetentionDecidesWhetherTheRecordSurvives asserts that retention ON, an absent config.json and an
+// unreadable one each delete nothing on a last-tab close.
 func TestCloseTab_RetentionDecidesWhetherTheRecordSurvives(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -484,7 +461,6 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	// The record vanishes out from under the tab (a crashed delete's window).
 	if err := store.Delete(t.Context(), "c-ghost"); err != nil {
 		t.Fatalf("remove the record: %v", err)
 	}

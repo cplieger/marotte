@@ -10,11 +10,9 @@ import (
 	"testing"
 )
 
-// allowedBareN is every production signature in this package that may take a
-// parameter spelled `n`, with what that `n` counts. R1 deletes the second
-// COORDINATE system, so the rule is narrower than "no counts": a page size and a
-// byte cap are values, an ENTRY count crossing a signature is a coordinate the log
-// already spells as seq. A site added here needs a reason a reader can check.
+// allowedBareN is every production signature here that may take a parameter named `n`, with what it counts. A page
+// size or byte cap is a value; an entry count crossing a signature is a coordinate the log spells as seq. An entry
+// added here needs a checkable reason.
 var allowedBareN = map[string]string{
 	"WithEntryFileCap": "a BYTE cap on the whole log, not a count of anything in it",
 	"WithChatFileCap":  "a BYTE cap on the chat file, not a count of anything in it",

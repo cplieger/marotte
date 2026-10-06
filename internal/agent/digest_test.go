@@ -38,8 +38,7 @@ func TestResolveDigest_OneStatePerHeldFromTheRegistry(t *testing.T) {
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// The fake store mints into its own counter; the resolver reads the runtime's
-	// registry, so mint the subjects there the way the real writers would.
+	// The resolver reads the runtime's registry, so mint there as the writers would.
 	h.versions.BumpCounter(subject.KindChat, "c1")
 	h.versions.BumpCounter(subject.KindChat, "c1")
 	h.versions.BumpCounter(subject.KindChats, "")
@@ -64,7 +63,7 @@ func TestResolveDigest_OneStatePerHeldFromTheRegistry(t *testing.T) {
 		{subject.KindChat, "c1", "2"},
 		{subject.KindChats, "", "1"},
 		{subject.KindStatus, "", "1"},
-		// Never minted this process: "0", matching what the REST envelope stamps.
+		// Never minted: "0", as the REST envelope stamps.
 		{subject.KindPending, "", subject.Unminted},
 		{subject.KindRuns, "", subject.Unminted},
 		{subject.KindCatalog, "", subject.Unminted},
@@ -116,7 +115,7 @@ func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
 		t.Errorf("open turn with an unsealed delta: %+v, want current at %q (the turn_open is the newest sealed seq)", st, turnVersion(id, 0))
 	}
 
-	// A kind change seals the text, so the newest sealed seq moves to 1.
+	// A kind change seals the text: the newest sealed seq moves to 1.
 	if _, err := log.ThinkingDelta(t.Context(), "", "say-1", "then reasoning"); err != nil {
 		t.Fatalf("ThinkingDelta: %v", err)
 	}
@@ -217,8 +216,7 @@ func TestResolveDigest_UnknownKindIsGone(t *testing.T) {
 	}
 }
 
-// Five concurrent requests hold at most four resolutions at once: the hook parks
-// every resolution inside its slot until the test releases them.
+// Five concurrent requests hold at most four resolutions at once.
 func TestResolveDigest_AtMostFourResolutionsAtOnce(t *testing.T) {
 	h, _, _ := newTestHub()
 	var inside, peak atomic.Int32
@@ -278,8 +276,7 @@ func TestResolveDigest_ContextExpiryWhileWaitingReturnsCtxErr(t *testing.T) {
 	}
 }
 
-// The mounted route is the library's handler under the route timeout: method and
-// content type are its refusals, asserted once through the runtime's own mux.
+// Method and content type are the library handler's refusals, asserted once through the mux.
 func TestSyncRoute_RefusesWrongMethodAndContentType(t *testing.T) {
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()

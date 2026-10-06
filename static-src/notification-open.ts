@@ -1,9 +1,5 @@
-// The page-side seam: the one place a notification click becomes navigation, shared by
-// the worker's postMessage and the in-page Notification.
-//
-// Its own module rather than a function in notify.ts, because notify.ts (a feature) and
-// handlers/push-message.ts (a handler) both import it and the allowed direction is
-// handler -> feature, so the shared thing sits below both.
+// The one place a notification click becomes navigation. Below both notify.ts and
+// handlers/push-message.ts, because handler -> feature is the allowed direction.
 
 import type { Route } from "./route-path.js";
 import { pushTargetRoute, type PushTarget } from "./push-subject.js";

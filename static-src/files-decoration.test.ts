@@ -1,18 +1,7 @@
-// ---------------------------------------------------------------------------
-// Tests for the file browser's change DECORATION — the git letter on a row. Not
-// the browser's navigation or CRUD.
-//
-// Each case pins a decision the decoration rests on:
-//   - a repaint is in place, so a 15s poll cannot blow away the selection or the
-//     scroll position of a listing the user is working in
-//   - a directory row carries the worst status BENEATH it, or a change three
-//     levels down is invisible until you walk into it
-//   - only a file's letter is clickable; a directory rollup has no single diff
-// ---------------------------------------------------------------------------
+// The file browser's git-letter decoration: the repaint is in place, so the 15s poll keeps selection and focus.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-// Leaves that reach for DOM or state this module does not own.
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: vi.fn(),
   scrollToBottom: vi.fn(),
@@ -22,12 +11,10 @@ vi.mock("./editor-openers.js", () => ({
   openFile: vi.fn(),
   openFileDiff: undefined,
   openFileGitDiff: vi.fn(),
-  // files.ts imports this for the middle-click background open. Browser Mode links
-  // the module for real, so a name absent from the factory fails COLLECTION rather
-  // than a test.
+  // Browser Mode links for real, so a name absent from the factory fails collection.
   openFileInBackground: vi.fn(),
 }));
-// chat.ts transitively mounts the transcript view at import time (#messages).
+// chat.ts mounts the transcript view at import time.
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 
 import { _repaintRowsForTest } from "./files.js";
@@ -56,16 +43,7 @@ function repo(name: string, files: { path: string; status: string }[]): GitRepoS
   };
 }
 
-/** One row, shaped exactly as entryRow builds it: the decoration reads only
- *  `data-path` / `data-is-dir` and inserts before `.fb-meta`.
- *
- *  The path is COMPOSED the way entryRow composes it — `joinPath` walked down
- *  from the browser's own root listing — rather than written as a literal. That
- *  is not ceremony: these cases were green for a year while every row the shipped
- *  browser produced carried a ROOTLESS path (`w/r/a/b.go`) that no key in the
- *  git-status index could match, because the fixture supplied a space the
- *  composition did not. Composing it here means a regression in the space fails
- *  these DOM cases too, not only the contract test. */
+/** Shaped as entryRow builds it, with the path composed the same way (`joinPath` from the browser's root). */
 function row(segments: string[], isDir = false): HTMLElement {
   let path = FB_ROOT;
   for (const seg of segments) {
@@ -96,8 +74,7 @@ beforeEach(() => {
   l.id = "fb-list";
   document.body.appendChild(l);
   resetWorkspace();
-  // /api/git/status-all names each repo by a bare directory under the workspace,
-  // so the absolute keys only exist once the handshake has stated the root.
+  // /api/git/status-all names repos by directory under the workspace, so absolute keys need the stated root.
   setWorkspaceRoot("/w");
   _setReposForTest([]);
   vi.mocked(openFileGitDiff).mockClear();
@@ -151,7 +128,7 @@ describe("git letter decoration", () => {
     expect(badge?.classList.contains("fb-git-clickable")).toBe(true);
     badge?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(vi.mocked(openFileGitDiff)).toHaveBeenCalledWith("/w/r/a.go", "HEAD");
-    // stopPropagation: clicking the badge must not also toggle the row.
+    // stopPropagation: clicking the badge must not toggle the row.
     expect(rowClicks).toBe(0);
   });
 

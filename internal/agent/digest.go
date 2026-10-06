@@ -12,20 +12,14 @@ import (
 )
 
 const (
-	// digestConcurrency bounds resolutions in flight. The client is single-flight
-	// per tab, so four slots serve four devices waking at once without queueing
-	// and a flood degrades to waiting rather than to lock contention on the
-	// streaming writers.
+	// digestConcurrency bounds resolutions in flight: four slots for four waking devices.
 	digestConcurrency = 4
-	// digestTimeout is the RouteTimeout on POST /api/sync, so a request parked on
-	// a lock cannot hold its slot for as long as the peer stays connected.
+	// digestTimeout is POST /api/sync's RouteTimeout.
 	digestTimeout = 10 * time.Second
 )
 
-// resolveDigest is the hub's Resolver: one State per Held, in any order, from the
-// registry the writers mint into. It takes NO per-chat store mutex — Mutate holds
-// that across an fsynced file rewrite — and NO lock a writer holds across I/O; each
-// answer is a few uncontended mutex reads.
+// resolveDigest is the hub's Resolver: one State per Held, from the registry writers mint
+// into. It takes no per-chat store mutex and no lock held across I/O.
 func (rt *Runtime) resolveDigest(ctx context.Context, held []sse.Held) ([]sse.State, error) {
 	if err := rt.digestSlots.acquire(ctx); err != nil {
 		return nil, err
@@ -41,8 +35,7 @@ func (rt *Runtime) resolveDigest(ctx context.Context, held []sse.Held) ([]sse.St
 	return out, nil
 }
 
-// resolveOne answers one subject. A kind this server does not serve is gone, so
-// the client forgets it rather than asking again on every digest.
+// resolveOne answers one subject; an unserved kind is gone, so the client forgets it.
 func (rt *Runtime) resolveOne(ctx context.Context, h *sse.Held) sse.State {
 	st := sse.State{Subject: h.Subject}
 	switch subject.Kind(h.Kind) {
@@ -56,8 +49,7 @@ func (rt *Runtime) resolveOne(ctx context.Context, h *sse.Held) sse.State {
 		subject.KindForgeInventory:
 		st.Version, _ = rt.versions.Current(subject.Kind(h.Kind), h.Ref)
 	case subject.KindLiveTurn:
-		// The ref is a turn id; the registry says which chat still holds it open and
-		// the store says the newest seq it sealed.
+		// The ref is a turn id: the registry names the chat holding it, the store its newest sealed seq.
 		chatID, held := rt.coord.turns.holdsTurn(h.Ref)
 		if !held {
 			st.Status = sse.StatusGone
@@ -89,9 +81,7 @@ func (rt *Runtime) resolveOne(ctx context.Context, h *sse.Held) sse.State {
 	return st
 }
 
-// digestSemaphore is a context-aware counting semaphore: a slot is acquired with
-// the request context, so a waiter whose request expires fails with ctx.Err()
-// instead of queueing behind the resolutions that filled the slots.
+// digestSemaphore is a context-aware counting semaphore: an expired waiter fails with ctx.Err().
 type digestSemaphore chan struct{}
 
 func newDigestSemaphore(n int) digestSemaphore { return make(chan struct{}, n) }
@@ -110,7 +100,7 @@ func (s digestSemaphore) acquire(ctx context.Context) error {
 
 func (s digestSemaphore) release() { <-s }
 
-// turnVersion is a turn stamp's version: the turn id and its newest sealed seq.
+// turnVersion is a turn stamp's version: turn id and newest sealed seq.
 func turnVersion(turn string, seq uint64) string {
 	return turn + ":" + strconv.FormatUint(seq, 10)
 }

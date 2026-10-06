@@ -14,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The projection round-trips what the store WROTE: one record, so the reader
-// cannot report a stamp, a chain or a draft the writer did not store.
+// The projection round-trips what the store wrote.
 func TestLoadRetentionHeader_ReadsWhatTheStoreWrote(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := t.Context()
@@ -47,10 +46,7 @@ func TestLoadRetentionHeader_ReadsWhatTheStoreWrote(t *testing.T) {
 	}
 }
 
-// Drafting is the DRAFT's presence and nothing else, which is what the purge's
-// draft exemption rests on. Staged attachments are the row that matters: they are
-// paths to files that exist on disk in their own right, so the exemption is
-// narrower than "the composer holds something".
+// Drafting is the draft's presence only; staged attachments are files in their own right and do not exempt.
 func TestLoadRetentionHeader_DraftingRoundTripsTheComposer(t *testing.T) {
 	cases := map[string]struct {
 		draft        string
@@ -93,10 +89,7 @@ func TestLoadRetentionHeader_DraftingRoundTripsTheComposer(t *testing.T) {
 	}
 }
 
-// An empty draft PRESENT on disk defends nothing. It needs a hand-written fixture
-// because Chat.Draft carries `omitempty`, so the store cannot write the key at all
-// and the round-trip test above never reaches emptiness. Reading an empty draft as
-// work in progress would make every chat that ever had one permanent.
+// An empty draft present on disk defends nothing; hand-written because `omitempty` keeps the store from writing it.
 func TestLoadRetentionHeader_AnExplicitEmptyDraftDefendsNothing(t *testing.T) {
 	s, _ := newTestStore(t)
 	path := filepath.Join(s.dir, "c1", headerFileName)
@@ -113,12 +106,8 @@ func TestLoadRetentionHeader_AnExplicitEmptyDraftDefendsNothing(t *testing.T) {
 	}
 }
 
-// The projection matches keys the way encoding/json does, CASE-INSENSITIVELY,
-// because encoding/json is the other reader of this same file (the store's full
-// load) and a key the two disagree about loses data silently: a missed
-// `updated_at` falls back to the file mtime, a missed `acp_session_id` leaves a
-// KAS session directory unreaped, and a missed `draft` lets the reaper UNLINK a
-// chat with unsent words in it.
+// Keys match case-insensitively like encoding/json, the store's reader: a missed `updated_at` falls back to mtime, a
+// missed `acp_session_id` leaves a session unreaped, a missed `draft` purges unsent words.
 func TestLoadRetentionHeader_MatchesKeysTheWayEncodingJSONDoes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -175,9 +164,7 @@ func TestLoadRetentionHeader_MatchesKeysTheWayEncodingJSONDoes(t *testing.T) {
 	}
 }
 
-// The premise the test above rests on, asserted rather than assumed:
-// encoding/json really does fold these keys. A Go release that tightened field
-// matching would otherwise make the folding above wrong rather than red.
+// encoding/json really folds these keys, so a stricter Go release turns the test above red.
 func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
 	var c marotte.Chat
 	body := `{"Draft":"unsent words","Updated_At":1730000000000,"ACP_Session_ID":"sess_new"}`
@@ -195,9 +182,7 @@ func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
 	}
 }
 
-// A chat with no activity stamp reports zero, which is what makes purgeOne fall
-// back to the file mtime. An invented stamp would date the chat to the epoch; an
-// error would make it unpurgeable.
+// No activity stamp reports zero, so purgeOne falls back to mtime.
 func TestLoadRetentionHeader_AbsentFieldsAreZero(t *testing.T) {
 	s, _ := newTestStore(t)
 	path := filepath.Join(s.dir, "c1", headerFileName)
@@ -214,8 +199,7 @@ func TestLoadRetentionHeader_AbsentFieldsAreZero(t *testing.T) {
 	}
 }
 
-// A file that is not a chat at all fails rather than reporting a zero header: a
-// silent zero would age every unreadable file from the epoch and delete it.
+// A non-chat file fails rather than reporting a zero header that would age it from the epoch.
 func TestLoadRetentionHeader_RejectsMalformedJSON(t *testing.T) {
 	cases := map[string]string{
 		"truncated object": `{"id":"c1","updated_at":`,
@@ -238,9 +222,7 @@ func TestLoadRetentionHeader_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-// A FIFO at a chat file name blocks in open(2) with no deadline able to rescue it,
-// and the purge reads EVERY chat file on every pass, so this is the one read that
-// would wedge retention permanently.
+// The purge reads every chat file each pass, so a blocking FIFO open would wedge retention for good.
 func TestLoadRetentionHeader_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	s, _ := newTestStore(t)
 	id := mkfifoChat(t, s.dir)
@@ -254,8 +236,7 @@ func TestLoadRetentionHeader_RefusesAFifoInsteadOfBlockingForever(t *testing.T) 
 	}
 }
 
-// writeRawHeader writes hand-built header bytes at path, creating the chat's
-// directory first as the store would have.
+// writeRawHeader writes hand-built header bytes at path, creating the chat directory first.
 func writeRawHeader(path string, body []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

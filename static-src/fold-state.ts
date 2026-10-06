@@ -1,26 +1,4 @@
-// ---------------------------------------------------------------------------
-// Progressive collapse: which turns are open.
-//
-// ONE TURN OPEN by default — the newest, which is the one being read. A turn
-// auto-collapses when the next turn starts and not before; see OPEN_TAIL.
-//
-// Everything older folds to its merged header/footer row. The fold is what pays
-// for the turn unit: a resident page of ~23 older turns becomes ~23 one-line
-// rows, which is the difference between a transcript and an archive.
-//
-// FOUR THINGS NEVER AUTO-FOLD, and the first is the important one:
-//
-//   - A turn whose severity is BROKEN. Errors are the last thing that should hide
-//     themselves, and the reason this rule is worth stating twice is that it was
-//     promised here and absent from the code — see isTurnOpen's own note.
-//   - A turn the user opened by hand. That choice persists per chat, so it
-//     survives a reload and a chat switch.
-//   - The newest turn, whose fold toggle is hidden.
-//   - A turn still running.
-//
-// Pure and DOM-free: the renderer asks whether a turn is open, and this module
-// answers from the projection plus the user's own overrides.
-// ---------------------------------------------------------------------------
+// Progressive collapse: which turns are open. One open by default, the newest; a turn folds when the next starts.
 
 import { LS_TURN_FOLDS_KEY } from "./ls-keys.js";
 import { readPerChat, writePerChat } from "./per-chat-store.js";
@@ -31,28 +9,16 @@ import type { Turn } from "./turns.js";
  *  auto-collapses when the next turn starts, and not before. */
 const OPEN_TAIL = 1;
 
-// There is no TURNS_WARM. It was a second trailing-turn count answering
-// MOUNTEDNESS, and a turn count is not a paint cost — `block-window.ts` owns
-// residency now, in blocks and tool cards. This module answers disclosure only.
+// Residency is `block-window.ts`'s, in blocks and tool cards; this module answers open or closed only.
 
-/** Per-chat, per-turn overrides: `true` = the user opened it, `false` = the user
- *  folded it. Absent = follow the automatic rule.
- *
- *  Keyed by the turn's opening MESSAGE id rather than its ordinal, because an
- *  ordinal shifts when a rewind drops turns and would then point at a different
- *  turn than the one the reader opened.
- *
- *  PER-DEVICE, in localStorage. It used to be `ui-state.turn_folds`, shared with
- *  every other device, and that failed the arrangement's own test: a fold is a
- *  disclosure state, so sharing it meant one screen rearranged a transcript
- *  someone else was reading. Bounded by chat count with oldest-first eviction,
- *  because nothing purges it any more. */
+/**
+ * Per-chat, per-turn overrides (`true` opened, `false` folded; absent follows the rule), keyed by the turn's opening
+ * message id, which is stable across pagination.
+ */
 type Overrides = Record<string, boolean>;
 const overrides = new Map<string, Overrides>();
 
-/** Turns opened by search rather than by the reader. Not persisted, and dropped
- *  wholesale when the search closes — a search must not permanently rearrange
- *  the transcript as a side effect. */
+/** Not persisted, dropped when the search closes: a search must not permanently rearrange the transcript. */
 const searchOpened = new Map<string, Set<string>>();
 
 let loaded = false;
@@ -67,11 +33,7 @@ function load(): void {
   }
 }
 
-/** Validate one chat's overrides, dropping any entry that is not a boolean.
- *
- *  Per entry rather than per chat: hand-edited or stale bytes must not reach the
- *  renderer's open/closed decision, and the honest failure is one fold falling
- *  back to the automatic rule rather than a whole chat losing its overrides. */
+/** Per entry: stale bytes must not reach the renderer's open/closed decision. */
 function validOverrides(v: unknown): Overrides | undefined {
   if (typeof v !== "object" || v === null || Array.isArray(v)) {
     return undefined;
@@ -85,40 +47,21 @@ function validOverrides(v: unknown): Overrides | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** Persist ONE chat's overrides, which is what lets the store evict by chat.
- *
- *  A whole-document write would have nothing to re-insert, so "oldest" could not
- *  mean anything and the eviction order would be whatever the map happened to
- *  hold. An empty record is written as a DELETE so a chat with nothing to remember
- *  does not occupy a slot. */
+/** One chat per key, which is what lets the store evict by chat. */
 function persist(chatID: string): void {
   const byTurn = overrides.get(chatID);
   const value = byTurn !== undefined && Object.keys(byTurn).length > 0 ? byTurn : undefined;
   writePerChat(LS_TURN_FOLDS_KEY, Object.fromEntries(overrides), chatID, value);
 }
 
-/** Whether a turn renders open.
- *
- *  `index` and `total` position the turn in the CURRENTLY PROJECTED list, which
- *  is the resident window rather than the session. That is the right frame: the
- *  two open turns are the two the reader is looking at, and a turn scrolled off
- *  the top of history is not one of them.
- *
- *  `hasLiveRun` is passed rather than derived, for the same reason `pendingAsk` is
- *  passed into `tabStatusFor`: the answer needs the run store and the message list,
- *  and this module must stay a pure fold-state rule that knows about neither. */
+/** Whether a turn renders open. `index`/`total` position it in the projected list (the resident window). */
 export function isTurnOpen(chatID: string, t: Turn, index: number, total: number): boolean {
   load();
-  // A running turn is the one being watched, and it CANNOT be collapsed — the
-  // rule outranks even an explicit override, so a stale recorded fold cannot
-  // hide a live stream.
+  // A running turn cannot collapse; this outranks an override so a stale fold cannot hide a live stream.
   if (t.outcome === "running") {
     return true;
   }
-  // The newest turn is the one being read and CANNOT be collapsed — its toggle
-  // is hidden, and the rule sits ABOVE the overrides so a fold recorded against
-  // it by an earlier build, or against a turn a rewind made newest, cannot
-  // strand the tail closed with no control left to reopen it.
+  // The newest turn cannot collapse; above the overrides so an old or rewound fold cannot strand it.
   if (index >= total - OPEN_TAIL) {
     return true;
   }
@@ -129,27 +72,11 @@ export function isTurnOpen(chatID: string, t: Turn, index: number, total: number
   if (searchOpened.get(chatID)?.has(t.id) === true) {
     return true;
   }
-  // A BROKEN turn never auto-folds, which is what this module's own header comment
-  // has always promised and what the code did not do. The justification the old
-  // `return false` carried — "the collapsed face carries the error text as the
-  // turn's output" — was measured FALSE for the case it matters most in: the face's
-  // error row came from a face-only lookup, which scanned backwards for an `event`
-  // message, and a turn that failed on the wire's own turn_end carries none. So a
-  // failed turn folded to a header, an empty body and a footer, and the collapsed
-  // face mounted nothing at all (`syncTurnFace`'s `childElementCount === 0` arm).
-  //
-  // Below the explicit override deliberately, unlike the running and newest-turn
-  // rules above it: a reader who folded a failed turn has read it and said so, and
-  // reopening it under them would be the control lying in the other direction.
+  // A broken turn never auto-folds: its collapsed face hides the reason.
   if (severityOf(t.outcome) === "broken") {
     return true;
   }
-  // Everything else folds, a turn holding a LIVE workflow run included. Its reason
-  // moved with the surface: the composer band's run bar (`run-bar.ts`) is now the
-  // persistent readout for a live run — per chat, across turns, across a reload —
-  // so folding takes away no signal a reader is watching, and the invocation card
-  // is one unfold away. The collapsed face used to carry a duplicate card and does
-  // not any more; that duplicate is what this line used to cite.
+  // Everything else folds, a live workflow run included: the run bar (`run-bar.ts`) is its readout.
   return false;
 }
 
@@ -165,19 +92,10 @@ export function setTurnOpen(chatID: string, turnID: string, open: boolean): void
   persist(chatID);
 }
 
-// There is no hasTurnOverride accessor. The distinction it was for — a
-// hand-opened turn surviving a search close while a search-opened one re-folds —
-// is already structural: isTurnOpen consults the persisted overrides BEFORE the
-// search set, so an explicit choice outranks a reveal without anyone asking.
-
-/** Whether the reader ASKED for this turn's body — by opening it, or by landing a
- *  search on it.
- *
- *  A different question from `isTurnOpen`, which also answers true for the newest
- *  turn and a running one by rule. This one is only ever the reader's own request,
- *  which is what makes it the right pin for residency (`block-window.ts`): a
- *  budget may fold a turn nobody asked for, and may not take back one somebody
- *  did. A recorded FOLD reads false, like no record at all. */
+/**
+ * Whether the reader asked for this turn's body (opened it, or a search landed on it); unlike `isTurnOpen`, not true
+ * for the newest or a running turn.
+ */
 export function isTurnRevealed(chatID: string, turnID: string): boolean {
   load();
   return overrides.get(chatID)?.[turnID] === true || searchOpened.get(chatID)?.has(turnID) === true;
@@ -204,18 +122,10 @@ export function clearSearchOpened(chatID: string): boolean {
   return true;
 }
 
-// There is no forgetChatFolds. It existed only because the overrides lived in one
-// global blob where an entry per deleted chat accumulated forever, and its one
-// caller was the chat_deleted handler. Per-chat storage bounds itself by chat count
-// with oldest-first eviction (per-chat-store.ts), so a purged or deleted chat needs
-// nobody to tell this module about it.
-
-/** Drop the in-memory copy of the persisted document, so the next read reloads it.
- *
- *  Production caller: the sign-out sweep (`boot.ts` `forgetDeviceState`). Deleting
- *  the localStorage key alone does not forget anything — `persist` rewrites the whole
- *  document out of this map, so the next fold after a sign-out would put the previous
- *  user's folds straight back. Also the reset a test that drives two boots needs. */
+/**
+ * Drop the in-memory copy so the next read reloads it. Called by the sign-out sweep (`boot.ts` `forgetDeviceState`);
+ * deleting the key alone does not reach a module-level cache.
+ */
 export function resetFoldState(): void {
   overrides.clear();
   searchOpened.clear();

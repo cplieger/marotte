@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// writeWorkspace
-// ---------------------------------------------------------------------------
-
 func TestWriteWorkspace_Empty(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
@@ -94,7 +90,6 @@ func TestWriteWorkspace_OmitsEmptySectionHeaders(t *testing.T) {
 		if strings.Contains(out, "### Directories") {
 			t.Errorf("Directories header emitted with zero dirs:\n%s", out)
 		}
-		// Sanity: the notable file IS listed (its guard is true here).
 		if !strings.Contains(out, "### Notable files") {
 			t.Errorf("expected Notable files section for README workspace:\n%s", out)
 		}
@@ -181,8 +176,7 @@ func TestWriteWorkspace_ScratchGuidance(t *testing.T) {
 	})
 	t.Run("omitted when the workspace root is itself a repo", func(t *testing.T) {
 		dir := t.TempDir()
-		// Root is a repo, so every path under workDir is inside it and there
-		// is no sibling _scratch to suggest.
+		// The root is a repo, so there is no sibling _scratch to suggest.
 		mustWriteFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
 		mustWriteFile(t, filepath.Join(dir, "nested", ".git", "HEAD"), "ref: refs/heads/main\n")
 		var b strings.Builder
@@ -207,10 +201,6 @@ func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
 		t.Errorf("protocol section emitted with no per-repo steering\n--- output ---\n%s", out)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// writeRepoEntry
-// ---------------------------------------------------------------------------
 
 // TestWriteRepoEntry_RendersAllFields verifies a fully-populated repo
 // renders every field: branch, origin host, README description, and the
@@ -288,14 +278,12 @@ func TestWriteRepoEntry_HookFields(t *testing.T) {
 	writeRepoEntry(&b, work, "myrepo")
 	out := b.String()
 
-	// The hook renders its name and PascalCase trigger, not "unknown".
 	if !strings.Contains(out, "Guard [PreToolUse]") {
 		t.Errorf("hook name+trigger not rendered as Guard [PreToolUse]:\n%s", out)
 	}
 	if strings.Contains(out, "[unknown]") {
 		t.Errorf("hook with a known trigger wrongly rendered [unknown]:\n%s", out)
 	}
-	// A hook with a command renders the command preview.
 	if !strings.Contains(out, "echo hi") {
 		t.Errorf("hook command preview not rendered:\n%s", out)
 	}
@@ -320,10 +308,6 @@ func TestWriteRepoEntry_OmitsAgentAndHookHeadersWhenEmpty(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// readGitOrigin / readGitBranch
-// ---------------------------------------------------------------------------
-
 func TestReadGitOrigin_ReturnsURLOnSuccessfulRead(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".git", "config"),
@@ -339,9 +323,8 @@ func TestReadGitOrigin_ReturnsURLOnSuccessfulRead(t *testing.T) {
 	}
 }
 
-// TestReadGitOrigin_ReadsURLBeyondReadCap places the origin url well past
-// byte 1088 (within the 64 KiB read cap but beyond any shrunk-cap mutant)
-// so a mutated cap would read too few bytes to reach the url.
+// TestReadGitOrigin_ReadsURLBeyondReadCap places the url past byte 1088 so a shrunk read cap
+// would miss it.
 func TestReadGitOrigin_ReadsURLBeyondReadCap(t *testing.T) {
 	repo := t.TempDir()
 	filler := strings.Repeat("a", 2000)
@@ -367,10 +350,6 @@ func TestReadGitBranch_ReturnsBranchOnSuccessfulRead(t *testing.T) {
 		t.Errorf("readGitBranch(missing HEAD) = %q, want \"\"", got)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// hostFromGitURL
-// ---------------------------------------------------------------------------
 
 // TestHostFromGitURL_HTTPS covers the https credential-stripping logic:
 // `user@` before the first `/` is stripped; a leading `/` before the `@`
@@ -416,17 +395,12 @@ func TestHostFromGitURL_SCP(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// readFirstLine / isMarkdownHeading / truncateUTF8
-// ---------------------------------------------------------------------------
-
 func TestReadFirstLine(t *testing.T) {
 	// U+E0000 TAG character in UTF-8 for the StripsHiddenUnicode case.
 	hiddenUnicodeContent := append([]byte("# Title\nHello"), 0xF3, 0xA0, 0x80, 0x80)
 	hiddenUnicodeContent = append(hiddenUnicodeContent, []byte("World\n")...)
 
-	// Line where 100-byte boundary lands mid-rune for TruncationIsUTF8Safe.
-	// Each "é" is 2 bytes. 48 × "é" = 96 bytes; + "ABCé" = 101 bytes.
+	// The 100-byte boundary lands mid-rune: 48 × "é" (96 bytes) + "ABCé" = 101 bytes.
 	truncBody := strings.Repeat("é", 48) + "ABCé"
 
 	tests := []struct {
@@ -440,18 +414,15 @@ func TestReadFirstLine(t *testing.T) {
 		wantEmpty            bool
 		checkValidUTF8Prefix bool
 	}{
-		// Original 5 cases.
 		{name: "normal", content: []byte("# Title\nThis is the description.\n"), want: "This is the description."},
 		{name: "skip blanks", content: []byte("\n\n# Heading\nContent here\n"), want: "Content here"},
 		{name: "empty", content: []byte(""), wantEmpty: true},
 		{name: "only headings", content: []byte("# H1\n## H2\n"), wantEmpty: true},
 		{name: "long line", content: []byte("# Title\n" + strings.Repeat("x", 150) + "\n"), want: strings.Repeat("x", 100) + "..."},
 
-		// Missing file.
 		{name: "Missing", useMissingPath: true, wantEmpty: true},
 
-		// Prompt-injection sanitisation: the injected paragraph is dropped and
-		// the next clean paragraph is used.
+		// The injected paragraph is dropped and the next clean one used.
 		{name: "DropsMarkdownLinks", content: []byte("# Title\n[click here](javascript:alert(1))\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"]("}},
 		{name: "DropsHTMLTags", content: []byte("# Title\n<script>alert(1)</script>\n\nA clean line\n"), wantNotContain: []string{"<"}, wantContains: "clean"},
 		{name: "DropsBackticks", content: []byte("# Title\nRun `rm -rf /` to clean up\n\nA clean line\n"), wantNotContain: []string{"`"}, wantContains: "clean"},
@@ -460,25 +431,19 @@ func TestReadFirstLine(t *testing.T) {
 		{name: "DropsImageReferences", content: []byte("# Title\n![alt][evil]\n\nA clean line\n"), wantNotContain: []string{"[", "]"}, wantContains: "clean"},
 		{name: "DropsBareURLs", content: []byte("# Title\nVisit https://evil.example for setup\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"https://", "http://"}},
 
-		// Paragraphs. A wrapped sentence is one description, a blockquote lead is
-		// prose, and an offending line takes its whole paragraph with it rather
-		// than leaving a mid-sentence fragment.
+		// A wrapped sentence is one description; an offending line takes its whole paragraph.
 		{name: "JoinsWrappedParagraph", content: []byte("# Title\nA sentence that wraps\nonto a second line.\n\nNext paragraph\n"), want: "A sentence that wraps onto a second line."},
 		{name: "StripsBlockquoteMarker", content: []byte("# Title\n\n> Typed configuration for Go apps\n\nMore prose\n"), want: "Typed configuration for Go apps"},
 		{name: "DropsWholeParagraphOnLaterLine", content: []byte("# Title\nA clean opening line\nwith a `code span` on the next\n\nSecond paragraph\n"), want: "Second paragraph", wantNotContain: []string{"clean opening"}},
 		{name: "DropsWholeParagraphOnFirstLine", content: []byte("# Title\nDefaults for `x` repos. GitHub applies\nthese to any repo, so they\n"), wantEmpty: true},
 
-		// Scan window.
 		{name: "OnlyScansFirstTenLines", content: []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\n# i\n# j\nplain line outside window\n"), wantEmpty: true},
 		{name: "ReturnsFirstPlainLineWithinWindow", content: []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\nplain line\n"), want: "plain line"},
 
-		// Hashtag without space is not a heading.
 		{name: "HashtagIsNotHeading", content: []byte("#mobile responsive design\n"), want: "#mobile responsive design"},
 
-		// Size cap.
 		{name: "SizeCapRejects", content: []byte("# Title\nA clean first line\n\n" + strings.Repeat("x", 32*1024)), want: "A clean first line"},
 
-		// UTF-8 safe truncation.
 		{name: "TruncationIsUTF8Safe", content: []byte("# Title\n" + truncBody + "\n"), wantSuffix: "...", checkValidUTF8Prefix: true},
 	}
 	for _, tt := range tests {
@@ -580,10 +545,6 @@ func TestTruncateUTF8_AllContinuationBytes(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// findNotableFiles / classifyEntries
-// ---------------------------------------------------------------------------
-
 func TestFindNotableFiles(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x"), 0o644)
@@ -613,9 +574,7 @@ func TestClassifyEntries(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "repo1", ".git"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "plain"), 0o755)
 	os.MkdirAll(filepath.Join(dir, ".hidden"), 0o755)
-	// Dot-NAMED git repos (.kiro, .github) are legitimate clone targets
-	// and must be listed; only ".git" itself and dot-named non-repos
-	// stay hidden.
+	// Dot-named git repos (.kiro, .github) are listed; ".git" and dot-named non-repos are not.
 	os.MkdirAll(filepath.Join(dir, ".kiro", ".git"), 0o755)
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644)
 

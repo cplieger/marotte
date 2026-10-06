@@ -1,36 +1,10 @@
 package bridge
 
-// The startup handshake's deadline.
-//
-// Bridge.Call carries no client-side deadline by design, and with a live
-// subprocess its only other exits are the response arriving and the bridge
-// dying. So before this budget existed, an initialize or a session/new that
-// never answered blocked Start forever: the chat sat registered as starting, so
-// every later Send answered 409 busy, and the singleflight key folded those
-// callers onto the same wedged spawn. The user saw their own message and then
-// nothing, with no error, no log line past `bridge spawned`, and no recovery
-// short of closing the tab.
-//
-// These tests drive the expiry through the SHIPPED budgets, shortened for the
-// duration of one test, rather than through a short parent context.
-// context.WithTimeout takes the earlier of the two deadlines, so a short parent
-// expires the handshake whether or not marotte has a budget of its own — a test
-// written that way passes with the budget deleted, which is the one thing it is
-// supposed to catch. Shortening the budget instead means the assertion fails if
-// the timer is removed. The budgets are package vars for this reason and no
-// other; nothing in production writes them, so these tests must not run in
-// parallel with anything that starts a bridge.
-//
-// NOT a synctest bubble, and that is deliberate: these bridges hold a live
-// subprocess with open pipes, so a goroutine is parked indefinitely on an
-// external FD and the fake clock can never advance. The bubble would hang until
-// the go-test timeout instead of failing.
-//
-// Red-check note: deleting the timer makes these HANG rather than report, so the
-// failure arrives as `panic: test timed out`. That is the correct signal here
-// rather than a defect in the tests — the bug being guarded against IS an
-// unbounded wait, so a guard for it cannot fail any faster than the thing it
-// guards. The same shape as the shutdown-ordering guard in internal/agent.
+// The startup handshake's deadline. Without it an unanswered initialize or session/new blocked Start forever, with
+// every Send answering 409 and no error. Expiry is driven through the shipped budgets, shortened, because a short
+// parent context would pass with the budget deleted; so these must not run in parallel with any bridge start. Not
+// synctest: live subprocess pipes stop the fake clock. Deleting the timer makes them hang to the test timeout, the
+// only failure an unbounded wait allows.
 
 import (
 	"context"
@@ -44,10 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// stallingFake writes a fake kiro-cli that answers every request EXCEPT the named
-// method, which it reads and then ignores forever. That is the shape the budget
-// exists for: the subprocess is alive and healthy, the pipe is open, and one
-// response simply never comes.
+// stallingFake writes a fake kiro-cli that answers every request except method, which it reads and ignores.
 func stallingFake(t *testing.T, dir, stallOn string) string {
 	t.Helper()
 	script := `#!/bin/sh
@@ -82,14 +53,10 @@ done
 	return scriptPath
 }
 
-// budgetProbe is how long the test gives the handshake. Short enough to keep the
-// suite fast, long enough to let a shell fake spawn and answer the requests that
-// come BEFORE the stalled one.
+// budgetProbe is the handshake's budget in tests: long enough for the fake to answer the requests before the stall.
 const budgetProbe = 750 * time.Millisecond
 
-// shortenBudgets replaces both shipped budgets with budgetProbe for the duration
-// of one test and restores them afterwards. Restored via t.Cleanup rather than
-// defer, so a subtest that fails its way out still puts them back.
+// shortenBudgets sets both shipped budgets to budgetProbe for one test, restored via t.Cleanup.
 func shortenBudgets(t *testing.T) {
 	t.Helper()
 	origHandshake, origReplay := handshakeBudget, replayBudget
@@ -97,12 +64,8 @@ func shortenBudgets(t *testing.T) {
 	t.Cleanup(func() { handshakeBudget, replayBudget = origHandshake, origReplay })
 }
 
-// TestStart_ExpiresOnAnUnansweredHandshake is the headline case, once per phase
-// so the message names the right one.
-//
-// The subprocess is deliberately left healthy and the pipe open: this is not a
-// dead-bridge test (b.done covers that, and Call already exits on it), it is the
-// case where kiro-cli is alive and simply never answers.
+// TestStart_ExpiresOnAnUnansweredHandshake runs once per phase so the message names it. kiro-cli stays alive and
+// never answers; dead bridges are b.done's case.
 func TestStart_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 	cases := map[string]struct {
 		stallOn   string
@@ -117,8 +80,7 @@ func TestStart_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 			stallOn:   "session/new",
 			wantPhase: "session start",
 		},
-		// A resume gets the larger replayBudget, so the phase in the message has
-		// to differ or an operator reading it cannot tell which ceiling applied.
+		// A resume gets replayBudget, so the message must name the phase.
 		"session/load never answers": {
 			stallOn:   "session/load",
 			sessionID: "01HXYZ0000000000000000000A",
@@ -136,9 +98,7 @@ func TestStart_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 			t.Cleanup(b.Stop)
 
 			start := time.Now()
-			// A parent with NO deadline: the budget under test has to be the
-			// thing that fires, or the assertion proves only that a context is
-			// honoured.
+			// A parent with no deadline, so the budget is what fires.
 			err := b.Start(context.Background(), &marotte.StartOpts{
 				Lifetime: context.Background(), SessionID: tc.sessionID,
 			})
@@ -147,16 +107,14 @@ func TestStart_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 			if err == nil {
 				t.Fatal("Start returned nil on a handshake that was never answered")
 			}
-			// The classification has to survive the wrap, or a caller that wants
-			// to tell a timeout from a refusal cannot.
+			// The classification survives the wrap.
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Errorf("Start error = %v, want it to wrap context.DeadlineExceeded", err)
 			}
 			if elapsed > 10*time.Second {
 				t.Errorf("Start took %v to give up, want about %v", elapsed, budgetProbe)
 			}
-			// The user-facing half. Each of these is a thing the raw
-			// "context deadline exceeded" does not say.
+			// Each is something the raw "context deadline exceeded" does not say.
 			for _, want := range []string{tc.wantPhase, "Send again", "/api/health"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("Start error %q does not mention %q", err, want)
@@ -166,13 +124,8 @@ func TestStart_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 	}
 }
 
-// TestStart_ReapsTheSubprocessOnExpiry: a start that gives up must not leave the
-// kiro-cli tree running. Without this the budget would trade one wedge for
-// another — the chat would recover and the process would leak, once per attempt.
-//
-// Asserted through NotifCh rather than by polling the pid: Stop calls cmd.Wait,
-// so a successful teardown leaves no process entry at all, and a kill(pid,0)
-// probe would be racing the reap it is trying to observe.
+// TestStart_ReapsTheSubprocessOnExpiry pins that a start that gives up must not leak the kiro-cli tree. Asserted through
+// NotifCh: Stop's cmd.Wait leaves no process entry to probe.
 func TestStart_ReapsTheSubprocessOnExpiry(t *testing.T) {
 	shortenBudgets(t)
 	dir := t.TempDir()
@@ -192,19 +145,9 @@ func TestStart_ReapsTheSubprocessOnExpiry(t *testing.T) {
 	}
 }
 
-// TestStart_FailsClosedWhenTheBudgetExpiresInsideTheAppliers is the subtle half,
-// and the reason the check exists at all.
-//
-// newSession's appliers are best-effort: each logs and returns rather than
-// failing session creation, because refusing to open a chat over a model
-// preference is worse than opening it on the default. An expired budget turns
-// that contract into a silent downgrade — a session on the wrong model and, worse,
-// in autopilot for a chat the user marked supervised, since applySupervised is
-// last in the sequence and its whole job is to make writes ask first.
-//
-// So newSession returns nil here and Start must still fail. The fake answers
-// initialize and session/new and stalls only on the config-option call the model
-// applier makes.
+// TestStart_FailsClosedWhenTheBudgetExpiresInsideTheAppliers pins that the appliers are best-effort, so an expiry would leave
+// the wrong model or autopilot for a supervised chat while newSession returns nil. The fake stalls on the model
+// applier's config call.
 func TestStart_FailsClosedWhenTheBudgetExpiresInsideTheAppliers(t *testing.T) {
 	shortenBudgets(t)
 	dir := t.TempDir()
@@ -213,9 +156,7 @@ func TestStart_FailsClosedWhenTheBudgetExpiresInsideTheAppliers(t *testing.T) {
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
 
-	// Model differs from the currentValue the fake reports, which is what makes
-	// applyInitialModel issue the call that stalls. Supervised is set too, so the
-	// case carries the applier whose loss actually matters.
+	// A different model makes applyInitialModel call and stall; Supervised carries the applier that matters.
 	err := b.Start(context.Background(), &marotte.StartOpts{
 		Lifetime: context.Background(), Model: "claude-opus-5", Supervised: true,
 	})
@@ -229,11 +170,7 @@ func TestStart_FailsClosedWhenTheBudgetExpiresInsideTheAppliers(t *testing.T) {
 	}
 }
 
-// TestHandshakeBudgets_ResumeIsNotTighterThanStart pins the one relationship
-// between the two constants that is a real invariant rather than a restatement of
-// their values: a resume streams the whole prior transcript inside its window, so
-// giving it the tighter ceiling would kill exactly the long replays it exists to
-// admit.
+// TestHandshakeBudgets_ResumeIsNotTighterThanStart pins that a resume streams the whole transcript in its window.
 func TestHandshakeBudgets_ResumeIsNotTighterThanStart(t *testing.T) {
 	if replayBudget <= handshakeBudget {
 		t.Errorf("replayBudget (%v) must exceed handshakeBudget (%v): a resume replays the "+
@@ -242,9 +179,7 @@ func TestHandshakeBudgets_ResumeIsNotTighterThanStart(t *testing.T) {
 	}
 }
 
-// TestHandshakeTimeout_LeavesOtherFailuresAlone: the wrap must be reachable only
-// by an expiry. A refusal, a parse failure or a dead bridge already carries the
-// cause a reader needs, and dressing it as a timeout would misattribute it.
+// TestHandshakeTimeout_LeavesOtherFailuresAlone pins that only an expiry is wrapped; other errors already name their cause.
 func TestHandshakeTimeout_LeavesOtherFailuresAlone(t *testing.T) {
 	for name, err := range map[string]error{
 		"nil":            nil,

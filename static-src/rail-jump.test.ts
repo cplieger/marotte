@@ -1,10 +1,9 @@
-// The rail's jump against REAL layout: one real scroller, real card boxes, the
-// platform's own scroll animation and its own `scrollend`. turn-rail.test.ts drives
-// the same pipeline over a scroller fake, which can assert only the calls the rail
-// makes; what needs a real engine is the landing itself, the correction that follows
-// a target moving under the animation, and the release when `scrollend` is taken
-// away — Chromium fires one for every programmatic scroll, so the timeout path is
-// unreachable until the event is suppressed.
+// The rail's jump against REAL layout: one real scroller, real card boxes, the platform's own
+// scroll animation and its own `scrollend`. turn-rail.test.ts drives the same pipeline over a
+// scroller fake, which can assert only the calls the rail makes; what needs a real engine is the
+// landing itself, the correction that follows a target moving under the animation, and the release
+// when `scrollend` is taken away — Chromium fires one for every programmatic scroll, so the timeout
+// path is unreachable until the event is suppressed.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { KEY_ATTR } from "@cplieger/reactive";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -13,16 +12,15 @@ import type * as ScrollModule from "./scroll.js";
 import type { Session, TurnState } from "./types.js";
 import type { TurnSummary } from "./turn-rail.js";
 
-/** How long one scroll is given to settle before the landing is re-measured
- *  (`turn-rail.ts` PICK_SETTLE_MS), and the correction loop's landing tolerance.
- *  Hardcoded: deriving either from the module would make these assertions agree
- *  with whatever the module believes. */
+/** How long one scroll is given to settle before the landing is re-measured (`turn-rail.ts`
+ *  PICK_SETTLE_MS), and the correction loop's landing tolerance. Hardcoded: deriving either from
+ *  the module would make these assertions agree with whatever the module believes. */
 const SETTLE_MS = 1200;
 const TOLERANCE_PX = 8;
 
-// The two seams worth watching, wrapped so each call carries a TIME. The real
-// module is spread in and both wrappers call through, so the behaviour under test
-// stays the platform's — this is an instrument, not a fake.
+// The two seams worth watching, wrapped so each call carries a TIME. The real module is spread in
+// and both wrappers call through, so the behaviour under test stays the platform's — this is an
+// instrument, not a fake.
 const { probe } = vi.hoisted(() => ({
   probe: {
     /** Every absolute landing the jump asked for, with the behavior and the clock. */
@@ -50,24 +48,23 @@ vi.mock("./scroll.js", async (importOriginal) => {
     },
   };
 });
-// The session-wide index is the rail's own fetch, and the pagination door is a
-// network read. Both are staged; the sequencing around them is what is under test.
-// `apiGetTyped` is the in-chat search's fetch, linked through the rail's hit-turn
-// reader and never asked here.
+// The session-wide index is the rail's own fetch, and the pagination door is a network read. Both
+// are staged; the sequencing around them is what is under test. `apiGetTyped` is the in-chat
+// search's fetch, linked through the rail's hit-turn reader and never asked here.
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
-// The DOM the scroll controller resolves at import, nested the way the page nests
-// it: the rail mounts in the positioned OUTER wrapper, `#messages-wrap` is the
-// scroller, and `#messages` holds the turn cards.
+// The DOM the scroll controller resolves at import, nested the way the page nests it: the rail
+// mounts in the positioned OUTER wrapper, `#messages-wrap` is the scroller, and `#messages` holds
+// the turn cards.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative";
 const wrap = document.createElement("div");
 wrap.id = "messages-wrap";
-// `overflow-anchor: none` is production's (css/13-messages.css) and it is
-// load-bearing: without it Chromium's own scroll anchoring moves `scrollTop` when a
-// card above the reader changes height, which is the number every case here reads.
+// `overflow-anchor: none` is production's (css/13-messages.css) and it is load-bearing: without it
+// Chromium's own scroll anchoring moves `scrollTop` when a card above the reader changes height,
+// which is the number every case here reads.
 wrap.style.cssText = "height:300px;overflow-y:auto;overflow-anchor:none;position:relative";
 const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
@@ -87,9 +84,9 @@ for (const [id, tag] of [
   }
   document.body.appendChild(e);
 }
-// Browser Mode serves no CSS, so the scene declares the boxes the stylesheet would:
-// `.turn-rail` takes its height from `position: absolute; inset-block` in
-// production, and a track with no box holds one marker.
+// Browser Mode serves no CSS, so the scene declares the boxes the stylesheet would: `.turn-rail`
+// takes its height from `position: absolute; inset-block` in production, and a track with no box
+// holds one marker.
 const style = document.createElement("style");
 style.textContent = ".turn-rail{position:absolute;inset-block-start:0;block-size:400px}";
 document.head.appendChild(style);
@@ -103,19 +100,18 @@ const { loadMessages } = await import("./store-load.js");
 rail.mountTurnRail(outer);
 
 const MINUTE = 60_000;
-/** The reading line, which the SCROLLER owns (`clientHeight / 3`). Read through it
- *  rather than written down, because a landing measured against any other line
- *  would agree with no other consumer of the rail. */
+/** The reading line, which the SCROLLER owns (`clientHeight / 3`). Read through it rather than
+ *  written down, because a landing measured against any other line would agree with no other
+ *  consumer of the rail. */
 const readingLine = (): number => scroll.readingLineOffset();
 
 function summary(n: number): TurnSummary {
   return { id: `u${String(n)}`, n, outcome: "completed", ts: n * MINUTE };
 }
 
-/** One settled turn of the store's own entry log, at session-absolute ordinal `n`.
- *  `closeAt` is set, so the turn does not read as live; the rail's resident
- *  projection reads `turn_open.n`, which is why there is no window base here — the
- *  ordinal is session-absolute in every window. */
+/** One settled turn of the store's own entry log, at session-absolute ordinal `n`. `closeAt` is
+ *  set, so the turn does not read as live; the rail's resident projection reads `turn_open.n`,
+ *  which is why there is no window base here — the ordinal is session-absolute in every window. */
 function turnState(n: number): TurnState {
   const id = `u${String(n)}`;
   return {
@@ -142,8 +138,8 @@ function turnState(n: number): TurnState {
   };
 }
 
-/** A chat whose resident window holds the turns `ns` names. `turn_count` is the
- *  SESSION's total, which is what the index's own count is read against. */
+/** A chat whose resident window holds the turns `ns` names. `turn_count` is the SESSION's total,
+ *  which is what the index's own count is read against. */
 function session(id: string, ns: number[], hasMore: boolean, turnCount: number): Session {
   return {
     ...makeSession({ id, name: id, has_more: hasMore }),
@@ -153,16 +149,16 @@ function session(id: string, ns: number[], hasMore: boolean, turnCount: number):
   };
 }
 
-/** Prepend one older turn to a resident window, the way a page landing in front of
- *  the reader does: `turn_order[0]` moves, which is the rail's own no-progress test. */
+/** Prepend one older turn to a resident window, the way a page landing in front of the reader
+ *  does: `turn_order[0]` moves, which is the rail's own no-progress test. */
 function prependTurn(s: Session, n: number): void {
   const id = `u${String(n)}`;
   s.turns.set(id, turnState(n));
   s.turn_order.unshift(id);
 }
 
-/** A resident turn card, keyed the way the transcript keys one: the id of the turn's
- *  OPENING message, which is what the rail joins on. */
+/** A resident turn card, keyed the way the transcript keys one: the id of the turn's OPENING
+ *  message, which is what the rail joins on. */
 function card(n: number, px: number): HTMLElement {
   const e = document.createElement("div");
   e.className = "turn";
@@ -182,9 +178,9 @@ function markerFor(n: number): HTMLButtonElement {
   return hit;
 }
 
-/** A card's top measured from the scrollport's own top edge, so it compares directly
- *  against the reading line. Rects rather than `offsetTop`, for `scroll.ts`'s reason:
- *  a turn card's offsetParent is not the scroller. */
+/** A card's top measured from the scrollport's own top edge, so it compares directly against the
+ *  reading line. Rects rather than `offsetTop`, for `scroll.ts`'s reason: a turn card's
+ *  offsetParent is not the scroller. */
 function topOnScreen(key: string): number {
   const el = messagesEl.querySelector<HTMLElement>(`[${KEY_ATTR}="${key}"]`);
   if (el === null) {
@@ -193,10 +189,10 @@ function topOnScreen(key: string): number {
   return el.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
 }
 
-/** Poll `pred` until it holds. `what` is the sentence a failure reads as, so a
- *  timeout names the thing that never happened rather than a bare deadline. Bounded
- *  by the suite's shared frame budget, never a wall-clock guess: this browser
- *  throttles rAF to 1Hz partway through a full run. */
+/** Poll `pred` until it holds. `what` is the sentence a failure reads as, so a timeout names the
+ *  thing that never happened rather than a bare deadline. Bounded by the suite's shared frame
+ *  budget, never a wall-clock guess: this browser throttles rAF to 1Hz partway through a full
+ *  run. */
 async function until(pred: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + FRAME_BUDGET_MS;
   while (!pred()) {
@@ -207,15 +203,15 @@ async function until(pred: () => boolean, what: string): Promise<void> {
   }
 }
 
-/** Wait out the whole operation. The release is the one observable every exit
- *  reaches, including the exits that scroll nowhere. */
+/** Wait out the whole operation. The release is the one observable every exit reaches, including
+ *  the exits that scroll nowhere. */
 function released(): Promise<void> {
   return until(() => probe.releases.length > 0, "the jump to release its epoch");
 }
 
-/** Wait until the scroller has stopped moving on its own, so a position read is the
- *  landing rather than a frame the animation is passing through. Three identical
- *  reads is at least one frame with no write in it. */
+/** Wait until the scroller has stopped moving on its own, so a position read is the landing
+ *  rather than a frame the animation is passing through. Three identical reads is at least one
+ *  frame with no write in it. */
 async function quiet(): Promise<void> {
   let last = -1;
   let stable = 0;
@@ -230,8 +226,8 @@ async function quiet(): Promise<void> {
   }, "the scroller to stop moving");
 }
 
-/** Run `fn` once, on the first scroll event the jump's own animation produces —
- *  which is the moment the target can still be moved under it. */
+/** Run `fn` once, on the first scroll event the jump's own animation produces — which is the
+ *  moment the target can still be moved under it. */
 function onFirstScroll(fn: () => void): void {
   wrap.addEventListener(
     "scroll",
@@ -242,10 +238,10 @@ function onFirstScroll(fn: () => void): void {
   );
 }
 
-/** Make the platform report a reduced-motion preference, which is what takes the
- *  jump's own behavior to `auto`. Chromium cannot be asked to prefer it, and
- *  `matchMedia` is an ordinary property, so the query is stubbed and every other
- *  query still answers for real. `unstubGlobals` restores it. */
+/** Make the platform report a reduced-motion preference, which is what takes the jump's own
+ *  behavior to `auto`. Chromium cannot be asked to prefer it, and `matchMedia` is an ordinary
+ *  property, so the query is stubbed and every other query still answers for real.
+ *  `unstubGlobals` restores it. */
 function preferReducedMotion(): void {
   const real = window.matchMedia.bind(window);
   vi.stubGlobal("matchMedia", (q: string) =>
@@ -253,10 +249,9 @@ function preferReducedMotion(): void {
   );
 }
 
-/** Take `scrollend` away from the rail's own settle. The controller registered its
- *  own listener at import, so the epoch still closes on the event — what this
- *  suppresses is the rail hearing it, which leaves `PICK_SETTLE_MS` as the only
- *  release path. */
+/** Take `scrollend` away from the rail's own settle. The controller registered its own listener
+ *  at import, so the epoch still closes on the event — what this suppresses is the rail hearing
+ *  it, which leaves `PICK_SETTLE_MS` as the only release path. */
 function suppressScrollend(): void {
   const real = wrap.addEventListener.bind(wrap);
   vi.spyOn(wrap, "addEventListener").mockImplementation((type, fn, opts) => {
@@ -300,9 +295,9 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     await released();
     await quiet();
 
-    // ONE animation, and the landing is the reader's own line rather than the top of
-    // the scrollport: the same line activation reads, so the turn the rail marks and
-    // the turn the reader is in cannot disagree.
+    // ONE animation, and the landing is the reader's own line rather than the top of the
+    // scrollport: the same line activation reads, so the turn the rail marks and the turn the
+    // reader is in cannot disagree.
     expect(probe.landings[0]?.behavior).toBe("smooth");
     expect(Math.abs(topOnScreen("u4") - readingLine())).toBeLessThanOrEqual(TOLERANCE_PX);
   });
@@ -320,10 +315,9 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
   });
 
   it("corrects a target that moved under the animation, and starts no second one", async () => {
-    // A smooth flight's target is frozen when it starts, so height arriving above
-    // the target while it runs lands the reader short of the reading line — which is
-    // what the correction closes, with `auto` so exactly one animation is ever in
-    // flight.
+    // A smooth flight's target is frozen when it starts, so height arriving above the target while
+    // it runs lands the reader short of the reading line — which is what the correction closes,
+    // with `auto` so exactly one animation is ever in flight.
     await residentChat(6);
     onFirstScroll(() => {
       const first = messagesEl.firstElementChild as HTMLElement | null;
@@ -343,9 +337,9 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
   });
 
   it("corrects the landing after a page of history lands in front of the target", async () => {
-    // The paged path, and the one that made the correction necessary: the cards a
-    // page mounts carry an ESTIMATED height until the rows are rendered, so the
-    // target's real position arrives after the scroll was aimed at it.
+    // The paged path, and the one that made the correction necessary: the cards a page mounts carry
+    // an ESTIMATED height until the rows are rendered, so the target's real position arrives after
+    // the scroll was aimed at it.
     const chat = "c-paged";
     vi.mocked(apiGet).mockResolvedValue({
       turns: [1, 2, 3, 4, 5, 6].map(summary),
@@ -392,12 +386,8 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
 });
 
 describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
-  /** The window the release is measured in: from the SCROLL the settle belongs to,
-   *  stamped as the rail asks for it and therefore strictly before its own timer
-   *  starts. Measured from the click instead, one throttled frame (~1s) would sit
-   *  inside the threshold and make the two paths indistinguishable; measured from
-   *  the scroll EVENT, its delivery lag would put a real timeout release a few ms
-   *  under the bound. */
+  /** The window the release is measured in: from the SCROLL the settle belongs to, stamped as
+   *  the rail asks for it and therefore strictly before its own timer starts. */
   function releaseAfterScroll(): number {
     const scrolled = probe.landings[0]?.at;
     const at = probe.releases[0];
@@ -408,9 +398,9 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
   }
 
   it("releases on the scroll's own end, without waiting the settle out", async () => {
-    // Reduced motion, so the scroll is INSTANT: Chromium fires `scrollend` for one
-    // of those too, which is what makes this window the event's rather than the
-    // timer's whatever the frame rate is doing.
+    // Reduced motion, so the scroll is INSTANT: Chromium fires `scrollend` for one of those too,
+    // which is what makes this window the event's rather than the timer's whatever the frame rate
+    // is doing.
     preferReducedMotion();
     await residentChat(6);
 
@@ -421,9 +411,9 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
   });
 
   it("releases on the timeout when scrollend never arrives", async () => {
-    // `scrollend` is not universally implemented, so the timeout is the only release
-    // path on an engine without it rather than belt-and-braces. Chromium has it and
-    // would satisfy the case above for free, so the event is taken away.
+    // `scrollend` is not universally implemented, so the timeout is the only release path on an
+    // engine without it rather than belt-and-braces. Chromium has it and would satisfy the case
+    // above for free, so the event is taken away.
     preferReducedMotion();
     await residentChat(6);
     suppressScrollend();
@@ -437,9 +427,9 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
   });
 
   it("hands the position back when the reader wheels out of the jump", async () => {
-    // The reader states a position while the jump holds one, so the pick goes: the
-    // wheel ends the epoch inside scroll.ts and the scroll event that follows
-    // publishes the gesture the rail cancels on.
+    // The reader states a position while the jump holds one, so the pick goes: the wheel ends the
+    // epoch inside scroll.ts and the scroll event that follows publishes the gesture the rail
+    // cancels on.
     await residentChat(6);
     markerFor(4).click();
     await until(() => probe.landings.length > 0, "the jump's own scroll to start");

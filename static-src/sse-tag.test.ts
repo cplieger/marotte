@@ -1,9 +1,4 @@
 // Tests for sse-tag.ts: the endpoint-derived presence tag and its adoption.
-//
-// The derivation is a CROSS-LANGUAGE contract: internal/push/tag.go computes the same
-// value for the same endpoint, and the fixture both halves read is Go's
-// testdata/tag_golden.json, so a drift on either side fails a test rather than
-// silencing a device.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import goldenRaw from "../internal/push/testdata/tag_golden.json?raw";

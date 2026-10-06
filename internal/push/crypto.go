@@ -36,12 +36,9 @@ func ecdhToECDSA(key *ecdh.PrivateKey) (*ecdsa.PrivateKey, error) {
 	return ecdsa.ParseRawPrivateKey(elliptic.P256(), key.Bytes())
 }
 
-// keyMaterial carries the five byte slices RFC 8291's key derivation consumes.
-//
-// A struct rather than five positional []byte parameters: the compiler accepts
-// any permutation, and a transposition does not fail — HKDF derives a different
-// key, the subscriber's browser cannot decrypt the payload and drops it with
-// nothing logged on either side. The field names are the only guard.
+// keyMaterial carries the five byte slices RFC 8291's key derivation consumes. A struct, because a
+// transposition of positional []byte compiles and HKDF silently derives a different key, which the
+// browser discards with nothing logged; the field names are the guard.
 type keyMaterial struct {
 	// Shared is the ECDH shared secret between our ephemeral key and the
 	// subscription's public key.

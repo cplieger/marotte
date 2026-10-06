@@ -26,8 +26,7 @@ func sessionAlive(t *testing.T, us *utilitySession, br *fakeBridge) (started, st
 
 func TestRawCall_ACallerCancellationLeavesTheSessionRunning(t *testing.T) {
 	br := newFakeBridge()
-	// What the real bridge returns for a cancelled request: Call selects
-	// ctx.Done() and hands back ctx.Err() (bridge_rpc.go).
+	// The real bridge's Call returns ctx.Err() for a cancelled request.
 	br.callErrs = map[string]error{methodKiroConfigTemplate: context.Canceled}
 	us := startedRPCSession(t, br)
 

@@ -1,19 +1,4 @@
-// ---------------------------------------------------------------------------
 // The master switch going ON: it enables the DEFAULT-ON kinds, not all of them.
-//
-// The four `true` writes enableEverything used to make are not interchangeable, so
-// each of the three the reader can observe is asserted here — the wire value, the
-// checkbox, and the in-memory state. Moving only the wire value leaves the pr_status
-// box rendered checked and isKindEnabled answering true while the server has it off,
-// which is the client-disagrees-with-server drift the OFF default exists inside.
-//
-// The failure arm is the other half: it writes false for EVERY kind, because it is a
-// teardown of the whole feature rather than a re-application of defaults.
-//
-// persist.js and the push actions are the two unmanaged edges (a settings write and a
-// subscription), so they are what is mocked; the disclosure primitive, the DOM and
-// notify.ts's own state are real.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -57,9 +42,9 @@ const KIND_IDS = {
   run_outcome: "notify-run-outcome-toggle",
 } as const;
 
-/** The panel's own markup, reduced to what initNotificationToggles reads. The three
- *  kind toggles are authored with the CHECKED state index.html gives them, so the
- *  pr_status box starts unchecked like the real first frame. */
+/** The panel's own markup, reduced to what initNotificationToggles reads. The three kind toggles
+ *  are authored with the CHECKED state index.html gives them, so the pr_status box starts
+ *  unchecked like the real first frame. */
 function mountPanel(): void {
   const host = document.createElement("div");
   host.innerHTML = `

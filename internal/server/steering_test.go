@@ -14,9 +14,7 @@ import (
 	"time"
 )
 
-// fakeSteering answers CustomPath with a path the test owns. Generate is never
-// driven here — /api/steering reads and writes custom.md and never regenerates
-// environment.md.
+// fakeSteering answers CustomPath with a path the test owns; Generate is never driven.
 type fakeSteering struct{ path string }
 
 func (f fakeSteering) Generate(context.Context) {}
@@ -52,12 +50,8 @@ func putSteering(t *testing.T, s *Server, ifMatch, content string) *httptest.Res
 	return rec
 }
 
-// A read failure must not answer 200 {"content":""}: that is indistinguishable from
-// the absent-file case, and a save PUTs the whole textarea as the whole document, so
-// the first keystroke would replace what is on disk.
-//
-// Read open is the settings document's rule and deliberately NOT this one: there the
-// write path refuses the same file, so serving defaults costs nothing.
+// TestHandleSteeringGet_RefusesADocumentItCannotRead pins no 200 {"content":""} for an
+// unreadable file: the first keystroke's save would replace it.
 func TestHandleSteeringGet_RefusesADocumentItCannotRead(t *testing.T) {
 	tests := map[string]func(t *testing.T, path string){
 		"a directory at the name": func(t *testing.T, path string) {
@@ -101,10 +95,8 @@ func TestHandleSteeringGet_RefusesADocumentItCannotRead(t *testing.T) {
 	}
 }
 
-// TestHandleSteeringGet_AbsentDocumentIsTheNormalCase is the other half of the
-// split above, and the one a fresh volume takes: no custom.md means no custom
-// instructions, so an empty document with a token the first save can offer is the
-// right answer rather than a refusal.
+// TestHandleSteeringGet_AbsentDocumentIsTheNormalCase pins an empty document plus a token
+// for a fresh volume.
 func TestHandleSteeringGet_AbsentDocumentIsTheNormalCase(t *testing.T) {
 	s, _ := steeringServer(t)
 
@@ -126,14 +118,8 @@ func TestHandleSteeringGet_AbsentDocumentIsTheNormalCase(t *testing.T) {
 	}
 }
 
-// TestHandleSteeringGet_DoesNotBlockOnAFIFO is the read side's own case: os.Open on
-// a FIFO blocks in open(2) with no context deadline to rescue it, so one mkfifo at
-// custom.md stranded a handler goroutine per GET, unbounded. Measured before the
-// fix, two requests released at 11.6s and 15.7s — long after both clients had gone.
-//
-// Bounded rather than direct, because reverting the fix does not make this fail, it
-// makes it HANG. The goroutine is left blocked on a revert, which is acceptable in a
-// test binary about to report a failure and exit.
+// TestHandleSteeringGet_DoesNotBlockOnAFIFO pins the FIFO refusal on the read side. Bounded:
+// a revert HANGS rather than fails.
 func TestHandleSteeringGet_DoesNotBlockOnAFIFO(t *testing.T) {
 	s, path := steeringServer(t)
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
@@ -157,9 +143,7 @@ func TestHandleSteeringGet_DoesNotBlockOnAFIFO(t *testing.T) {
 	}
 }
 
-// TestHandleSteeringPut_StoresTheDocument0600 pins the mode on disk rather than the
-// argument: custom.md is user prose on the persistent volume, its sibling
-// environment.md is 0600, and everything else marotte writes beside them is too.
+// TestHandleSteeringPut_StoresTheDocument0600 pins the mode on disk, not the argument.
 func TestHandleSteeringPut_StoresTheDocument0600(t *testing.T) {
 	s, path := steeringServer(t)
 
@@ -200,11 +184,8 @@ func TestHandleSteeringPut_RequiresAValidatorToken(t *testing.T) {
 	}
 }
 
-// TestHandleSteeringPut_RefusesAStaleToken is the case the whole mechanism exists
-// for: a second device, or an agent editing custom.md as the generated
-// environment.md tells it to, is no longer overwritten by a stale panel's next
-// keystroke. The 409 carries the fresh token AND the document, so the reader's box
-// can be re-seeded from the refusal itself.
+// TestHandleSteeringPut_RefusesAStaleToken pins the 409 for a stale token, carrying the fresh
+// token AND the document.
 func TestHandleSteeringPut_RefusesAStaleToken(t *testing.T) {
 	s, path := steeringServer(t)
 	if err := os.WriteFile(path, []byte("# loaded\n"), 0o600); err != nil {
@@ -215,7 +196,7 @@ func TestHandleSteeringPut_RefusesAStaleToken(t *testing.T) {
 		t.Fatal("GET published no ETag, so there is no stale token to offer")
 	}
 
-	// Somebody else writes, which moves both inputs the token is derived from.
+	// Somebody else writes, moving both token inputs.
 	const theirs = "# somebody else's, and longer\n"
 	if err := os.WriteFile(path, []byte(theirs), 0o600); err != nil {
 		t.Fatalf("rewrite %s: %v", path, err)
@@ -248,9 +229,7 @@ func TestHandleSteeringPut_RefusesAStaleToken(t *testing.T) {
 	}
 }
 
-// savedETag decodes a 200 PUT's body and reports the validator it carried. The BODY
-// rather than the header is what the client reads: the action framework's decode hook
-// sees a body and cannot reach a response header.
+// savedETag decodes a 200 PUT's body and reports its validator (the client reads the body).
 func savedETag(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	var got steeringSaveBody
@@ -263,11 +242,8 @@ func savedETag(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return got.ETag
 }
 
-// TestHandleSteeringPut_PublishesTheNextToken is what makes a debounced save usable:
-// without a fresh token on the reply, the second keystroke's save would 409 against
-// the first one's own write and the reader would be told their text was not saved
-// when it was. Both carriers are asserted because they have different readers — the
-// body is the client's, the header is anything reading the HTTP contract.
+// TestHandleSteeringPut_PublishesTheNextToken pins the fresh token in body and header, or a
+// debounced second save would 409 against the first.
 func TestHandleSteeringPut_PublishesTheNextToken(t *testing.T) {
 	s, path := steeringServer(t)
 
@@ -296,9 +272,8 @@ func TestHandleSteeringPut_PublishesTheNextToken(t *testing.T) {
 	}
 }
 
-// TestHandleSteeringPut_EmptyContentRemovesTheFile pins the whitespace-is-absence
-// rule through the precondition: "no custom instructions" is stored as no file, so
-// the reply's token has to be the absent one or the next save is refused.
+// TestHandleSteeringPut_EmptyContentRemovesTheFile pins that the reply's token is then the
+// absent one.
 func TestHandleSteeringPut_EmptyContentRemovesTheFile(t *testing.T) {
 	s, path := steeringServer(t)
 	if err := os.WriteFile(path, []byte("# mine\n"), 0o600); err != nil {

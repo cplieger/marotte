@@ -1,14 +1,5 @@
-// ---------------------------------------------------------------------------
-// The cross-language pin for the cross-chat search reply.
-//
-// chat.SearchAllResult and chat.Match are wiregen-registered; Go's
-// TestSearchAllWireContract writes the fixture from a real SearchAll over a seeded
-// store, and this decodes it through the generated decodeSearchAllResult — the
-// decoder `searchChats` runs on every live reply — so the encoder cannot drift
-// from what the History page reads.
-//
-// Node placement because the fixture is a disk read.
-// ---------------------------------------------------------------------------
+// Cross-language pin: Go's TestSearchAllWireContract writes the fixture from a real SearchAll, and
+// this decodes it through the generated decodeSearchAllResult that `searchChats` runs.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
@@ -44,9 +35,7 @@ describe("the cross-chat search reply shared with the Go implementation", () => 
   it("carries a best hit only where the transcript holds a line to show", () => {
     const r = decodeSearchAllResult(fx.result);
     const [withLine, titleOnly] = r.matches;
-    // The first occurrence in the chat, segment-relative, past no multibyte word. The hit
-    // names its TURN and its ENTRY, and the two are equal here because the match is that
-    // turn's prompt, which rides the `turn_open` entry.
+    // The hit's TURN and ENTRY are equal here because the match is the turn's prompt (`turn_open`).
     expect(withLine?.best).toMatchObject({
       turn_id: "chat-001-t1",
       entry_id: "chat-001-t1",
@@ -55,16 +44,14 @@ describe("the cross-chat search reply shared with the Go implementation", () => 
       segment_len: 33,
     });
     expect(withLine?.hits).toBe(3);
-    // A title-only match has no `best` at all: a zero hit would carry an empty
-    // segment kind, which the registered enum refuses.
+    // A title-only match has no `best`: a zero hit's empty segment kind fails the registered enum.
     expect(titleOnly?.best).toBeUndefined();
     expect(titleOnly?.hits).toBe(0);
   });
 
   it("refuses a title-only match spelled as a zero hit", () => {
     const r = fx.result as { matches: Record<string, unknown>[] };
-    // Every other field is present and well-typed, so the refusal is attributable to the
-    // empty `segment_kind` alone — which is what the assertion on the message pins.
+    // Every other field is valid, so the refusal is attributable to the empty `segment_kind` alone.
     const zeroHit = {
       turn_id: "chat-003-t1",
       entry_id: "chat-003-t1",
@@ -76,8 +63,7 @@ describe("the cross-chat search reply shared with the Go implementation", () => 
     };
     const forged = { ...r, matches: [{ ...r.matches[1], best: zeroHit }] };
     expect(() => decodeSearchAllResult(forged)).toThrow(/segment_kind/);
-    // The control: the same hit with a real segment kind decodes, so the refusal above
-    // cannot be a missing or mistyped field wearing the enum's name.
+    // Control: with a real segment kind the same hit decodes.
     const named = {
       ...r,
       matches: [{ ...r.matches[1], best: { ...zeroHit, segment_kind: "prompt" } }],

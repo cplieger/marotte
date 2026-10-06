@@ -1,15 +1,7 @@
 package agent
 
-// Proof for the confinement the fs handlers gained: the check-then-act the
-// lexical resolver used to leave open is closed by naming every operation
-// through the workspace's os.Root.
-//
-// Each test here stages the race explicitly — resolve, swap an INTERMEDIATE
-// directory for a symlink pointing outside the workspace, then act — and asserts
-// both halves: the ambient operation the handler used to perform escapes, and the
-// confined operation it performs now is refused. The ambient half is not padding;
-// it is the red check, and it is what makes these tests fail loudly if anyone
-// reintroduces an os call on the resolver's absolute path.
+// Each test stages an ancestor swap between resolve and act, then asserts the ambient os
+// call escapes (the red check) and the os.Root-confined operation is refused.
 
 import (
 	"errors"
@@ -22,14 +14,12 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// escapeStage is one staged ancestor swap: a workspace containing work/sub/f.txt
-// and a sibling directory outside it holding a file the agent must not reach.
+// escapeStage is one staged ancestor swap: work/sub/f.txt plus an outside file the agent must not reach.
 type escapeStage struct {
 	rt      *Runtime
 	work    string
 	outside string
-	// abs is the path the lexical resolver returned BEFORE the swap: what the
-	// deleted ambient os calls would have operated on.
+	// abs is the path the resolver returned before the swap.
 	abs string
 	// root/rel are what the handlers use now.
 	root *os.Root
@@ -41,16 +31,11 @@ const (
 	insideContent = "inside"
 )
 
-// stageAncestorSwap builds the workspace, resolves work/sub/f.txt, and then
-// replaces the "sub" DIRECTORY with a symlink to a directory outside the
-// workspace — the swap an agent with write access to the workspace can perform
-// with one rename, in the window between the resolver's verdict and the
-// operation.
+// stageAncestorSwap resolves work/sub/f.txt, then swaps the "sub" directory for a symlink
+// outside the workspace: one rename between verdict and operation.
 func stageAncestorSwap(t *testing.T) escapeStage {
 	t.Helper()
-	// EvalSymlinks the temp dirs: on macOS /var is itself a symlink to
-	// /private/var, and an unresolved base makes the containment check compare
-	// two different spellings of the same directory.
+	// EvalSymlinks: on macOS /var is a symlink to /private/var.
 	work := canonDir(t, t.TempDir())
 	outside := canonDir(t, t.TempDir())
 	if err := os.WriteFile(filepath.Join(outside, "f.txt"), []byte(outsideSecret), 0o600); err != nil {
@@ -79,7 +64,7 @@ func stageAncestorSwap(t *testing.T) escapeStage {
 		t.Fatalf("confineInWorkDir(%q) rel = %q, want %q", target, rel, filepath.Join("sub", "f.txt"))
 	}
 
-	// The swap. Everything the resolver verified about "sub" is now false.
+	// The swap.
 	if err := os.Remove(target); err != nil {
 		t.Fatalf("remove inside file: %v", err)
 	}
@@ -93,8 +78,7 @@ func stageAncestorSwap(t *testing.T) escapeStage {
 	return escapeStage{rt: rt, work: work, outside: outside, abs: abs, root: root, rel: rel}
 }
 
-// canonDir resolves a directory through EvalSymlinks so comparisons against it
-// are against the real path.
+// canonDir resolves dir through EvalSymlinks.
 func canonDir(t *testing.T, dir string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(dir)
@@ -104,12 +88,11 @@ func canonDir(t *testing.T, dir string) string {
 	return resolved
 }
 
-// A read named through the workspace root is refused after an ancestor swap; the
-// ambient os.ReadFile the handler used to perform hands back the outside file.
+// A root-confined read is refused after an ancestor swap; ambient os.ReadFile leaks the outside file.
 func TestConfinedRead_RefusesAncestorSwap(t *testing.T) {
 	st := stageAncestorSwap(t)
 
-	// Red check: this is the deleted code path, and it escapes.
+	// Red check: the ambient path escapes.
 	leaked, err := os.ReadFile(st.abs)
 	if err != nil {
 		t.Fatalf("os.ReadFile(%q) after ancestor swap = %v; the escape this test "+
@@ -120,7 +103,6 @@ func TestConfinedRead_RefusesAncestorSwap(t *testing.T) {
 			st.abs, leaked, outsideSecret)
 	}
 
-	// The confined read the handler performs now.
 	got, err := atomicfile.ReadBoundedInRoot(t.Context(), st.root, st.rel, fsReadCap)
 	if err == nil {
 		t.Fatalf("ReadBoundedInRoot(root, %q) = (%q, nil), want an escape error", st.rel, got)
@@ -130,14 +112,12 @@ func TestConfinedRead_RefusesAncestorSwap(t *testing.T) {
 	}
 }
 
-// A write named through the workspace root is refused after an ancestor swap.
-// The control is the exact open the handler used to perform, syscall.O_NOFOLLOW
-// included — the flag guards only the FINAL component, so it does not help.
+// A root-confined write is refused after an ancestor swap. O_NOFOLLOW guards only the final component, so it does not help.
 func TestConfinedWrite_RefusesAncestorSwap(t *testing.T) {
 	st := stageAncestorSwap(t)
 	outsideFile := filepath.Join(st.outside, "f.txt")
 
-	// Red check: the deleted open writes outside the workspace, O_NOFOLLOW and all.
+	// Red check: the ambient open writes outside, O_NOFOLLOW and all.
 	f, err := os.OpenFile(st.abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		t.Fatalf("os.OpenFile(%q, O_NOFOLLOW) after ancestor swap = %v; the escape this "+
@@ -154,12 +134,11 @@ func TestConfinedWrite_RefusesAncestorSwap(t *testing.T) {
 			got, rErr, "CLOBBERED")
 	}
 
-	// Restore the outside file so the confined half is judged against a clean state.
+	// Restore the outside file for the confined half.
 	if err := os.WriteFile(outsideFile, []byte(outsideSecret), 0o600); err != nil {
 		t.Fatalf("restore outside file: %v", err)
 	}
 
-	// The confined write the handler performs now.
 	if _, err := atomicfile.WriteFileInRoot(t.Context(), st.root, st.rel, []byte("CONFINED"),
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o755)); err == nil {
 		t.Fatalf("WriteFileInRoot(root, %q) = nil, want an escape error", st.rel)
@@ -173,15 +152,12 @@ func TestConfinedWrite_RefusesAncestorSwap(t *testing.T) {
 	}
 }
 
-// A delete named through the pinned parent is refused after an ancestor swap;
-// the ambient Lstat + Remove pair unlinks the outside file.
+// A delete through the pinned parent is refused after an ancestor swap; ambient Lstat + Remove unlinks the outside file.
 func TestConfinedDelete_RefusesAncestorSwap(t *testing.T) {
 	st := stageAncestorSwap(t)
 	outsideFile := filepath.Join(st.outside, "f.txt")
 
-	// The confined descent FIRST here, because the red check destroys the target:
-	// OpenParentInRoot refuses "sub" outright, since it Lstats each component and
-	// a symlink is not a directory.
+	// Confined descent first, because the red check destroys the target.
 	if parent, base, err := atomicfile.OpenParentInRoot(st.root, st.rel); err == nil {
 		_ = parent.Close()
 		t.Fatalf("OpenParentInRoot(root, %q) = (%v, %q, nil), want a refusal at the "+
@@ -191,7 +167,7 @@ func TestConfinedDelete_RefusesAncestorSwap(t *testing.T) {
 		t.Fatalf("outside file after the confined delete attempt: %v, want it still there", err)
 	}
 
-	// Red check: the deleted pair unlinks it.
+	// Red check: the ambient pair unlinks it.
 	info, err := os.Lstat(st.abs)
 	if err != nil {
 		t.Fatalf("os.Lstat(%q) after ancestor swap = %v; the escape this test exists "+
@@ -209,8 +185,7 @@ func TestConfinedDelete_RefusesAncestorSwap(t *testing.T) {
 	}
 }
 
-// A listing named through the workspace root is refused after an ancestor swap;
-// os.ReadDir enumerates the outside directory.
+// A root-confined listing is refused after an ancestor swap; os.ReadDir enumerates outside.
 func TestConfinedReadDir_RefusesAncestorSwap(t *testing.T) {
 	st := stageAncestorSwap(t)
 	absDir := filepath.Dir(st.abs)
@@ -224,11 +199,8 @@ func TestConfinedReadDir_RefusesAncestorSwap(t *testing.T) {
 	}
 }
 
-// A FIFO left at a read target must be REFUSED, not opened. open(2) on a
-// reader-less FIFO blocks indefinitely, and this handler runs under
-// lifetime.inflight against a KAS Call that carries no timeout — so a hang here
-// wedges the chat's turn permanently. The test would hang rather than fail if
-// the refusal regressed, which is why it is worth pinning.
+// A FIFO at a read target must be refused: open(2) blocks, and a KAS Call with no timeout
+// wedges the turn. A regression hangs rather than fails.
 func TestConfinedRead_RefusesFIFO(t *testing.T) {
 	work := canonDir(t, t.TempDir())
 	fifo := filepath.Join(work, "pipe")
@@ -247,9 +219,7 @@ func TestConfinedRead_RefusesFIFO(t *testing.T) {
 	}
 }
 
-// A FIFO left at a write target must be refused too: the deleted
-// O_WRONLY|O_CREATE|O_TRUNC open would have blocked until a reader appeared, and
-// rename(2) would happily have replaced the pipe with a regular file.
+// A FIFO at a write target must be refused too.
 func TestConfinedWrite_RefusesFIFO(t *testing.T) {
 	work := canonDir(t, t.TempDir())
 	fifo := filepath.Join(work, "pipe")
@@ -276,17 +246,8 @@ func TestConfinedWrite_RefusesFIFO(t *testing.T) {
 	}
 }
 
-// A symlink planted at the write target AFTER the path was confined must not
-// carry the write through to its victim.
-//
-// This is the property the deleted syscall.O_NOFOLLOW open held, and it is worth
-// pinning because the mechanism changed. The resolver EvalSymlinks the leaf, so a
-// link that already exists is rewritten to its target and never reaches the
-// write at all — the only way a symlink gets here is the race, so the race is
-// what the test stages. Where the old open answered ELOOP, the rename now
-// REPLACES the link with the new regular file, because rename(2) does not follow
-// a final component. Different answer, same guarantee: the victim's bytes are
-// untouched, and os.Root forbids the link pointing outside the workspace anyway.
+// A symlink planted at the target after confinement must not carry the write to its victim.
+// rename(2) replaces the link rather than following it.
 func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T) {
 	work := canonDir(t, t.TempDir())
 	victim := filepath.Join(work, "victim.txt")
@@ -314,9 +275,7 @@ func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T
 
 	_, err = atomicfile.WriteFileInRoot(t.Context(), root, rel, []byte("clobber"),
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o755))
-	// Either outcome is acceptable — a refusal (the Lstat saw the link) or a
-	// completed write that replaced the link. What must NOT happen is the
-	// victim changing.
+	// A refusal or a write that replaced the link are both fine; the victim must not change.
 	if got, rErr := os.ReadFile(victim); rErr != nil || string(got) != "keep me" {
 		t.Errorf("victim after write (err = %v) = (%q, %v), want (%q, nil)",
 			err, got, rErr, "keep me")
@@ -337,9 +296,7 @@ func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T
 	}
 }
 
-// With no workspace root the fs handlers must REFUSE rather than fall back to
-// ambient os calls: a boundary with nothing behind it is worse than a withheld
-// capability.
+// With no workspace root the handlers refuse rather than fall back to ambient os calls.
 func TestConfineInWorkDir_RefusesWithoutRoot(t *testing.T) {
 	lt := &lifetime{workDir: t.TempDir()}
 	if _, _, err := lt.confineInWorkDir("f.txt"); !errors.Is(err, errNoWorkRoot) {

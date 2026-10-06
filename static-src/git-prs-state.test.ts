@@ -18,7 +18,6 @@ import {
 } from "./git-prs-state.js";
 import type { ConfiguredForge, InventoryEntry, InventoryScope, PR } from "./wire/types.gen.js";
 
-/** The canonical ids of org/repo and org/other. */
 const REPO = "v1.6f72672f7265706f";
 const OTHER = "v1.6f72672f6f74686572";
 
@@ -133,8 +132,7 @@ describe("the groups an inventory derives", () => {
   });
 
   it("stands the authored rows under the login in for the owner scope a connection lacks", () => {
-    // GitLab's owner scope refuses the user's own namespace, so the login's
-    // repositories are the authored rows under it; the rest are elsewhere.
+    // GitLab's owner scope refuses the user's own namespace, so the login's repositories are the authored rows under it.
     applyInventoryList({
       entries: [
         entry(GL.id, "4", [

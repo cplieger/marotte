@@ -1,22 +1,6 @@
-// ---------------------------------------------------------------------------
-// The composer's two rows are ONE band height, on whichever pointer tier is in
-// force.
-//
-// The box is a textarea over a row of controls. Both heights used to be literals
-// — `2rem` on `.pill`/`.send-btn`, `2.5rem` on `--composer-rest-h` — which agree
-// on the fine tier by arithmetic (4 + 32 + 4 = 40) and cannot agree anywhere
-// else: the universal hit-target floor lifts a control to 44px on a coarse
-// pointer, so the pill row rendered 52px under a textarea still at 40. A
-// width-keyed override in 15-input.css carried the match for a phone, which is
-// exactly the axis that cannot reach a touch DESKTOP — wide and coarse.
-//
-// Two halves, following composer-font-css.test.ts, because neither answers the
-// other's question. The SOURCE read says the height is one derived value and that
-// no width query overrides it, which is the regression a computed style cannot
-// see (a passing measurement says nothing about the axis it was keyed on). The
-// MEASUREMENT says the two rows match at four (width, tier) combinations, the
-// wide-coarse one being the reported defect.
-// ---------------------------------------------------------------------------
+// The composer's two rows are one band height on every pointer tier. Source half: the height is one derived value and
+// no width query overrides it (a measurement cannot see the axis it was keyed on). Measurement half: the rows match
+// at four (width, tier) combinations, wide-coarse being the one a width query cannot see.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
@@ -27,9 +11,7 @@ import { ICON_SEND } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { allRules, loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
-/** The composer subtree as the page ships it, sliced rather than hand-written:
- *  the pill row's height is the sum of its own controls, so a fixture with two
- *  invented pills would measure a row this app does not render. */
+/** Sliced from the shipped page: the pill row's height is the sum of its real controls. */
 function composerMarkup(): string {
   const open = indexHtml.indexOf('<form id="prompt-form"');
   expect(open, 'static/index.html has no <form id="prompt-form">').toBeGreaterThan(-1);
@@ -38,12 +20,7 @@ function composerMarkup(): string {
   return indexHtml.slice(open, close + "</form>".length);
 }
 
-/** Stage two attachments in the mounted composer, through the REAL builder.
- *
- *  `static/index.html` ships `#attachment-row` empty and `hidden`, so the chip cases
- *  have to populate it — and a hand-written `<li>` would measure a chip this app does
- *  not render (the `×` is an opt-in the composer alone passes, and the glyph inside it
- *  is what that button's own box is sized around). */
+/** Through the real builder: `#attachment-row` ships empty, and a hand-written chip would not carry the composer's `×`. */
 function stageAttachments(): void {
   const row = document.getElementById("attachment-row");
   if (row === null) {
@@ -64,11 +41,7 @@ function stageAttachments(): void {
   }
 }
 
-/** The value of one declaration in `rule`, paren-balanced.
- *
- *  A regex cannot read these any more: `--composer-ctl-h` is a `max()` over a token,
- *  so `[^)]+` stops at the first inner `)` and a `[^;]+` form reads a whole nested
- *  expression correctly only by accident of ordering. */
+/** Paren-balanced, because `--composer-ctl-h` is a `max()` over a token and `[^)]+` stops at the first inner `)`. */
 function declaration(body: string, property: string): string | null {
   const at = body.indexOf(`${property}:`);
   if (at === -1) {
@@ -93,18 +66,12 @@ describe("the height's declarations, read from source", () => {
 
   it("declares one control height for the box, and it takes ONE rung on touch", () => {
     const form = ruleContaining(css, '[id="prompt-form"]', "top");
-    // The painted box takes ONE rung up on the coarse tier through `--ctl-h-sm` — 32
-    // under a mouse, 36 under a finger — and stops well short of the 44px TARGET floor:
-    // the floor in the PAINTED box puts 44px of button around a 20px glyph, which reads
-    // as empty, while a flat 32 on a finger is too small to look right.
+    // The painted box takes one rung up on coarse (`--ctl-h-sm`: 32 mouse, 36 finger) and stops short of the target floor.
     expect(form.body).toMatch(/--composer-ctl-h:\s*max\(2rem,\s*var\(--ctl-h-sm\)\)/);
-    // The floor must NOT be read here, or the box takes the TARGET's measure again
-    // and both reports come back. This is the half that survived both moves.
+    // The floor must not be read here, or the painted box takes the 44px target's measure ("grown buttons look empty").
     expect(form.body).not.toMatch(/--composer-ctl-h:[^;]*--hit-floor/);
-    // ONE declaration, so the tier cannot be re-decided by a second selector. That
-    // is what reading a tier TOKEN buys over a `[data-pointer="coarse"]` override,
-    // and it is also what keeps `data-touched` (which moves --hit-floor alone) from
-    // growing the painted box on a mouse-driven touch laptop.
+    // One declaration, so no second selector re-decides the tier, and `data-touched` (which moves `--hit-floor`) cannot
+    // grow the painted box on a touch laptop.
     const writers = allRules(css)
       .filter((r) => /--composer-ctl-h:/.test(r.body))
       .map((r) => r.selector);
@@ -113,10 +80,7 @@ describe("the height's declarations, read from source", () => {
 
   it("derives the textarea's resting band from that height and the row's own inset", () => {
     const input = ruleContaining(css, '[id="prompt-input"]', "top");
-    // The inset term is the row's padding, which pays for the expander's block reach
-    // (`--composer-pill-pad`, 6px on coarse against `--pill-inset`'s 4); reading
-    // `--pill-inset` here leaves the textarea 44px under a 45px pill row — the
-    // disagreement this whole file exists to pin.
+    // The row's padding pays for the expander's block reach (`--composer-pill-pad`, 6px coarse vs `--pill-inset`'s 4).
     expect(input.body).toMatch(
       /--composer-rest-h:\s*calc\(var\(--composer-ctl-h\)\s*\+\s*2\s*\*\s*var\(--composer-pill-pad\)\)/,
     );
@@ -125,14 +89,10 @@ describe("the height's declarations, read from source", () => {
   it("gives the two controls that height instead of a literal", () => {
     for (const selector of [".pill", ".send-btn"]) {
       const rule = ruleContaining(css, selector, "top");
-      // The control's OWN declarations, cut at its first nested block: both rules
-      // carry a nested `& svg` sizing for their glyph, which is a legitimate
-      // statement about the drawing rather than about the row.
+      // Cut at the first nested block: both rules carry a nested `& svg` glyph sizing.
       const brace = rule.body.indexOf("{");
       const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
-      // Either spelling: `.pill` says `height`, `.send-btn` says `block-size`. Only the
-      // BLOCK axis is shared; the inline one comes from the padding its icon-only
-      // sibling uses.
+      // Either spelling (`height` on `.pill`, `block-size` on `.send-btn`). Only the block axis is shared.
       expect(own, `${selector} reads the shared height`).toMatch(
         /(?:block-size|height):\s*var\(--composer-ctl-h\)/,
       );
@@ -142,22 +102,15 @@ describe("the height's declarations, read from source", () => {
   });
 
   it("takes Send's width from ONE mechanism, so it cannot drift from the height", () => {
-    // The width is one mechanism, not a literal: an inline axis from its own padding
-    // plus a block axis from `height` once gave 42x32 on a fine pointer and 44x44 on a
-    // coarse one, the coarse square landing on the hit floor by coincidence. Send
-    // takes the SAME padding `.pill` takes, declared once per tier and shared by
-    // selector, so there is no second literal to drift.
+    // Send's width comes from the same padding `.pill` takes, declared once per tier, so there is no second literal to
+    // drift (the original 42x32 vs 44x44 mismatch).
     const rule = ruleContaining(css, ".send-btn", "top");
     const brace = rule.body.indexOf("{");
     const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
     expect(own).toMatch(/block-size:\s*var\(--composer-ctl-h\)/);
-    // No literal width, and no `aspect-ratio` re-squaring it.
     expect(own, "no literal inline size").not.toMatch(/inline-size:\s*\d/);
     expect(own, "no aspect-ratio re-squaring it").not.toMatch(/aspect-ratio/);
-    // Both icon-only controls derive their inline padding from ONE token, which is what
-    // makes "Send is the same box as its sibling" structural rather than two numbers
-    // that happen to agree. Send adds half its glyph deficit on top, so the expression
-    // differs while the source of truth does not.
+    // Both icon-only controls derive inline padding from one token; Send adds half its glyph deficit on top.
     expect(own, "Send derives its padding from the row's token").toMatch(
       /padding-inline:\s*max\(\s*var\(--pill-pad-inline\)/,
     );
@@ -165,9 +118,7 @@ describe("the height's declarations, read from source", () => {
     expect(pill.body, ".pill spends the same token").toMatch(
       /padding:\s*0\s+var\(--pill-pad-inline\)/,
     );
-    // And no rule may re-pad either of them with a literal, which is the drift the
-    // token exists to prevent — a phone override on `.pill` alone is exactly how Send
-    // ended up 32 wide against a 46px sibling.
+    // No rule may re-pad either with a literal: a phone override on `.pill` alone made Send 32 wide beside a 46px sibling.
     const rePadders = allRules(css)
       .filter((r) =>
         r.selector
@@ -181,7 +132,6 @@ describe("the height's declarations, read from source", () => {
     expect(own, "physical, or the floor's own min-width wins by source order").toMatch(
       /min-width:\s*0/,
     );
-    // The width query that broke squareness on a narrow MOUSE window is gone.
     const widthWriters = allRules(css)
       .filter((r) => /\.send-btn/.test(r.selector) && /min-width:\s*var\(--btn-h\)/.test(r.body))
       .map((r) => r.selector);
@@ -189,9 +139,7 @@ describe("the height's declarations, read from source", () => {
   });
 
   it("lets no rule override the resting band, least of all a width query", () => {
-    // THE TIER IS THE POINTER, NOT THE WIDTH (01-tokens.css). The override this
-    // replaced sat in `@media (width <= 48rem)`, so a wide coarse viewport kept
-    // the fine-tier band. One derivation, no second writer, on any axis.
+    // The tier is the pointer, not the width (01-tokens.css): a width-keyed override missed wide coarse viewports.
     const writers = allRules(css)
       .filter((r) => /--composer-rest-h:/.test(r.body))
       .map((r) => r.selector);
@@ -200,9 +148,7 @@ describe("the height's declarations, read from source", () => {
 });
 
 describe("the composer, measured at real viewport sizes", () => {
-  // The block sits last in the file and restores the size it found, like
-  // composer-font-css.test.ts. `page.viewport` has no getter, so the entry size
-  // is read off the frame rather than copied from vitest.config.ts.
+  // Sits last and restores the entry size, read off the frame (`page.viewport` has no getter).
   let entry: { readonly width: number; readonly height: number } | null = null;
   let styleEl: HTMLStyleElement | null = null;
 
@@ -223,13 +169,10 @@ describe("the composer, measured at real viewport sizes", () => {
     }
   });
 
-  /** The composer's two bands at one viewport size under one pointer tier.
-   *
-   *  `band` is the pill row MINUS its `border-block-start`: that hairline is the
-   *  boundary between the two rows rather than part of either, so it is the row's
-   *  band the textarea has to match. The resize is asserted, or a `page.viewport`
-   *  that stopped moving the frame would leave every case below reporting about
-   *  the project's own size while still naming a device. */
+  /**
+   * `band` is the pill row minus its `border-block-start`, the boundary between the rows. The resize is asserted, or a
+   * stuck viewport makes every case vacuous.
+   */
   async function bandsAt(
     width: number,
     height: number,
@@ -263,12 +206,7 @@ describe("the composer, measured at real viewport sizes", () => {
   }
 
   it("matches the two rows on a touch DESKTOP, which is the case a width query cannot reach", async () => {
-    // The reported defect: 40px of textarea over a 52px pill row, because the
-    // controls take the coarse hit floor and the band was a fine-tier literal.
-    //
-    // 32 for the control and 44 for both bands, because the painted box does not carry
-    // the target's measure. The case pins that the two rows agree, on the tier a width
-    // query cannot see.
+    // Wide coarse: a width query cannot see the tier, so the textarea could sit over a taller pill row.
     const { textarea, band, control } = await bandsAt(1440, 900, "coarse");
     expect(control, "one rung up on a coarse pointer, still short of the 44px floor").toBe(36);
     expect(textarea).toBe(44);
@@ -289,10 +227,8 @@ describe("the composer, measured at real viewport sizes", () => {
   });
 
   it("holds every control's TARGET at the hit floor, and lets none reach the textarea", async () => {
-    // The half the painted-box size is only safe with, and why it is a hit test rather
-    // than a style read: the 44px target is non-negotiable and no target may overhang
-    // into its neighbour's box. Both are properties of what `elementFromPoint` answers,
-    // which a declaration read cannot stand in for.
+    // A hit test, not a style read: the 44px target and the no-overhang rule are properties of what `elementFromPoint`
+    // answers, and a source assertion that looked right is how the earlier defect survived.
     await bandsAt(390, 844, "coarse");
     const row = document.querySelector<HTMLElement>(".prompt-pills");
     const input = document.getElementById("prompt-input");
@@ -300,8 +236,7 @@ describe("the composer, measured at real viewport sizes", () => {
       throw new Error("the composer subtree did not mount");
     }
     const root = getComputedStyle(document.documentElement);
-    // The token is authored in `rem`, so it is resolved against the root size here
-    // rather than restated as a number.
+    // Authored in `rem`, so resolved against the root size rather than restated.
     const floor =
       Number.parseFloat(root.getPropertyValue("--hit-floor")) * Number.parseFloat(root.fontSize);
     expect(floor, "the coarse floor, in px").toBe(44);
@@ -335,12 +270,11 @@ describe("the composer, measured at real viewport sizes", () => {
         down = t;
       }
       const name = el.id === "" ? el.className : el.id;
-      // The scan resolves the boundary to a quarter pixel, so the measured height is
-      // the floor to within one step.
+      // The scan resolves the boundary to a quarter pixel.
       if (up + down + 0.25 < floor - 0.5) {
         short.push(`${name} target ${String(up + down)}px tall`);
       }
-      // The row's own padding is what pays for the expander's upward reach.
+      // The row's own padding pays for the expander's upward reach.
       if (cy - up < inputBottom) {
         theft.push(`${name} reaches ${String(inputBottom - (cy - up))}px into the textarea`);
       }
@@ -349,11 +283,7 @@ describe("the composer, measured at real viewport sizes", () => {
     expect(theft, "no target overhangs into #prompt-input's box").toEqual([]);
   });
 
-  /** The send button as the RUNNING app has it. `static/index.html` ships it empty
-   *  — `prompt-input.ts` does `sendBtn.replaceChildren(iconEl(STATE_ICON.idle))` at
-   *  boot — so a fixture sliced from that page measures a 26px button with no ink in
-   *  it. Driving the production glyph rather than a hand-written one means an
-   *  upstream path change moves these two cases with it. */
+  /** `static/index.html` ships Send empty (`prompt-input.ts` fills it at boot), so the production glyph is driven here. */
   function withSendGlyph(): HTMLElement {
     const send = document.getElementById("send-btn");
     if (send === null) {
@@ -364,12 +294,8 @@ describe("the composer, measured at real viewport sizes", () => {
   }
 
   it("keeps Send wider than tall on every tier and width", async () => {
-    // Send is WIDER than tall: a square made it the only control in the row whose
-    // width was its height, which read as a different size class (the narrowest
-    // control, read as the biggest). The surplus width is free touch area, so the
-    // direction is asserted rather than a number. Only the HEIGHT is compared with
-    // `#chat-options-btn`: box-identical cost 6px of a row with 4px of slack. The
-    // source read asserts the width comes from one mechanism, not a literal.
+    // Send is not square: a square read as a different size class. Only the height is compared to the sibling (box-identical
+    // cost 6px of a row with 4px of slack); the surplus width is free touch area, so the direction is asserted.
     for (const [w, h, tier] of [
       [320, 568, "coarse"],
       [390, 844, "coarse"],
@@ -393,8 +319,7 @@ describe("the composer, measured at real viewport sizes", () => {
   });
 
   it("sizes Send's glyph box with the same token as the control beside it", async () => {
-    // Send swaps faces (send, stop, steer), so a per-path ink correction cannot live
-    // on it: every face takes `--icon-ui`, the box the sibling's glyph has too.
+    // Send swaps faces, so no per-path ink correction can live on it: every face takes `--icon-ui`.
     await bandsAt(390, 844, "coarse");
     withSendGlyph();
     const glyph = (id: string): DOMRect => {
@@ -411,18 +336,15 @@ describe("the composer, measured at real viewport sizes", () => {
   });
 
   it("matches them on a wide viewport with no pointer tier resolved yet", async () => {
-    // The no-JS fallback arm is width-gated, so a wide window keeps mouse sizing
-    // until `pointer-tier.ts` classifies it. Both rows have to follow it together.
+    // The no-JS fallback is width-gated, so a wide window keeps mouse sizing until `pointer-tier.ts` classifies it.
     const { textarea, band } = await bandsAt(1440, 900, null);
     expect(textarea).toBe(40);
     expect(band).toBe(40);
   });
 
   it("centres the composer on its own divider, which is what the match buys", async () => {
-    // The consequence worth measuring rather than reasoning about: with equal
-    // bands the distance from the box's top edge to the text's centre equals the
-    // distance from the controls' centre to its bottom edge. Counting the divider
-    // into the textarea's band instead puts this half a pixel out.
+    // With equal bands, box top to text centre equals controls' centre to box bottom; counting the divider into the
+    // textarea's band puts this half a pixel out.
     const boxOf = (): DOMRect => {
       const box = document.getElementById("prompt-box");
       if (box === null) {
@@ -452,14 +374,8 @@ describe("the composer, measured at real viewport sizes", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The staged-attachment chip is the box's THIRD row. Its children are `<button>`s, so a
-// height derived from them would put the zero-specificity 44px TARGET floor into the
-// painted box: a 50px chip around a 15px label beside the pill row's smaller controls.
-// So the source read pins the height to the box's derived term with the floor opted out
-// PHYSICALLY, and the measurement pins that the chip agrees with the row under it while
-// every target still clears the floor without reaching into a neighbour's.
-// ---------------------------------------------------------------------------
+// The staged-attachment chip is the box's third row. Its height came from its `<button>` children, so the hit floor
+// put the 44px target into the painted box (50.78px around a 15px label); the same two halves apply.
 
 describe("the attachment chip's declarations, read from source", () => {
   const css = loadCSS("15-input.css");
@@ -469,21 +385,13 @@ describe("the attachment chip's declarations, read from source", () => {
     const brace = rule.body.indexOf("{");
     const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
     expect(declaration(own, "block-size")).toMatch(/^var\(--composer-ctl-h,/);
-    // The block padding that used to add 4.8px on top of the children.
     expect(declaration(own, "padding-block")).toBe("0");
     expect(own, "no literal height beside the derived one").not.toMatch(/(^|[^-])height:\s*\d/);
   });
 
   it("keeps that fallback the same EXPRESSION the box declares, not the same number", () => {
-    // One value, two homes, and nothing else holds them together: this component's
-    // other home is a sent turn's header (29-turns.css), outside `#prompt-form`, where
-    // the property does not resolve — and a `var()` with nothing behind it invalidates
-    // the declaration, which would put the chip back on its children's height.
-    //
-    // EXPRESSION rather than value, because `--composer-ctl-h` is tier-dependent again
-    // (`max(2rem, var(--ctl-h-sm))`): a `2rem` fallback would agree with the pill row
-    // inside the composer and disagree with it in a turn header, on the coarse tier
-    // only, which is exactly the shape this whole file exists to catch.
+    // Expression, not value: the chip's other home is a sent turn's header, outside `#prompt-form`, where
+    // `--composer-ctl-h` does not resolve; a `var()` with nothing behind it invalidates the declaration.
     const form = ruleContaining(css, '[id="prompt-form"]', "top");
     const declared = declaration(form.body, "--composer-ctl-h");
     const chip = ruleContaining(css, ".attachment-pill", "top");
@@ -494,10 +402,7 @@ describe("the attachment chip's declarations, read from source", () => {
   });
 
   it("pays for the chips' target reach out of the row's own padding", () => {
-    // The term `.prompt-pills` reads, for the same reason: without it a chip's expander
-    // overhangs into `#prompt-input`'s box above and into the pill row's own controls'
-    // targets below. `--pill-inset` (4px) is short of the reach on a coarse pointer,
-    // and it also left the chips inside the controls' inline edge.
+    // Without the row's padding term a chip's expander overhangs `#prompt-input` above and the pill targets below.
     const rule = ruleContaining(css, ".attachment-row", "top");
     expect(declaration(rule.body, "padding")).toBe("var(--composer-pill-pad)");
     const writers = allRules(css)
@@ -511,8 +416,8 @@ describe("the attachment chip's declarations, read from source", () => {
       const rule = ruleContaining(css, selector, "top");
       const brace = rule.body.indexOf("{");
       const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
-      // Physical, or the floor's own `min-height` wins by source order — 61-mcp-tools
-      // sorts later, and a logical property is a DIFFERENT property to it.
+      // Physical, or the floor's `min-height` wins by source order (61-mcp-tools sorts later; a logical property is a
+      // different property to it).
       expect(declaration(own, "min-height"), `${selector} drops the floor's min-height`).toBe("0");
       expect(declaration(own, "min-width"), `${selector} drops the floor's min-width`).toBe("0");
       expect(declaration(own, "position"), `${selector} is the expander's containing block`).toBe(
@@ -524,9 +429,7 @@ describe("the attachment chip's declarations, read from source", () => {
     expect(declaration(expander.body, "inset-block")).toBe(
       "min(0px, calc((100% - var(--hit-floor)) / 2))",
     );
-    // BLOCK ONLY. An inline expander on the `×` would put a DESTRUCTIVE target over
-    // the last characters of the filename, so a tap meant to open the file would
-    // remove it.
+    // Block only: an inline expander on the `×` would put a destructive target over the filename's last characters.
     expect(
       declaration(expander.body, "inset-inline"),
       "no inline reach into the sibling control",
@@ -602,9 +505,6 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   });
 
   it("holds every chip button's TARGET at the floor, and lets none reach a neighbour", async () => {
-    // The half the painted-box size is only safe with, and a hit test rather than a
-    // style read because the target and the overhang are both properties
-    // of what `elementFromPoint` answers.
     const { floor } = await chipsAt(390, 844, "coarse");
     const input = document.getElementById("prompt-input");
     const control = document.getElementById("chat-options-btn");
@@ -615,7 +515,6 @@ describe("the attachment chip, measured at real viewport sizes", () => {
       const hit = document.elementFromPoint(x, y);
       return hit === el || (hit !== null && el.contains(hit));
     };
-    /** How far `el` owns the vertical line through its centre, in `dir`. */
     const reach = (el: Element, dir: -1 | 1): number => {
       const r = el.getBoundingClientRect();
       const cx = r.left + r.width / 2;
@@ -638,8 +537,7 @@ describe("the attachment chip, measured at real viewport sizes", () => {
     expect(buttons.length, "two chips, each with a label and a remove").toBe(4);
 
     const inputBottom = input.getBoundingClientRect().bottom;
-    // The pill row's own controls grow upward by the same rule, so the boundary a chip
-    // may not cross is that target's top edge rather than the control's box.
+    // The pill row's controls grow upward too, so the boundary is that target's top, not the control's box.
     const controlRect = control.getBoundingClientRect();
     const controlTargetTop = controlRect.top + controlRect.height / 2 - reach(control, -1);
     const short: string[] = [];
@@ -665,12 +563,8 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   });
 
   it("paints nothing that could reveal the remove button's asymmetric target", async () => {
-    // The `×` target is the full floor tall and 24px wide, which is acceptable only
-    // while nothing on screen draws the difference: a fill on either box would make
-    // the target's shape visible. The background half is a CSSOM WALK, because
-    // computed style answers for ONE state and the question is every state a rule can
-    // put this button in; a test page cannot call `CSS.forcePseudoState`, and a
-    // synthetic hover drives no style recalc.
+    // The `×` target is floor-tall and 24px wide, acceptable only while nothing paints the difference. The background half
+    // walks the CSSOM, since computed style answers for one state and a test page cannot force pseudo-states.
     await chipsAt(390, 844, "coarse");
     const close = document.querySelector<HTMLElement>("#attachment-row .attachment-close");
     const label = document.querySelector<HTMLElement>("#attachment-row .attachment-open");
@@ -678,20 +572,12 @@ describe("the attachment chip, measured at real viewport sizes", () => {
       throw new Error("the chip did not mount");
     }
 
-    /** Every rule in the bundle that writes `background*` and whose selector this
-     *  element matches once its pseudo-CLASSES are stripped, in document order.
-     *
-     *  IT DESCENDS INTO NESTED RULES, and that is what makes the sweep exhaustive
-     *  rather than merely plausible. Measured in Chromium 152: a `CSSStyleRule` is NOT
-     *  a `CSSGroupingRule` (`instanceof` is false) but it DOES carry `cssRules`, so a
-     *  walk that only recurses through grouping rules sees a top-level selector and
-     *  none of its `&:hover` children. `.icon-btn` — which this button wears — holds
-     *  four of them, the fill among them, so without the descent the resting assertion
-     *  below would be asserting over one rule instead of five. */
+    /**
+     * Every `background*` writer whose selector matches once pseudo-classes are stripped, in document order. Descends into
+     * nested rules: a `CSSStyleRule` carries `cssRules` but is not a `CSSGroupingRule` (Chromium 152).
+     */
     const fillWriters = (el: Element, pseudo: string): { selector: string; value: string }[] => {
       const out: { selector: string; value: string }[] = [];
-      /** `&` resolved against the enclosing selector list, which is all these
-       *  stylesheets' nesting is (a state or a variant on the parent). */
       const resolve = (selector: string, parents: readonly string[]): string[] =>
         parents.length === 0
           ? [selector]
@@ -714,9 +600,7 @@ describe("the attachment chip, measured at real viewport sizes", () => {
             rule.style.getPropertyValue("background-color");
           if (value !== "") {
             for (const raw of selectors) {
-              // Keep only the selectors aimed at the pseudo-element under test, then
-              // strip the state so a `:hover` rule is counted for the element it would
-              // paint.
+              // Keep only selectors aimed at the pseudo-element under test, then strip the state so a `:hover` rule counts.
               const wantsPseudo = raw.includes("::after") || raw.includes("::before");
               if (pseudo === "" ? wantsPseudo : !raw.includes(pseudo)) {
                 continue;
@@ -755,15 +639,8 @@ describe("the attachment chip, measured at real viewport sizes", () => {
       return out;
     };
 
-    // 1. THE PAINTED BOX. Every rule that fills it carries a STATE, so at rest there is
-    //    no shape on screen at all — and each of those paints the button's OWN box,
-    //    which is square. A fill on a stateless rule, or a non-square box, is what
-    //    would make the asymmetric target visible.
-    //
-    //    `.icon-btn`'s `&:hover` fill is the one live writer, and it is UNGATED by
-    //    `any-hover` — an app-wide property of that shared class rather than this
-    //    button's, so a tap latches it on a touch device. It still cannot reveal the
-    //    asymmetry, because what it paints is the square box asserted below.
+    // 1. The painted box: every fill carries a state and paints the button's own square box, so the asymmetric target
+    // stays invisible. `.icon-btn`'s `&:hover` fill is not gated by `any-hover`, and still paints only that square.
     const onElement = fillWriters(close, "");
     expect(onElement.length, "the sweep reaches the nested state rules").toBeGreaterThan(1);
     const resting = onElement.filter(
@@ -777,9 +654,7 @@ describe("the attachment chip, measured at real viewport sizes", () => {
     expect(r.width, "the painted box is square, so no state fill can be asymmetric").toBe(r.height);
     expect(getComputedStyle(close).backgroundColor, "transparent at rest").toBe("rgba(0, 0, 0, 0)");
 
-    // 2. THE TARGET. The expander is the only box carrying the asymmetry, and it is
-    //    unpainted in every state: no rule gives it a background, and it declares no
-    //    border of its own. The label's expander takes the same guarantee.
+    // 2. The target: the expander is unpainted in every state and declares no border; the label's expander likewise.
     for (const el of [close, label]) {
       expect(fillWriters(el, "::after"), "nothing fills the expander, in any state").toEqual([]);
       const after = getComputedStyle(el, "::after");
@@ -790,9 +665,7 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   });
 
   it("never lets the remove button's target cover the filename", async () => {
-    // The one asymmetry in the expander: `×` is destructive, so its target may not
-    // reach the label's. They touch across the chip's own 4px gap, which belongs to
-    // neither.
+    // `×` is destructive, so its target may not reach the label's; they touch across the chip's 4px gap.
     await chipsAt(390, 844, "coarse");
     const label = document.querySelector<HTMLElement>("#attachment-row .attachment-open");
     const close = document.querySelector<HTMLElement>("#attachment-row .attachment-close");
@@ -801,8 +674,6 @@ describe("the attachment chip, measured at real viewport sizes", () => {
     }
     const lr = label.getBoundingClientRect();
     const cr = close.getBoundingClientRect();
-    // The label's own trailing edge, and its whole trailing half at the chip's vertical
-    // centre: the remove button must own none of it.
     for (const x of [lr.right - 1, lr.right - 4, lr.left + lr.width * 0.75]) {
       const hit = document.elementFromPoint(x, lr.top + lr.height / 2);
       expect(
@@ -810,8 +681,7 @@ describe("the attachment chip, measured at real viewport sizes", () => {
         `the remove button owns the label at x=${String(Math.round(x - lr.left))}`,
       ).toBe(false);
     }
-    // And the remove button's own target still clears WCAG 2.5.8's 24px on the axis it
-    // may not grow, which is why it declares a 24px box.
+    // The remove button's target still clears WCAG 2.5.8's 24px on the axis it may not grow.
     expect(cr.width).toBe(24);
   });
 });

@@ -1,10 +1,7 @@
 package command
 
-// `ErrorPayload.TurnScoped` lets the client drop the toast for a chat already on
-// screen, on the grounds that the turn's own card holds the reason. It is a property
-// of the EMISSION rather than of the code: `prompt_failed` has three emitters and
-// `recovery_failed` two, and three of the five open no turn at all, so for those the
-// toast is the only surface a per-code answer would silence.
+// TurnScoped is a property of the EMISSION, not the code: one code is emitted both with and without
+// a turn card holding the reason.
 
 import (
 	"context"
@@ -31,6 +28,9 @@ type surfaceDeps struct {
 	spawnErr error
 	// slotHeld makes TryAcquireForPrompt refuse, which is the held-bridge-slot path.
 	slotHeld bool
+	// closedReason, when set, is the reason AwaitTurn reports the turn closed with:
+	// the engine's turn_end winning the close.
+	closedReason string
 	// startRefused makes StartTurn answer false, the cancelled-during-spawn path.
 	startRefused bool
 	// callErr, when set, fails the prompt Call itself.
@@ -44,6 +44,7 @@ type abandonedTurn struct {
 	turn   string
 	stop   marotte.StopReason
 	reason string
+	kind   marotte.FailureKind
 }
 
 func newSurfaceDeps() *surfaceDeps {
@@ -60,10 +61,17 @@ func (d *surfaceDeps) Broadcast(_ context.Context, e marotte.ServerEvent) {
 	d.errors = append(d.errors, p)
 }
 
-func (d *surfaceDeps) AbandonInFlightTurn(_ context.Context, _ marotte.ChatID, turn string, stop marotte.StopReason, reason string) {
+func (d *surfaceDeps) AbandonInFlightTurn(_ context.Context, _ marotte.ChatID, turn string, stop marotte.StopReason, reason string, kind marotte.FailureKind, _ uint64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.abandoned = append(d.abandoned, abandonedTurn{turn: turn, stop: stop, reason: reason})
+	d.abandoned = append(d.abandoned, abandonedTurn{turn: turn, stop: stop, reason: reason, kind: kind})
+}
+
+func (d *surfaceDeps) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
+	if d.closedReason != "" {
+		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason}, nil
+	}
+	return d.benchDeps.AwaitTurn(ctx, chatID, turnID)
 }
 
 func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
@@ -118,7 +126,7 @@ func (*surfaceBridge) PromptGeneration() uint64                         { return
 func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
 	deps := newSurfaceDeps()
 	reportPromptFailure(t.Context(), promptRolesOf(deps), "c1", "t-7",
-		errors.New("connection reset"), time.Second, false)
+		errors.New("connection reset"), 0, time.Second, false)
 
 	got := deps.onlyError(t)
 	if got.Code != marotte.ErrCodePromptFailed {
@@ -128,6 +136,19 @@ func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
 		t.Error("TurnScoped = false, want true: AbandonInFlightTurn stamps this same " +
 			"reason on the turn's carrier, so the card says it durably and a toast for " +
 			"the chat on screen is a second copy of it")
+	}
+}
+
+// When the engine's own turn_end closed the turn, the toast carries the sentence
+// the card shows rather than marotte's reading of the prompt error.
+func TestReportPromptFailure_BroadcastsTheClosedReason(t *testing.T) {
+	deps := newSurfaceDeps()
+	deps.closedReason = "Your connection was interrupted. Please try again in a moment."
+	reportPromptFailure(t.Context(), promptRolesOf(deps), "c1", "t-7",
+		errors.New("ACP error -32603: Internal error"), 9, time.Second, false)
+
+	if got := deps.onlyError(t).Message; got != deps.closedReason {
+		t.Errorf("error frame Message = %q, want the closed turn's reason %q", got, deps.closedReason)
 	}
 }
 
@@ -147,7 +168,6 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 		turnScoped bool
 	}{
 		{
-			// The spawn failed, so the opened turn closes with the spawn's reason.
 			name:    "the bridge could not be spawned",
 			want:    marotte.ErrCodeBridgeStartFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
@@ -157,9 +177,6 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			turnScoped: true,
 		},
 		{
-			// A held slot despite an owned reservation is a programming error rather
-			// than a fault, but the turn is open and the POST acked, so it still has
-			// to report.
 			name:    "the bridge slot was held despite the reservation",
 			want:    marotte.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.slotHeld = true },
@@ -169,8 +186,6 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			turnScoped: true,
 		},
 		{
-			// The most reachable: a refused start in the spawn / MCP window means no
-			// ACP call, and the turn CmdPrompt opened closes with the refusal's reason.
 			name:    "the turn was refused before it started",
 			want:    marotte.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.startRefused = true },
@@ -180,14 +195,11 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			turnScoped: true,
 		},
 		{
-			// The turn being replaced was already finalized and the retry's turn is
-			// never opened, so this failure finalizes nothing; its frame names the
-			// cause because the toast is its only surface.
 			name:    "empty-turn recovery could not respawn the session",
 			want:    marotte.ErrCodeRecoveryFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				retryEmptyTurnPrompt(ctx, roles, "c1", p, map[string]any{})
+				retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", p, map[string]any{})
 			},
 		},
 	}
@@ -221,7 +233,7 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	deps.callErr = errors.New("connection reset")
 	roles := promptRolesOf(deps)
 
-	retryEmptyTurnPrompt(t.Context(), roles, "c1", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+	retryEmptyTurnPrompt(t.Context(), roles, "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
 	got := deps.onlyError(t)
 	if got.Code != marotte.ErrCodeRecoveryFailed {
@@ -233,13 +245,8 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	}
 }
 
-// The reader's own Stop reaches that same branch, and it must withhold the frame like
-// every other cancelled exit: the retry takes the prompt slot and registers its own
-// cancel precisely so the grace can unblock a retry KAS never answers, so the expiry
-// trips it here. `recovery_failed` routes to a toast and TurnScoped suppresses it only
-// for a reader already on that chat, so any other chat got a red toast for a stop the
-// reader asked for — reading "Retry prompt failed: " and nothing after it, because a
-// cancel supplies no prose.
+// TestRetryEmptyTurnPrompt_WithholdsTheFrameOnACancel: the reader's own Stop reaches the retry's
+// failure branch and must withhold the frame like every cancelled exit.
 func TestRetryEmptyTurnPrompt_WithholdsTheFrameOnAnUnackedCancel(t *testing.T) {
 	deps := newSurfaceDeps()
 	deps.callErr = context.Canceled
@@ -249,7 +256,7 @@ func TestRetryEmptyTurnPrompt_WithholdsTheFrameOnAnUnackedCancel(t *testing.T) {
 	defer cancel(nil)
 	cancel(ErrCancelGraceExpired)
 
-	retryEmptyTurnPrompt(ctx, roles, "c1", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+	retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
 	deps.mu.Lock()
 	frames := deps.errors
@@ -267,7 +274,7 @@ func TestRetryEmptyTurnPrompt_RespawnFailureNamesTheCause(t *testing.T) {
 	deps := newSurfaceDeps()
 	deps.spawnErr = errors.New("no such binary")
 
-	retryEmptyTurnPrompt(t.Context(), promptRolesOf(deps), "c1", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+	retryEmptyTurnPrompt(t.Context(), promptRolesOf(deps), "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
 	frame := deps.onlyError(t)
 	if !strings.Contains(frame.Message, "Session refresh failed") || !strings.Contains(frame.Message, "no such binary") {
@@ -280,12 +287,8 @@ func TestRetryEmptyTurnPrompt_RespawnFailureNamesTheCause(t *testing.T) {
 	}
 }
 
-// EVERY prompt exit runs the turn end rule on the turn CmdPrompt opened at
-// admission, through AbandonInFlightTurn: the turn_close it writes grades the turn
-// from the stop that ended it and carries the real reason, an `interrupted` for
-// every exit that broke and a bare `cancelled` for the one that did not. An exit
-// that closed nothing would leave a turn with a turn_open and no turn_close, which
-// the store-open closer would later write off as a crash.
+// TestPromptExits_CloseTheTurnThroughTheTurnEndRule: every prompt exit closes the turn CmdPrompt
+// opened through AbandonInFlightTurn, graded from the stop that ended it.
 func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 	cases := []struct {
 		name string
@@ -298,8 +301,7 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 		want string
 		// stop is what the exit concludes.
 		stop marotte.StopReason
-		// frame is whether this exit also broadcasts an error, in which case the two
-		// surfaces must read one sentence. Asserted in BOTH directions: false demands
+		// frame is whether this exit also broadcasts an error; asserted both ways, false demanding
 		// zero error payloads.
 		frame bool
 	}{
@@ -334,20 +336,15 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 			frame: true,
 		},
 		{
-			// The one exit with no frame at all: it logged a Warn and returned, so the
-			// close is the whole of what a reader ever learns about it.
 			name:    "the empty-turn retry's own turn never started",
 			arrange: func(d *surfaceDeps) { d.startRefused = true },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				retryEmptyTurnPrompt(ctx, roles, "c1", p, map[string]any{})
+				retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", p, map[string]any{})
 			},
 			want: "cancelled before the agent answered",
 			stop: marotte.StopReasonInterrupted,
 		},
 		{
-			// The reader pressed Stop and KAS never acked it, so the grace budget killed
-			// the prompt context during the spawn / MCP window. Nothing is broken, so
-			// the close is a bare `cancelled` with no reason and no toast.
 			name:    "an unacked cancel killed the context before the turn started",
 			arrange: func(d *surfaceDeps) { d.startRefused = true },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {

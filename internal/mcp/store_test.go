@@ -54,9 +54,8 @@ func TestCreate_ValidStdio(t *testing.T) {
 	}
 }
 
-// A name collision is only a conflict when the SPEC differs. The identical-spec
-// half of this used to assert 409; it is now a no-op that keeps the stored
-// record (see TestCreate_IdenticalSpecPreservesEnvValues).
+// A name collision is only a conflict when the SPEC differs; an identical spec is
+// a no-op that keeps the stored record (TestCreate_IdenticalSpecPreservesEnvValues).
 func TestCreate_NameConflict(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.Create(t.Context(), &Server{
@@ -373,19 +372,18 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	}
 }
 
-// TestSSE_SecretRoundTrip proves an SSE server's secrets (a header value
-// and the oauth_client_secret) mask on read and survive a "***"-preserving
-// Update, exactly like an HTTP server — the masking/merge helpers are
-// transport-agnostic, and SSE must not regress that parity.
+// TestSSE_SecretRoundTrip proves an SSE server's header secret masks on read
+// and survives a "***"-preserving Update, exactly like an HTTP server — the
+// masking/merge helpers are transport-agnostic, and SSE must not regress that
+// parity.
 func TestSSE_SecretRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	orig, err := s.Create(t.Context(), &Server{
-		Transport:         TransportSSE,
-		Name:              "sse-secret",
-		URL:               "https://mcp.example/sse",
-		Headers:           []KeyPair{{Name: "Authorization", Value: "Bearer real-token"}},
-		OAuthClientSecret: "real-secret",
-		Enabled:           true,
+		Transport: TransportSSE,
+		Name:      "sse-secret",
+		URL:       "https://mcp.example/sse",
+		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer real-token"}},
+		Enabled:   true,
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -399,18 +397,14 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 	if got.Headers[0].Value != SecretMask {
 		t.Errorf("header secret not masked on read: %q", got.Headers[0].Value)
 	}
-	if got.OAuthClientSecret != SecretMask {
-		t.Errorf("oauth_client_secret not masked on read: %q", got.OAuthClientSecret)
-	}
 
-	// Update resubmitting the mask preserves both stored secrets.
+	// Update resubmitting the mask preserves the stored secret.
 	if _, err := s.Update(t.Context(), orig.ID, &Server{
-		Transport:         TransportSSE,
-		Name:              "sse-secret",
-		URL:               "https://mcp.example/sse",
-		Headers:           []KeyPair{{Name: "Authorization", Value: SecretMask}},
-		OAuthClientSecret: SecretMask,
-		Enabled:           true,
+		Transport: TransportSSE,
+		Name:      "sse-secret",
+		URL:       "https://mcp.example/sse",
+		Headers:   []KeyPair{{Name: "Authorization", Value: SecretMask}},
+		Enabled:   true,
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -420,9 +414,6 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 	}
 	if raw[0].Headers[0].Value != "Bearer real-token" {
 		t.Errorf("header secret not preserved: %q", raw[0].Headers[0].Value)
-	}
-	if raw[0].OAuthClientSecret != "real-secret" {
-		t.Errorf("oauth_client_secret not preserved: %q", raw[0].OAuthClientSecret)
 	}
 }
 
@@ -440,7 +431,7 @@ func TestEnabledNames_DefensiveFilter(t *testing.T) {
 }
 
 func TestCreate_IDNotNameCollides(t *testing.T) {
-	// Regression: the ID should be a generated random string, not the
+	// The ID is a generated random string, not the
 	// user-supplied name. If it were the name, a user could create a
 	// server named "status" or "registry" and collide with the
 	// /api/mcp/status and /api/mcp/registry/search routes.
@@ -472,9 +463,8 @@ func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 	t.Fatalf("counter never reached %d (last=%d)", want, c.Load())
 }
 
-// F1: SetOnChange replaces the callback so the later-wired consumer
-// actually sees mutations. Critical for the circular-init ordering
-// with PrewarmRunner described in the store godoc.
+// SetOnChange replaces the callback so the later-wired consumer actually sees
+// mutations, which the circular-init ordering with PrewarmRunner depends on.
 func TestSetOnChange_ReplacesCallback(t *testing.T) {
 	dir := t.TempDir()
 	var firstCalls, secondCalls atomic.Int32
@@ -529,9 +519,8 @@ func TestSetOnChange_NilIsNoop(t *testing.T) {
 	})
 }
 
-// F3: Create and Update must propagate DisabledTools. Previously both
-// silently dropped the field — ToACP emits it but the store never
-// persisted it, so the deny list never reached kiro-cli.
+// Create and Update must persist DisabledTools, or the deny list ToACP emits
+// never reaches kiro-cli.
 func TestCreate_PersistsDisabledTools(t *testing.T) {
 	s := newTestStore(t)
 	got, err := s.Create(t.Context(), &Server{
@@ -579,7 +568,25 @@ func TestUpdate_PersistsDisabledTools(t *testing.T) {
 	}
 }
 
-// F4: Update error branches — lowest-covered function in the suite.
+// Update replaces WaitForReady and TimeoutMS, and reports its error branches.
+func TestUpdate_ReplacesWaitForReadyAndTimeout(t *testing.T) {
+	s := newTestStore(t)
+	orig, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := s.Update(t.Context(), orig.ID, &Server{
+		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
+		WaitForReady: true, TimeoutMS: 90_000,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got := s.Get(t.Context(), orig.ID)
+	if got == nil || !got.WaitForReady || got.TimeoutMS != 90_000 {
+		t.Errorf("after Update, record = %+v, want wait_for_ready true and timeout_ms 90000", got)
+	}
+}
+
 func TestUpdate_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.Update(t.Context(), "does-not-exist", &Server{
@@ -641,7 +648,7 @@ func TestUpdate_RenameToOwnNameAllowed(t *testing.T) {
 	}
 }
 
-// F5: not-found branches on Get / SetEnabled / Delete.
+// Not-found branches on Get / SetEnabled / Delete.
 func TestGet_ReturnsNilForUnknownID(t *testing.T) {
 	s := newTestStore(t)
 	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
@@ -665,7 +672,7 @@ func TestDelete_UnknownIDReturnsNoError(t *testing.T) {
 	}
 }
 
-// F10: List and Get must return deep copies so callers can't mutate the store.
+// List and Get must return deep copies so callers can't mutate the store.
 func TestList_ReturnsDeepCopy(t *testing.T) {
 	s := newTestStore(t)
 	_, _ = s.Create(t.Context(), &Server{
@@ -715,8 +722,8 @@ func TestGet_ReturnsDeepCopy(t *testing.T) {
 	}
 }
 
-// Regression: load() must preserve the corrupt mcp.json aside so the
-// next persist doesn't destroy the user's config. Ops-mcp-003.
+// load() must preserve the corrupt mcp.json aside so the next persist
+// doesn't destroy the user's config.
 func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.json")
@@ -761,8 +768,7 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 	}
 }
 
-// load() must re-enforce 0600 when the file arrives with
-// looser perms.
+// load() must re-enforce 0600 when the file arrives with looser perms.
 func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.json")
@@ -794,8 +800,8 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	}
 }
 
-// Regression: load() must preserve the non-nil []*Server{} invariant
-// even when the on-disk file has a null "servers" field. Q9.
+// load() must preserve the non-nil []*Server{} invariant even when the
+// on-disk file has a null "servers" field.
 func TestLoad_NullServersPreservesNonNilInvariant(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.json")
@@ -819,11 +825,9 @@ func TestLoad_NullServersPreservesNonNilInvariant(t *testing.T) {
 	}
 }
 
-// Persist-failure rollback. Every mutator
-// (Create / Update / SetEnabled / Delete) pairs an in-memory change
-// with a persist call; if persist fails, the in-memory state must
-// roll back so callers don't see ghost records. Provoke a failure by
-// making the store dir read-only after construction.
+// breakPersist makes the store dir read-only after construction, so persist
+// fails. Every mutator (Create / Update / SetEnabled / Delete) must then roll its
+// in-memory change back so callers don't see ghost records.
 func breakPersist(t *testing.T, s *Store) {
 	t.Helper()
 	if os.Geteuid() == 0 {
@@ -911,8 +915,7 @@ func TestDelete_RollsBackOnPersistFailure(t *testing.T) {
 	}
 }
 
-// load() corrupt-file rename-failure fallback.
-// When rename aside fails, load() must still return nil (store comes
+// When renaming a corrupt file aside fails, load() must still return nil (store comes
 // up empty) and must leave the corrupt file in place. Triggered by
 // making the parent dir read-only so os.Rename returns EACCES.
 func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
@@ -1046,15 +1049,8 @@ func TestStore_MCPConfigContract(t *testing.T) {
 	})
 }
 
-// TestNew_RefusesNilContext pins the construction-time requirement that replaced
-// a use-site context.Background() fallback.
-//
-// The fallback was the defect: notifyChange parents the change callback on the
-// store's lifetime, and production wires MCP prewarm to that callback, so a nil
-// store ctx silently produced a prewarm goroutine no shutdown could cancel and
-// nothing waited on. Nothing observable failed — the notification fired, the work
-// ran, and it simply outlived the process's shutdown sequence. Refusing at New
-// makes it a startup error at the single construction site instead.
+// TestNew_RefusesNilContext pins the construction-time requirement: a context.Background() fallback
+// would parent the change callback on a lifetime nothing cancels.
 func TestNew_RefusesNilContext(t *testing.T) {
 	t.Parallel()
 

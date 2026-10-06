@@ -1,11 +1,6 @@
 package agent
 
-// Tests for serving one workflow step's transcript.
-//
-// The fixture is the measured `inspect` shape: a repeat whose two iterations hold
-// the SAME step id under differently-spelled iteration containers, which is what
-// makes "address by path, never by id" a property with teeth rather than a
-// preference.
+// The fixture is the measured `inspect` shape: two repeat iterations holding the same step id, which makes path addressing necessary.
 
 import (
 	"context"
@@ -21,14 +16,9 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// stepInspect is one run's inspect reply, trimmed to what this path decodes: a
-// repeat with two iterations, each holding a step whose node id is `build`, plus a
-// pending step that has no session at all.
-//
-// Note the iteration containers: the tree spells them `loop#0` / `loop#1` while
-// every path below reads `iter-0` / `iter-1`. That divergence is the reason
-// workflow.pathSegment exists, and asserting on the wire spelling here is what
-// keeps this endpoint addressable by the ids the client actually holds.
+// stepInspect is one run's trimmed inspect reply: two iterations each with step `build`, plus a session-less
+// pending step. The tree spells iterations `loop#0`/`loop#1` while paths read `iter-0`/`iter-1`
+// (workflow.pathSegment).
 const stepInspect = `{
   "workflowId": "wf_1",
   "state": {
@@ -70,8 +60,7 @@ func promptTextsOf(t *testing.T, entries []marotte.Entry) []string {
 	return out
 }
 
-// armStepInspect makes the utility bridge answer `_kiro/workflow/inspect` with the
-// fixture above.
+// armStepInspect answers `_kiro/workflow/inspect` with the fixture.
 func armStepInspect(br *fakeBridge) {
 	br.mu.Lock()
 	defer br.mu.Unlock()
@@ -81,10 +70,7 @@ func armStepInspect(br *fakeBridge) {
 	br.callResults[methodKiroWorkflowInspect] = json.RawMessage(stepInspect)
 }
 
-// armStepReplay makes a `session/load` reply with a replay of `texts`, each frame
-// stamped with sessionID — the id of the session being LOADED, which is what makes
-// them foreign to the utility session's own connection and therefore the frames
-// this feature exists to route.
+// armStepReplay answers `session/load` with a replay of texts stamped with the loaded session id, foreign to the utility session.
 func armStepReplay(br *fakeBridge, sessionID string, texts ...string) {
 	frames := make([]*marotte.RPCResponse, 0, len(texts))
 	for _, tx := range texts {
@@ -98,8 +84,7 @@ func armStepReplay(br *fakeBridge, sessionID string, texts ...string) {
 	br.notifsOnCall[marotte.MethodSessionLoad] = frames
 }
 
-// shortStepBudget drives the budget in milliseconds so an expiry test does not
-// wait out a real minute.
+// shortStepBudget drives the budget in milliseconds.
 func shortStepBudget(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := stepTranscriptBudget
@@ -130,9 +115,7 @@ func TestStepTranscript_AStepsFramesProject(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_ARepeatsIterationsAreDistinct is the property the whole
-// address-by-path decision rests on. Both paths name a step whose NODE ID is
-// `build`; only the path separates them, and each must reach its own session.
+// TestStepTranscript_ARepeatsIterationsAreDistinct pins that only the path separates two `build` steps, each reaching its own session.
 func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -157,18 +140,14 @@ func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
 		if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{tc.want}) {
 			t.Errorf("%s projected texts %q, want one %q", tc.path, texts, tc.want)
 		}
-		// The session actually loaded is the other half of the claim: a path
-		// resolving to the right CONTENT off the wrong session id would only be
-		// right because the fake answered the same frames either way.
+		// The loaded session id is the other half: the fake would answer the same frames either way.
 		if id := br.lastParamsFor(marotte.MethodSessionLoad)[marotte.KeySessionID]; id != tc.session {
 			t.Errorf("%s loaded session %v, want %s", tc.path, id, tc.session)
 		}
 	}
 }
 
-// TestStepTranscript_AStepThatNeverRanIsGone: KAS records no session for a step
-// that has not started, so there is nothing to load and never was. `gone` rather
-// than a 404, because the step is genuinely part of this run.
+// TestStepTranscript_AStepThatNeverRanIsGone pins that no session to load, and the step is real, so `gone`, not 404.
 func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -184,16 +163,13 @@ func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
 	if len(got.Entries) != 0 {
 		t.Errorf("entries = %+v, want none", got.Entries)
 	}
-	// And nothing was loaded: a step with no session must not put a session/load
-	// on the wire at all.
+	// No session/load goes on the wire.
 	if br.called(marotte.MethodSessionLoad) {
 		t.Error("a step with no session issued a session/load")
 	}
 }
 
-// TestStepTranscript_AnUnknownPathIsAClientError separates the two absences.
-// `gone` says the step exists and its transcript does not; errStepUnknown says
-// this run has no such step, which is the caller's mistake.
+// TestStepTranscript_AnUnknownPathIsAClientError separates the step-gone verdict from no-such-step.
 func TestStepTranscript_AnUnknownPathIsAClientError(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -216,9 +192,7 @@ func TestStepTranscript_AnUnknownPathIsAClientError(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_AFailedLoadIsUnavailable: KAS answers an id it does not hold
-// and a transient fault with the same shape, so this is `unavailable` and never
-// `gone` — the two want opposite client behaviour, and only one is retryable.
+// TestStepTranscript_AFailedLoadIsUnavailable pins that KAS's unknown-id and transient answers look alike, so never `gone`.
 func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -241,14 +215,8 @@ func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_AnUnreadableRunIsUnavailable: a run whose own state cannot be
-// read has no step transcript either, and it is a state of the world rather than a
-// client error — so it is a 200 carrying `unavailable`, not a 404.
-//
-// Both arms of "unreadable" are driven, because they arrive by different routes and
-// only one of them looks like a failure: KAS's refusal reaches this side as an EMPTY
-// result (rawCall drops the in-band error), while a wire change reaches it as bytes
-// that will not decode. Neither is the caller's fault, so neither may 404.
+// TestStepTranscript_AnUnreadableRunIsUnavailable pins that a 200 `unavailable`, for both arms: an empty result (rawCall
+// drops in-band errors) and undecodable bytes.
 func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
 	for _, tc := range []struct {
 		desc  string
@@ -298,12 +266,7 @@ func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_TheBudgetBoundsTheBarrier is the reason this read has a budget
-// at all: a bridge Call has no client-side timeout, so without one a step whose
-// replay never drains holds the request forever.
-//
-// Driven with the utility session's forward goroutine NOT wired to the registry, so
-// nothing ever observes the drain — which is exactly the shape a wedged replay has.
+// TestStepTranscript_TheBudgetBoundsTheBarrier pins that the utility forward goroutine is not wired to the registry, the shape of a wedged replay.
 func TestStepTranscript_TheBudgetBoundsTheBarrier(t *testing.T) {
 	shortStepBudget(t, 40*time.Millisecond)
 	br := newFakeBridge()
@@ -320,16 +283,13 @@ func TestStepTranscript_TheBudgetBoundsTheBarrier(t *testing.T) {
 	if got.State != marotte.RunStepTranscriptUnavailable {
 		t.Errorf("state = %q, want unavailable", got.State)
 	}
-	// The point is that it ANSWERS. A generous ceiling, because the assertion is
-	// "bounded", not "bounded to the millisecond".
+	// It answers; the ceiling is generous.
 	if elapsed > 5*time.Second {
 		t.Errorf("answered after %v, want inside the budget", elapsed)
 	}
 }
 
-// TestStepTranscript_ARefusedLoadLeavesNoReplayOpen pins the cleanup: every exit
-// takes the replay, so a second read of the same step is not refused as a
-// duplicate by a corpse of the first.
+// TestStepTranscript_ARefusedLoadLeavesNoReplayOpen pins that every exit takes the replay, so a retry is not refused by a corpse.
 func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -343,8 +303,7 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	if _, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build"); err != nil {
 		t.Fatalf("first read: %v", err)
 	}
-	// The refusal cleared, the retry succeeds. Without the deferred take the
-	// registry would still hold sess_pass0 and answer `unavailable` forever.
+	// The retry succeeds; without the deferred take the registry would answer `unavailable` forever.
 	br.mu.Lock()
 	br.callRPCErrs = nil
 	br.mu.Unlock()
@@ -362,9 +321,7 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_IncludesReaderInterventions pins the row filter over a
-// complete step exchange: the pane owns the instruction, the transcript owns a
-// later human answer, and event rows have no turn card to render on.
+// TestStepTranscript_IncludesReaderInterventions pins the row filter: the pane owns the instruction, the transcript a later human answer, and event rows have no card.
 func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -396,8 +353,7 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
-	// The reader's answer opens a turn of its own as an ordinary prompt, between the
-	// question and the reply that followed it, beside the step's own instruction rows.
+	// The reader's answer opens its own turn as an ordinary prompt, between question and reply.
 	if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{"Which target?", "Using main."}) {
 		t.Errorf("StepTranscript texts = %q, want the question and the reply after the answer", texts)
 	}
@@ -420,17 +376,15 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity: a raw `session/load` Call must
-// NOT rebind the utility bridge's own session id. If it did, liveID() would report a step's
-// id, taking the real utility session out of the orphan reaper's keep-list — and the reaper
-// would delete on-disk state from under a live subprocess.
+// TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity pins that a raw `session/load` must not rebind the utility's
+// session id, or the reaper deletes a live subprocess's state.
 func TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 	armStepReplay(br, "sess_pass0", "hello")
 
-	// Start the utility session first, so its id is settled before the read.
+	// Settle the utility's id before the read.
 	if err := h.utility.get().session.ensureStarted(t.Context()); err != nil {
 		t.Fatalf("start utility session: %v", err)
 	}
@@ -452,10 +406,7 @@ func TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity(t *testing.T) {
 	}
 }
 
-// --- The HTTP surface ---
-
-// getStepTranscript drives the real route table, so the wildcard pattern and the
-// path-value decode are exercised rather than assumed.
+// getStepTranscript drives the real route table, wildcard and path decode included.
 func getStepTranscript(t *testing.T, h *Runtime, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -485,16 +436,13 @@ func TestHandleStepTranscript_HTTP(t *testing.T) {
 	if texts := textsOf(t, out.Entries); !slices.Equal(texts, []string{"served"}) {
 		t.Errorf("texts = %q, want one %q", texts, "served")
 	}
-	// The verdict must be PRESENT on the wire, not omitted. A `state` a client can
-	// find absent is a client inventing "assume ready".
+	// The verdict must be present: a client finding it absent would assume ready.
 	if !strings.Contains(rec.Body.String(), `"state"`) {
 		t.Error("the reply omits `state`")
 	}
 }
 
-// TestHandleStepTranscript_AGoneVerdictIsA200 pins the status split: only a path
-// this run does not name is an HTTP error. `gone` and `unavailable` are answers
-// ABOUT the transcript, and a client has to be able to render each.
+// TestHandleStepTranscript_AGoneVerdictIsA200 pins that only a path the run does not name is an HTTP error.
 func TestHandleStepTranscript_AGoneVerdictIsA200(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -526,8 +474,7 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 	}{
 		{
 			desc: "a path this run does not name is a 404",
-			// The one HTTP error: the run and the endpoint are fine, the caller's
-			// path is not.
+			// The one HTTP error: the caller's path.
 			method: http.MethodGet,
 			target: "/api/runs/wf_1/steps/wf_1/nope",
 			want:   http.StatusNotFound,
@@ -539,9 +486,7 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 			want:   http.StatusBadRequest,
 		},
 		{
-			// The EXACT form is registered alongside the subtree precisely so this
-			// is a 400 rather than ServeMux's own 307 to the trailing-slash form,
-			// which internal/server's canonical-path gate cannot see.
+			// The exact form is registered so this is a 400, not ServeMux's 307, which canonicalAPIPath cannot see.
 			desc:   "the bare collection is a 400, never a redirect",
 			method: http.MethodGet,
 			target: "/api/runs/wf_1/steps",
@@ -572,17 +517,12 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 	}
 }
 
-// TestHandleStepTranscript_APercentEncodedSegmentDecodes pins the one encoding rule
-// this route has: segments are encoded per segment and the separators stay raw, so
-// a node id carrying a `#` or a space survives the trip.
-//
-// Measured against Go's own ServeMux: `{path...}` hands back the DECODED remainder,
-// which is why the handler compares it to the tree's join as it stands.
+// TestHandleStepTranscript_APercentEncodedSegmentDecodes pins that segments are encoded individually and separators
+// stay raw; ServeMux's `{path...}` returns the decoded remainder.
 func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	// A step whose node id is not URL-safe. `loop#0` is the shape a repeat child
-	// falls back to when KAS sends no `iteration`.
+	// `loop#0` is a repeat child's fallback id when KAS sends no `iteration`.
 	br.mu.Lock()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowInspect: json.RawMessage(`{"state":{"workflowId":"wf_1","root":{` +
@@ -608,12 +548,8 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 	}
 }
 
-// --- The registry, on its own ---
-
-// TestStepReplays_TheSettleSpansTheDrain is the barrier's whole argument, tested
-// where it lives: a load that has returned settles only once the CONSUMER has
-// folded everything that preceded the result, because the replay frames precede
-// that result on the wire and the notification channel is buffered.
+// TestStepReplays_TheSettleSpansTheDrain pins that a returned load settles only once the consumer folded everything
+// before its result: frames precede it and the channel is buffered.
 func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
@@ -622,14 +558,13 @@ func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 	if closedNow(sr.barrier("sess_a")) {
 		t.Fatal("a fresh replay's barrier is already closed")
 	}
-	// Reaching the position is not enough on its own: the load has not returned,
-	// so the position it will name is not known yet.
+	// The load has not returned, so its position is unknown.
 	sr.settleConsumed(atFrame(testLoadSeq), false)
 	if closedNow(sr.barrier("sess_a")) {
 		t.Fatal("settled before the load returned")
 	}
 	sr.markLoadedAt("sess_a", drainPoint{gen: testFwdGen, seq: testLoadSeq + 2})
-	// The load has returned but the consumer is still behind its position.
+	// Returned, but the consumer is behind.
 	sr.settleConsumed(atFrame(testLoadSeq+1), false)
 	if closedNow(sr.barrier("sess_a")) {
 		t.Fatal("settled while frames were still unfolded: the drain was not spanned")
@@ -640,20 +575,14 @@ func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 	}
 }
 
-// TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns is defect (a) on the
-// STEP route: the read holds a barrier nothing will close.
-//
-// The settle used to run only from the utility session's drain loop, so a replay
-// whose frames were all folded before the `session/load` RPC returned had no
-// trigger left — no frame was coming, and the loop only ends when the bridge does.
-// The read then held its whole 60s budget and answered `unavailable` for a
-// transcript that existed and was fully projected.
+// TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns pins that a replay fully folded before the RPC returns must
+// settle on the load's own attempt, or the read waits out 60s and answers `unavailable`.
 func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
 	}
-	// The drain loop folded every replayed frame while the RPC was still in flight.
+	// Every frame folded while the RPC was in flight.
 	sr.settleConsumed(atFrame(testLoadSeq), false)
 	if closedNow(sr.barrier("sess_a")) {
 		t.Fatal("settled before the load returned")
@@ -668,11 +597,8 @@ func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	}
 }
 
-// TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing: the utility
-// session is recycled every 20 prompts and culled after 30 minutes idle, so a
-// previous subprocess's forward goroutine draining its closed channel is ordinary
-// rather than exotic — and its positions run arbitrarily far ahead of a fresh
-// session's, because each read loop restarts its sequence at zero.
+// TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing pins that the utility session is recycled (20 prompts,
+// 30 min idle), and an old forward's positions run far ahead of a restarted sequence.
 func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.T) {
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
@@ -686,14 +612,12 @@ func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.
 		t.Fatal("a straggling observation from the previous subprocess settled a " +
 			"replay loaded on the live one")
 	}
-	// Nor may its EXIT seal, which arrives when that closed channel runs out.
+	// Nor its exit seal.
 	sr.settleConsumed(drainPoint{gen: testFwdGen}, true)
 	if closedNow(sr.barrier("sess_a")) {
 		t.Fatal("the previous subprocess's exit seal settled the live replay")
 	}
-	// Nor may its position have been ADOPTED, which refusing to settle on it does
-	// not prove: the live subprocess's own first frame is one frame in, so a stored
-	// 900 would settle this read on a transcript nothing has folded.
+	// Nor its position stored: the live session's first frame would then settle on nothing folded.
 	sr.settleConsumed(drainPoint{gen: live, seq: 1}, false)
 	if closedNow(sr.barrier("sess_a")) {
 		t.Fatal("the live subprocess's FIRST frame settled the replay: the straggler's " +
@@ -706,8 +630,7 @@ func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.
 	}
 }
 
-// TestStepReplays_NoReplayOpenAnswersImmediately: a reader must never wait on a
-// load that is not happening.
+// TestStepReplays_NoReplayOpenAnswersImmediately pins that never wait on a load that is not happening.
 func TestStepReplays_NoReplayOpenAnswersImmediately(t *testing.T) {
 	var sr stepReplays
 	if !closedNow(sr.barrier("nobody")) {
@@ -716,15 +639,12 @@ func TestStepReplays_NoReplayOpenAnswersImmediately(t *testing.T) {
 	if got := sr.take("nobody"); got != nil {
 		t.Errorf("take of an unknown session = %+v, want nil", got)
 	}
-	// markLoadedAt and settleConsumed must tolerate it too: the drain loop calls
-	// settleConsumed on every frame, whether or not anything is being read.
+	// The drain loop calls settleConsumed on every frame, read or not.
 	sr.markLoadedAt("nobody", atLoad())
 	sr.settleConsumed(atFrame(testLoadSeq), false)
 }
 
-// TestStepReplays_ASecondReadOfOneStepIsRefused: two readers of one barrier is a
-// lifecycle this registry does not carry, so the second is refused rather than
-// joined — and the refusal must not disturb the first.
+// TestStepReplays_ASecondReadOfOneStepIsRefused, without disturbing the first.
 func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
@@ -738,16 +658,14 @@ func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 	if !closedNow(sr.barrier("sess_a")) {
 		t.Error("the refused second open disturbed the first replay")
 	}
-	// Once taken, the session is open for a new read again.
+	// Once taken, the session is readable again.
 	_ = sr.take("sess_a")
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Error("a session cannot be read again after its replay was taken")
 	}
 }
 
-// TestStepReplays_TakeIsIdempotentAndClosesTheBarrier: take is the reader's own
-// cleanup and runs on the timeout path too, so it must close a barrier nothing
-// else will and survive being called twice.
+// TestStepReplays_TakeIsIdempotentAndClosesTheBarrier pins that take runs on timeout too.
 func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
 	var sr stepReplays
 	sr.open("sess_a", translate.NewEntryProjection(newMessageID, ""))
@@ -759,13 +677,11 @@ func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
 	if got := sr.take("sess_a"); got != nil {
 		t.Errorf("a second take = %+v, want nil", got)
 	}
-	// And a settle reaching a taken entry must not panic on an already-closed
-	// channel.
+	// A settle on a taken entry must not double-close.
 	sr.settleConsumed(atFrame(testLoadSeq), false)
 }
 
-// TestStepReplays_IngestReportsWhetherItConsumed is what lets the utility session
-// tell an expected replay frame from a genuinely foreign one.
+// TestStepReplays_IngestReportsWhetherItConsumed lets the utility session tell a replay frame from a foreign one.
 func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 	var sr stepReplays
 	raw := json.RawMessage(`{"content":{"type":"text","text":"x"}}`)
@@ -788,11 +704,8 @@ func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget drives the read under a budget
-// too short to hide behind: on the real 60s budget, a read that waits it out and answers
-// `unavailable` is indistinguishable from one that settles. At 50ms only a closed barrier can
-// answer `ready`, so the load's read-loop position, the attachment it names and the utility
-// session's per-frame report all have to agree.
+// TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget pins that at 50ms only a closed barrier answers `ready`, so
+// position, attachment and the per-frame report must agree.
 func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -813,14 +726,8 @@ func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
 	}
 }
 
-// TestUtilityRawCallAt_CarriesTheResponsePosition: the step read's whole barrier
-// rests on this one number, so it must be a real position rather than a zero.
-//
-// A load answering at 0 while the frames it must wait for are still queued would
-// make the completion condition trivially true — the consumer's position starts at
-// 0 too — and the read would return a short projection with nothing reporting the
-// shortfall. It also names the ATTACHMENT, because the utility session is recycled
-// every 20 prompts and each subprocess restarts its sequence at zero.
+// TestUtilityRawCallAt_CarriesTheResponsePosition pins that a zero would make the condition trivially true. It also
+// names the attachment, since recycled sessions restart at zero.
 func TestUtilityRawCallAt_CarriesTheResponsePosition(t *testing.T) {
 	br := newFakeBridge()
 	armStepReplay(br, "sess_pass0", "one ", "two ", "three")
@@ -845,8 +752,6 @@ func TestUtilityRawCallAt_CarriesTheResponsePosition(t *testing.T) {
 	}
 }
 
-// --- helpers ---
-
 // closedNow reports whether a barrier is already closed, without waiting.
 func closedNow(ch <-chan struct{}) bool {
 	select {
@@ -857,9 +762,8 @@ func closedNow(ch <-chan struct{}) bool {
 	}
 }
 
-// unwiredStepRuns builds a Runs over a utility session with NO forward goroutine
-// feeding the step registry — the shape a wedged replay has, and the only way to
-// drive the barrier's own budget deterministically.
+// unwiredStepRuns builds a Runs whose utility session has no forward goroutine feeding the registry: a wedged
+// replay, driving the budget deterministically.
 func unwiredStepRuns(t *testing.T, br *fakeBridge) *Runs {
 	t.Helper()
 	session := &utilitySession{

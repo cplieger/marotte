@@ -20,6 +20,8 @@ type TurnResult struct {
 	// Turn is the id of the turn this result belongs to: the turn_open entry's id,
 	// which is every handle on a turn under the log.
 	Turn string
+	// Reason is the failure reason the turn_close carries, empty on a clean close.
+	Reason string
 	// EmittedNothing is whether the turn produced content, measured AFTER the
 	// steering filter's withheld text settled back in: a turn whose only text sits
 	// in that carry reads as empty to any earlier measurement.
@@ -28,6 +30,14 @@ type TurnResult struct {
 	// closer, which is what makes the empty-turn recovery safe to arm: a local
 	// close's end_turn says only that marotte had nothing better to call it.
 	WireEnded bool
+}
+
+// EngineError is the engine's own account of a failed execution, from a
+// display_error frame. Server-side only: it becomes a turn_close reason.
+type EngineError struct {
+	Message        string
+	ErrorType      string
+	RetryErrorType string
 }
 
 // TurnOpenSource names what opened a turn.

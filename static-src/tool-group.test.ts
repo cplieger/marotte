@@ -46,13 +46,7 @@ describe("labelWithSamples", () => {
   });
 });
 
-// --- kindNoun ---
-//
-// It moved to `tool-kind-noun.ts`, whose table is TOTAL over `ToolKind`. So the
-// two `unknown_kind` cases that used to sit here are gone with the `?? "call"`
-// fallback they pinned: the parameter is the union now, and a value outside it
-// cannot be spelled. The five kinds the old table lacked are pinned instead —
-// they all answered "call" before, which is what a real noun replaces.
+// --- kindNoun --- (`tool-kind-noun.ts`, TOTAL over `ToolKind`)
 
 describe("kindNoun", () => {
   const cases: [ToolKind, number, string][] = [
@@ -232,8 +226,7 @@ describe("summarize", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Four grouping rules, all on one axis: collapsing exists to hide items that are
-// individually uninteresting, and a FAILURE is the opposite.
+// Grouping: collapsing hides individually uninteresting items, and a FAILURE is the opposite.
 // ---------------------------------------------------------------------------
 
 /** A settled card, as the group's DOM sees it. */
@@ -350,10 +343,8 @@ describe("grouping rules for failures", () => {
   });
 
   it("a refusal outranks a stop, and the summary still names both", () => {
-    // One mark for a mixed group, so the two amber states need an order: a refusal
-    // is something the WORK did and a stop is something the READER did, so the one
-    // they did not cause is the one to surface. Folding the other away would be a
-    // loss, which is why both clauses stay.
+    // One mark for a mixed group: a refusal (the WORK) outranks a stop (the READER), so the one the
+    // reader did not cause surfaces.
     const g = groupWith(card("execute", "declined"), card("execute", "warn"));
     const icon = g.querySelector(".tool-group-icon");
     expect(icon?.classList.contains("is-declined")).toBe(true);
@@ -398,10 +389,8 @@ describe("grouping rules for failures", () => {
   });
 
   it("collapses a superseded run of two or more, and NEVER a bare one-call run", () => {
-    // The positional rule: being superseded is what closes a group. But a
-    // ONE-member group is bare — no header, no chrome — so its body region IS the
-    // lone card, and collapsing it would make that card vanish with nothing left
-    // to bring it back. It has no box to fold, so there is nothing to do.
+    // Superseded closes a group, but a ONE-member group is bare: its body IS the lone card, with nothing
+    // to bring it back.
     const lone = groupWith(card("read", "ok"));
     autoCollapseGroup(lone);
     expect(lone.classList.contains("tool-group-auto-collapsed")).toBe(false);
@@ -464,15 +453,9 @@ describe("grouping rules for failures", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A group the verdict already condemned is CREATED collapsed, silently.
-//
-// These cases mount the real stylesheet, which is load-bearing rather than setup:
-// the transition lives on `.uip-disclosure-region` in the ui-primitives base the
-// MANIFEST pulls in, so without it `getAnimations()` is empty whatever the code
-// does and the first case cannot fail. It sits inside
-// `@media (prefers-reduced-motion: no-preference)`, and the browser project sets no
-// reduced-motion preference — the second case is what proves that, so if it ever
-// reads 0 animations check the preference before the production code.
+// A group the verdict already condemned is CREATED collapsed, silently. The real stylesheet is
+// load-bearing: the transition lives on `.uip-disclosure-region` under `prefers-reduced-motion:
+// no-preference`; if the second case reads 0 animations, check the preference first.
 // ---------------------------------------------------------------------------
 
 describe("a superseded run is born collapsed rather than folded", () => {
@@ -539,9 +522,8 @@ describe("a superseded run is born collapsed rather than folded", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The BARE state: a lone tool call gets no outer box and no group header. The
-// class is a pure function of the member count with one writer, so the assertions
-// below drive `refreshGroupHeader` (through `groupWith`) rather than setting it.
+// The BARE state: a lone call gets no outer box and no header. The class has one writer, so cases
+// drive `refreshGroupHeader` through `groupWith`.
 // ---------------------------------------------------------------------------
 
 describe("a one-call run renders bare", () => {

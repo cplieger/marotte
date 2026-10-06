@@ -22,17 +22,15 @@ func FuzzLineRingPushSample(f *testing.F) {
 			pushed++
 		}
 		sample := r.Sample()
-		// Sample length must not exceed 2 * halfCap.
 		if len(sample) > 2*halfCap {
 			t.Errorf("sample length %d exceeds 2*halfCap=%d", len(sample), 2*halfCap)
 		}
-		// Every line in sample must respect perLineCap.
 		for _, s := range sample {
 			if len(s) > perLineCap {
 				t.Errorf("sample line length %d exceeds perLineCap=%d", len(s), perLineCap)
 			}
 		}
-		// If pushed <= 2*halfCap, sample should contain all pushed lines (truncated).
+		// Up to 2*halfCap pushes, the sample holds every line.
 		if pushed <= 2*halfCap && len(sample) != pushed {
 			t.Errorf("pushed %d <= 2*halfCap=%d but sample has %d entries",
 				pushed, 2*halfCap, len(sample))
@@ -40,8 +38,7 @@ func FuzzLineRingPushSample(f *testing.F) {
 	})
 }
 
-// splitLines splits on newline without importing strings to keep the
-// test self-contained.
+// splitLines splits on newline without importing strings.
 func splitLines(s string) []string {
 	if s == "" {
 		return nil

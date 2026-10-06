@@ -1,18 +1,7 @@
-// The ONE YAML front-matter parser for `.kiro/**/*.md`.
-//
-// Replaced a line-oriented `strings.Cut(line, ":")` reader that mishandled
-// YAML block scalars (`description: >`), returning the bare indicator as the
-// value and dropping continuation lines — measured on this repo: 61 of 216
-// `.kiro` documents used a block scalar, so the agent-facing environment.md
-// rendered "— >" as a skill's description.
-//
-// internal/server's REST scanners and this package's environment.md generator
-// both read the same fields off the same files through this one parser.
-//
-// Deliberately not a YAML library: handles only the subset `.kiro`
-// front-matter uses (flat/block/quoted scalars, flow/block sequences), and a
-// malformed header degrades to empty fields rather than an error — a bad
-// front-matter block is the author's own file, not marotte's to reject.
+// The ONE YAML front-matter parser for `.kiro/**/*.md`, shared by internal/server's REST
+// scanners and the environment.md generator. Not a YAML library: only the subset `.kiro`
+// uses (flat/block/quoted scalars, flow/block sequences); a malformed header degrades to
+// empty fields rather than an error.
 
 package steering
 
@@ -20,21 +9,12 @@ import (
 	"strings"
 )
 
-// FrontMatterReadCap bounds how much of a document is read to find its
-// front-matter. Only the head matters, so an untrusted workspace repo cannot OOM
-// the container with a giant file.
-//
-// Exported because it used to be written FOUR times: twice inline in
-// discovery.go, once as `steeringReadCap` in internal/server, and again for
-// hooks. One definition, every caller.
+// FrontMatterReadCap bounds how much of a document is read to find its front-matter, so an
+// untrusted repo cannot OOM the container. One definition for every caller.
 const FrontMatterReadCap = 64 << 10
 
-// FrontMatter is every field `.kiro` documents carry that a reader surfaces.
-// A field absent from a document is the zero value.
-//
-// Field census over this workspace's 216 documents, which is why exactly these
-// keys are parsed: description 183, inclusion 123, fileMatchPattern 99, name 60,
-// tools 47, model 47, steering_override 11.
+// FrontMatter is every field `.kiro` documents carry that a reader surfaces; an absent field
+// is the zero value.
 type FrontMatter struct {
 	// Name is the `name` key: a skill's or agent's declared name, which may
 	// differ from its filename.
@@ -53,17 +33,9 @@ type FrontMatter struct {
 	Model string
 	// Tools is an agent's `tools` sequence, flow (`[a, b]`) or block (`- a`).
 	Tools []string
-	// HasInclusion reports whether the document actually DECLARED an inclusion
-	// key, as opposed to inheriting the default above.
-	//
-	// The distinction exists because "always" is the right default for a
-	// steering document and a fabrication for a skill. KAS's
-	// SkillFrontMatterSchema declares no `inclusion` — only
-	// SteeringContextFrontMatterSchema does — but it is `.passthrough()`, and
-	// `createSteeringCommandSource` reads `config?.inclusion` across skills AND
-	// steering alike, so a skill that DOES declare `manual` or `auto` really
-	// becomes a slash command. Both facts have to hold at once: forward a
-	// declared mode, invent nothing.
+	// HasInclusion reports whether the document DECLARED an inclusion key. "always" is the
+	// steering default and a fabrication for a skill, yet a skill declaring `manual` or `auto`
+	// does become a slash command: forward a declared mode, invent nothing.
 	HasInclusion bool
 	// SteeringOverride reports whether `steering_override` is present and
 	// truthy — a skill that replaces the steering set is worth spotting.
@@ -120,21 +92,16 @@ func applyField(fm *FrontMatter, f field) {
 	}
 }
 
-// parseFields walks the front-matter body and returns its top-level fields.
-//
-// The whole reason this is not a per-line Cut: a key whose value is a block
-// scalar (`>`/`|`, with optional chomping/keep indicators) or a block sequence
-// owns every MORE-INDENTED line that follows it, and those lines carry no colon
-// of their own.
+// parseFields walks the front-matter body and returns its top-level fields. A block scalar
+// or block sequence owns every more-indented line after its key, which is why this is not a
+// per-line Cut.
 func parseFields(body string) []field {
 	lines := strings.Split(body, "\n")
 	var out []field
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 		if isSkippableLine(line) || leadingSpaces(line) > 0 {
-			// An indented line at top level is a continuation the block
-			// handlers below already consumed, or malformed. Either way it is
-			// not a key.
+			// An indented line here was consumed by a block handler, or is malformed.
 			continue
 		}
 		rawKey, rawVal, ok := strings.Cut(line, ":")
@@ -147,8 +114,7 @@ func parseFields(body string) []field {
 		case isBlockScalarIndicator(val):
 			f.value, i = readBlockScalar(lines, i+1)
 		case val == "":
-			// Either a block sequence (`- item` lines below) or an empty
-			// value. readBlockSequence returns i unchanged when neither.
+			// A block sequence, or an empty value (readBlockSequence returns i unchanged).
 			f.list, i = readBlockSequence(lines, i+1)
 		case strings.HasPrefix(val, "["):
 			f.list = parseFlowSequence(val)
@@ -185,24 +151,16 @@ func isBlockScalarIndicator(val string) bool {
 	return true
 }
 
-// readBlockScalar folds the indented lines starting at `from` into one string,
-// returning it and the index of the LAST line consumed (so the caller's loop
-// increments past it).
-//
-// Folding is `>`-style — newlines become spaces — for every indicator. A `|`
-// block would strictly preserve them, but every consumer here renders the
-// description as one line (a table cell, a steering bullet), and a literal
-// newline in either would break the line-oriented output. Blank lines separate
-// paragraphs and collapse to a single space for the same reason.
+// readBlockScalar folds the indented lines from `from` into one string and returns the index
+// of the LAST line consumed. Folding is `>`-style for every indicator: every consumer renders
+// a single line.
 func readBlockScalar(lines []string, from int) (value string, lastIdx int) {
 	var parts []string
 	i := from
 	for ; i < len(lines); i++ {
 		line := lines[i]
 		if strings.TrimSpace(line) == "" {
-			// A blank line inside a block scalar is part of it; a blank line
-			// after it is harmless to consume, because a following top-level
-			// key is not indented and ends the loop below.
+			// A blank line inside or just after the block is safe to consume.
 			continue
 		}
 		if leadingSpaces(line) == 0 {
@@ -288,27 +246,16 @@ func isTruthy(v string) bool {
 	}
 }
 
-// normalizeText strips a leading UTF-8 BOM and folds every line-ending
-// convention to "\n".
-//
-// A LONE "\r" is normalized too, not just "\r\n". Found by FuzzParse: without
-// it, a Mac-classic line ending is ordinary text, so a heading or a description
-// could carry an embedded carriage return into output every consumer renders on
-// one line. One helper so Parse and FirstHeading cannot disagree about what a
-// line is — they previously normalized separately, and FirstHeading then sliced
-// its own string using offsets derived from the other one.
+// normalizeText strips a leading UTF-8 BOM and folds every line ending (a lone "\r" too) to
+// "\n". Parse and FirstHeading share it, so they agree on what a line is.
 func normalizeText(data []byte) string {
 	s := strings.TrimPrefix(string(data), "\ufeff")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	return strings.ReplaceAll(s, "\r", "\n")
 }
 
-// FirstHeading returns the text of a document's first markdown H1, or "".
-//
-// The fallback for a document with no front-matter: a spec doc opens directly on
-// `# Requirements — …`, so the heading is its only self-description. A
-// front-matter block is skipped so a `# ` comment inside one is never mistaken
-// for the title.
+// FirstHeading returns the text of a document's first markdown H1, or "": the fallback
+// label for a document with no front-matter. A front-matter block is skipped.
 func FirstHeading(data []byte) string {
 	content := normalizeText(data)
 	if _, after, ok := strings.Cut(content, "\n---"); ok && strings.HasPrefix(content, "---\n") {

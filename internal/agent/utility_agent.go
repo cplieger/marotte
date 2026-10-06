@@ -1,7 +1,5 @@
-// Package agent runs the utility text-generation agent (the first of the
-// utility runtime's two roles; see utility_session.go for the split).
-// UtilityPrompt serves ambient AI tasks, one text turn at a time (turnMu),
-// which does not extend to the session's stateless RPC reads.
+// Package agent runs the utility text-generation agent (utility_session.go splits the runtime's two roles).
+// UtilityPrompt serves one text turn at a time (turnMu); the session's stateless RPC reads do not wait on it.
 package agent
 
 import (
@@ -18,40 +16,27 @@ import (
 
 const maxUtilityPrompts = 20
 
-// maxUtilityPromptBytes is the cumulative prompt-size budget per session.
-// 64 KB ≈ a handful of capped commit diffs (8 KB) / PR diffs (12 KB); past
-// it the accumulated context costs more per turn than a session recycle.
+// maxUtilityPromptBytes is the cumulative prompt-size budget per session: past about 64 KB the re-sent context costs
+// more per turn than a recycle.
 const maxUtilityPromptBytes = 64 * 1024
 
-// utilityAgent runs text-generation turns on the shared utility session.
-// Its per-session bookkeeping (prompt counters, applied effort) is keyed
-// to the session's generation: whenever the session restarts underneath
-// it (recycle, error reset, idle cull), the next turn observes the new
-// generation and starts fresh counters.
+// utilityAgent runs text-generation turns on the shared utility session. Its prompt counters and applied effort are
+// keyed to the session generation, so a restart underneath it (recycle, reset, idle cull) starts them fresh.
 type utilityAgent struct {
 	session *utilitySession
-	// currentEffort is the reasoning-effort level last applied to the live
-	// session (empty = model default). Per-task levels: cheap tasks run
-	// low, diff-reading tasks run medium. Only re-applied when it differs.
+	// currentEffort is the reasoning-effort level last applied to the live session (empty = model default).
 	currentEffort marotte.EffortLevel
 
-	// turnMu serializes text-generation turns. Ambient tasks are not
-	// latency-critical enough to warrant parallelism, and one session
-	// cannot interleave two prompt streams anyway.
+	// turnMu serializes text turns: one session cannot interleave two prompt streams.
 	turnMu sync.Mutex
-	// counterGen is the session generation the counter/effort fields
-	// belong to.
+	// counterGen is the session generation the counter and effort fields belong to.
 	counterGen  uint64
 	promptCount int
-	// promptBytes accumulates the byte size of every prompt sent on the
-	// current session. Each turn re-sends the whole prior conversation, so
-	// recycling on a byte budget bounds the re-billed dead context.
+	// promptBytes sums every prompt sent on the session. Each turn re-sends the whole conversation, so a byte budget
+	// bounds the re-billed context.
 	promptBytes int
-	// effortUnsupported latches after a failed effortLevel
-	// set_config_option (the cheapest model may expose no reasoning-effort
-	// config). Cleared with the rest of the per-session state on a
-	// generation change, so a recycle onto a different model re-probes
-	// once.
+	// effortUnsupported latches after a failed effortLevel set_config_option (the cheapest model may expose none),
+	// and clears on a generation change so a different model re-probes once.
 	effortUnsupported bool
 }
 
@@ -60,13 +45,9 @@ func newUtilityAgent(session *utilitySession) *utilityAgent {
 	return &utilityAgent{session: session}
 }
 
-// UtilityPrompt sends a prompt on the utility session and returns the
-// text response. Lazily starts the session on first call. Thread-safe;
-// concurrent text turns serialize on turnMu. The session is recycled
-// after maxUtilityPrompts prompts or maxUtilityPromptBytes of cumulative
-// prompt input, whichever comes first, to bound both context bleed and
-// the re-billed dead context each turn drags along. effort is the
-// per-task reasoning-effort level ("" keeps the session's current level).
+// UtilityPrompt sends a prompt on the utility session and returns the text response, starting the session lazily.
+// Safe for concurrent use; text turns serialize on turnMu. The session recycles after maxUtilityPrompts prompts or
+// maxUtilityPromptBytes of input. effort is the per-task level ("" keeps the current one).
 func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error) {
 	ua.turnMu.Lock()
 	defer ua.turnMu.Unlock()
@@ -103,10 +84,8 @@ func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort
 	return ua.drainResponse(ctx, lease, resp)
 }
 
-// syncCounters resets the per-session bookkeeping when the session
-// generation changed underneath the agent (recycle, error reset, idle
-// cull + restart). This is what guarantees a culled-then-restarted
-// session never inherits a stale prompt count or effort latch.
+// syncCounters resets the per-session bookkeeping when the session generation changed, so a restarted session never
+// inherits a stale prompt count or effort latch.
 func (ua *utilityAgent) syncCounters(gen uint64) {
 	if ua.counterGen == gen {
 		return
@@ -118,12 +97,8 @@ func (ua *utilityAgent) syncCounters(gen uint64) {
 	ua.effortUnsupported = false
 }
 
-// applyEffort sets the session's reasoning-effort level via
-// session/set_config_option when the requested level differs from the one
-// already applied. Best-effort: the cheapest model may expose no
-// effortLevel config option, in which case the failure is latched
-// (effortUnsupported) so subsequent tasks don't re-pay the round-trip
-// until the next session start. Caller holds turnMu.
+// applyEffort sets the reasoning-effort level via session/set_config_option when it differs from the applied one.
+// Best-effort: a failure latches effortUnsupported until the next session start. Caller holds turnMu.
 func (ua *utilityAgent) applyEffort(ctx context.Context, lease sessionLease, effort marotte.EffortLevel) {
 	if effort == "" || effort == ua.currentEffort || ua.effortUnsupported || !effort.Valid() {
 		return
@@ -140,11 +115,8 @@ func (ua *utilityAgent) applyEffort(ctx context.Context, lease sessionLease, eff
 	ua.currentEffort = effort
 }
 
-// drainLeftoverChunks non-blockingly empties the chunk channel of anything
-// a prior turn left behind. drainResponse returns on a short idle
-// debounce, so a late chunk can land after it returns and sit in the
-// buffer; the success path never clears the channel. A nil channel (a
-// session preset by tests, or acquired before any start) is a no-op.
+// drainLeftoverChunks empties, without blocking, what a prior turn left in the chunk channel: drainResponse returns
+// on an idle debounce, so a late chunk can sit in the buffer. A nil channel is a no-op.
 func drainLeftoverChunks(chunks <-chan utilityChunkPayload) {
 	if chunks == nil {
 		return
@@ -158,14 +130,9 @@ func drainLeftoverChunks(chunks <-chan utilityChunkPayload) {
 	}
 }
 
-// drainResponse reads the prompt response and collects assistant text from
-// the forwarded response channel.
-//
-// kiro-cli does NOT emit a `session/update` sessionUpdate=="end_turn"
-// notification: per ACP, the turn-end signal is the JSON-RPC RESPONSE to
-// session/prompt, already awaited by Call before this runs. So this only
-// drains chunks that arrived before the response landed, until a short idle
-// debounce elapses or ctx / the 60s hard ceiling fire.
+// drainResponse reads the prompt response and collects assistant text from the forwarded response channel. kiro-cli
+// sends no end_turn update: the turn ends with the session/prompt response, which Call already awaited. So this
+// drains earlier chunks until an idle debounce, ctx or the 60s ceiling.
 func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, resp *marotte.RPCResponse) (string, error) {
 	if resp == nil {
 		return "", errors.New("nil response")
@@ -185,9 +152,7 @@ func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, r
 	for {
 		select {
 		case <-ctx.Done():
-			// Only reset if cancellation came from the request context, not
-			// shutdownCtx — during shutdown, stopUtilityBridge handles
-			// cleanup and an extra reset here would race Stop().
+			// Only for request-context cancellation: during shutdown stopUtilityBridge cleans up, and a reset here races Stop().
 			if !ua.session.shuttingDown() {
 				ua.session.resetIf(lease.gen)
 			}
@@ -197,14 +162,12 @@ func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, r
 				return text.String(), nil
 			}
 			text.WriteString(chunk.Content.Text)
-			// Reset alone is safe: a chan-based timer's channel is
-			// unbuffered since Go 1.23, so no stale receive can land.
+			// Safe without draining: since Go 1.23 a timer's channel is unbuffered.
 			idle.Reset(idleDebounce)
 		case <-idle.C:
 			return text.String(), nil
 		case <-timeout.C:
-			// Reset so a wedged turn doesn't interleave leftover chunks
-			// into the next caller's stream.
+			// Reset so a wedged turn's leftover chunks do not reach the next caller.
 			ua.session.resetIf(lease.gen)
 			return text.String(), errors.New("utility prompt timeout")
 		}

@@ -59,14 +59,10 @@ type pullResult struct {
 	Detail  string      `json:"detail,omitempty"`
 }
 
-// pullAllBudget bounds the whole pass, perRepoPullBudget each repository inside
-// it, and minPullBudget is the floor a pull needs before it may START: a
-// `git pull --ff-only` killed part-way through its checkout leaves a half-updated
-// worktree and possibly an index.lock, so a repository the remaining budget
-// cannot see through is reported out_of_time and never touched.
-//
-// pullAllBudget sits under the client's 30s request timeout, so the caller always
-// receives a complete answer rather than timing out over a running pass.
+// pullAllBudget bounds the whole pass, perRepoPullBudget each repository, and minPullBudget is what
+// a pull needs before it may START: a `git pull --ff-only` killed mid-checkout leaves a
+// half-updated worktree and maybe an index.lock, so a repository the remaining budget cannot cover
+// is reported, not started.
 const (
 	pullAllBudget     = 25 * time.Second
 	perRepoPullBudget = 20 * time.Second
@@ -158,11 +154,9 @@ func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) 
 	return pullResult{Repo: e.Name, Verdict: verdictPulled}
 }
 
-// preflight judges whether a fast-forward is safe in a repository already known
-// to be behind, returning the blocking verdict or nil. Ordered by severity, first
-// hit wins. `git pull --ff-only` would refuse in all these states anyway; the
-// checks exist because git's message names the symptom, not the cause ("You have
-// unstaged changes" for a rebase in progress).
+// preflight judges whether a fast-forward is safe in a repository already behind, returning the
+// blocking verdict or nil, most severe first. `git pull --ff-only` would refuse these too, but its
+// message names the symptom, not the cause.
 func preflight(ctx context.Context, dir, branch string, ahead int) *pullResult {
 	if operationInProgress(ctx, dir) {
 		return blocked(reasonInProgress, "A merge, rebase or cherry-pick is in progress here.")
@@ -243,12 +237,8 @@ func operationInProgress(ctx context.Context, dir string) bool {
 	return false
 }
 
-// worktreeState answers the pre-flight's two questions off ONE status read: does
-// the index hold a merge conflict, and which paths carry a local change.
-//
-// The conflict half reads v2's unmerged record type, because the row builder
-// splits an XY pair into one row per side and that pairing is what a conflict IS.
-// A rename's ORIGIN counts as dirty too: a fast-forward writes either end.
+// worktreeState answers both pre-flight questions off ONE status read: whether the index holds a
+// merge conflict (v2's unmerged record type), and which paths carry a local change.
 func worktreeState(ctx context.Context, dir string) (dirty map[string]struct{}, conflicted, ok bool) {
 	st, err := readStatus(ctx, dir)
 	if err != nil {

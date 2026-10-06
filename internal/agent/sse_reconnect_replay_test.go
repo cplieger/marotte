@@ -1,13 +1,8 @@
 package agent
 
-// The reported reconnect sequence, at the seam rather than through a browser: a reader
-// whose window closes mid-turn and re-opens gets a connect that names the chat busy
-// and carries no turn content, so the transcript GET is the only channel that hands
-// back the reply already on screen.
-//
-// Both halves are asserted in one test on purpose: the content-free connect is what
-// makes the GET load-bearing, so asserting the GET alone would pass just as well on a
-// build where the connect happened to carry the turn after all.
+// The reported reconnect sequence at the seam: a mid-turn reopen gets a content-free connect naming the chat
+// busy, so the transcript GET alone must return the visible reply. Both halves in one test, since the
+// content-free connect is what makes the GET load-bearing.
 
 import (
 	"encoding/json"
@@ -28,10 +23,8 @@ const (
 	replayGapText      = "here is the first half of the reply"
 )
 
-// transcriptPage is the single-chat GET's response as this test READS it, spelled by
-// hand rather than taken from the production struct: the field names ARE the contract
-// the client decodes, so a test importing the server's own type would assert it against
-// itself and pass through a rename.
+// transcriptPage is the single-chat GET's response spelled by hand: its field names are the client contract,
+// so importing the server's type would test it against itself.
 type transcriptPage struct {
 	Entries []struct {
 		Kind    string          `json:"kind"`
@@ -47,11 +40,8 @@ type transcriptPage struct {
 	Live bool `json:"live"`
 }
 
-// newReplayGapRuntime wires the runtime to a REAL chat store plus its real routes,
-// because the defect IS a disagreement between two surfaces (what the connect
-// carries and what the transcript GET carries), so both have to be the shipped ones.
-// The tab store is wired for newBudgetRuntime's reason: an unwired one makes every
-// chat look open for a different reason.
+// newReplayGapRuntime wires a real chat store and routes: the defect is a disagreement between two shipped
+// surfaces. The tab store is wired as in newBudgetRuntime.
 func newReplayGapRuntime(t *testing.T) (*Runtime, *http.ServeMux) {
 	t.Helper()
 	dir := t.TempDir()
@@ -69,16 +59,14 @@ func newReplayGapRuntime(t *testing.T) (*Runtime, *http.ServeMux) {
 	}
 	rt = New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs,
 		WithTabs(ts), WithConfigDir(dir))
-	rt.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, rt) })
 	mux := http.NewServeMux()
 	cs.RegisterRoutes(mux)
 	return rt, mux
 }
 
-// openReplayGapTurn opens the turn the reader watched and fills it the way the wire
-// does: a thinking delta, then a text delta in the same lane, so the reasoning is
-// sealed and the text is the entry still coalescing when the GET reads it.
+// openReplayGapTurn fills the turn as the wire does: a thinking delta, then a text delta in the same lane, so
+// reasoning is sealed and text still coalescing.
 func openReplayGapTurn(t *testing.T, rt *Runtime) {
 	t.Helper()
 	rt.bridge.mgr.orInsert(replayGapChat)
@@ -92,10 +80,7 @@ func openReplayGapTurn(t *testing.T, rt *Runtime) {
 	openBudgetChatTab(t, rt, replayGapChat)
 }
 
-// getTranscript drives the real route and decodes the newest page. The store's own
-// rules about the page (the older-page withhold, the lock order, the stamps) are
-// internal/chat's and are tested there; this file's subject is whether the open
-// turn reaches the wire at all.
+// getTranscript drives the real route and decodes the newest page; the page rules are internal/chat's.
 func getTranscript(t *testing.T, mux *http.ServeMux, id marotte.ChatID) transcriptPage {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id), nil)
@@ -119,15 +104,12 @@ func (p transcriptPage) kinds() []string {
 	return kinds
 }
 
-// TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn is the reported defect.
-// Before the fix the connect carried no turn and the GET carried no open tail either,
-// so the reloaded view showed the prompt over an empty body.
+// TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn — a reloaded view must not show the prompt over an empty body.
 func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
 	rt, mux := newReplayGapRuntime(t)
 	openReplayGapTurn(t, rt)
 
-	// The connect the reloaded window makes carries no turn content at all, which is
-	// what makes the GET the only channel for the in-flight reply.
+	// The reloaded window's connect carries no turn content.
 	body := coldConnect(t, rt, "").Body.String()
 	if strings.Contains(body, string(marotte.EventType("turn_state"))) || strings.Contains(body, replayGapText) {
 		t.Fatalf("the connect carries turn content; the GET assertions below would pass without it: %q", body)
@@ -162,9 +144,7 @@ func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
 	}
 }
 
-// TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail is the boundary between
-// "a turn is running" and "there is a reply to hand back". `live` already carries the
-// first, and an open entry with no text would mount a blank row under the prompt.
+// TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail pins that `live` says a turn runs; an empty open entry would mount a blank row.
 func TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail(t *testing.T) {
 	rt, mux := newReplayGapRuntime(t)
 	const quiet marotte.ChatID = "c-quiet"
@@ -184,8 +164,7 @@ func TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail(t *testing.T) 
 	}
 }
 
-// TestTranscriptGET_AnIdleChatIsNotLive is the other direction: a chat whose turn
-// was taken must answer no, or a reader keeps waiting for deltas that never come.
+// TestTranscriptGET_AnIdleChatIsNotLive pins that or a reader waits for deltas that never come.
 func TestTranscriptGET_AnIdleChatIsNotLive(t *testing.T) {
 	rt, mux := newReplayGapRuntime(t)
 	const idle marotte.ChatID = "c-idle"

@@ -7,7 +7,7 @@ package marotte
 // Bridge lifecycle methods — used by the bridge package to drive the
 // kiro-cli subprocess through initialize → session/new|load. On v3 (KAS)
 // model/mode/effort switches all route through session/set_config_option
-// (session/set_model is gone), and a rewind reverts the session in place at a
+// (v3 has no session/set_model), and a rewind reverts the session in place at a
 // message id (see command/rewind.go).
 const (
 	MethodInitialize  = "initialize"
@@ -17,75 +17,44 @@ const (
 	// unscoped it returns every session on the box (measured: 399 rows across
 	// 55 directories, against 2 for one workspace). `limit` is IGNORED.
 	MethodSessionList = "session/list"
-	MethodSetMode     = "session/set_mode"
-	MethodCancel      = "session/cancel"
-	// MethodCheckpointRevertMultiple reverts a session to a USER message,
-	// dropping that message and every one after it and rolling the files back
-	// from KAS's own snapshots. KAS appends a `checkpoint_revert` TOMBSTONE to
-	// its session log, so the truncation is durable: a later session/load
-	// replays the log through applyCheckpointReverts, which pops the stack back
-	// through the target. The verb refuses a mid-turn session and a concurrent
-	// revert itself, server-side, so marotte does not police either.
-	//
-	// For REWINDING this replaced session/fork. A fork made a SECOND chat; a
-	// revert edits the one you are in, which is what rewinding was always meant
-	// to mean. That did not retire the fork verb — see MethodSessionFork, which
-	// serves the operation a second chat is the RIGHT answer to.
+	// MethodSessionDelete is ACP's core delete. It cascades the session's
+	// workflow runs, refuses (-32000 SessionOwnsLiveWorkflowsError) while one is
+	// live, and answers {} for an id that never existed.
+	MethodSessionDelete = "session/delete"
+	MethodSetMode       = "session/set_mode"
+	MethodCancel        = "session/cancel"
+	// MethodCheckpointRevertMultiple reverts a session to a USER message, dropping it and
+	// everything after and rolling the files back from KAS's snapshots. KAS appends a durable
+	// `checkpoint_revert` tombstone that a later session/load replays (applyCheckpointReverts). KAS
+	// itself refuses a mid-turn session and a concurrent revert.
 	MethodCheckpointRevertMultiple = "_kiro/checkpoint/revertMultiple"
-	// MethodSessionFork branches a session: KAS creates a new one carrying the
-	// forked session's context and returns `{sessionId}`. Note the namespace —
-	// `session/*`, not `_kiro/*`, and it is still in the live method table
-	// (measured against the 2.18.0 sidecar: `session_fork:"session/fork"`).
-	//
-	// Params `{sessionId, cwd, _meta:{kiro:{…}}}`, where the `_meta.kiro` block is
-	// entirely CALLER-supplied. Two keys matter here: `createdReason`, which KAS
-	// stores and reports back on a later `session/load` beside `parentSessionId`
-	// and `title`; and `title`, the tangent's name in KAS's own metadata.
-	//
-	// `messageId` is NOT required, and that is measured rather than inferred:
-	// KAS's own /tangent calls `fork({createdReason:"tangent", title})` with no
-	// message id at all, while only its /rewind path passes one. So a tangent
-	// fork needs no addressable user message — but see command/fork.go, which
-	// keeps a priming fallback anyway, because a refusal must not cost the user
-	// the feature.
+	// MethodSessionFork branches a session (`session/*`, not `_kiro/*`; 2.18.0 sidecar): KAS
+	// creates one carrying the forked context and returns `{sessionId}`. Params `{sessionId, cwd,
+	// _meta:{kiro:{…}}}`, the `_meta.kiro` block caller-supplied: `createdReason` (reported back on
+	// session/load) and `title`. No `messageId` for a tangent: KAS's own /tangent sends none.
 	MethodSessionFork = "session/fork"
-	// MethodSessionCompact summarizes the conversation and replaces it with the
-	// summary, emitting the `summarization_completed` frame the translate layer
-	// already maps.
-	//
-	// This is what typed `/compact` was NOT doing. Probed: the typed form returns
-	// `end_turn` in ~3.4s with ZERO summarization frames while the model replies
-	// "Done — context compacted", because no parser inside KAS claims it. The
-	// native verb returns `{success: true}` and does the work.
-	//
-	// `{success: false}` covers three conditions with NO discriminator — a turn in
-	// flight, a compaction already running, and (as a thrown error rather than a
-	// false) no such session — so a caller can only surface one generic failure.
+	// MethodSessionCompact summarizes the conversation and replaces it with the summary, emitting
+	// `summarization_completed`; typed `/compact` does nothing (no parser in KAS claims it).
+	// `{success: false}` covers a turn in flight and a compaction already running with no
+	// discriminator.
 	MethodSessionCompact = "_kiro/session/compact"
+	// MethodSessionRename sets a session's title as the USER's, latching
+	// titleSetByUser so KAS stops emitting agent titles for it. Served for a
+	// resident session and, on any other process, as a write to its stored metadata.
+	MethodSessionRename = "_kiro/session/rename"
+	// MethodSessionExport zips one persisted session ({sessionId} →
+	// {success, filePath, error?}) into KAS's own TMPDIR/kiro-exports-* directory
+	// under the fixed name kiro-session-<sessionId>.zip. It reads the session off
+	// disk, so any process answers it; the caller deletes the file.
+	MethodSessionExport = "_kiro/session/export"
 
-	// MethodSessionSteer delivers a mid-turn steer: a message that joins the
-	// RUNNING turn instead of waiting for it to end.
-	//
-	// Note the namespace — `_session/*`, not `_kiro/*` like every other extension
-	// method here. That is KAS's spelling, not a typo to be tidied.
-	//
-	// Params `{sessionId, message, messageId?}`; the reply is
-	// `{queued: true, messageId}` or `{queued: false, messageId, dropped: "..."}`.
-	// A missing sessionId, an unknown session and an empty message all THROW
-	// rather than answering, so a transport error here is a real failure.
-	//
-	// KAS appends the message to a per-session steering buffer, and the graph
-	// consumes it at the next node boundary as an ordinary human turn — resetting
-	// the agent's iteration counter so it has budget to act on the new guidance.
-	// A steer that arrives too late for the current node does not get dropped: the
-	// end-of-turn drain loops the turn back through the model to consume it.
-	//
-	// TWO CONSEQUENCES marotte has to handle rather than ignore. `message` is a
-	// plain STRING, so attachments cannot ride a steer. And KAS decides whether
-	// the message is a user steer or a system notification by SNIFFING its text
-	// against `^\s*\[notification/(info|success|warning|error)\]` — not from a
-	// parameter — so a user message that happens to open that way is silently
-	// reclassified. See command/steer.go for what marotte does about both.
+	// MethodSessionSteer delivers a mid-turn steer (`_session/*`, KAS's spelling). Params
+	// `{sessionId, message, messageId?}`; replies `{queued: true, messageId}` or `{queued: false,
+	// messageId, dropped}`; a missing or unknown session and an empty message THROW. KAS buffers it
+	// and the graph consumes it at the next node boundary as a human turn.
+	// `message` is a plain STRING (no attachments), and KAS classifies text matching
+	// `^\s*\[notification/(info|success|warning|error)\]` as a system notification;
+	// command/steer.go handles both.
 	MethodSessionSteer = "_session/steer"
 	// MethodSessionSteerClear drops every steer still queued in the session's
 	// buffer before the model reads it. Params `{sessionId}`, reply
@@ -115,28 +84,20 @@ const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
 
-// CreatedReasonTangent labels a forked session in KAS's roster, travelling as
-// `_meta.kiro.createdReason` on MethodSessionFork and reported back on a later
-// `session/load` beside `parentSessionId`.
-//
-// This used to read "there is no createdReason constant", on the reasoning that
-// marotte no longer forks — true while a rewind was the only thing that had
-// wanted to. A tangent is the operation a second session IS the right answer to,
-// so the label is back, and the value is KAS's own spelling for it: its /tangent
-// sends exactly this string.
+// MethodMCPGetResource reads one resource from the MCP pool of the process it
+// is sent to: {serverName, uri} → {contents[]}. Each bridge holds its own pool.
+const MethodMCPGetResource = "_kiro/mcp/getResource"
+
+// CreatedReasonTangent labels a forked session in KAS's roster, sent as `_meta.kiro.createdReason`
+// on MethodSessionFork and reported back on session/load; KAS's own /tangent sends this exact
+// string.
 const CreatedReasonTangent = "tangent"
 
-// Agent user-input method name. On v3 (KAS, 2.14+) the agent's user_input
-// tool (structured questions: plan-mode clarifications, spec gates) is
-// forwarded to us as the extension request _kiro/userInput (a JSON-RPC
-// request with an id, delivered like _kiro/mcp/elicitation) carrying
-// {sessionId, toolCallId, question, options[{title, description,
-// recommended, subOptionsLabel, subOptions[]}]}. We surface a question
-// dialog and reply {action:"answered", answer:"<text>"} on the request id;
-// any other action makes KAS advance to the next phase. Gated by the
-// initialize capability _meta.kiro.userInput:true — without it KAS
-// flattens the question into a session/request_permission and SKIPS
-// free-form (no-options) questions entirely.
+// Agent user-input method name. On v3 the agent's user_input tool reaches us as the request
+// _kiro/userInput carrying {sessionId, toolCallId, question, options[…]}; we reply
+// {action:"answered", answer:"<text>"} on the request id, any other action advancing the phase.
+// Gated by `_meta.kiro.userInput:true`, without which KAS flattens it into a permission request and
+// skips free-form questions.
 const (
 	MethodKiroUserInput = "_kiro/userInput"
 )
@@ -146,21 +107,31 @@ const (
 	MethodPrompt = "session/prompt"
 )
 
-// MethodPolicyIgnoreFilesChanged tells KAS which ignore FILES to enforce, and it
-// is the whole door: KAS reads no `_meta.kiro` key and no session key for this,
-// and the ACP server constructs its agent with no list at all, which is why
-// kiro-cli's own TUI reads a gitignored file fine.
-//
-// CONNECTION-scope, so it is sent once per bridge; hot, so no session restart
-// follows; and `{files: []}` CLEARS the list, which is why an empty list is never
-// sent (see StartOpts.IgnoreFiles). A malformed payload is a warn and a no-op on
-// KAS's side, so a bad frame cannot disable enforcement, only fail to change it.
+// MethodPolicyIgnoreFilesChanged is the whole door for which ignore FILES KAS enforces (no
+// `_meta.kiro` key exists). Connection-scope and hot. `{files: []}` CLEARS the list, so an empty
+// list is never sent (StartOpts.IgnoreFiles); a malformed payload is a no-op on KAS's side.
 const (
 	MethodPolicyIgnoreFilesChanged = "_kiro/policy/ignore_files_changed"
 
 	// ParamIgnoreFiles is the notification's one params key, carrying []string.
 	ParamIgnoreFiles = "files"
 )
+
+// MethodTerminalSettingsChanged updates a live KAS process's shell-tool default
+// timeout. Params are {terminal: {enabled, commandTimeoutMs?}}, strict on KAS's
+// side; {enabled: false} drops back to KAS's 120 s.
+const MethodTerminalSettingsChanged = "_kiro/terminal/settings_changed"
+
+// TerminalSettingsParams builds MethodTerminalSettingsChanged's params for a
+// timeout in ms. KAS's schema is strict, so the unset case carries no
+// commandTimeoutMs member at all.
+func TerminalSettingsParams(ms int) map[string]any {
+	terminal := map[string]any{"enabled": ms > 0}
+	if ms > 0 {
+		terminal["commandTimeoutMs"] = ms
+	}
+	return map[string]any{"terminal": terminal}
+}
 
 // Session-level ACP method names — streaming updates, permissions, config.
 const (
@@ -200,18 +171,36 @@ const (
 	// never needs re-asserting — which is what lets marotte pass it once at
 	// session/new instead of policing every write.
 	ConfigOptionAutopilot = "autopilot"
+	// ConfigOptionMemoryReflection is background memory learning. Its value is the
+	// STRING "on" or "off" (a JSON boolean is a silent no-op), and it is the one
+	// half of the memory preference KAS lets a client change on a live session.
+	ConfigOptionMemoryReflection = "memoryReflection"
+	// ConfigOptionThinking is extended thinking, present only for a model whose
+	// choice carries `_meta.kiro.thinkingToggleable`. Its value is the STRING
+	// ThinkingOn or ThinkingOff; turning it off caps a high effort tier.
+	ConfigOptionThinking = "thinking"
+	// ConfigOptionContentCollection drives the opt-out header on every model request
+	// of the PROCESS, not the session, and KAS persists none of it. The value is the
+	// STRING ConfigValueContentCollectionEnabled or ...Disabled; a JSON boolean is
+	// ignored.
+	ConfigOptionContentCollection = "contentCollection"
 )
 
-// The two values KAS's autopilot option accepts. It is a SELECT over these
-// STRINGS, not a boolean: zSetSessionConfigOptionRequest's union takes a boolean
-// only alongside a `type:"boolean"` discriminator, and a bare
-// {"configId":"autopilot","value":false} satisfies neither arm. Live-probed on
-// kiro-cli 2.20.0, it answers -32602 Invalid params and the session stays in
-// autopilot, so the shape is the whole difference between a supervised chat
-// asking before it writes and not asking at all.
-//
-// A pair rather than one constant so the two senders — the session door and the
-// live toggle — cannot disagree about the spelling.
+// The two values KAS's contentCollection option accepts.
+const (
+	ConfigValueContentCollectionEnabled  = "enabled"
+	ConfigValueContentCollectionDisabled = "disabled"
+)
+
+// The thinking option's two values, also Chat.Thinking's choices.
+const (
+	ThinkingOn  = "on"
+	ThinkingOff = "off"
+)
+
+// The two values KAS's autopilot option accepts: a SELECT over these strings. A bare boolean
+// satisfies neither arm of zSetSessionConfigOptionRequest and answers -32602 (kiro-cli 2.20.0),
+// leaving the session in autopilot. A pair so both senders spell it alike.
 const (
 	ConfigValueAutopilotOn  = "on"
 	ConfigValueAutopilotOff = "off"

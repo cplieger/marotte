@@ -1,18 +1,4 @@
-// ---------------------------------------------------------------------------
-// The control row's IN-FLIGHT state, and what happens to it when the row is
-// rebuilt.
-//
-// Three properties. A retry starts a process and can legitimately take tens of
-// seconds, so an unbound button looks dead for the whole handshake and can be
-// clicked again meanwhile — that is what the pending binding is for. The row is
-// rebuilt only when the server's AFFORDANCE moved, not once per `run_progress`
-// frame. And when it IS rebuilt the previous row's bindings go with it, or each one
-// leaves a live effect following an action for a button nothing can see.
-//
-// Its own file because it needs REAL actions: pending state lives in the actions
-// registry, so a plain `vi.fn()` dispatch cannot produce it, and run-view.test.ts's
-// cases want a dispatch that resolves the moment it is called.
-// ---------------------------------------------------------------------------
+// The control row's IN-FLIGHT state, and what happens to it when the row is rebuilt.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
@@ -20,31 +6,27 @@ const m = vi.hoisted(() => ({
   reply: { current: undefined as unknown },
   controls: { current: undefined as unknown },
   opened: [] as string[],
-  /** One resolver per dispatch still in flight, so a test decides when a verb
-   *  settles and can hold one open across a repaint. */
+  /** One resolver per dispatch still in flight, so a test decides when a verb settles and can
+   *  hold one open across a repaint. */
   settle: [] as (() => void)[],
 }));
 
-// A Browser-Mode mock is linked as real ESM, so EVERY name any module in this
-// graph reaches has to exist on it — a partial factory fails collection rather than
-// one case. Anything no case here drives answers the EMPTY value for its type, never
-// a plausible one: a mock that claims an answer makes a case pass for a reason
-// production never supplied.
+// A Browser-Mode mock is linked as real ESM, so EVERY name any module in this graph reaches has to
+// exist on it — a partial factory fails collection rather than one case.
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
-  // Reached through `run-step-transcript.js`, which run-view imports to read a
-  // settled step's transcript off KAS. No case here shows a step, so this answers
-  // the no-request result: `run-step-transcript.ts` grades status 0 transient.
+  // Reached through `run-step-transcript.js`, which run-view imports to read a settled step's
+  // transcript off KAS. No case here shows a step, so this answers the no-request result:
+  // `run-step-transcript.ts` grades status 0 transient.
   apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
-  // The run READ, because the store spends a failed read's STATUS: a 404 is the
-  // server's settled answer about the run, a 0 is no request at all. Driven per case
-  // from `m.reply` below.
+  // The run READ, because the store spends a failed read's STATUS: a 404 is the server's settled
+  // answer about the run, a 0 is no request at all. Driven per case from `m.reply` below.
   apiGetOrError: vi.fn(),
 }));
 
-// `refreshRun` reaches the launching chat's window through a lazy import, so the
-// graph resolves at runtime and stops here.
+// `refreshRun` reaches the launching chat's window through a lazy import, so the graph resolves at
+// runtime and stops here.
 vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
 vi.mock("./tabs.js", () => ({
@@ -56,8 +38,8 @@ vi.mock("./tabs.js", () => ({
   tabSetVersion: vi.fn(() => 0),
   // The open run tabs run-dots seeds run state for. Empty keeps the seed inert.
   openRunRefs: vi.fn(() => []),
-  // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here for
-  // `tabIdFor`'s reason: with no tab id to resolve there is no row to rename.
+  // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here for `tabIdFor`'s
+  // reason: with no tab id to resolve there is no row to rename.
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
   closeTab: vi.fn(),
@@ -65,10 +47,7 @@ vi.mock("./tabs.js", () => ({
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
   openGitView: vi.fn(),
-  // run-view's own three. `hasTab` is the eviction exemption's reader (no tab is
-  // open), `parentChatRef` the launching chat a run tab nests under (none), and
-  // `openTab` the door behind the empty-step link, which no case here clicks —
-  // hence "nothing was opened" rather than the success answer.
+  // run-view's own three.
   hasTab: vi.fn(() => false),
   parentChatRef: vi.fn(() => ""),
   openTab: vi.fn(() => Promise.resolve("failed")),
@@ -81,10 +60,9 @@ vi.mock("./decision-dock.js", () => ({
   runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
 }));
 
-// REAL actions, deliberately: `bindLoadingState` reads the registry's pending
-// signal for the action NAME, so only a genuine dispatch flips the button. Each
-// one parks until the test resolves it, which is what a slow engine handshake
-// looks like from the button's seat.
+// REAL actions, deliberately: `bindLoadingState` reads the registry's pending signal for the action
+// NAME, so only a genuine dispatch flips the button. Each one parks until the test resolves it,
+// which is what a slow engine handshake looks like from the button's seat.
 vi.mock("./actions/runs.js", async () => {
   const { defineAction } = await import("@cplieger/actions");
   const verb = (name: string) =>
@@ -103,6 +81,9 @@ vi.mock("./actions/runs.js", async () => {
     pauseRun: verb("pause"),
     resumeRun: verb("resume"),
     retryRun: verb("retry"),
+    // Linked by run-view's repeat controls; no case here offers them.
+    extendRunRepeat: verb("extend"),
+    finishRunRepeat: verb("finish_loop"),
   };
 });
 
@@ -117,22 +98,22 @@ async function drain(): Promise<void> {
   }
 }
 
-/** ONE run for the whole file, run-view.test.ts's convention and for its reason:
- *  the view installs a single effect that subscribes to the cell of whatever run it
- *  first painted, so a case naming a second run would render nothing at all. */
+/** ONE run for the whole file, run-view.test.ts's convention and for its reason: the view
+ *  installs a single effect that subscribes to the cell of whatever run it first painted, so a
+ *  case naming a second run would render nothing at all. */
 const RUN = "wf_1";
 
-/** The state fixture, a NEW object each time: the store's cell only wakes its
- *  readers when the value actually changes, so re-using one would paint once. */
+/** The state fixture, a NEW object each time: the store's cell only wakes its readers when the
+ *  value actually changes, so re-using one would paint once. */
 function abortedState(): unknown {
   return { workflowId: RUN, state: { workflowId: RUN, status: "aborted" } };
 }
 
 const RETRY_ONLY = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
 
-/** The same verb, a different ANSWER: the server has added the sentence explaining
- *  why pause is not on offer. Retry still renders, so a case can watch the
- *  REPLACEMENT button while keeping the verb under test the same one. */
+/** The same verb, a different ANSWER: the server has added the sentence explaining why pause is
+ *  not on offer. Retry still renders, so a case can watch the REPLACEMENT button while keeping
+ *  the verb under test the same one. */
 const RETRY_PLUS_REFUSAL = {
   verbs: ["retry"],
   refused: { pause: "This run has no live engine on this server." },
@@ -158,18 +139,17 @@ async function paintRetryRow(): Promise<HTMLElement> {
   return body;
 }
 
-/** Repaint the run the way a `run_progress` frame does: a fresh state lands in the
- *  store and the view's one effect renders it. The affordance is untouched, which is
- *  what makes this the case that must NOT rebuild the row. */
+/** Repaint the run the way a `run_progress` frame does: a fresh state lands in the store and the
+ *  view's one effect renders it. The affordance is untouched, which is what makes this the case
+ *  that must NOT rebuild the row. */
 async function repaint(): Promise<void> {
   m.reply.current = abortedState();
   invalidateRun(RUN);
   await drain();
 }
 
-/** Move the AFFORDANCE, which is the one thing that replaces the row: the store's
- *  controls cell is read inside the render pass, so a new answer wakes the same
- *  effect a state change does. */
+/** Move the AFFORDANCE, which is the one thing that replaces the row: the store's controls cell
+ *  is read inside the render pass, so a new answer wakes the same effect a state change does. */
 async function affordanceMoves(next: unknown): Promise<void> {
   m.controls.current = next;
   invalidateRunControls(RUN);
@@ -200,8 +180,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // Leave nothing pending: the registry is module state for the whole file, so a
-  // dispatch still in flight would arrive in the next test's button.
+  // Leave nothing pending: the registry is module state for the whole file, so a dispatch still in
+  // flight would arrive in the next test's button.
   for (const resolve of m.settle.splice(0)) {
     resolve();
   }
@@ -209,11 +189,28 @@ afterEach(async () => {
 });
 
 describe("the control row's in-flight state", () => {
-  // The button is unbound no more. Without this a retry looked dead for the whole
-  // handshake — no disabled state, no busy state — and every further click sent
-  // another request for work already being started.
+  // The button is unbound no more. Without this a retry looked dead for the whole handshake — no
+  // disabled state, no busy state — and every further click sent another request for work already
+  // being started.
   it("disables the button and marks it busy while the verb is in flight", async () => {
     const body = await paintRetryRow();
+    const btn = retryButton(body);
+    expect(btn.disabled).toBe(false);
+
+    btn.click();
+    await drain();
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("disables a repeat control while its verb is in flight", async () => {
+    const body = await paintRetryRow();
+    await affordanceMoves({
+      verbs: ["finish_loop"],
+      refused: {},
+      parent_chat_id: "",
+      pause_node_id: "loop-1",
+    });
     const btn = retryButton(body);
     expect(btn.disabled).toBe(false);
 
@@ -229,9 +226,8 @@ describe("the control row's in-flight state", () => {
 
     btn.click();
     await drain();
-    // The premise, stated: without it the release below is satisfied by a button
-    // nothing ever disabled, which is the same green for a binding that is missing
-    // entirely.
+    // The premise, stated: without it the release below is satisfied by a button nothing ever
+    // disabled, which is the same green for a binding that is missing entirely.
     expect(btn.disabled).toBe(true);
 
     for (const resolve of m.settle.splice(0)) {
@@ -243,10 +239,8 @@ describe("the control row's in-flight state", () => {
     expect(btn.hasAttribute("aria-busy")).toBe(false);
   });
 
-  // The row is a function of the affordance and the pending signals, and a
-  // `run_progress` frame moves neither — it moved the run's STATE. Rebuilding here
-  // threw away a live button and its binding several times a minute on a busy run,
-  // and a reader mid-click lost the element under the pointer.
+  // The row is a function of the affordance and the pending signals, and a `run_progress` frame
+  // moves neither — it moved the run's STATE.
   it("keeps the row it has when a progress frame moves only the run's state", async () => {
     const body = await paintRetryRow();
     const before = retryButton(body);
@@ -257,10 +251,7 @@ describe("the control row's in-flight state", () => {
     expect(before.isConnected).toBe(true);
   });
 
-  // The host's half of the same rule, and FOCUS is what it protects. Chromium blurs
-  // a node on any re-seat, including `replaceChildren` with the host's own only
-  // child, so a host that re-inserted an unchanged row would take focus off the
-  // button a keyboard reader is sitting on once per progress frame.
+  // The host's half of the same rule, and FOCUS is what it protects.
   it("leaves focus on the button when a progress frame repaints the row", async () => {
     const body = await paintRetryRow();
     const btn = retryButton(body);
@@ -272,13 +263,9 @@ describe("the control row's in-flight state", () => {
     expect(document.activeElement).toBe(btn);
   });
 
-  // THE LEAK. `bindLoadingState` disposes itself only for an element that was
-  // ATTACHED the last time its effect ran, and the row is built before the page
-  // appends it — so a button replaced before its first pending flip never armed
-  // that path and stayed subscribed. A detached button still following the action
-  // is the observable half of one live effect per replacement, for the tab's
-  // lifetime. Driven by an affordance change, because that is now the only thing
-  // that replaces the row.
+  // THE LEAK. `bindLoadingState` disposes itself only for an element that was ATTACHED the last
+  // time its effect ran, and the row is built before the page appends it — so a button replaced
+  // before its first pending flip never armed that path and stayed subscribed.
   it("stops following the verb once the row that carried the button is replaced", async () => {
     const body = await paintRetryRow();
     const stale = retryButton(body);
@@ -296,17 +283,12 @@ describe("the control row's in-flight state", () => {
     expect(stale.hasAttribute("aria-busy")).toBe(false);
   });
 
-  // The page's disposal is the SECOND moment the row stops being current, and the
-  // one nothing used to cover: `buildRunControls` drains on its next call, so a row
-  // whose page was thrown away kept its bindings until some later build — and, once
-  // the rebuild became conditional, the stale row would have been handed to the new
-  // page's host instead of a fresh one.
   it("stops following the verb once the page the row lived in is disposed", async () => {
     const body = await paintRetryRow();
     const stale = retryButton(body);
 
-    // What a caller replacing `#run-body`'s children does: the page this module
-    // cached is no longer mounted in it, so the next paint mounts a new one.
+    // What a caller replacing `#run-body`'s children does: the page this module cached is no longer
+    // mounted in it, so the next paint mounts a new one.
     body.replaceChildren();
     await repaint();
     const live = retryButton(body);
@@ -320,10 +302,9 @@ describe("the control row's in-flight state", () => {
     expect(stale.hasAttribute("aria-busy")).toBe(false);
   });
 
-  // The other direction, and the reason the drain cannot simply dispose every
-  // binding it finds: a verb in flight across a replacement must keep the NEW
-  // button disabled, because the work is still running and the verb is the same
-  // verb.
+  // The other direction, and the reason the drain cannot simply dispose every binding it finds: a
+  // verb in flight across a replacement must keep the NEW button disabled, because the work is
+  // still running and the verb is the same verb.
   it("keeps the replacement button disabled while the verb it carries is still in flight", async () => {
     const body = await paintRetryRow();
     const clicked = retryButton(body);
@@ -332,8 +313,8 @@ describe("the control row's in-flight state", () => {
 
     await affordanceMoves(RETRY_PLUS_REFUSAL);
     const live = retryButton(body);
-    // The premise: this is genuinely a NEW button. Without it the assertion below is
-    // satisfied by the disabled button the click already left behind.
+    // The premise: this is genuinely a NEW button. Without it the assertion below is satisfied by
+    // the disabled button the click already left behind.
     expect(live).not.toBe(clicked);
     expect(live.disabled).toBe(true);
     expect(live.getAttribute("aria-busy")).toBe("true");

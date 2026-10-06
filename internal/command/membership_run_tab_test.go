@@ -1,10 +1,7 @@
 package command
 
-// A run tab's PARENT, which the coordinator fills in from the run's own lease.
-//
-// It exists because Parent is immutable after open, so getting it wrong is
-// permanent and used to differ per device — the launching chat was known only to
-// whichever client happened to hold the run's frames. One rule, every door.
+// A run tab's Parent is immutable after open, so the coordinator fills it from the run's own lease
+// rather than from whichever device knew the launching chat.
 
 import (
 	"testing"
@@ -59,10 +56,9 @@ func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
 	return ""
 }
 
-// TestOpenTab_FillsARunsParentFromItsLease is symptom B: a run tab opened by a
-// door that holds no chat id — a `/run/{id}` deep link on a fresh browser, a
-// back press, another device's open — used to land top level and stay there for
-// good, because Parent is set once.
+// TestOpenTab_FillsARunsParentFromItsLease — a run tab opened by a door that holds
+// no chat id — a `/run/{id}` deep link on a fresh browser, a back press, another
+// device's open — must still nest, because Parent is set once.
 func TestOpenTab_FillsARunsParentFromItsLease(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-launcher"}}
@@ -118,9 +114,8 @@ func TestOpenTab_AClientSuppliedParentWins(t *testing.T) {
 	}
 }
 
-// TestOpenTab_LeavesAParentlessRunTopLevel is the case the fix must NOT break: a
-// manual or scheduled run has a lease and no launching chat, so it belongs at the
-// top of the strip exactly as before.
+// TestOpenTab_LeavesAParentlessRunTopLevel — a manual or scheduled run has a lease
+// and no launching chat, so it belongs at the top of the strip.
 func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	for name, runs := range map[string]RunOwner{
@@ -149,8 +144,6 @@ func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 // fill reaching them would invent a hierarchy no door asked for.
 func TestOpenTab_FillsNoParentForAnyOtherKind(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	// A run owner that would answer for ANY ref, so a kind leaking through the
-	// gate is visible rather than merely unproven.
 	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"/workspace/a.go": "c-launcher", "c-other": "c-launcher"}}
 	mem, st, _ := newRunTabMembership(t, store, runs)
 	seedRecord(t, store, "c-launcher")

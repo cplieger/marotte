@@ -2,7 +2,11 @@ package marotte
 
 // Wire shapes for POST /api/command; routing lives in agent/command.go.
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+	"unicode/utf16"
+)
 
 // CommandType identifies the kind of client command posted to /api/command.
 type CommandType string
@@ -22,6 +26,7 @@ const (
 	CmdRewindChat          CommandType = "rewind_chat"
 	CmdCompact             CommandType = "compact"
 	CmdSetEffort           CommandType = "set_effort"
+	CmdSetThinking         CommandType = "set_thinking"
 	CmdSetDraft            CommandType = "set_draft"
 	CmdSetAttachments      CommandType = "set_attachments"
 	CmdSetMode             CommandType = "set_mode"
@@ -29,6 +34,10 @@ const (
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
 	CmdSteer               CommandType = "steer"
 	CmdSteerClear          CommandType = "steer_clear"
+	CmdQueuePrompt         CommandType = "queue_prompt"
+	CmdUnqueuePrompt       CommandType = "unqueue_prompt"
+	CmdSetInterruptMode    CommandType = "set_interrupt_mode"
+	CmdRenameChat          CommandType = "rename_chat"
 	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
 	// server clears the buffer and resends the others together, in order.
 	CmdSteerRemove CommandType = "steer_remove"
@@ -56,11 +65,9 @@ type ClientCommand struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-// PromptCommand is the payload for type="prompt".
-//
-// Text is required, trimmed, capped at 512 KiB; oversize returns HTTP 413.
-// MessageID is required (validMessageID). Model is optional (validIdent).
-// Attachments are resolved via resolveInsideWorkDir before read.
+// PromptCommand is the payload for type="prompt". Text or at least one attachment is required; Text
+// is capped at 512 KiB (413), Attachments at MaxAttachments (413) of MaxAttachmentPathBytes each
+// (400), each confined before it is read.
 type PromptCommand struct {
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"`
@@ -100,14 +107,9 @@ type ResumeSessionCommand struct {
 	OpID string `json:"op_id,omitempty"`
 }
 
-// ForkChatCommand is the payload for type="fork_chat": start a TANGENT off
-// another chat, beginning with the parent's conversation behind it and diverging
-// from there, with nothing syncing the two afterwards.
-//
-// The new chat's id is minted SERVER-SIDE and returned, so the envelope's ChatID
-// is normally empty; ParentChatID names the one being forked. Title is optional
-// and rides `_meta.kiro.title` into KAS's session metadata; it is not the chat
-// name, which stays the ordinary naming precedence.
+// ForkChatCommand is the payload for type="fork_chat": a TANGENT that starts with the parent's
+// conversation behind it and diverges, nothing syncing the two afterwards. The new chat's id is
+// minted server-side and returned.
 type ForkChatCommand struct {
 	ParentChatID ChatID `json:"parent_chat_id"`
 	Title        string `json:"title,omitempty"`
@@ -140,8 +142,14 @@ type PermissionResponseCommand struct {
 	// OMITTED id as a reject, so the client sends a decision per offered file.
 	FileDecisions map[string]bool `json:"file_decisions,omitempty"`
 	OptionID      string          `json:"option_id"`
-	RequestID     int64           `json:"request_id"`
+	// RejectionReason is the user's note on a deny, at most
+	// MaxRejectionReasonRunes once trimmed. Never paired with FileDecisions.
+	RejectionReason string `json:"rejection_reason,omitempty"`
+	RequestID       int64  `json:"request_id"`
 }
+
+// MaxRejectionReasonRunes caps a deny note, matching the TUI's own cap.
+const MaxRejectionReasonRunes = 1000
 
 // ElicitationResponseCommand is the payload for type="elicitation_response".
 // RequestID echoes the elicitation_needed event. Action is "accept" | "decline"
@@ -171,14 +179,9 @@ type UserInputResponseCommand struct {
 	RequestID int64  `json:"request_id"`
 }
 
-// RewindChatCommand is the payload for type="rewind_chat": revert THIS chat to
-// a past turn, dropping the addressed message and everything after it and
-// rolling the files back.
-//
-// MessageID must name a USER message, which is what KAS's revert verb addresses
-// and enforces. Marotte resolves a turn footer's Rewind to the FOLLOWING turn's
-// user message, never the clicked turn's own: KAS drops the addressed message
-// inclusive, so keeping turn N means addressing turn N+1.
+// RewindChatCommand is the payload for type="rewind_chat": revert THIS chat to a past turn,
+// dropping the addressed message and everything after it and rolling the files back. MessageID must
+// name a USER message, which KAS's revert verb enforces.
 type RewindChatCommand struct {
 	MessageID string `json:"message_id"`
 	// Confirmed says the reader was told which live runs the cut would stop and
@@ -195,24 +198,16 @@ type SetEffortCommand struct {
 	Level EffortLevel `json:"level"`
 }
 
-// SetDraftCommand is the payload for type="set_draft": the composer text typed
-// into this chat and not sent.
-//
-// Text is capped at MaxDraftBytes and may be EMPTY — that is how a sent or
-// abandoned message is cleared, so it is a value rather than a missing field. A
-// NO-OP on a chat that is not a server record yet, because auto-creating one
-// would put a sidebar row on every client for a chat nobody has sent anything to.
+// SetDraftCommand is the payload for type="set_draft": this chat's unsent composer text, capped at
+// MaxDraftBytes. Empty is a value (how a message clears); a no-op on a chat that is not a server
+// record yet.
 type SetDraftCommand struct {
 	Text string `json:"text"`
 }
 
-// SetAttachmentsCommand is the payload for type="set_attachments": the paths
-// staged beside this chat's draft, the whole list every time rather than an add
-// or a remove, because a per-file delta would need an ordering the wire does not
-// carry. An empty list is a VALUE, and like set_draft this is a NO-OP on a chat
-// that is not a server record yet. Capped at MaxAttachments entries of
-// MaxAttachmentPathBytes each, and confined at the READ (BuildPromptBlocks)
-// rather than here.
+// SetAttachmentsCommand is the payload for type="set_attachments": the WHOLE list of paths staged
+// beside the draft, every time, since a per-file delta would need an ordering the wire lacks. Empty
+// is a value; a no-op like set_draft.
 type SetAttachmentsCommand struct {
 	Paths []string `json:"paths"`
 }
@@ -223,6 +218,38 @@ type SetAttachmentsCommand struct {
 // started the mode is persisted and applied at session/new (StartOpts.Mode).
 type SetModeCommand struct {
 	ModeID string `json:"mode_id"`
+}
+
+// SetThinkingCommand is the payload for type="set_thinking": the effort slider's
+// Off stop sends false; picking any effort tier turns thinking back on through
+// set_effort itself.
+type SetThinkingCommand struct {
+	Enabled bool `json:"enabled"`
+}
+
+// RenameChatCommand is the payload for type="rename_chat": the user's own name for
+// the chat, at most MaxUserChatNameUnits UTF-16 code units after sanitizing.
+type RenameChatCommand struct {
+	Name string `json:"name"`
+}
+
+// MaxUserChatNameUnits caps a user rename in UTF-16 code units, the unit an HTML
+// input's maxlength counts.
+const MaxUserChatNameUnits = 128
+
+// kasTitleCap is KAS's own title cap, in JS string length (UTF-16 code units).
+const kasTitleCap = 80
+
+// KASStoredTitle is the title KAS keeps for a rename to name: trimmed, and past 80
+// UTF-16 code units cut to 77 plus "...". A reconcile compares against this, never
+// against name, or a long name would re-rename on every load.
+func KASStoredTitle(name string) string {
+	t := strings.TrimSpace(name)
+	units := utf16.Encode([]rune(t))
+	if len(units) <= kasTitleCap {
+		return t
+	}
+	return string(utf16.Decode(units[:kasTitleCap-3])) + "..."
 }
 
 // EffortLevel is a typed enum for reasoning effort levels.
@@ -238,12 +265,9 @@ const (
 	EffortMax    EffortLevel = "max"
 )
 
-// Valid reports whether e is plausibly an effort-level id: a short lowercase
-// token (letter first; letters, digits or hyphens; at most 32 bytes).
-//
-// Deliberately a SHAPE check, not a closed set: the tier vocabulary is per model
-// and upstream-owned, so a model shipped after this build must work unchanged.
-// KAS stays the authority on which tiers a session accepts.
+// Valid reports whether e is plausibly an effort-level id: a short lowercase token (letter first;
+// letters, digits, hyphens; at most 32 bytes). A shape check, not a closed set: the vocabulary is
+// per model and upstream-owned.
 func (e EffortLevel) Valid() bool {
 	if len(e) == 0 || len(e) > 32 {
 		return false
@@ -268,13 +292,8 @@ type SetSupervisedModeCommand struct {
 	Enabled bool `json:"enabled"`
 }
 
-// SteerCommand is the payload for type="steer": a message that joins the RUNNING
-// turn rather than waiting for it to end, which is what a prompt typed mid-turn
-// becomes. KAS merges it into the live turn at the next node boundary.
-//
-// Text is required, trimmed, and capped at maxSteerBytes. There is no
-// Attachments field, and that is a wire constraint: `_session/steer` takes a
-// plain string, so a content block has nowhere to go.
+// SteerCommand is the payload for type="steer": a message that joins the RUNNING turn, merged by
+// KAS at the next node boundary. Text is required, trimmed and capped at maxSteerBytes.
 type SteerCommand struct {
 	Text      string `json:"text"`
 	MessageID string `json:"message_id"`
@@ -292,13 +311,29 @@ type CancelCommand struct {
 	Lead string `json:"lead,omitempty"`
 }
 
-// OpenTabCommand is the payload for type="open_tab": open a tab for something
-// that ALREADY EXISTS. It never mints, so (Kind, Ref) is a key and never a create
-// directive — a chat is created by create_chat.
-//
-// An open for a (Kind, Ref) that is already open mutates nothing, bumps no
-// version and emits no event; the response's `created:false` is what makes that
-// observable, so a client resolving on the event does not wait forever.
+// QueuePromptCommand is the payload for type="queue_prompt": a message held for
+// the end of the running turn. Text and MessageID follow PromptCommand's rules;
+// Attachments are capped at MaxAttachments and read when the row is sent.
+type QueuePromptCommand struct {
+	Text        string       `json:"text"`
+	MessageID   string       `json:"message_id"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// UnqueuePromptCommand is the payload for type="unqueue_prompt". An id no row
+// carries is success: two devices can discard one row.
+type UnqueuePromptCommand struct {
+	MessageID string `json:"message_id"`
+}
+
+// SetInterruptModeCommand is the payload for type="set_interrupt_mode".
+type SetInterruptModeCommand struct {
+	Mode InterruptMode `json:"mode"`
+}
+
+// OpenTabCommand is the payload for type="open_tab": open a tab for something that already exists.
+// It never mints, so (Kind, Ref) is a key; an already-open (Kind, Ref) mutates nothing and emits no
+// event.
 type OpenTabCommand struct {
 	// Kind must be one of the nine (TabKind.Valid).
 	Kind TabKind `json:"kind"`
@@ -317,24 +352,16 @@ type OpenTabCommand struct {
 	Owns bool `json:"owns,omitempty"`
 }
 
-// CloseTabCommand is the payload for type="close_tab".
-//
-// Closing an id that is not open is NOT an error: two devices can close the same
-// tab. For a CHAT tab this also runs the chat teardown — cancel the turn, cancel
-// the chat's runs, tear the bridge down — and KEEPS the record under retention,
-// so reopening it session/loads everything back.
+// CloseTabCommand is the payload for type="close_tab". Closing an id that is not open is not an
+// error. For a CHAT tab it also runs the chat teardown and keeps the record under retention.
 type CloseTabCommand struct {
 	ID   string `json:"id"`
 	OpID string `json:"op_id,omitempty"`
 }
 
-// ReorderTabsCommand is the payload for type="reorder_tabs": the whole expanded
-// order, every open tab exactly once.
-//
-// There is deliberately NO base-version precondition. The exact-set check IS
-// sufficient — an order naming the set the server holds cannot have come from a
-// set it does not hold — while a version precondition would discard a valid drag
-// whenever an unrelated mutation landed first. A set mismatch is a 409.
+// ReorderTabsCommand is the payload for type="reorder_tabs": the whole expanded order, every open
+// tab once. No base-version precondition: the exact-set check is sufficient, and a version one
+// would discard a valid drag.
 type ReorderTabsCommand struct {
 	OpID  string   `json:"op_id,omitempty"`
 	Order []string `json:"order"`
@@ -357,13 +384,9 @@ type ReparentTabCommand struct {
 	OpID   string `json:"op_id,omitempty"`
 }
 
-// ApproveSpecPhaseCommand is the payload for type="approve_spec_phase": record
-// that a human approved Phase of the spec at Dir, as it was at Hash.
-//
-// Hash is the COMPARE-AND-SWAP precondition, not a value the server trusts: the
-// handler re-reads the document and refuses a mismatch with the current hash, so
-// approving a version you have not seen records nothing. Phase is one of
-// specapproval.Phases(); Hash is a sha256 hex digest.
+// ApproveSpecPhaseCommand is the payload for type="approve_spec_phase": a human approved Phase of
+// the spec at Dir, as it was at Hash. Hash is a compare-and-swap precondition the handler
+// re-checks, not a value it trusts.
 type ApproveSpecPhaseCommand struct {
 	Dir   string `json:"dir"`
 	Phase string `json:"phase"`

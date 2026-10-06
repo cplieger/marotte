@@ -1,16 +1,6 @@
-// ---------------------------------------------------------------------------
-// Per-tool-call SILENCE: the wall clock this client last applied a frame for a
-// call, and the words a card states about it.
-//
-// OBSERVABILITY, NEVER A BOUND. Nothing here cancels a call, kills a turn or
-// orders an entry: the value is `Date.now()`-derived and reads NO entry `ts`, so
-// it is a display value in the same class as `elapsed_ms` and the property that
-// no comparison function reads a timestamp is untouched.
-//
-// A per-call CANCEL is refused separately and for its own reason: ACP's cancel
-// verb is turn-scoped, so bounding one call means cancelling its turn, which is
-// the class the run-bounds rewrite exists to stop.
-// ---------------------------------------------------------------------------
+// Per-tool-call SILENCE: the wall clock this client last applied a frame for a call, and the words
+// a card states about it. OBSERVABILITY, NEVER A BOUND: it cancels and orders nothing, and reads NO
+// entry `ts`. No per-call cancel either: ACP's cancel verb is turn-scoped.
 
 import { signal, touch } from "@cplieger/reactive";
 import { toolCallSigKey } from "./store-signals.js";
@@ -25,10 +15,8 @@ export const SILENCE_THRESHOLD_MS = 120_000;
  *  1s clock costs nothing a reader can see. */
 const SILENCE_TICK_MS = 15_000;
 
-/** Keyed `toolCallSigKey(chat, call)` — the same composite the card's own signal
- *  uses, because a tool call id is backend-authored and carries no uniqueness
- *  guarantee, so a background chat's call would otherwise report for a visible
- *  card holding the same id. */
+/** Keyed `toolCallSigKey(chat, call)`, as the card's signal is: a backend-authored tool call id is
+ *  not unique across chats. */
 const lastActivity = new Map<string, number>();
 
 /** Bumped by the ticker below. A reader inside an effect subscribes by reading
@@ -61,10 +49,8 @@ function stopTicker(): void {
   timer = undefined;
 }
 
-/** Record that this client APPLIED a frame for a call. Two producers, and both
- *  are frames rather than facts read off an entry: the live create a card is
- *  built from, and every folded `tool_progress` (`store.ts` `applyToolProgress`,
- *  the one client-side application point for that frame). */
+/** Record that this client APPLIED a frame for a call: the live create, and every folded
+ *  `tool_progress` (`store.ts` `applyToolProgress`). */
 export function noteToolActivity(chatID: string, toolID: string, now = Date.now()): void {
   lastActivity.set(toolCallSigKey(chatID, toolID), now);
   ensureTicker();

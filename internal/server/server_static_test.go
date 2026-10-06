@@ -16,11 +16,8 @@ import (
 const missingWorkerLine = `msg="server: no service worker in the embedded static tree;` +
 	` push notifications cannot be subscribed to"`
 
-// Without /sw.js there is no push-subscription path at all, and the SPA fallback
-// answers /sw.js with index.html, so a browser reports the failure in one tab's
-// console and nowhere else. This line is the only server-side signal separating
-// "push is broken" from "built without the bundle" — and it is a claim about the
-// WORKER, so a build that ships one must stay silent.
+// TestSpaHandler_WarnsOnlyWhenTheServiceWorkerIsAbsent pins the warning when /sw.js is
+// missing and silence when it ships.
 func TestSpaHandler_WarnsOnlyWhenTheServiceWorkerIsAbsent(t *testing.T) {
 	tests := map[string]struct {
 		shipsWorker bool
@@ -47,9 +44,8 @@ func TestSpaHandler_WarnsOnlyWhenTheServiceWorkerIsAbsent(t *testing.T) {
 	}
 }
 
-// The report belongs to the BOOT, not to a request: spaHandler is built once per
-// ListenAndServe, and a per-request line would put one in the log for every asset
-// and every client route a browser asks for.
+// TestSpaHandler_ReportsTheMissingServiceWorkerOncePerBoot pins one line per boot, not per
+// request.
 func TestSpaHandler_ReportsTheMissingServiceWorkerOncePerBoot(t *testing.T) {
 	fsys := fstest.MapFS{"index.html": {Data: []byte("<html>shell</html>")}}
 	logs := captureLogs(t)
@@ -173,11 +169,8 @@ func TestSpaHandler_unknownPathFallsBackToIndex(t *testing.T) {
 	}
 }
 
-// index.html requested directly is HTML, so it takes the no-store branch (never
-// the asset ETag policy), keeping releases immediate — and it answers with the
-// shell, not a redirect. The status assertion is load-bearing: Cache-Control and
-// ETag are both set before the fallback runs, so checking only those passes while
-// the handler answers a 301 with a zero-length body.
+// TestSpaHandler_indexHTMLIsNoStore pins no-store AND the shell (not a redirect) for
+// /index.html: the headers are set before the fallback, so the status is load-bearing.
 func TestSpaHandler_indexHTMLIsNoStore(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": {Data: []byte("<html>fresh</html>")},
@@ -202,14 +195,9 @@ func TestSpaHandler_indexHTMLIsNoStore(t *testing.T) {
 	}
 }
 
-// Every client route whose path ENDS in /index.html gets the shell.
-//
-// net/http.serveFile answers this class with a bare 301 to "./" (fs.go:686-689:
-// index canonicalization reads r.URL.Path and runs before the name it was handed
-// is opened), so the file editor's `/file/{path}` deep link could not open a file
-// genuinely named index.html. The %2F row is the Go 1.27 half: localRedirect
-// answers 404 rather than 301 once the escaped path carries an escaped slash
-// (fs.go:786-792) — a different status, just as wrong.
+// TestSpaHandler_indexHTMLSuffixedRoutesGetTheShell pins the shell for every client route
+// ending in /index.html: net/http.serveFile answers it with a 301 to "./" (fs.go:686-689),
+// or 404 once the path carries an escaped slash (fs.go:786-792, go1.27).
 func TestSpaHandler_indexHTMLSuffixedRoutesGetTheShell(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": {Data: []byte("<html>shell</html>")},
@@ -262,9 +250,8 @@ func TestSpaHandler_headOnTheShellIsLengthOnly(t *testing.T) {
 	}
 }
 
-// A content-addressed chunk is served immutable, end to end. The fixture name is
-// the real shape cmd/bundle emits (esbuild's `chunks/[name]-[hash]`, 8 uppercase
-// base32 characters), so this is the header a browser actually receives.
+// TestSpaHandler_hashedChunkIsImmutable pins an immutable answer for cmd/bundle's real chunk
+// name shape.
 func TestSpaHandler_hashedChunkIsImmutable(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html":                    {Data: []byte("<html></html>")},
@@ -286,7 +273,7 @@ func TestSpaHandler_hashedChunkIsImmutable(t *testing.T) {
 	if rec.Header().Get("ETag") == "" {
 		t.Error("hashed asset lost its ETag; an immutable answer still needs one for a forced reload")
 	}
-	// A release replaces app.js's bytes under the same name, so it must not inherit.
+	// app.js's bytes change under the same name, so it must not inherit immutability.
 	reqApp := httptest.NewRequest(http.MethodGet, "/app.js", nil)
 	recApp := httptest.NewRecorder()
 	h.ServeHTTP(recApp, reqApp)
@@ -295,9 +282,8 @@ func TestSpaHandler_hashedChunkIsImmutable(t *testing.T) {
 	}
 }
 
-// The policy is a claim about the NAME, and the near misses are what make it safe:
-// a year-long immutable answer for a name whose bytes can change is unrecoverable
-// server-side, so anything but the bundler's own shape falls back to revalidating.
+// TestAssetCachePolicy pins the NAME rule and its near misses: anything but the bundler's
+// own shapes revalidates.
 func TestAssetCachePolicy(t *testing.T) {
 	cases := map[string]string{
 		// The bundler's own shape, and its sourcemap sibling.
@@ -316,9 +302,8 @@ func TestAssetCachePolicy(t *testing.T) {
 		"":                  revalidateAsset,
 		"index.html":        noStoreHTML,
 		"docs/index.html":   noStoreHTML,
-		// A stamped face is immutable for a year; the un-stamped cases are the
-		// load-bearing half, pinning that a dropped fingerprint step costs a
-		// revalidation round trip rather than serving a stale face.
+		// The un-stamped cases pin that a dropped fingerprint step costs a revalidation, not a
+		// stale face.
 		"vendor/fonts/WebTerminalGlyphs.a1b2c3d4.woff2":    immutableAsset,
 		"vendor/fonts/MonaspaceNeonNF-Bold.0123abcd.woff2": immutableAsset,
 		"vendor/fonts/WebTerminalGlyphs.woff2":             revalidateAsset,
@@ -328,8 +313,7 @@ func TestAssetCachePolicy(t *testing.T) {
 		"vendor/fonts/mono.a1b2c3d.woff2":                  revalidateAsset,
 		"vendor/fonts/mono.a1b2c3g4.woff2":                 revalidateAsset,
 		"vendor/fonts/mono.A1B2C3D4.woff2":                 revalidateAsset,
-		// The trailing slash in the prefix is what keeps a sibling directory out,
-		// and .html outranks the prefix so a page under it is never cached.
+		// The prefix's trailing slash keeps a sibling directory out; .html outranks the prefix.
 		"vendor/fonts-list.json":       revalidateAsset,
 		"vendor/fontsomething/x.woff2": revalidateAsset,
 		"vendor/fonts/index.html":      noStoreHTML,
@@ -343,8 +327,7 @@ func TestAssetCachePolicy(t *testing.T) {
 		"prefix/chunks/x-4K73XYBF.js":    revalidateAsset,
 	}
 	for path, want := range cases {
-		// `-run` treats "/" as a subtest separator, so a slash-bearing name could
-		// not be selected; the failure message carries the real path.
+		// `-run` splits on "/", so slash-bearing names are rewritten; the message carries the path.
 		t.Run(strings.ReplaceAll(path, "/", "_"), func(t *testing.T) {
 			if got := assetCachePolicy(path); got != want {
 				t.Errorf("assetCachePolicy(%q) = %q, want %q", path, got, want)

@@ -8,18 +8,11 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// chatHoldsLiveRun is the server's half of "is everything this chat started actually
-// over?", and every case below is a way the answer could be wrong in the direction
-// that matters: a false negative lets a push claim the work finished while a run this
-// chat launched carries on.
-//
-// A parked lease is the case worth reading twice. `Bounded()` is false for a run
-// stopped on a person and for every lease read back off disk, so a predicate that
-// consulted it would report exactly the population this exists for as settled.
+// TestChatHoldsLiveRun guards the false negative: a push claiming work finished while a
+// launched run continues. Parked and restored leases read Bounded() false.
 func TestChatHoldsLiveRun(t *testing.T) {
 	t.Parallel()
-	// Bounded() is Deadline non-zero, so a lease WITH one is the ordinary executing
-	// case and a lease without one is parked or restored.
+	// Bounded() is Deadline non-zero: with one is executing, without is parked or restored.
 	executing := runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", Deadline: time.Now().Add(time.Hour)}
 	parked := runlease.Lease{WorkflowID: "wf_2", ChatID: "c1"}
 	parentless := runlease.Lease{WorkflowID: "wf_3"}

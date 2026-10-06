@@ -1,6 +1,6 @@
-// Tests for the PWA share-target + URL shortcut handling in share-target.ts.
-// chat.ts has a heavy import graph, so it's mocked to a spy — this file only
-// verifies the wiring: which URL params trigger which action.
+// Tests for the PWA share-target + URL shortcut handling in share-target.ts. chat.ts has a heavy
+// import graph, so it's mocked to a spy — this file only verifies the wiring: which URL params
+// trigger which action.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { createPlannerSessionMock } = vi.hoisted(() => ({
@@ -11,10 +11,9 @@ vi.mock("./chat.js", () => ({
   createPlannerSession: createPlannerSessionMock,
 }));
 
-// share-target.ts touches only $.promptInput; back it with a real textarea so
-// the value/focus writes land on a real element. The element is created inside
-// the factory (which is hoisted) and read back via the mocked import below,
-// avoiding a top-level TDZ reference.
+// share-target.ts touches only $.promptInput; back it with a real textarea so the value/focus
+// writes land on a real element. The element is created inside the factory (which is hoisted) and
+// read back via the mocked import below, avoiding a top-level TDZ reference.
 vi.mock("./dom.js", () => ({
   $: { promptInput: document.createElement("textarea") },
 }));
@@ -23,10 +22,10 @@ import { applyShareTarget } from "./share-target.js";
 import type * as ShareTargetModule from "./share-target.js";
 import { $ } from "./dom.js";
 
-/** A fresh module per test. `queued` and `bootApplied` are module state, and
- *  `vi.resetModules()` does not re-evaluate a module in Browser Mode — the module
- *  map is URL-keyed, so a busted specifier is what mints a new instance. The `.ts`
- *  extension is load-bearing for coverage attribution. */
+/** A fresh module per test. `queued` and `bootApplied` are module state, and `vi.resetModules()`
+ *  does not re-evaluate a module in Browser Mode — the module map is URL-keyed, so a busted
+ *  specifier is what mints a new instance. The `.ts` extension is load-bearing for coverage
+ *  attribution. */
 let seq = 0;
 async function freshShareTarget(): Promise<typeof ShareTargetModule> {
   seq++;
@@ -35,9 +34,9 @@ async function freshShareTarget(): Promise<typeof ShareTargetModule> {
   )) as typeof ShareTargetModule;
 }
 
-/** A `launchQueue` that records its consumer, so a test can decide WHEN the
- *  platform delivers — the difference between a cold launch (buffered params
- *  flushed as the consumer is set) and a launch into a running window. */
+/** A `launchQueue` that records its consumer, so a test can decide WHEN the platform delivers —
+ *  the difference between a cold launch (buffered params flushed as the consumer is set) and a
+ *  launch into a running window. */
 function stubLaunchQueue(): { deliver: (targetURL: string) => void } {
   let consumer: ((p: { readonly targetURL?: string }) => void) | null = null;
   vi.stubGlobal("launchQueue", {
@@ -84,10 +83,9 @@ describe("applyShareTarget", () => {
     expect(createPlannerSessionMock).not.toHaveBeenCalled();
   });
 
-  // AWAITED, and that is the assertion: the planner create is the one thing here
-  // that has to finish before boot applies the initial route, because the chat id
-  // is the server's now. A synchronous call would strip the query while the tab
-  // the route resolves against did not exist yet.
+  // AWAITED, and that is the assertion: the planner create is the one thing here that has to finish
+  // before boot applies the initial route, because the chat id is the server's now. A synchronous
+  // call would strip the query while the tab the route resolves against did not exist yet.
   it("strips the query string after applying so a reload doesn't re-fire", async () => {
     history.replaceState(null, "", "/?agent=planner");
     await applyShareTarget();
@@ -95,11 +93,8 @@ describe("applyShareTarget", () => {
   });
 });
 
-// A cold launch takes BOTH doors: the browser navigates the document to the
-// target URL and enqueues the same params for `launchQueue`. One launch must
-// produce one planner chat, and it must be created inside the boot's ordering —
-// the boot activates the restored tab, applies the launch, and only then resolves
-// the URL against the strip.
+// A cold launch takes BOTH doors: the browser navigates the document to the target URL and enqueues
+// the same params for `launchQueue`.
 describe("initLaunchQueue", () => {
   it("applies a cold launch ONCE even though both doors carry it", async () => {
     history.replaceState(null, "", "/?agent=planner");
@@ -121,8 +116,8 @@ describe("initLaunchQueue", () => {
     initLaunchQueue();
     queue.deliver("/?agent=planner");
 
-    // The queue's copy is HELD: creating the chat here would put it outside the
-    // ordering applyInitialRoute resolves against.
+    // The queue's copy is HELD: creating the chat here would put it outside the ordering
+    // applyInitialRoute resolves against.
     expect(createPlannerSessionMock).not.toHaveBeenCalled();
   });
 

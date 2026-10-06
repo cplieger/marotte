@@ -1,30 +1,11 @@
-// ---------------------------------------------------------------------------
-// `geometrySkipped` names three CSS rules, and this is what keeps it honest.
-//
-// The predicate answers "would reading this element's box force the browser to
-// render a subtree it chose to skip", and it answers by matching selectors
-// against the DOM. Those selectors are a claim ABOUT the stylesheets: that they
-// are every place `content-visibility: hidden` lives. Nothing links the two
-// halves, so a rule renamed in CSS leaves the predicate matching nothing and
-// every geometry read it guards silently starts forcing a render again — which
-// is invisible to the type checker, to the linter, and to every behavioural
-// test, because the wrong answer is a performance fault rather than a wrong
-// number.
-//
-// A SOURCE guard plus a DOM guard, deliberately, because they fail for different
-// reasons: the first catches the CSS moving out from under the predicate, the
-// second catches the predicate's own matching breaking. A computed-style check
-// cannot replace either — `content-visibility` resolves to `hidden` on a parked
-// view whether or not the predicate knows the selector.
-// ---------------------------------------------------------------------------
+// `geometrySkipped` matches selectors that claim to be every `content-visibility: hidden` rule. Nothing links the
+// two, and a drift is a silent performance fault, so a source guard (the CSS moved) and a DOM guard (the matching
+// broke) both pin it. A computed-style check cannot replace either.
 
 import { describe, it, expect, vi } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
-// `messages-blocks.ts`'s graph reaches `scroll.ts`, a self-initialising singleton
-// that resolves `#messages` at module load, and `byId` throws on a missing
-// element — so the hosts exist before the import resolves and the scroll
-// subsystem is the canonical mock every suite in this graph uses.
+// `scroll.ts` resolves `#messages` at module load and `byId` throws on a missing element, so the hosts exist first.
 for (const id of [
   "messages",
   "messages-wrap",
@@ -41,17 +22,14 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 const { geometrySkipped } = await import("./messages-blocks.js");
 
-/** The three subtree shapes the transcript skips, each with the sheet that declares
- *  it. The selector strings are the predicate's own, so a drift on either side of
- *  the correspondence fails here. */
+/** The selector strings are the predicate's own, so a drift on either side fails here. */
 const SKIPPED = [
   { sheet: "29-turns.css", selector: ".turn[data-folded] > .turn-body" },
   { sheet: "13-messages.css", selector: ".transcript-view:not(.is-active)" },
   { sheet: "14-tools.css", selector: ".subagent-block.collapsed > .subagent-body" },
 ] as const;
 
-/** Build `selector`'s shape for real and return the descendant to measure, so the
- *  predicate walks a genuine ancestor chain rather than a hand-set attribute. */
+/** Builds the shape for real, so the predicate walks a genuine ancestor chain. */
 function mountSkipped(selector: string): HTMLElement {
   const host = document.createElement("div");
   if (selector.startsWith(".turn[")) {
@@ -65,9 +43,7 @@ function mountSkipped(selector: string): HTMLElement {
     host.className = "transcript-view";
     host.innerHTML = `<div class="turn-body"><div class="message assistant">prose</div></div>`;
   } else {
-    // A fall-through built the parked-view shape, so a SKIPPED entry whose shape
-    // nobody wrote still matched the parked-view rule and passed for the wrong
-    // predicate.
+    // A fall-through once let an unwritten shape match the parked-view rule and pass for the wrong predicate.
     throw new Error(`no shape mounted for ${selector}`);
   }
   document.body.appendChild(host);
@@ -91,9 +67,7 @@ describe("geometrySkipped tracks the stylesheets it speaks for", () => {
   }
 
   it("answers false for a block the page is rendering", () => {
-    // The control. Without it every case above is satisfied by a predicate that
-    // returns true unconditionally, which would skip every measurement the
-    // spacers depend on.
+    // The control: without it a predicate returning true unconditionally satisfies every case above.
     const host = document.createElement("div");
     host.className = "transcript-view is-active";
     host.innerHTML = `<div class="turn"><div class="turn-body"><div class="message assistant">prose</div></div></div>`;

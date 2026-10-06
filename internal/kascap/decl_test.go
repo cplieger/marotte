@@ -24,9 +24,6 @@ func TestEveryDeclHasABecause(t *testing.T) {
 			if strings.TrimSpace(row.because) == "" {
 				t.Errorf("%s has no because; state what the key buys and what breaks without it", rowID(row))
 			}
-			// A because that only restates the key teaches nothing. Compared
-			// case-insensitively against the key alone, which is the one
-			// mechanical form of "says nothing" available here.
 			if strings.EqualFold(strings.TrimSpace(row.because), row.key) {
 				t.Errorf("%s's because only restates its key", rowID(row))
 			}
@@ -40,14 +37,8 @@ func TestEveryDeclHasABecause(t *testing.T) {
 // this to explain a deliberate omission almost certainly has not explained it.
 const withheldReasonFloor = 40
 
-// TestNoSendWithoutReason gates the rows a map literal could never carry: a
-// key marotte deliberately WITHHOLDS.
-//
-// Two properties, and the second is the one that catches drift. A withheld row
-// must explain the omission at more than token length, and it must carry no
-// wire value or gate — a value the table never sends is dead state, and the way
-// this table would rot is somebody flipping send to false and leaving the value
-// behind for a later reader to trust.
+// TestNoSendWithoutReason gates the rows a map literal could never carry: keys marotte deliberately
+// withholds, each with a reason.
 func TestNoSendWithoutReason(t *testing.T) {
 	withheld := 0
 	for _, row := range table {
@@ -97,17 +88,8 @@ func doorCollisions(rows []decl) []string {
 	return bad
 }
 
-// TestSessionDoorKeysAbsentFromConnectionDoor pins that a key rides exactly one
-// door.
-//
-// The failure it guards is a MOVE that only half happens: a key relocated to
-// the session door while its connection row stays behind is declared twice, and
-// because both projections build from the same table nothing else would notice.
-//
-// No row rides the session door today, so the first subtest alone would be
-// vacuous. The second runs the same check over a deliberately-broken table and
-// requires it to complain, which is what makes the green result mean something
-// before T5 adds a real session row.
+// TestSessionDoorKeysAbsentFromConnectionDoor pins that a key rides exactly one door, catching a
+// move that only half happened.
 func TestSessionDoorKeysAbsentFromConnectionDoor(t *testing.T) {
 	t.Run("the real table", func(t *testing.T) {
 		if bad := doorCollisions(table); len(bad) > 0 {
@@ -158,29 +140,12 @@ func TestDeclIsWellFormed(t *testing.T) {
 	}
 }
 
-// TestSettingRowsCarryTheEnabledObject pins the shape KAS demands of a settings
-// entry: isSettingEnabled returns val.enabled for an object and false for
-// anything else, so a bare true here resolves FALSE and silently turns the
-// feature off. That is the failure mode this column was added to prevent, and
-// it is invisible on the wire.
-//
-// It covers gated rows through their GATE rather than skipping them, because a
-// gated row's wire value is built at runtime and is exactly as able to be the
-// wrong shape. Both Spawn states are exercised: a value-gated row has to carry
-// the object in both, and a presence-gated row has to carry it whenever present.
-//
-// The member's VALUE is a separate question from its shape, and vetoRows is where
-// this test states the difference. Every ungated row means "on", so its enabled
-// must be true; a row deliberately sending false is a REFUSAL of something the
-// client cannot otherwise reach, and listing it here makes a second one a decision
-// somebody takes rather than a typo that passes.
+// TestSettingRowsCarryTheEnabledObject asserts that isSettingEnabled returns val.enabled for an object and
+// false otherwise, so every sent settings value must be {"enabled": …}.
 func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
-	// vetoRows are the sent settings rows whose enabled is deliberately FALSE.
-	// userMemoryOptIn refuses kiro-cli's memory subsystem, and the value has to be
-	// exactly this: KAS tests hasOwnProperty before isSettingEnabled, so an absent
-	// key means "no opinion" and an empty object yields undefined. Only an explicit
-	// false vetoes.
-	vetoRows := map[string]bool{"userMemoryOptIn": true}
+	vetoRows := map[string]bool{
+		"steeringSupervisor": true,
+	}
 
 	checked := 0
 	for _, row := range table {
@@ -221,12 +186,8 @@ type settingValue struct {
 	gated  bool
 }
 
-// settingValuesOf returns every wire value a sent settings row can put on the
-// wire: the compiled one, or the gate's answer in both Spawn states.
-//
-// A gate that withholds in a state contributes nothing for it, which is correct
-// rather than a gap — an absent key is a shape KAS reads as false by design, and
-// TestInitializeDeclaresExactly is what pins which states withhold.
+// settingValuesOf returns every wire value a sent settings row can put on the wire: the compiled
+// one, or the gate's answer in both Spawn states.
 func settingValuesOf(t *testing.T, row decl) []settingValue {
 	t.Helper()
 	if row.gate == nil {
@@ -240,11 +201,15 @@ func settingValuesOf(t *testing.T, row decl) []settingValue {
 		{"with every gate field off", Spawn{}},
 		{"with every gate field on", Spawn{
 			SecretStorage: true, Hooks: true,
-			Presets:    []string{"read-workspace"},
-			ToolSearch: true, Knowledge: true,
+			Presets:   []string{"read-workspace"},
+			Knowledge: true, ToolLoad: true,
+			SpecPlan: "full", SpecAskClarification: true,
+			WorkValidation: "on", InfraSafetyMonitor: "on",
+			TerminalCommandTimeoutMs: 300000,
+			InlineAgents:             true, SteeringReminders: true,
 		}},
 	} {
-		if v, present := row.gate(st.spawn); present {
+		if v, present := row.gate(&st.spawn); present {
 			out = append(out, settingValue{value: v, origin: st.name, gated: true})
 		}
 	}
@@ -254,73 +219,16 @@ func settingValuesOf(t *testing.T, row decl) []settingValue {
 	return out
 }
 
-// TestEnvOverrideOnlyOnSentRows pins what makes the env column disable-only.
-//
-// A withheld row carries no wire value (TestNoSendWithoutReason enforces that),
-// so an operator able to turn one ON would put a JSON null on the wire —
-// resolving false at every settings site and enabling nothing at every
-// capability site, for a key that now LOOKS declared. Restricting the column to
-// send:true rows makes that unreachable rather than merely discouraged.
-func TestEnvOverrideOnlyOnSentRows(t *testing.T) {
-	for _, row := range table {
-		if row.env == "" || row.send {
-			continue
-		}
-		t.Errorf(`%s is withheld but names env=%q. The override's fallback is the row's own
-send, so on a withheld row the only reachable change is turning it ON — and a
-withheld row has no value to send. Give the row a value and send:true, or drop
-the env name.`, rowID(row), row.env)
+// The tool-search setting must stay off the wire: "Load MCP tools on demand"
+// drives the tool_load arm through the child environment, and a still-sent
+// toolSearch key would reinstate the array-growing mode if that arm were removed.
+func TestToolSearchSettingIsWithheld(t *testing.T) {
+	row := findRow(t, resolverSetting, "toolSearch")
+	if row.send {
+		t.Errorf("%s is sent; it must be a withheld claim row", rowID(row))
 	}
-}
-
-// TestEnvOverrideIsWired proves the lookup exists and decides the wire, across
-// every state an operator can put the variable in.
-//
-// The old tripwire in this slot asserted the opposite (that nothing read the
-// column) and was deleted with the lookup that replaced it. Its successor has to
-// exercise the projection rather than the column, because the failure that
-// matters is a name that reaches no code: a row could carry an env nobody reads
-// and every structural check above would still pass.
-//
-// The malformed case is the one worth having. envx.Bool falls back to the row's
-// compiled send and logs one Warn, so a typo in a compose file leaves the
-// capability ON. That fail direction is deliberate: the variable exists to
-// disable a capability on purpose, and a mistyped value is not a purpose.
-func TestEnvOverrideIsWired(t *testing.T) {
-	row := findRow(t, resolverSetting, "workflows")
-	if row.env == "" {
-		t.Fatalf("setting.workflows carries no env name; this test pins the lookup through it")
-	}
-	build := Capabilities
-	if row.door == doorSession {
-		build = SessionMeta
-	}
-
-	// Cannot be t.Parallel: every case sets a process-wide variable.
-	for _, tc := range []struct {
-		name  string
-		value string
-		want  bool
-	}{
-		{"unset leaves the compiled default", "", true},
-		{"false stops sending", "false", false},
-		{"0 stops sending", "0", false},
-		{"off stops sending", "off", false},
-		{"no stops sending", "no", false},
-		{"mixed case is tolerated", "FALSE", false},
-		{"surrounding space is tolerated", "  false  ", false},
-		{"true keeps sending", "true", true},
-		{"1 keeps sending", "1", true},
-		{"a typo keeps sending", "flase", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(string(row.env), tc.value)
-			settings, _ := build(Spawn{})[settingsKey].(map[string]any)
-			_, present := settings["workflows"]
-			if present != tc.want {
-				t.Errorf("%s=%q: workflows present = %v, want %v", row.env, tc.value, present, tc.want)
-			}
-		})
+	if row.gate != nil || row.value != nil {
+		t.Errorf("%s carries a gate or value; a withheld row has no wire value", rowID(row))
 	}
 }
 
@@ -337,44 +245,19 @@ func findRow(t *testing.T, r resolver, key string) decl {
 	return decl{}
 }
 
-// neutralizeEnvOverrides pins every env-bearing row to its compiled send for the
-// duration of the test, by setting each variable EMPTY (which envx reads as
-// unset).
-//
-// Any test that asserts on a projection needs this, because an env override
-// makes the payload depend on the ambient environment: a developer or runner
-// carrying MAROTTE_AGENT_WORKFLOWS=false would fail a golden for a reason that
-// has nothing to do with the table. Driven off the table so a new env row is
-// covered without editing this helper. Callers must not use t.Parallel.
-func neutralizeEnvOverrides(t *testing.T) {
-	t.Helper()
-	for _, row := range table {
-		if row.env != "" {
-			t.Setenv(string(row.env), "")
-		}
-	}
-}
-
-// TestBuildersDoNotAliasTheTable pins that a caller cannot corrupt the table
-// through a payload it was handed. The settings objects are built once at package
-// init, so without the clone in buildDoor one caller's mutation would change
-// every later handshake in the process.
-//
-// Both doors, because both now carry a settings object and both build through the
-// same clone. A door tested on one side only would let a regression survive on
-// the other.
+// TestBuildersDoNotAliasTheTable pins that a caller cannot corrupt the table through a payload it
+// was handed.
 func TestBuildersDoNotAliasTheTable(t *testing.T) {
-	neutralizeEnvOverrides(t)
 	for _, tc := range []struct {
 		name  string
-		build func(Spawn) map[string]any
+		build func(*Spawn) map[string]any
 		key   string
 	}{
 		{"connection", Capabilities, "codeIntelligence"},
-		{"session", SessionMeta, "workflows"},
+		{"session", SessionMeta, "backgroundExecution"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			first := settingsOf(t, tc.build(Spawn{}))
+			first := settingsOf(t, tc.build(&Spawn{}))
 			entry, ok := first[tc.key].(map[string]any)
 			if !ok {
 				t.Fatalf("no %s settings object; got %T", tc.key, first[tc.key])
@@ -382,7 +265,7 @@ func TestBuildersDoNotAliasTheTable(t *testing.T) {
 			entry["enabled"] = false
 			delete(first, tc.key)
 
-			second := settingsOf(t, tc.build(Spawn{}))
+			second := settingsOf(t, tc.build(&Spawn{}))
 			again, ok := second[tc.key].(map[string]any)
 			if !ok {
 				t.Fatalf("mutating one payload's settings object removed %s from the next one", tc.key)

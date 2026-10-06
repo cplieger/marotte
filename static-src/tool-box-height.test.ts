@@ -1,16 +1,6 @@
-// A COLLAPSED TOOL BOX IS ONE HEIGHT, whichever kind it is.
-//
-// The transcript puts two box kinds side by side in one turn: a `.tool-group`
-// collapsed to its summary line ("Ran 2 commands") and a claim-only `.tool-call`
-// ("Read file"). Both are a header row inside a 1px-bordered card, both headers
-// declare `min-height: var(--btn-h)` and the same padding, so they must measure
-// the same — and they did not, which reads as the boxes being sized at random.
-//
-// Measured rather than reasoned, because the two numbers a reader reports are
-// OUTER heights and the divergence was in neither header: `.tool-call` declares
-// `contain-intrinsic-size` for its `content-visibility: auto`, and that value is
-// what an off-screen card renders at. A placeholder disagreeing with the real
-// collapsed height makes a card change size as it scrolls into view.
+// A COLLAPSED TOOL BOX IS ONE HEIGHT, whichever kind: a collapsed `.tool-group` and a claim-only
+// `.tool-call` sit side by side. Measured as OUTER heights, because the divergence was
+// `.tool-call`'s `contain-intrinsic-size`, what an off-screen card renders at.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -105,23 +95,15 @@ describe("a collapsed tool box", () => {
     return reserved;
   }
 
-  // The placeholder a card renders at while `content-visibility: auto` skips its
-  // layout. A value that disagrees with the real collapsed height is a resize on
-  // scroll, not a static mismatch — and `contain-intrinsic-size` sizes the
-  // CONTENT box, so the card's own borders must NOT be in it.
-  //
-  // `.tool-call` is the ONLY box on the header floor, because it is the only one
-  // whose collapsed state is a bare header. The three below always carry
-  // something under theirs, so the floor would under-reserve them.
+  // A placeholder disagreeing with the collapsed height resizes the card on scroll.
+  // `contain-intrinsic-size` sizes the CONTENT box, so borders are excluded. Only `.tool-call` sits
+  // on the header floor: the others always carry something under their header.
   it("reserves the header floor, borders excluded, on a claim-only card", () => {
     mountBoxes();
     expect(reservedSize(".tool-call")).toBeCloseTo(controlHeight(), 1);
   });
 
-  // Stated as a RELATION rather than a value: re-encoding each box's own length
-  // here would just restate the stylesheet. What this catches is the one edit the
-  // relation forbids — pulling a header-plus-more box down onto the bare-header
-  // floor, which reserves less than the box can ever render at.
+  // A RELATION, not values: forbids pulling a header-plus-more box down onto the bare-header floor.
   it("reserves more than that floor wherever the collapsed state carries content", () => {
     mountBoxes();
     const floor = controlHeight();

@@ -1,15 +1,3 @@
-// Account/subscription usage fetch (_kiro/account/getUsage).
-//
-// Account-level usage is distinct from a chat's per-session context ring
-// (which reads the v3 usage_update notification). It's a bare C→A request
-// that needs a live acp session with valid auth but no chat context, so we
-// route it through the long-lived utility bridge. Served to the client at
-// GET /api/account/usage and rendered only in the sidebar status footer.
-//
-// The account query is slow-changing and may be rate-limited, so the HTTP
-// layer (server/server_handlers_account.go) fetches lazily on footer open
-// and caches; this method is the uncached fetch + parse.
-
 package agent
 
 import (
@@ -22,18 +10,12 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// accountUsageCallTimeout bounds one _kiro/account/getUsage round-trip.
-// The leased utility session issues Calls OUTSIDE its lifecycle mutex
-// (see utility_session.go's concurrent-call model), so this deadline is
-// not about lock starvation — it keeps a wedged getUsage RPC from
-// pinning its caller and the session lease indefinitely. Matches the
-// 45s the knowledge/spec sibling reads use.
+// accountUsageCallTimeout bounds one _kiro/account/getUsage round-trip so a wedged RPC
+// cannot pin its caller and the utility session lease.
 const accountUsageCallTimeout = 45 * time.Second
 
-// AccountUsage fetches account/subscription usage via the utility bridge
-// and parses the KAS getUsage result into the domain shape. Lazily
-// constructs the utility bridge (same pattern as UtilityPrompt) so the
-// footer works even when no chat is open. Satisfies server.AccountUsageProvider.
+// AccountUsage fetches account usage via the utility bridge, constructing it lazily so
+// it works with no chat open. Uncached: the HTTP layer caches.
 func (rt *Runtime) AccountUsage(ctx context.Context) (*marotte.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
@@ -44,8 +26,7 @@ func (rt *Runtime) AccountUsage(ctx context.Context) (*marotte.AccountUsage, err
 	return parseAccountUsage(raw)
 }
 
-// kasUsageResult mirrors the KAS _kiro/account/getUsage reply
-// ({success, message, data}); data mirrors transformUsageLimits.
+// kasUsageResult mirrors the KAS _kiro/account/getUsage reply ({success, message, data}).
 type kasUsageResult struct {
 	Data    *kasUsageData `json:"data"`
 	Message string        `json:"message"`
@@ -72,10 +53,8 @@ type kasUsageBreakdown struct {
 	HasLimit        bool    `json:"hasLimit"`
 }
 
-// parseAccountUsage converts the raw KAS getUsage result into the domain
-// AccountUsage. A success=false reply (e.g. "Invalid profileArn.") is
-// returned as an error; success=true with a nil data object (admin-managed
-// plan) yields an AccountUsage carrying only the note.
+// parseAccountUsage converts the KAS getUsage result. success=false is an error;
+// success=true with nil data (admin-managed plan) yields only the note.
 func parseAccountUsage(raw json.RawMessage) (*marotte.AccountUsage, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("account usage: empty result")
@@ -93,7 +72,6 @@ func parseAccountUsage(raw json.RawMessage) (*marotte.AccountUsage, error) {
 	}
 	out := &marotte.AccountUsage{FetchedAt: time.Now().UTC().Format(time.RFC3339)}
 	if r.Data == nil {
-		// Admin-managed plan: success with no breakdowns.
 		out.Note = strings.TrimSpace(r.Message)
 		out.Breakdowns = []marotte.AccountUsageBreakdown{}
 		return out, nil

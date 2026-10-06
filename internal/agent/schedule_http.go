@@ -1,10 +1,6 @@
 package agent
 
-// Schedule REST: the workflow rows on /docs/workflows carry a Schedule button
-// beside Run, and this is what it talks to.
-//
-// Three verbs and no more: a schedule is a small record the client rewrites
-// wholesale, so an upsert plus a delete covers editing without a PATCH shape.
+// Schedule REST behind the workflow rows' Schedule button: an upsert and a delete, since the client rewrites a schedule wholesale.
 
 import (
 	"encoding/json"
@@ -18,9 +14,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// scheduleView is one row as the client sees it: the stored entry plus the
-// resolved next run, which the server computes so the UI never reimplements the
-// recurrence math and the summary line cannot disagree with what will happen.
+// scheduleView is a stored entry plus its resolved next run, computed server-side so the summary matches what will happen.
 type scheduleView struct {
 	NextRunAt  *time.Time    `json:"next_run_at,omitempty"`
 	LastRunAt  *time.Time    `json:"last_run_at,omitempty"`
@@ -33,8 +27,7 @@ type scheduleView struct {
 	Enabled    bool          `json:"enabled"`
 }
 
-// registerSchedule wires the schedule surface. No-op when scheduling is
-// unavailable (no store), so the routes never 500 on a nil dependency.
+// registerSchedule wires the schedule surface, a no-op with no store.
 func (rr *runRoutes) registerSchedule(mux *http.ServeMux) {
 	if rr.runs.schedules == nil {
 		return
@@ -54,9 +47,7 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 	webhttp.WriteJSON(w, map[string]any{"schedules": out})
 }
 
-// scheduleViewOf resolves an entry's next run for display. A spec that cannot
-// be computed yields no next run rather than an error: the row still renders so
-// the user can fix or delete it.
+// scheduleViewOf resolves an entry's next run; an uncomputable spec yields none, so the row still renders.
 func scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
 		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,
@@ -67,9 +58,7 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 		v.LastRunAt = &t
 	}
 	if e.Enabled {
-		// Same derivation the runner uses (schedule.NextRunFrom), floored at
-		// now so a stale anchor cannot render a next run that has already
-		// passed.
+		// schedule.NextRunFrom as the runner uses it, floored at now.
 		if next, err := schedule.NextRunFrom(e.Spec, e.Anchor, time.Now()); err == nil {
 			v.NextRunAt = &next
 		}
@@ -77,12 +66,8 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 	return v
 }
 
-// handleSchedulePut: POST /api/schedules → insert or replace one schedule.
-//
-// The recipe source is validated against the live recipe list rather than
-// trusted, for the same reason handleLaunch does it: the value looks like a
-// path, and storing an arbitrary one would let a client aim the scheduler at a
-// file that is not a recipe.
+// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against the live
+// recipe list, as in handleLaunch, so no arbitrary file can be scheduled.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID      string        `json:"id"`

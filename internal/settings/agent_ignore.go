@@ -8,10 +8,8 @@ import (
 	"unicode"
 )
 
-// AgentIgnoreFloor is sent to KAS whatever the user's list holds, so a
-// `.kiroignore` at the workspace root is always enforced. It is not a removable
-// entry: the panel renders it as a fixed row above the user's chips, and
-// AgentIgnoreList puts it first in the list that goes on the wire.
+// AgentIgnoreFloor is sent to KAS whatever the user's list holds, so a root `.kiroignore` is
+// always enforced; AgentIgnoreList puts it first.
 const AgentIgnoreFloor = ".kiroignore"
 
 // ErrAgentIgnoreEntry is the class of every refusal below. Each refusal wraps it
@@ -19,13 +17,9 @@ const AgentIgnoreFloor = ".kiroignore"
 // that only reports the class cannot say which rule fired.
 var ErrAgentIgnoreEntry = errors.New("invalid agent ignore file entry")
 
-// jsTrimmed trims the runes ECMAScript's String.prototype.trim removes, which is
-// the set KAS's own entry validator compares against. It is deliberately NOT
-// strings.TrimSpace: Go's unicode.IsSpace and ECMAScript's WhiteSpace plus
-// LineTerminator differ on two runes, and one differs in the ACCEPTING
-// direction — U+FEFF is trimmed by JavaScript and not by Go, so TrimSpace lets
-// through an entry KAS then skips. U+0085 is the mirror image and is omitted
-// here for the same reason: Go trims it, JavaScript does not.
+// jsTrimmed trims the runes ECMAScript's String.prototype.trim removes, the set KAS's entry
+// validator compares against. NOT strings.TrimSpace: U+FEFF is trimmed by JavaScript and not
+// by Go (TrimSpace would admit an entry KAS skips); U+0085 is the reverse and is omitted.
 func jsTrimmed(s string) string {
 	return strings.TrimFunc(s, func(r rune) bool {
 		switch r {
@@ -36,13 +30,9 @@ func jsTrimmed(s string) string {
 	})
 }
 
-// ValidAgentIgnoreEntry mirrors KAS's `Bvt`, rule for rule: non-empty, already
-// trimmed, not ".", no path separator, no "..", no glob metacharacter. Arm order
-// cannot matter — empty and untrimmed are disjoint, and no other pair overlaps on
-// a verdict. An entry KAS refuses is one it SKIPS with a load error, so accepting
-// one persists a name the agent never enforces while the panel claims it does.
-// The basename rule is KAS's mechanism: the list names ignore FILES at the
-// workspace root, so a pattern belongs inside one of them.
+// ValidAgentIgnoreEntry mirrors KAS's `Bvt` rule for rule: non-empty, already trimmed, not
+// ".", no path separator, no "..", no glob metacharacter. An entry KAS refuses is one it
+// SKIPS, so accepting it would show an unenforced name as enforced.
 func ValidAgentIgnoreEntry(entry string) error {
 	switch {
 	case entry == "":
@@ -61,14 +51,8 @@ func ValidAgentIgnoreEntry(entry string) error {
 	return nil
 }
 
-// AgentIgnoreList is the list marotte sends KAS: AgentIgnoreFloor first, then the
-// user's entries in their own order, deduped, with anything ValidAgentIgnoreEntry
-// refuses dropped.
-//
-// It filters as well as dedupes so that what marotte sends equals what KAS
-// enforces: KAS skips an invalid entry itself, and config.json is a file the
-// operator edits by hand, so a name that never reached the PATCH validation can
-// still be in the document.
+// AgentIgnoreList is the list marotte sends KAS: AgentIgnoreFloor first, then the user's
+// entries in order, deduped, with refused entries dropped (config.json is hand-editable).
 func AgentIgnoreList(entries []string) []string {
 	out := make([]string, 0, len(entries)+1)
 	out = append(out, AgentIgnoreFloor)

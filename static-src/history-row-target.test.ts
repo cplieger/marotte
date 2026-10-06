@@ -1,12 +1,5 @@
-// THE HISTORY ROW'S TARGET IS THE WHOLE BODY, minus the one destructive control in
-// it. On the shared `.entry` row the body IS the control: it stretches to the row's
-// full height and runs from the row's content edge to the actions slot. The row's
-// `padding-inline` is the CARD's inset and is outside the control by design
-// (11-page-lists.css), so the edge these cases measure is the content edge.
-//
-// Real layout in real Chromium, because every assertion here is a box or a hit
-// test. The rows are built through the REAL builder, so the fixture cannot drift
-// from what history.ts produces.
+// The history row's target is the whole body minus its one destructive control. The row's `padding-inline` is the
+// card's inset, outside the control, so these measure the content edge. Real layout, through the real builder.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -17,8 +10,7 @@ const host = document.createElement("div");
 
 const noop = (): void => undefined;
 
-/** A history row as `history.ts` `buildRow` assembles one: the same spec shape,
- *  with the delete button in the actions slot. */
+/** As `history.ts` `buildRow` assembles one. */
 function mountRow(opts: { delete: boolean; sub?: boolean }): {
   row: HTMLElement;
   open: HTMLElement;
@@ -57,14 +49,12 @@ function mountRow(opts: { delete: boolean; sub?: boolean }): {
   return { row, open, del };
 }
 
-/** The row's content edge: the card's inset is the row's own and sits outside the
- *  control. */
+/** The card's inset is the row's own and sits outside the control. */
 function contentLeft(row: HTMLElement): number {
   return row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft);
 }
 
-/** Whether a point activates the open control: a hit on any of its descendants
- *  does, because the click reaches the button by bubbling. */
+/** A hit on any descendant counts: the click reaches the button by bubbling. */
 function opens(open: HTMLElement, x: number, y: number): boolean {
   const hit = document.elementFromPoint(x, y);
   return hit === open || (hit !== null && open.contains(hit));
@@ -106,13 +96,11 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
     const o = open.getBoundingClientRect();
     const d = del!.getBoundingClientRect();
     const share = (o.width * o.height) / (r.width * r.height);
-    // The number the complaint was about. A regression to a text-shaped control
-    // lands near 0.28 on this tier's own measurement, so the floor separates the
-    // two shapes rather than merely being satisfied by the current one.
+    // A text-shaped control lands near 0.28 here, so the floor separates the two shapes.
     expect(share, `the control covers ${(share * 100).toFixed(1)}% of the row`).toBeGreaterThan(
       0.9,
     );
-    // And it stops short of the destructive control rather than reaching under it.
+    // It stops short of the destructive control.
     expect(o.right, "the open target does not overlap the delete button").toBeLessThanOrEqual(
       d.left + 0.5,
     );
@@ -122,9 +110,7 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
     const { row, open } = mountRow({ delete: true });
     const r = row.getBoundingClientRect();
     const cy = r.top + r.height / 2;
-    // The four places the old band excluded: the row's own centre (which resolved
-    // to a summary span), the content's leading edge, the row's last line, and the
-    // time slot at the trailing end of the title line.
+    // The row's centre, the content's leading edge, the last line, and the time slot.
     expect(opens(open, r.left + r.width / 2, cy), "the row's centre").toBe(true);
     expect(opens(open, contentLeft(row) + 2, cy), "the content's leading edge").toBe(true);
     expect(opens(open, r.left + r.width / 2, r.bottom - 2), "the last line").toBe(true);
@@ -144,9 +130,7 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
   });
 
   it("fills the height of a ONE-LINE row, which is the tier's height like any other", () => {
-    // The row's height is the `--row-h` token, never its content, so a row with no
-    // subtitle is exactly as tall as one with, and the control spans all of it
-    // rather than centring at its text's height.
+    // The height is the `--row-h` token, never the content, so the control spans the row with or without a subtitle.
     const { row, open } = mountRow({ delete: true, sub: false });
     const r = row.getBoundingClientRect();
     const o = open.getBoundingClientRect();
@@ -156,8 +140,7 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
   });
 
   it("reaches the content's trailing edge when the row has no delete button", () => {
-    // A run still moving carries none (`buildDeleteButton` withholds it), and the
-    // control grows into the space rather than leaving a dead strip.
+    // A run still moving has no delete (`buildDeleteButton`), and the control grows into the space.
     const { row, open, del } = mountRow({ delete: false });
     expect(del).toBeNull();
     const r = row.getBoundingClientRect();

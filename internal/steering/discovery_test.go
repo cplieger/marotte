@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// parseSteeringFrontmatter + findRepoDocs
-// ---------------------------------------------------------------------------
-
 func TestParseSteeringFrontmatter(t *testing.T) {
 	tests := []struct {
 		name string
@@ -114,7 +110,6 @@ func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 	if err := os.MkdirAll(steering, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Three files, three trigger types.
 	files := map[string]string{
 		"architecture.md": "---\ninclusion: always\ndescription: Arch overview\n---\nbody",
 		"go-layout.md":    "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\n---\nbody",
@@ -162,7 +157,6 @@ func TestFindRepoDocs_CapAt20(t *testing.T) {
 	if err := os.MkdirAll(steering, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// 25 files; expect 20 returned.
 	for i := range 25 {
 		name := fmt.Sprintf("doc-%02d.md", i)
 		if err := os.WriteFile(filepath.Join(steering, name), []byte("body"), 0o644); err != nil {
@@ -174,10 +168,6 @@ func TestFindRepoDocs_CapAt20(t *testing.T) {
 		t.Errorf("got %d docs, want 20 (capped)", len(docs))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// writeRepoSteering / writeRepoSkills group headers + entry annotations
-// ---------------------------------------------------------------------------
 
 // An "auto" doc is on-demand, so it belongs under the Manual header ("read on
 // demand") and must NOT be announced to the agent as always-loaded. KAS groups
@@ -274,10 +264,6 @@ func TestWriteRepoSkills_HeadersAndEntryFields(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// parseHookDoc
-// ---------------------------------------------------------------------------
-
 // hookDoc wraps hook-entry JSON objects in the v1 envelope.
 func hookDoc(hooks ...string) string {
 	return `{"version":"v1","hooks":[` + strings.Join(hooks, ",") + `]}`
@@ -343,10 +329,6 @@ func TestParseHookDoc_Shapes(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// findRepoAgents / findRepoHooks / findMdDocsInDir
-// ---------------------------------------------------------------------------
-
 // TestFindRepoAgents_ReadableDir verifies a readable agents dir yields the
 // agent, and a missing dir yields nil.
 func TestFindRepoAgents_ReadableDir(t *testing.T) {
@@ -408,11 +390,8 @@ func TestFindMdDocsInDir_ReadableDir(t *testing.T) {
 	}
 }
 
-// TestDiscoveryEntryCaps verifies the per-directory entry caps:
-// findRepoAgents and findRepoHooks cap at 10, findMdDocsInDir at 20.
-// Feeding more files than the cap and asserting the EXACT capped count
-// discriminates a > cap boundary (would return cap+1) from a < cap
-// negation (would break after the first append and return 1).
+// TestDiscoveryEntryCaps pins the EXACT caps: findRepoAgents and findRepoHooks 10,
+// findMdDocsInDir 20.
 func TestDiscoveryEntryCaps(t *testing.T) {
 	t.Run("findRepoAgents caps at 10", func(t *testing.T) {
 		repo := t.TempDir()
@@ -427,8 +406,7 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 	})
 	t.Run("findRepoHooks caps at 10 entries", func(t *testing.T) {
 		repo := t.TempDir()
-		// 6 files x 2 hooks = 12 hook entries; the cap counts ENTRIES,
-		// not files.
+		// 6 files x 2 hooks: the cap counts ENTRIES, not files.
 		for i := range 6 {
 			mustWriteFile(t,
 				filepath.Join(repo, ".kiro", "hooks", fmt.Sprintf("hook%02d.json", i)),
@@ -452,15 +430,8 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// findRepoSkills (skills are directories containing SKILL.md)
-// ---------------------------------------------------------------------------
-
-// TestFindRepoSkills_ScansSubdirsWithSkillMd verifies skills are scanned
-// as subdirectories pointing at SKILL.md (not flat .md files), that the
-// SKILL.md front-matter classifies the skill, that a subdir without a
-// SKILL.md still counts (default "always", matching the REST scan), and
-// that a stray flat .md file directly under skills/ is ignored.
+// TestFindRepoSkills_ScansSubdirsWithSkillMd pins skills as subdirectories pointing at
+// SKILL.md, classified by it, with a manifest-less subdir counted and a flat .md ignored.
 func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "alpha", "SKILL.md"),
@@ -516,10 +487,6 @@ func TestFindRepoSkills_CapAt20(t *testing.T) {
 		t.Errorf("findRepoSkills(25 skill dirs) = %d, want 20 (capped)", got)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// findRepoAgents de-dupes paired .json + .md
-// ---------------------------------------------------------------------------
 
 // TestFindRepoAgents_DedupsPairedFiles verifies a paired reviewer.json +
 // reviewer.md collapses to ONE agent preferring the .md, while a

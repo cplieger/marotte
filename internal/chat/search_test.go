@@ -11,8 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// turnFixture accumulates one turn's entries in file order, seq assigned as the
-// appender would.
+// turnFixture accumulates one turn's entries in file order, assigning seq as the appender would.
 type turnFixture struct {
 	id      string
 	entries []marotte.Entry
@@ -61,7 +60,7 @@ func (tf *turnFixture) close(p marotte.EntryTurnClose) *turnFixture {
 	return tf.add("", tf.id+":close", marotte.EntryKindTurnClose, p)
 }
 
-// chatOf joins turns in file order with every turn drawn.
+// chatOf joins turns in file order, every turn drawn.
 func chatOf(turns ...*turnFixture) ([]marotte.Entry, map[string]struct{}) {
 	var entries []marotte.Entry
 	drawn := make(map[string]struct{}, len(turns))
@@ -87,7 +86,7 @@ func search(entries []marotte.Entry, drawn map[string]struct{}, q string) []Hit 
 	return Search(entries, drawn, q, false).Matches
 }
 
-// transcript: turn 1 asks about the retry, turn 2 about the composer.
+// transcript pins that turn 1 asks about the retry, turn 2 about the composer.
 func transcript() ([]marotte.Entry, map[string]struct{}) {
 	return chatOf(
 		openTurn("t-1", 1, prompt("m-1", "how does the retry work")).
@@ -113,10 +112,7 @@ func TestSearch_FindsTextAndNamesItsTurn(t *testing.T) {
 	}
 }
 
-// The match-case flag governs the FREE TEXT only. The scoped filters stay
-// case-insensitive whatever the reader asked for: a path is typed from memory,
-// and a filter that suddenly cared about case would be a behaviour change nobody
-// requested by ticking a box labelled "match case".
+// Match-case governs the free text only; scoped filters stay case-insensitive, since paths are typed from memory.
 func TestSearch_CaseSensitivity(t *testing.T) {
 	plain, plainDrawn := chatOf(openTurn("t-1", 1, prompt("m-1", "now fix the composer")).
 		text("a1", "Done, the Composer grows upward."))
@@ -154,9 +150,7 @@ func TestSearch_CaseSensitivity(t *testing.T) {
 	}
 }
 
-// The rune-offset arithmetic reads a prefix of the HAYSTACK, which is the folded
-// string in insensitive mode and the original in sensitive mode; both must land
-// on the same rune index for the client to highlight the right occurrence.
+// The rune offset is computed over the folded or original haystack; both modes must land on the same rune index.
 func TestSearch_OffsetsAreRuneIndicesInBothCaseModes(t *testing.T) {
 	entries, drawn := oneText("héllo wörld Needle")
 	for _, cs := range []bool{false, true} {
@@ -170,8 +164,7 @@ func TestSearch_OffsetsAreRuneIndicesInBothCaseModes(t *testing.T) {
 	}
 }
 
-// Offsets are relative to the matched ENTRY's own segment, never to the turn,
-// so a tool call between two text entries does not shift the second one.
+// Offsets are relative to the entry's own segment, so a tool call between two texts does not shift the second.
 func TestSearch_EveryOccurrenceIsAHitAtItsOwnOffset(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "intro paragraph").
@@ -197,8 +190,7 @@ func TestSearch_EmptyQueryFindsNothing(t *testing.T) {
 	}
 }
 
-// An empty result must marshal as [] rather than null, so the client has one
-// empty case instead of two.
+// An empty result marshals as [], not null.
 func TestSearch_NeverReturnsNil(t *testing.T) {
 	entries, drawn := transcript()
 	if search(entries, drawn, "") == nil {
@@ -209,8 +201,7 @@ func TestSearch_NeverReturnsNil(t *testing.T) {
 	}
 }
 
-// "Which turn printed that error" is asked more often than "which turn
-// mentioned it", so a tool_result's output is searched, and so is the thinking.
+// Tool output and thinking are searched: "which turn printed that error" is the commoner question.
 func TestSearch_SearchesThinkingAndToolOutput(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		thinking("th1", "considering a mutex here").
@@ -254,9 +245,7 @@ func TestSearch_ScopedFilters(t *testing.T) {
 		}
 	})
 
-	// A file only READ has a location and no diff, and "the turn where you
-	// looked at auth.go" is a real question, so locations count too; a WRITE
-	// is found through its result's diff path.
+	// A read has a location and no diff, so locations count; a write is found through its diff path.
 	t.Run("file matches a read as well as a write", func(t *testing.T) {
 		got := search(entries, drawn, "file:token.go")
 		if len(got) != 2 || got[0].EntryID != "tc1" || got[1].EntryID != "tc1:result" {
@@ -281,8 +270,7 @@ func TestSearch_ScopedFilters(t *testing.T) {
 		if got := search(entries, drawn, "tool:read turn:1"); len(got) != 2 {
 			t.Errorf("tool:read turn:1 = %+v, want the two tc1 entries", got)
 		}
-		// A filter that excludes everything returns nothing rather than
-		// ignoring itself.
+		// An all-excluding filter returns nothing rather than ignoring itself.
 		if got := search(entries, drawn, "tool:read turn:99"); len(got) != 0 {
 			t.Errorf("an impossible combination returned %d hits", len(got))
 		}
@@ -295,9 +283,8 @@ func TestSearch_ScopedFilters(t *testing.T) {
 	})
 }
 
-// A colon-bearing term that names no filter stays text: a URL is meant
-// literally, `turn:abc` and `turn:0` name no turn (turns count from 1), and
-// `role:` is not a filter over entries.
+// A colon term naming no filter stays text: URLs are literal, `turn:abc` and `turn:0` name no turn, `role:` is not a
+// filter.
 func TestSearch_UnknownOrUnparseablePrefixStaysFreeText(t *testing.T) {
 	cases := []struct {
 		name, content, query string
@@ -337,9 +324,7 @@ func TestSearch_ExcerptCarriesContextAndCollapsesWhitespace(t *testing.T) {
 	}
 }
 
-// An excerpt marks a cut with an ellipsis and carries a fixed radius of context
-// around the match. A mark on an uncut side claims text was dropped when none
-// was, and a short radius silently loses context the reader needs.
+// An ellipsis marks only a side actually cut, and the context radius is fixed.
 func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -363,10 +348,8 @@ func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
 	}
 }
 
-// The hit LIST is cut at maxSearchHits and the COUNT is not: a reader shown 200
-// hits out of 340 is told 340, so the cap reads as a floor rather than a total.
-// Scanned is every entry of a drawn turn, and Truncated stays false because
-// everything was read; the cut is stated by Matched exceeding the list.
+// The hit list caps at maxSearchHits, the count does not (200 shown of 340 reads 340). Scanned is every entry of a
+// drawn turn; Truncated stays false.
 func TestSearch_MatchedCountsPastTheHitCap(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -401,10 +384,8 @@ func TestSearch_MatchedCountsPastTheHitCap(t *testing.T) {
 	}
 }
 
-// searchEntries' second result is the byte volume of exactly the segments the
-// scan read: every span every entry exposes, and nothing from an entry a filter
-// excluded. Cross-chat ranking divides its occurrence count by this, so the two
-// must cover one span set.
+// searchEntries' byte volume covers exactly the segments read, none from filtered-out entries, matching the
+// occurrence count's span set.
 func TestSearchEntries_CharsAreTheSpansTheScanRead(t *testing.T) {
 	entries, drawn := chatOf(
 		openTurn("t-1", 1, prompt("m-1", "abc")).
@@ -431,9 +412,7 @@ func TestSearchEntries_CharsAreTheSpansTheScanRead(t *testing.T) {
 	}
 }
 
-// A turn the rail does not draw has no card and no rail row, so its segments
-// are skipped: a hit there would name an n nothing shows and an entry the
-// client cannot find. Its entries are not scanned either.
+// An undrawn turn has no card or rail row, so its entries are not scanned.
 func TestSearch_AnUndrawnTurnIsSkipped(t *testing.T) {
 	entries, drawn := chatOf(
 		openTurn("t-1", 1, prompt("m-1", "find the needle")).text("a1", "one needle").
@@ -453,8 +432,8 @@ func TestSearch_AnUndrawnTurnIsSkipped(t *testing.T) {
 	}
 }
 
-// seedSearchChat writes one closed prompt turn into a store: the header named
-// name, the prompt, one text entry per reply, and the close. It answers the turn id.
+// seedSearchChat writes one closed prompt turn into a store (header name, prompt, one text entry per reply, close)
+// and returns the turn id.
 func seedSearchChat(t *testing.T, s *Store, id marotte.ChatID, name, promptText string, replies ...string) string {
 	t.Helper()
 	opened, err := s.OpenTurn(t.Context(), id, &TurnSpec{
@@ -490,8 +469,7 @@ func searchVia(t *testing.T, s *Store, id marotte.ChatID, query string) SearchRe
 	return body
 }
 
-// The turn ordinal a hit reports and the one the rail draws are both the
-// turn_open's n, read off the same log, so they cannot disagree.
+// A hit's ordinal and the rail's are both turn_open's n from the same log.
 func TestSearch_TurnNumbersMatchTheRailRows(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedSearchChat(t, s, "c1", "One", "how does the retry work", "The retry uses exponential backoff.")
@@ -511,9 +489,7 @@ func TestSearch_TurnNumbersMatchTheRailRows(t *testing.T) {
 	}
 }
 
-// Both halves of the in-chat search have to agree on the match-case toggle: the
-// client highlights in the DOM while this enumerates session-wide, so the flag
-// rides the request rather than being a default either side could get wrong.
+// The client highlights in the DOM while this enumerates the session, so the case flag rides the request.
 func TestHandleSearch_CaseParam(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedSearchChat(t, s, "c1", "One", "now fix the composer", "Done, the Composer grows upward.")
@@ -537,8 +513,7 @@ func TestHandleSearch_CaseParam(t *testing.T) {
 	}
 }
 
-// The handler writes the scan's own reply, so the tally reaches the wire: a cut
-// list arrives beside the count that says it was cut.
+// The handler writes the scan's reply, so a capped list arrives with its count.
 func TestHandleSearch_ReportsTheTally(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedSearchChat(t, s, "c1", "One", "count these", strings.Repeat("hit ", maxSearchHits+1), "one lonely miss")
@@ -572,10 +547,8 @@ func TestHandleSearch_ReportsTheTally(t *testing.T) {
 	}
 }
 
-// The chat's TITLE is not part of the in-chat search, and the handler is the
-// layer that can say so: Search sees entries and never a name. It is a DECISION,
-// not an omission: SearchAll already answers "which conversation", and a title
-// hit names no position inside a transcript for the client to navigate to.
+// The in-chat search deliberately skips the chat's title: SearchAll answers "which conversation", and a title hit has
+// no transcript position.
 func TestHandleSearch_ChatNameIsNotSearched(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedSearchChat(t, s, "c1", "The needle investigation", "what now", "nothing to report")
@@ -585,8 +558,7 @@ func TestHandleSearch_ChatNameIsNotSearched(t *testing.T) {
 	}
 }
 
-// wantHit is the segment-addressing half of an expected hit; assertHits checks it
-// field by field so a failure names the exact coordinate that broke.
+// wantHit is an expected hit's segment address; assertHits compares field by field to name the broken coordinate.
 type wantHit struct {
 	entry      string
 	lane       string
@@ -620,9 +592,7 @@ func assertHits(t *testing.T, hits []Hit, want []wantHit) {
 	}
 }
 
-// The same text in the agent's lane and a delegate's lane is two different
-// places: each hit names its own entry and lane, and both offsets are relative
-// to their OWN segment, so the two identical prefixes yield identical offsets.
+// The same text in the agent's and a delegate's lane is two hits, each with its own entry, lane and segment offset.
 func TestSearch_DistinguishesParentAndDelegateLanes(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "the needle in the parent").
@@ -633,9 +603,7 @@ func TestSearch_DistinguishesParentAndDelegateLanes(t *testing.T) {
 	})
 }
 
-// A tool call's title is a segment of its tool_call entry and its output a
-// segment of the tool_result: two entries, two hits, each offset relative to
-// its own span, both in the call's lane.
+// A tool's title is a segment of its tool_call and its output of the tool_result: two hits, in the call's lane.
 func TestSearch_ToolTitleAndOutputAreSegmentsOfTheCallAndTheResult(t *testing.T) {
 	tf := openTurn("t-1", 1, nil).text("a1", "running the search now")
 	tf.add("sub-9", "tc1", marotte.EntryKindToolCall, marotte.EntryToolCall{ID: "tc1", Title: "grep needle"})
@@ -647,23 +615,20 @@ func TestSearch_ToolTitleAndOutputAreSegmentsOfTheCallAndTheResult(t *testing.T)
 	})
 }
 
-// A diff-bearing result's new_text is a segment of its own carrying a RUNE
-// offset. The diff's PATH is not searched: it is reachable through `file:` and
-// through the title, so a needle in the path yields nothing.
+// A result's new_text is its own segment with a rune offset; the diff path is not searched (`file:` and the title
+// reach it).
 func TestSearch_DiffNewTextIsSearched(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
 		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{Path: "needle.go", NewText: "åß needle"}}},
 	)
-	// "åß " is 3 runes (5 bytes); the whole segment is 9 runes (11 bytes).
+	// "åß " is 3 runes (5 bytes); the segment is 9 runes (11 bytes).
 	assertHits(t, search(entries, drawn, "needle"), []wantHit{
 		{entry: "tc1:result", kind: SegmentToolDiff, offset: 3, segmentLen: 9},
 	})
 }
 
-// new_text only: 97.4% of old_text's lines are also in new_text, so searching
-// both would mint a second hit for one rendered line. The stated loss is exactly
-// this: a line the edit REMOVED is not findable through the diff.
+// new_text only: 97.4% of old_text's lines repeat there. A removed line is not findable through the diff.
 func TestSearch_DiffOldTextIsNotSearched(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
@@ -676,8 +641,7 @@ func TestSearch_DiffOldTextIsNotSearched(t *testing.T) {
 	}
 }
 
-// A file DELETE has an empty new_text, so it contributes no segment at all: the
-// title is the only span, so the one hit is a title hit.
+// A delete's empty new_text adds no segment; the one hit is the title.
 func TestSearch_DiffWithEmptyNewTextContributesNoSegment(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Delete needle.go"},
@@ -688,8 +652,7 @@ func TestSearch_DiffWithEmptyNewTextContributesNoSegment(t *testing.T) {
 	})
 }
 
-// Only Diffs[0] is searched, because nothing renders or fetches a second diff:
-// a hit past the first would be a counted match with no destination.
+// Only Diffs[0]: nothing renders a second diff, so a hit there would have no destination.
 func TestSearch_OnlyTheFirstDiffIsSearched(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
@@ -708,9 +671,7 @@ func inputCall(input string) marotte.EntryToolCall {
 	return marotte.EntryToolCall{ID: "tc1", Title: "Write File", Input: json.RawMessage(input)}
 }
 
-// Only the string LEAF VALUES of an input are searched: a needle in a KEY is not
-// text a reader searches for, a number or a bool is not either, and every string
-// at any depth is covered so a nested array element is reachable.
+// Only string leaf values are searched, at any depth; keys, numbers and bools are not.
 func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -725,8 +686,7 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 		input: `{"cmd":"grep needle here"}`,
 		want:  []wantHit{{entry: "tc1", kind: SegmentToolInput, offset: 5, segmentLen: 16}},
 	}, {
-		// The query is the bool's own spelling: `true` would match every call
-		// carrying a flag.
+		// The query is the bool's spelling; `true` would match every flag.
 		name:  "a bool leaf is not searched",
 		query: "true",
 		input: `{"recurse":true}`,
@@ -735,14 +695,12 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 		query: "42",
 		input: `{"limit":42}`,
 	}, {
-		// The leaves are "outer", "deep needle" and "tail": one segment of
-		// "outer\ndeep needle\ntail", so the hit sits 11 runes in.
+		// Leaves "outer", "deep needle", "tail" form one segment, so the hit is 11 runes in.
 		name:  "a string nested in an array of objects is covered",
 		input: `{"a":"outer","edits":[{"newStr":"deep needle"}],"z":"tail"}`,
 		want:  []wantHit{{entry: "tc1", kind: SegmentToolInput, offset: 11, segmentLen: 22}},
 	}, {
-		// An array ELEMENT is a value, never a key, so a walk that alternates
-		// key/value inside an array would drop every second path.
+		// Array elements are values, so alternating key/value in an array would drop every second path.
 		name:  "every element of a string array is covered",
 		input: `{"paths":["a.go","needle.go"]}`,
 		want:  []wantHit{{entry: "tc1", kind: SegmentToolInput, offset: 5, segmentLen: 14}},
@@ -766,11 +724,8 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 	}
 }
 
-// Leaves are joined in DOCUMENT order, which is the order the card prints them,
-// so two occurrences come back at the offsets that order gives them. The two
-// leaves are different lengths, so the expected offsets (0, 24) belong to this
-// order alone: swapped, the same two leaves yield 11 and 18; the keys are
-// reverse-alphabetical so a sorted walk cannot produce document order by accident.
+// Leaves join in document order, the card's order. Different lengths make offsets (0, 24) order-specific (swapped:
+// 11 and 18), and reverse-alphabetical keys rule out a sorted walk.
 func TestSearch_ToolInputLeafOrderIsDocumentOrder(t *testing.T) {
 	entries, drawn := oneTool(inputCall(`{"z":"needle first","a":"and then a needle"}`), nil)
 	// "needle first\nand then a needle" is one 30-rune segment.
@@ -782,15 +737,14 @@ func TestSearch_ToolInputLeafOrderIsDocumentOrder(t *testing.T) {
 
 func TestSearch_ToolInputOffsetIsARuneIndex(t *testing.T) {
 	entries, drawn := oneTool(inputCall(`{"a":"åß","b":"ü needle"}`), nil)
-	// "åß\nü " is 5 runes (8 bytes); the whole segment is 11 runes (14 bytes).
+	// "åß\nü " is 5 runes (8 bytes); the segment is 11 runes (14 bytes).
 	assertHits(t, search(entries, drawn, "needle"), []wantHit{
 		{entry: "tc1", kind: SegmentToolInput, offset: 5, segmentLen: 11},
 	})
 }
 
-// An edit call sends its payload twice, as the input's newStr on the tool_call
-// and as the diff on the tool_result, and that is ONE rendered write, so it is
-// one hit, on the entry whose element holds the text.
+// An edit's payload appears as the input's newStr and as the result's diff, one rendered write, so one hit, on the
+// entry holding the text.
 func TestSearch_InputLeafDoesNotDoubleCountItsDiff(t *testing.T) {
 	const payload = "func fetch(ctx context.Context) error { return needle(ctx) }"
 	if len(payload) < inputLeafDedupeMin {
@@ -808,10 +762,8 @@ func TestSearch_InputLeafDoesNotDoubleCountItsDiff(t *testing.T) {
 	})
 }
 
-// A missing input is a NORMAL value: the literal `null` the bound writes for an
-// input it could neither parse nor shorten, and an absent input, both yield no
-// segment, with no error to the caller. These are the two shapes a log line can
-// hold; malformed bytes cannot reach a persisted payload and are the walker's own case.
+// A `null` input (unparseable and unshortenable) and an absent one yield no segment and no error; malformed bytes
+// cannot reach a persisted payload.
 func TestSearch_MissingInputYieldsNoHit(t *testing.T) {
 	for _, input := range []string{`null`, ``} {
 		entries, drawn := oneTool(inputCall(input), nil)
@@ -821,8 +773,7 @@ func TestSearch_MissingInputYieldsNoHit(t *testing.T) {
 	}
 }
 
-// The leaf walker answers "" for bytes it cannot parse rather than a partial
-// segment or an error: a truncated document is malformed like any other.
+// The leaf walker returns "" for unparseable bytes, a truncated document included.
 func TestInputLeafText_MalformedBytesYieldNoText(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -842,8 +793,7 @@ func TestInputLeafText_MalformedBytesYieldNoText(t *testing.T) {
 	}
 }
 
-// A plan entry renders as a card, so each of its entries is a searchable span
-// of its own: one segment per plan entry, all on the plan entry's id.
+// A plan renders as a card, so each plan entry is a segment on the plan entry's id.
 func TestSearch_PlanIsSearched(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "starting now").
@@ -857,8 +807,7 @@ func TestSearch_PlanIsSearched(t *testing.T) {
 	})
 }
 
-// A denial's RESOURCE is the one reader-facing string in the policy verdict, the
-// command or path that was refused, so it is the one field searched.
+// A denial's resource (the refused command or path) is its one reader-facing, searched field.
 func TestSearch_DenialResourceIsSearched(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Run Command"},
@@ -871,8 +820,7 @@ func TestSearch_DenialResourceIsSearched(t *testing.T) {
 	})
 }
 
-// A turn that ended badly persists WHY on its turn_close, and the card's footer
-// renders it, so the reason is a searchable span of that entry.
+// A turn_close's failure reason renders in the footer, so it is searched.
 func TestSearch_TurnFailureReasonIsSearched(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "partial answer").
@@ -882,8 +830,7 @@ func TestSearch_TurnFailureReasonIsSearched(t *testing.T) {
 	})
 }
 
-// A steer entry's text is the note the transcript renders for it, so it is a
-// `steer` segment; an agent-origin note is searched the same way.
+// A steer's text is a `steer` segment, agent-origin notes included.
 func TestSearch_SteerTextIsSearched(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "working on it").
@@ -895,8 +842,7 @@ func TestSearch_SteerTextIsSearched(t *testing.T) {
 	})
 }
 
-// A compaction failure's reason and a safety block's properties both render as
-// text in the turn, so each is a content segment of its own entry.
+// A compaction failure's reason and a safety block's properties render as text, so each is a content segment.
 func TestSearch_CompactionFailedAndSafetyBlockedAreContentSegments(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		add("", "cf-1", marotte.EntryKindCompactionFailed, marotte.EntryCompactionFailed{Reason: "needle too large"}).
@@ -907,9 +853,7 @@ func TestSearch_CompactionFailedAndSafetyBlockedAreContentSegments(t *testing.T)
 	})
 }
 
-// An attachment is searched by the NAME the pill renders and NOT by the path,
-// which lives in a `title` attribute the client's DOM walker cannot mark. Both
-// directions, because either half alone would pass while the other broke.
+// Attachments are searched by name, not by the path in the pill's `title` attribute; both directions asserted.
 func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, &marotte.EntryPrompt{
 		ID: "m-1", Text: "have a look",
@@ -923,9 +867,8 @@ func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
 	}
 }
 
-// A `disclose_context` result's display name is what the card SHOWS, replacing
-// the title, so a reader who can see a skill name must be able to find it.
-// DisplayName only: URI is not rendered and Type is a class name.
+// A `disclose_context` result's display name replaces the title on the card, so it is searched; URI and Type are
+// not.
 func TestSearch_DisclosedDisplayNameIsSearched(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Disclose Context"},
@@ -941,8 +884,7 @@ func TestSearch_DisclosedDisplayNameIsSearched(t *testing.T) {
 	}
 }
 
-// The fields deliberately left unsearched, each for a stated reason, and each
-// asserted where a needle in it would otherwise be indistinguishable from a gap.
+// The deliberately unsearched fields, each asserted where a needle would otherwise look like a gap.
 func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1037,11 +979,8 @@ func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 	}
 }
 
-// A tool call's segments come out in the order the CARD renders them: the
-// create half (title, input) on the tool_call, then the settled half
-// (disclosed, diff, denial, output) on the tool_result. Stepping a card walks it
-// the way a reader reads it, and bestHit's list-position tie-break is pinned to
-// a stated order rather than to an accident of declaration.
+// A tool call's segments follow the card: title and input on the tool_call, then disclosed, diff, denial and output
+// on the tool_result, which also pins bestHit's tie-break.
 func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "grep needle", Input: json.RawMessage(`{"cmd":"a needle in the input"}`)},
@@ -1063,9 +1002,7 @@ func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
 	})
 }
 
-// Hits arrive in FILE order across entries and across interleaved turns: the
-// log's position is the only order, so a prompt, a plan and a close are found
-// where they sit rather than in a per-kind tail.
+// Hits come in file order across entries and interleaved turns, not grouped by kind.
 func TestSearch_HitsFollowFileOrder(t *testing.T) {
 	a := openTurn("t-1", 1, prompt("m-1", "needle one")).text("a1", "needle two")
 	b := openTurn("t-2", 2, nil).text("b1", "needle three").close(marotte.EntryTurnClose{
@@ -1086,9 +1023,7 @@ func TestSearch_HitsFollowFileOrder(t *testing.T) {
 	}
 }
 
-// Every kind segmentKinds declares has a producer that can reach it, read off
-// the SAME slice the golden's kind loop reads. Two queries: SegmentEntry is
-// produced by a FILTER-ONLY query alone.
+// Every kind in segmentKinds has a reachable producer; SegmentEntry needs a filter-only query.
 func TestSearch_SegmentKindsAreExhaustive(t *testing.T) {
 	entries, drawn := searchContractEntries()
 	seen := make(map[SegmentKind]int)
@@ -1108,22 +1043,19 @@ func TestSearch_SegmentKindsAreExhaustive(t *testing.T) {
 	}
 }
 
-// Segment offsets and lengths count RUNES, not bytes, and are relative to the
-// matched entry even when an earlier entry holds multi-byte text.
+// Offsets and lengths count runes and are entry-relative even after earlier multibyte text.
 func TestSearch_SegmentOffsetsAreRuneIndices(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "héllo wörld").
 		thinking("th1", "åß needle"))
-	// "åß " is 3 runes (5 bytes); the whole segment is 9 runes (11 bytes).
+	// "åß " is 3 runes (5 bytes); the segment is 9 runes (11 bytes).
 	assertHits(t, search(entries, drawn, "needle"), []wantHit{
 		{entry: "th1", kind: SegmentReasoning, offset: 3, segmentLen: 9},
 	})
 }
 
-// A filter-only query yields one synthetic hit per matching entry, carried as
-// segment_kind "entry": offset 0, zero segment length, locating the entry rather
-// than a span inside it. A tool_call with no text is still listed, with an
-// excerpt from its first span.
+// A filter-only query yields one hit per matching entry as segment_kind "entry" (offset 0, zero length); a textless
+// tool_call is listed with an excerpt from its first span.
 func TestSearch_FilterOnlyHitsAreEntryKind(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "prose here").
@@ -1139,8 +1071,7 @@ func TestSearch_FilterOnlyHitsAreEntryKind(t *testing.T) {
 	}
 }
 
-// lane is OPTIONAL on the generated type, and the encoder's half of that is
-// omitting it when unset rather than writing an empty string.
+// lane is optional on the generated type, so the encoder omits it when unset.
 func TestHit_WireShape(t *testing.T) {
 	full, err := json.Marshal(Hit{
 		TurnID: "t-1", EntryID: "tc1:result", SegmentKind: SegmentToolOutput, Lane: "sub-1", Turn: 3, Offset: 8, SegmentLen: 19,

@@ -1,8 +1,7 @@
 package chat
 
-// The two chat GET envelopes carry the digest stamp the client's version map
-// observes on commit: the store's own counter, plus the hub epoch that lets the map
-// refuse a response issued under a previous hub.
+// Both chat GET envelopes carry the digest stamp the client's version map checks: the store's counter plus the hub
+// epoch, so a response from a previous hub is refused.
 
 import (
 	"encoding/json"
@@ -58,8 +57,7 @@ func TestGetChat_SubjectIsTheStoresChatVersionWithTheEpoch(t *testing.T) {
 	}
 }
 
-// A chat file that exists but was never mutated this process (a restart) stamps
-// Unminted, which is also what the resolver answers, so the pair compares equal.
+// A chat not mutated this process (a restart) stamps Unminted, matching the resolver.
 func TestGetChat_NeverMutatedThisProcessStampsUnminted(t *testing.T) {
 	dir := t.TempDir()
 	first, err := NewStore(dir)

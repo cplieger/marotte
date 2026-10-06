@@ -1,6 +1,5 @@
 # check=error=true
 
-# --- Builder stage: compile Go server and TypeScript ---
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -9,7 +8,6 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
-# Go for building the web server
 # renovate: datasource=golang-version depName=golang
 ARG GO_VERSION=1.27.1
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -17,150 +15,93 @@ RUN ARCH=$(dpkg --print-architecture) && \
     | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# tsc — the TypeScript 7 native compiler (a Go binary, no Node needed). Now
-# that TS7 has shipped stable, the native compiler is the `typescript`
-# package's own `tsc`, distributed per-platform under
-# @typescript/typescript-linux-<arch> (published in lockstep with the
-# `typescript` metapackage at the same version). We fetch just that platform
-# tarball and run its bundled `tsc` at build time.
+# tsc is TypeScript 7's native compiler, shipped per platform as
+# @typescript/typescript-linux-<arch>; only that tarball is fetched.
 # renovate: datasource=npm depName=typescript
 ARG TS_VERSION=7.0.2
-# Arch-aware fetch: native per-arch runners build arm64 on real arm64
-# hardware, so the tsc binary must match the build arch. dpkg reports
-# arm64/amd64; the npm platform package uses arm64/x64. A hardcoded x64
-# here fails the arm64 build with "cannot execute binary file: Exec
-# format error".
+# dpkg says amd64/arm64, the npm package says x64/arm64; a hardcoded x64
+# fails the native arm64 build with "Exec format error".
 RUN TS_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL \
     "https://registry.npmjs.org/@typescript/typescript-linux-${TS_ARCH}/-/typescript-linux-${TS_ARCH}-${TS_VERSION}.tgz" \
     | tar -xz -C /tmp
 
-# Build Go server
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 
-# Bake the published tool catalog as the first-boot/offline fallback.
-# The catalog (~700 tools joined from the mise + aqua registries by
-# cplieger/tool-catalog's daily publisher; both registries' MIT license
-# texts travel INSIDE the JSON) is DATA on a daily upstream cadence —
-# the runtime engine refreshes it at boot and on a schedule
-# (MAROTTE_TOOL_CATALOG_REFRESH), so this baked copy only serves a
-# container that has never reached the publisher. marotte's
-# bundled-tools.json (this app's own tools) is not compiled in:
-# the engine re-applies it to EVERY loaded catalog (baked, cached,
-# fetched), so it ships beside the binary instead. The verify pass
-# re-gates whatever the fetch returned: every required-tools.txt name
-# must resolve for linux amd64+arm64 or the build fails, and the
-# runtime refresh re-runs the same check before every swap.
+# The baked tool catalog is the first-boot/offline fallback; the engine
+# refreshes it at boot and daily. The verify pass fails the build unless every
+# required-tools.txt name resolves for linux amd64 and arm64.
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json
-# `go tool`, not `go run <pkg>@<version>`: the pkg@version form resolves OUTSIDE
-# the main module, so it discarded the copy `go mod download` had already put in
-# the layer above and re-resolved toolbelt over the network -- including a query
-# for the module's latest version to report a deprecation. GOPROXY falls back to
-# `direct` on a proxy error, direct means VCS, and this stage installs no git, so
-# a proxy hiccup failed the build with "git: executable file not found in $PATH"
-# rather than anything about the catalog (main, 2026-08-22). The tool directive in
-# go.mod pins the version instead, which also collapses the two pins this step
-# used to carry -- go.mod and an ARG that had to agree with nothing enforcing it.
-# Runs with GOPROXY=off, so it cannot reach for the network at all.
+# `go tool`, not `go run <pkg>@<version>`: the latter resolves outside the
+# module and can fall through to GOPROXY=direct, which needs git this stage lacks.
+# GOPROXY=off keeps the step offline.
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
     GOFLAGS=-mod=readonly GOPROXY=off go tool toolcatalog \
       verify -catalog /tmp/tool-catalog.json -require required-tools.txt \
       -overlay bundled-tools.json
 
-# Fetch @cplieger/actions TS source from npm registry. The lib publishes
-# TS only (no precompiled JS) — same pattern as @cplieger/reactive and
-# @cplieger/web-terminal-engine, matching how local TS files in static-src/ are
-# treated. Extracted to static-src/node_modules/@cplieger/actions/ so
-# tsc's typecheck and esbuild's bundle resolution find the package + its
-# types relative to static-src/tsconfig.json.
+# The @cplieger libraries publish TS source only; each is extracted into
+# static-src/node_modules/@cplieger/<lib>/ for tsc and cmd/bundle to resolve.
 # renovate: datasource=npm depName=@cplieger/actions
 ARG CPLIEGER_ACTIONS_VERSION=3.1.7
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
 
-# Fetch @cplieger/fetch TS source (same TS-only pattern). api-client.ts imports
-# createFetch/requestRaw from it; bundled into app.js by cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/fetch
 ARG CPLIEGER_FETCH_VERSION=2.2.1
 RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/fetch/-/fetch-${CPLIEGER_FETCH_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
 
-# Fetch @cplieger/reactive TS source (same TS-only pattern). @cplieger/actions
-# imports it, and the app imports it directly; bundled into app.js by
-# cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/reactive
 ARG CPLIEGER_REACTIVE_VERSION=2.1.2
 RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
 
-# @cplieger/web-terminal-engine is @cplieger/web-terminal-ui's peer; cmd/bundle
-# bundles both into app.js.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
 
-# shell.ts imports createTerminal, localScrollbackStorage, presetSingle and
-# mobileToolbar from @cplieger/web-terminal-ui; cmd/bundle bundles it into app.js.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.3.2
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
 
-# Fetch @cplieger/ui-primitives TS source (same TS-only pattern). The app's
-# headless UI modules (toast, tooltip, confirm, popover, focus-trap, theme,
-# view-transition, announce) import its per-primitive subpaths; bundled into
-# app.js by cmd/bundle. Its base stylesheet (css/ui-primitives.css) is
-# concatenated into static/style.css by cmd/bundle (via a MANIFEST entry),
-# then skinned by static-src/css/04-uip-skin.css.
-#
-# createTheme with a storage adapter (static-src/theme.ts, and the pre-paint
-# theme step bundled into static/prepaint.js) needs @cplieger/ui-primitives
-# >= 2.1.0. This ARG and static-src/package.json's @cplieger/ui-primitives pin
-# track the same exact version.
+# css/ui-primitives.css is concatenated into static/style.css by cmd/bundle.
+# This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui-primitives
 ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.1.1
 RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
 
-# @cplieger/keyenc encodes the client's composite keys (row signatures, the
-# persisted banner-dismissal and pending-path keys, the action idempotency
-# keys) so no field's content can forge a different field split. This ARG and
-# static-src/package.json's @cplieger/keyenc pin track the same exact version.
+# This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/keyenc
 ARG CPLIEGER_KEYENC_VERSION=1.0.9
 RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
 
-# @cplieger/sse is the resumable Server-Sent-Events client: the per-profile
-# SharedWorker host, the per-tab stream fallback, the version map and the digest
-# client that sse-adapter.ts composes. This ARG and static-src/package.json's
-# @cplieger/sse pin track the same exact version.
+# This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/sse
 ARG CPLIEGER_SSE_VERSION=1.1.1
 RUN mkdir -p static-src/node_modules/@cplieger/sse && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/sse/-/sse-${CPLIEGER_SSE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/sse --strip-components=1
 
-# The terminal's two web fonts, fetched into static/vendor/fonts/ so they land
-# in the //go:embed static tree. Every URL is TAG-PINNED: releases/latest/download
-# is mutable, so a sha gate over it would break on every upstream release with no
-# version bump in this file to explain it.
+# Every font URL is tag-pinned: releases/latest/download is mutable, so a sha
+# gate over it would break on every upstream release.
 #
-# Monaspace Neon NF is the text face static-src/css/00-fonts.css declares. Its
-# LICENSE travels with the faces: the SIL Open Font License 1.1 requires the
-# copyright notice and the licence text to accompany every copy of the font,
-# and serving the four woff2 files IS a copy.
+# Monaspace Neon NF's SIL OFL 1.1 requires its licence to travel with every copy,
+# and serving the woff2 files is a copy.
 # renovate: datasource=github-tags depName=githubnext/monaspace
 ARG MONASPACE_VERSION=v1.400
 # repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/LICENSE dest=MonaspaceNeonNF-LICENSE
@@ -174,17 +115,9 @@ ARG MONASPACE_ITALIC_SHA256=3d77eb9a5ec9e32c5ac7ea49c4325e5d6c8e5fefda7317527de9
 # repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-BoldItalic.woff2
 ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edcd65ea993c909b3aa
 
-# cplieger/web-terminal-glyphs is the tiling-glyph overlay: box drawing, block
-# elements, shades, braille, Powerline and the Unicode mosaic blocks, drawn for
-# Monaspace Neon NF's 1240/2000 em advance at 14px on a 17px row. It carries no
-# letters, no digits and no space, which is why 00-fonts.css lists it FIRST in
-# font-family and the text face behind it keeps its metrics and its look.
-#
-# LICENSE and NOTICE are served beside the font: this repo is public and the
-# font file is redistributed under Apache-2.0, whose section 4 requires both to
-# travel with it. Every licence file lands under the name of the family it
-# covers, because two differently-licensed families share this directory and a
-# bare LICENSE beside five woff2 files names neither.
+# web-terminal-glyphs carries no letters, digits or space, so 00-fonts.css lists
+# it first and the text face keeps its metrics. Apache-2.0 section 4 requires its
+# LICENSE and NOTICE to travel with it; each licence file is named for its family.
 # renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
 ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.7
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
@@ -194,11 +127,9 @@ ARG WEB_TERMINAL_GLYPHS_LICENSE_SHA256=c95bae1d1ce0235ecccd3560b772ec1efb97f348a
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/NOTICE dest=WebTerminalGlyphs-NOTICE
 ARG WEB_TERMINAL_GLYPHS_NOTICE_SHA256=a5ac4badcc25b16fd3faed99e48caa48113a491cef3dbdd79d650243afefb4cb
 
-# `set -e` plus a per-iteration `sha256sum -c` is the whole gate: a for-loop's
-# exit status is only its LAST iteration's, so verifying after the loop would
-# accept every earlier face unchecked. The `*)` arm fails the build when a face
-# has no matching sha ARG, so adding a face without its pin cannot ship
-# unverified bytes.
+# A for-loop's exit status is only its last iteration's, so each face is
+# verified inside the loop. The `*)` arm fails the build for a face with no sha
+# ARG.
 RUN set -e; mkdir -p static/vendor/fonts; \
     for face in Regular Bold Italic BoldItalic; do \
       case "$face" in \
@@ -230,43 +161,16 @@ RUN set -e; mkdir -p static/vendor/fonts; \
       printf '%s  static/vendor/fonts/%s\n' "$asset_sha" "$dest" | sha256sum -c -; \
     done
 
-# Build the browser client, then the Go server (static files embedded via
-# go:embed). BUILD_VERSION is stamped into internal/version.Build via
-# -ldflags so the running binary can report what tag it was built from.
-# Defaults to "dev" for local test builds; the release workflow passes the
-# release tag.
-#
-# Step 1: tsc --noEmit is the TYPE gate over the app + service-worker
-# configs (esbuild transpiles without typechecking, so tsc keeps failing
-# the build on type errors exactly as before).
-# Step 2: cmd/bundle runs esbuild through its Go API, a Go library, which
-# is why this stage installs no Node and no npm. What it emits and how the
-# CSS manifests compose: CONTRIBUTING.md, frontend assets.
+# BUILD_VERSION is stamped into internal/version.Build; the release workflow
+# passes the tag. tsc --noEmit is the type gate (esbuild does not typecheck), then
+# cmd/bundle bundles through esbuild's Go API.
 ARG BUILD_VERSION=dev
-# Wire-floor gate (cross-language compatibility): go.mod's engine module and
-# the ARG-pinned npm client version move INDEPENDENTLY (Renovate bumps them in
-# separate PRs, and a Go-only engine release publishes no npm package), so
-# their pairing is governed by the engine's exported wire-compatibility floors,
-# not by version strings looking alike. Assert both directional floors at build
-# time — a declared-incompatible pairing would close every shell attempt with
-# code 4002 while /api/health stays green and the rest of the app works, so the
-# outage reads as a shell bug rather than a version mismatch. Fail HERE instead.
-# Client constants come from the vendored artifact's PUBLISHED MANIFEST
-# (wire-compatibility.json, a package-root file the engine renders from its own
-# TypeScript constants); server constants come from the engine's public Go API
-# inside scripts/wirecheck. Neither half is scraped from source. This replaced a
-# `sed` extraction of wire-compatibility.ts, which is the practice the engine
-# published the manifest to end -- it breaks on any reformat of that line, and a
-# reformat is not a wire change, so the gate would have failed for the wrong
-# reason. The manifest is decoded by the engine's own terminal.ReadWireManifest,
-# so its schema has one home rather than one per consumer.
-# BUILT, not `go run`: the gate's exit code is its contract (0 compatible,
-# 1 floor violated, 2 the gate itself is broken), and `go run` discards it --
-# it prints "exit status 2" and exits 1 itself, collapsing "fix the gate" into
-# "bump a pin". Dropping the DL3062 ignore with it: that rule fires on an
-# unpinned `go run`/`go install <pkg>`, which is meaningless for a local path,
-# and `go build ./scripts/wirecheck` does not trip it. An unneeded ignore
-# suppresses a real future warning on this step.
+# Wire-floor gate: go.mod's engine module and the npm client pin move
+# independently, so assert both directional compatibility floors here. A mismatched
+# pair closes every shell with code 4002 while /api/health stays green. The client
+# floors come from the vendored wire-compatibility.json, the server's from
+# scripts/wirecheck. Built, not `go run`: the exit code is the contract (0 ok,
+# 1 floor violated, 2 gate broken), and `go run` collapses it to 1.
 RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=tmpfs,target=/tmp/wirecheck-bin \
     WIRE_MANIFEST=static-src/node_modules/@cplieger/web-terminal-engine/wire-compatibility.json && \
@@ -279,9 +183,8 @@ RUN /tmp/package/lib/tsc --project static-src/tsconfig.build.json --noEmit && \
     /tmp/package/lib/tsc --project static-src/tsconfig.sw.json --noEmit && \
     go run ./cmd/bundle
 
-# The -X path must be go.mod's full module path. The linker discards a path
-# matching no package in the build with no error and no warning, so a wrong one
-# ships the "dev" fallback from a build that reported success.
+# The -X path must be go.mod's full module path: a wrong one is discarded
+# silently and ships the "dev" fallback.
 RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X github.com/cplieger/marotte/internal/version.Build=${BUILD_VERSION}" \
     -o /app/marotte .
@@ -289,58 +192,24 @@ RUN CGO_ENABLED=0 go build \
 COPY scripts/collect-licenses.sh scripts/
 RUN sh scripts/collect-licenses.sh --name marotte .
 
-# --- Final stage: minimal runtime ---
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Baked-in dependencies — the minimal stable runtime surface that
-# marotte and kiro-cli rely on. Everything else (Node, Python, Go,
-# Java, Rust, all LSPs) is installed on demand by the
-# in-process tools engine (the cplieger/toolbelt library, wired in
-# internal/composition) into the persistent /config/tools/ volume,
-# discovered through the compiled catalog.
-#
-# What's here and why:
-#   - ca-certificates: HTTPS trust for every download
-#   - curl: entrypoint kiro-cli download + manual install commands
-#   - git: marotte's gitexec, file history, forge integrations
-#          (the checkpoint system does NOT use git — it is a
-#          content-addressed blob/event store)
-#   - openssh-client: git over ssh
-#   - unzip: kiro-cli installer (it's a zip) + zip-format tools
-#   - xz-utils: Node/shellcheck tarball extract (.tar.xz)
-#   - jq: entrypoint.sh JSON parsing + a generally useful agent tool
-#
-# Notably NOT here. Each is installable at runtime from Settings -> Tools:
-# nodejs and python3 as catalog entries (node, uv), and the rest as `apt:`
-# entries now that the engine has an apt source -- so this list is a starting
-# point rather than a ceiling. Removing them drops ~190 MB off the compressed
-# image (212 MB -> ~22 MB):
-#   nodejs, npm, python3, python3-pip, python3-venv, wget, gcc,
-#   libc6-dev, make, openssl, rsync.
-# kiro-cli itself is downloaded on first boot by entrypoint.sh
-# (licensing prevents us from baking it into the image).
-# PKG_REFRESH busts the cache for this layer. Without it BuildKit restores the
-# layer verbatim on every rebuild and `apt-get upgrade` never runs again, so the
-# image keeps shipping whatever packages were current when the layer was first
-# built (measured 2026-08: 11 days stale, with Debian security updates already
-# out for util-linux, unzip and jq). The central release/CI/scan builds pass
-# today's UTC date. The `echo` is load-bearing: BuildKit keys a RUN on the build
-# args it actually CONSUMES, so a merely-declared ARG would change nothing.
+# Only the minimal runtime surface is baked; everything else (Node, Python, Go,
+# Java, Rust, LSPs) is installed on demand by the tools engine into /config/tools/.
+# git serves gitexec, file history and forges; unzip the kiro-cli installer;
+# xz-utils .tar.xz tool archives; jq entrypoint.sh. kiro-cli is downloaded at first
+# boot because its licence forbids baking it. PKG_REFRESH busts this layer's cache, or `apt-get upgrade` never reruns and the
+# image ships stale packages. The `echo` is required: BuildKit keys a RUN only on
+# build args it consumes.
 ARG PKG_REFRESH=static
-# Re-declared after the ARG above: hadolint >= 2.15.0 drops a stage's SHELL
-# dialect at the next ARG/ENV and shellchecks the rest of the stage as POSIX
-# sh. Docker-side a no-op (same shell, no layer); it keeps the SC checks live.
+# Re-declared because hadolint >= 2.15.0 drops the SHELL dialect at the next ARG.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# libatomic1 is a RUNTIME dependency of the Node.js the tools engine
-# installs, not a build tool: node's official linux-x64 binaries link
-# libatomic.so.1 from v25 onward (measured — v24.18.0 does not, v26.7.0
-# does). Nothing else in this list pulls it, so without it every
-# npm-sourced tool fails with a bare `npm failed: exit status 127` and
-# `node: error while loading shared libraries: libatomic.so.1` — which
-# took out pyright, typescript and typescript-language-server together.
+# libatomic1 is a runtime dependency of the Node.js the tools engine installs
+# (official linux-x64 binaries link it from v25); without it every npm-sourced tool
+# fails with exit status 127.
 # hadolint ignore=DL3008
 RUN echo "OS package refresh: ${PKG_REFRESH}" \
     && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
@@ -355,87 +224,35 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Every dev tool (Go, Node, Python, Java, Rust, LSPs)
-# is installed at runtime by the tools engine (internal/tools) into
-# the persistent /config/tools/ tree: versioned trees under
-# opt/<name>/, every binary symlinked (or shimmed) into the single
-# bin/ dir, npm and python package trees under npm/ and python/.
-# PATH exposes those plus the package-manager bin dirs so a freshly
-# installed tool is visible the moment its job finishes.
-#
-# /config is the single persistent volume for all container state:
-#   /config/tools/      — bin/ (PATH), opt/<tool>/, npm/, python/, go/
-#   /config/home/       — auth, ssh, gitconfig, build cache
-#   /config/home/.kiro/ — kiro-cli per-user state (sessions, settings,
-#                         steering, agents, logs). KIRO_HOME MUST equal
-#                         $HOME/.kiro: the v3 engine (KAS) ignores KIRO_HOME
-#                         and hardcodes os.homedir()/.kiro, while the Rust
-#                         wrapper (settings CLI) honors KIRO_HOME — pointing
-#                         KIRO_HOME inside HOME is the only way marotte, the
-#                         wrapper, and KAS agree on one directory. (Verified
-#                         against the KAS 2.12 bundle: zero KIRO_HOME reads;
-#                         home-dir comes from --home-dir or os.homedir().)
-#   /config/*.json      — config.json (marotte prefs), tools.json (v2
-#                         manifest), tools-state.json (engine state), mcp.json
-#   /config/chats/      — chat history
-#
-# GOROOT is intentionally absent: the go bin symlink resolves into its
-# versioned dist tree under opt/go/ and the toolchain derives GOROOT
-# from its own resolved location.
-#
-
-# tools/bin is the engine's SINGLE PATH dir; the npm/ and python/ trees are install
-# roots behind it, not PATH entries (toolbelt links every binary into tools/bin).
-# Keeping npm/bin or python/bin on PATH would let a binary planted there, ahead of
-# /usr/bin and never repaired by the entrypoint, run as root. Inherited pre-v2
-# volumes are the one regressing case: a binary in npm/bin with no tools/bin
-# symlink stops resolving ("command not found"); symlink it into tools/bin.
-
-# tools/go/bin STAYS: it is GOPATH/bin, where a hand-run `go install` lands when the
-# engine's GOBIN is not in play. Deleting a user's own go-installed tools would break
-# their workflow, and the threat presupposes an actor who already holds
-# /config/home/.ssh and the auth tokens.
+# KIRO_HOME must equal $HOME/.kiro: KAS ignores KIRO_HOME and uses os.homedir()/.kiro.
+# GOROOT is unset: the toolchain derives it from its resolved location.
+# tools/bin is the engine's only PATH dir; npm/ and python/ link their binaries into
+# it, so their own bin dirs stay off PATH (they would sit ahead of /usr/bin as a
+# plant target). tools/go/bin stays: it is GOPATH/bin for a hand-run `go install`.
 ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/bin"
 ENV HOME="/config/home"
 ENV KIRO_HOME="/config/home/.kiro"
-# The encoding every child process resolves. Unset, glibc's default C locale
-# applies and git octal-escapes every non-ASCII path in status/diff/log output.
-# C.UTF-8 is a glibc BUILT-IN, so this needs no `locales` package — and a base
-# image on musl would make the line a claim the image cannot honour.
+# Unset, glibc's C locale makes git octal-escape non-ASCII paths. C.UTF-8 is a
+# glibc built-in, so no locales package is needed.
 ENV LANG="C.UTF-8"
 RUN mkdir -p /config/home/.kiro && chmod 777 /config/home /config/home/.kiro
 
-# Where a composer upload lands (marotte.DefaultUploadDir). Created at BUILD
-# time, as root, because the runtime uid is the operator's to choose — the public
-# compose example sets `user: "${PUID:-1000}:${PGID:-1000}"`, and a non-root uid
-# cannot create a directory at / (root-owned, 0755), so the server's own
-# boot-time mkdir only succeeds for root.
-#
-# 1777 rather than 0777: the runtime uid is unknown here, and sticky is the right
-# shape for a world-writable directory (the /tmp convention) — it stops one
-# principal renaming or unlinking another's file.
-#
-# It sits in the image layer rather than on a volume, so its CONTENTS do not
-# survive a container recreate. An operator who wants them to mounts a volume
-# here, which SHADOWS this directory and must therefore be owned by the runtime
-# uid; the README says so.
+# The composer upload directory (marotte.DefaultUploadDir), created at build
+# time because a non-root runtime uid cannot create it at /. Sticky 1777 because
+# the runtime uid is unknown. Not on a volume: mount one owned by the runtime uid to
+# keep uploads across recreates.
 RUN mkdir -p /uploads && chmod 1777 /uploads
 
-# Repoint root's pw_dir to /config/home so OpenSSH (which resolves "~"
-# via getpwuid, NOT $HOME) reads and writes ~/.ssh/known_hosts under
-# the persisted volume. Without this, every container recreation wipes
-# the host-key cache.
+# OpenSSH resolves "~" via getpwuid, not $HOME, so root's home must be the
+# persisted /config/home or every recreate wipes known_hosts.
 RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passwd
 
-# Copy compiled web server from builder
 COPY --from=builder /app /app
 COPY --from=builder /out/usr/share/licenses /usr/share/licenses
 
-# Install artifacts under /opt/marotte/ so they don't clutter / in the
-# file browser. The blacklist in internal/filebrowse/paths.go already
-# hides /opt, so users never see these.
+# /opt is hidden from the file browser (internal/filebrowse/paths.go).
 COPY --chmod=755 entrypoint.sh /opt/marotte/entrypoint.sh
 COPY --from=builder /tmp/tool-catalog.json /opt/marotte/tool-catalog.json
 COPY bundled-tools.json /opt/marotte/bundled-tools.json
@@ -443,28 +260,12 @@ COPY bundled-tools.json /opt/marotte/bundled-tools.json
 WORKDIR /workspace
 EXPOSE 9847
 
-# start-period=300s: a fresh-volume first boot downloads and verifies kiro-cli
-# (~528 MB zip), so a slow registry or link can legitimately take minutes. The
-# budget is unchanged by the install moving into the server: the listener now
-# binds first and /api/health answers 503 "kiro-cli installing" for that same
-# window, where before there was nothing listening at all. Either way the
-# container is not healthy until the pinned version is installed and runnable, so
-# the start period still has to cover the download. 60s marked such containers
-# unhealthy while the install was progressing normally.
+# start-period=300s: a first boot downloads and verifies kiro-cli (~528 MB), and
+# /api/health answers 503 until the pinned version is installed.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
     CMD ["curl", "-sf", "http://127.0.0.1:9847/api/health"]
-# tini is PID 1 so orphans get reaped.
-#
-# marotte spawns git, kiro-cli and the agent's own terminals, and each of those can
-# leave a grandchild whose parent exits first. An orphan reparents to PID 1, and
-# PID 1 was marotte — a Go program that waits the children it started and nothing
-# else, so an orphan's exit status was never collected and the process stayed on the
-# table as a zombie forever. Measured before this: 1,172 zombies of 1,246 processes,
-# 610 of them `git`, all with ppid 1, against a `pids.max` of `max` as the only
-# thing between that and a hard `fork` failure.
-#
-# Reaping is not an application concern and an in-process SIGCHLD/Wait4 loop fights
-# the Go runtime's own child bookkeeping, so it belongs in PID 1. `--` separates
-# tini's arguments from the entrypoint's; entrypoint.sh keeps its own `exec`, so the
-# server still runs as tini's direct child and signals still reach it.
+# tini is PID 1 so orphans are reaped: marotte waits only the children it
+# started, and its git and kiro-cli grandchildren otherwise piled up as zombies
+# (1,172 of 1,246 processes measured). entrypoint.sh keeps its `exec`, so the
+# server stays tini's direct child and receives signals.
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/marotte/entrypoint.sh"]

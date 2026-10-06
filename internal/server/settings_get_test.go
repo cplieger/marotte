@@ -18,11 +18,8 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// getEffective issues GET /api/settings against a config dir and decodes the
-// response into the wire type. Decoding into the STRUCT rather than a map is part
-// of the assertion: a response missing a field would leave it at its Go zero
-// value, which for chat_retention_days is 0 ("delete chats on close") and would be
-// caught by every case below that expects a real default.
+// getEffective issues GET /api/settings and decodes into the wire STRUCT: a missing field
+// would read as its zero value (0 retention days, "delete on close"), which the cases catch.
 func getEffective(t *testing.T, dir string) marotte.EffectiveSettings {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -59,13 +56,8 @@ func TestSettingsGet_AbsentFileServesEveryDefault(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_ResolvesDefaultsUnderStoredValues is the whole point of the
-// change: a stored file that names two keys must not make the other thirteen
-// absent from the response.
-//
-// Reverting the handler to echoing the file's bytes fails this on the first
-// unlisted field it checks — which is what the client used to have to paper over
-// with its own copies of these defaults.
+// TestSettingsGet_ResolvesDefaultsUnderStoredValues pins that a file naming two keys still
+// answers every other key at its default.
 func TestSettingsGet_ResolvesDefaultsUnderStoredValues(t *testing.T) {
 	dir := seedConfig(t, `{"chat_retention_days":-1,"theme":"dark"}`)
 	got := getEffective(t, dir)
@@ -77,9 +69,7 @@ func TestSettingsGet_ResolvesDefaultsUnderStoredValues(t *testing.T) {
 	if got.Theme != "dark" {
 		t.Errorf("theme = %q, want dark (the stored value)", got.Theme)
 	}
-	// Everything the file did not name is present and at its default. These three
-	// are the ones whose default is NOT the zero value, so they are the ones a
-	// client reading an absent key would have got wrong.
+	// The keys whose default is NOT the zero value.
 	if !got.KnowledgeEnabled {
 		t.Error("knowledge_enabled = false, want true: absent must not read as the zero value")
 	}
@@ -90,29 +80,21 @@ func TestSettingsGet_ResolvesDefaultsUnderStoredValues(t *testing.T) {
 	if got.NotifyPRStatus {
 		t.Error("notify_pr_status = true, want false: it is the one keyed kind that defaults OFF, because a pull request's CI verdict is already on the forge — the polarity is not uniform across the three")
 	}
-	// The seeded list is EMPTY and the FLOOR is what enforces anything, so what a
-	// client must never receive here is null: the wire field carries no omitempty,
-	// so nil marshals as null and the required string[] cannot decode one.
+	// Never null: the field has no omitempty and the client's required string[] cannot decode null.
 	if got.AgentIgnoreFiles == nil {
 		t.Error("agent_ignore_files is nil; it marshals as null and the client cannot decode it")
 	}
 	if len(got.AgentIgnoreFiles) != 0 {
 		t.Errorf("agent_ignore_files = %v, want it empty: a seeded entry filters reads nobody asked to filter", got.AgentIgnoreFiles)
 	}
-	// And the master switch really is off, so the assertion above is about polarity
-	// rather than about everything defaulting true.
+	// The master switch really is off, so the above is about polarity.
 	if got.NotificationsEnabled {
 		t.Error("notifications_enabled = true, want false")
 	}
 }
 
-// TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault is the finding the
-// adversarial review contributed: a complete response whose values were never
-// checked is not safer than a sparse one, it just moves where the wrong value
-// enters — and it moves it to the moment the client stops guarding.
-//
-// A hand-edited config.json is the realistic source. Each case stores a
-// well-formed JSON value of the wrong type for its field.
+// TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault pins that a well-typed-JSON value of
+// the wrong Go type yields the default (a hand-edited config.json).
 func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 	tests := []struct {
 		desc  string
@@ -141,8 +123,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 			desc: "a null, which encoding/json would otherwise accept as a no-op",
 			raw:  `{"chat_retention_days":null}`,
 			check: func(t *testing.T, got marotte.EffectiveSettings) {
-				// The trap: json.Unmarshal of null into an int succeeds and leaves the
-				// scratch at 0, so accepting it would persist "delete chats on close".
+				// null into an int succeeds and leaves 0 ("delete chats on close").
 				if got.ChatRetentionDays != settings.DefaultChatRetentionDays {
 					t.Errorf("chat_retention_days = %d, want the default %d; a stored null must not resolve to the zero value",
 						got.ChatRetentionDays, settings.DefaultChatRetentionDays)
@@ -156,22 +137,15 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 				if !slices.Equal(got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles()) {
 					t.Errorf("agent_ignore_files = %v, want the default %v", got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
 				}
-				// The default is EMPTY, so slices.Equal cannot tell it from nil —
-				// assign-on-success has to be checked on the nil axis or this case
-				// goes green with the discipline removed.
+				// The default is EMPTY, so check the nil axis or the case passes without the discipline.
 				if got.AgentIgnoreFiles == nil {
 					t.Error("agent_ignore_files is nil; the default must stand, and nil marshals as null")
 				}
 			},
 		},
 		{
-			// The element values are deliberately unlike the defaults. Measured: an
-			// in-place json.Unmarshal writes each element until it meets the bad one, so
-			// decoding ["zzz",7] over [".gitignore",".kiroignore"] leaves
-			// [zzz .kiroignore] — a MIXTURE of stored and default, which is worse than
-			// either. A fixture whose first element happened to equal the default would
-			// pass against that bug by coincidence, which an earlier version of this case
-			// did.
+			// An in-place decode of ["zzz",7] leaves [zzz .kiroignore], a MIXTURE; the fixture values
+			// differ from the defaults so that bug cannot pass by coincidence.
 			desc: "a partially-decodable list does not mix stored and default elements",
 			raw:  `{"agent_ignore_files":["zzz",7]}`,
 			check: func(t *testing.T, got marotte.EffectiveSettings) {
@@ -185,9 +159,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 			},
 		},
 		{
-			// Measured: unlike a scalar, a null decoded in place over a slice SETS IT TO
-			// NIL and returns no error, so accepting it would empty the ignore list
-			// silently — the same end state as the live bug this change fixes.
+			// A null decoded in place over a slice sets it to NIL with no error.
 			desc: "a null over a list does not wipe it",
 			raw:  `{"agent_ignore_files":null}`,
 			check: func(t *testing.T, got marotte.EffectiveSettings) {
@@ -195,9 +167,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 					t.Errorf("agent_ignore_files = %v, want the default %v; a stored null must not empty the list",
 						got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
 				}
-				// Nil is the ONLY axis this case has left: the default is empty, so a
-				// wiped list and the default compare equal. Removing errStoredNull
-				// leaves the field nil, which this catches and slices.Equal cannot.
+				// Nil is the only axis left: a wiped list and the empty default compare equal.
 				if got.AgentIgnoreFiles == nil {
 					t.Error("agent_ignore_files is nil; a stored null must be refused, not assigned")
 				}
@@ -211,9 +181,8 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_AWrongTypedValueIsReportedByKeyNotByValue pins the log contract.
-// A settings file can hold a token somebody pasted into the wrong field, and this
-// line goes to Loki, so the key is reportable and the value is not.
+// TestSettingsGet_AWrongTypedValueIsReportedByKeyNotByValue pins that the log names the key,
+// never the value.
 func TestSettingsGet_AWrongTypedValueIsReportedByKeyNotByValue(t *testing.T) {
 	const secret = "ghp_notarealtokenbutshapedlikeone"
 	logs := captureLogs(t)
@@ -228,14 +197,8 @@ func TestSettingsGet_AWrongTypedValueIsReportedByKeyNotByValue(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_AStoredNullIsReported is the reporting half, and it is the case
-// that a value assertion alone cannot see.
-//
-// Measured: json.Unmarshal of null into an int or a bool is a NO-OP returning a nil
-// error, so a null decoded in place leaves the default standing and reports
-// nothing. The value is then right by accident while the user who wrote that null
-// is told nothing about it. Refusing null explicitly is what makes it reportable,
-// so this test is what distinguishes the implementation from the shortcut.
+// TestSettingsGet_AStoredNullIsReported pins that a stored null is reported: decoding it in
+// place is a silent no-op.
 func TestSettingsGet_AStoredNullIsReported(t *testing.T) {
 	logs := captureLogs(t)
 	got := getEffective(t, seedConfig(t, `{"knowledge_enabled":null}`))
@@ -248,15 +211,8 @@ func TestSettingsGet_AStoredNullIsReported(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_FailsOpenOnAnUnreadableDocument is the read half of the
-// read-open/write-closed asymmetry.
-//
-// Each of these files makes the write path REFUSE (see
-// TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead, which asserts 500
-// for the same shapes). The read serves defaults instead, because this is a
-// dev-box container whose operator reshapes /config by hand and a surface that
-// shows nothing helps them less than one that shows the values in force. The
-// write's refusal is what protects the file.
+// TestSettingsGet_FailsOpenOnAnUnreadableDocument pins the read half of read-open/write-closed:
+// the shapes the write refuses are served as defaults here.
 func TestSettingsGet_FailsOpenOnAnUnreadableDocument(t *testing.T) {
 	tests := []struct {
 		desc string
@@ -332,8 +288,7 @@ func TestSettingsGet_FailsOpenOnAnUnreadableDocument(t *testing.T) {
 			if want := settings.EffectiveDefaults(); !effectiveEqual(got, want) {
 				t.Errorf("GET over %s = %+v, want the defaults", tc.desc, got)
 			}
-			// Serving defaults SILENTLY would be the bad version of failing open: the
-			// operator would see plausible values and no reason to look at the file.
+			// Not silently: the operator must be told to look at the file.
 			if !strings.Contains(logs.String(), "unreadable") {
 				t.Errorf("no warning logged for %s; failing open must say so:\n%s", tc.desc, logs.String())
 			}
@@ -341,14 +296,8 @@ func TestSettingsGet_FailsOpenOnAnUnreadableDocument(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_DoesNotBlockOnAFIFO is the GET's half of a guard the write path
-// already had. os.ReadFile, which this handler used to call, blocks in open(2) on
-// a FIFO with no deadline to rescue it, so one FIFO planted at config.json parked
-// the handler's goroutine for the life of the process. Sharing readStoredSettings
-// brings atomicfile.OpenRegular's refusal with it.
-//
-// Reverting the handler to os.ReadFile makes this test HANG rather than fail,
-// which is the failure mode worth knowing about.
+// TestSettingsGet_DoesNotBlockOnAFIFO pins OpenRegular's FIFO refusal on the GET. A revert
+// to os.ReadFile makes this HANG rather than fail.
 func TestSettingsGet_DoesNotBlockOnAFIFO(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, settings.Filename)
@@ -369,15 +318,8 @@ func TestSettingsGet_DoesNotBlockOnAFIFO(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys is the test the adversarial
-// review asked for, and it pins the claim that a complete RESPONSE does not become
-// a complete FILE.
-//
-// The mechanism it protects: PATCH merges against the stored document rather than
-// against whatever the client last read (mergeSettingsPatch), so the fifteen
-// defaults the GET now sends cannot be written back. If a future change routed the
-// write through the response instead, every default would materialise on disk and
-// a later change to any default would stop reaching existing installs.
+// TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys pins that a complete RESPONSE does not
+// become a complete FILE: PATCH merges against the stored document.
 func TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys(t *testing.T) {
 	dir := seedConfig(t, `{"theme":"dark"}`)
 	path := filepath.Join(dir, settings.Filename)
@@ -413,14 +355,8 @@ func TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic is a regression test for a
-// live defect found while designing this change.
-//
-// json.Unmarshal of the literal `null` into a map sets it to NIL and returns a nil
-// error, overriding the make() that preceded it. maps.Copy onto a nil map panics,
-// so a four-byte config.json made every settings write fail with an opaque 500
-// through webhttp.Recoverer. `[]` and `"str"` both error on their own; null was the
-// gap, and readStoredSettings now refuses it explicitly.
+// TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic pins the top-level `null` document:
+// it unmarshals to a nil map, and maps.Copy onto nil panicked into an opaque 500.
 func TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic(t *testing.T) {
 	dir := seedConfig(t, `null`)
 	path := filepath.Join(dir, settings.Filename)
@@ -428,12 +364,10 @@ func TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/settings", bytes.NewReader([]byte(`{"theme":"dark"}`)))
 	rec := httptest.NewRecorder()
-	// No recover() here on purpose: the panic this pins must not reach the
-	// middleware, so an unrecovered panic failing the test IS the assertion.
+	// No recover(): an unrecovered panic failing the test IS the assertion.
 	s.handleSettingsWrite(rec, req)
 
-	// The write REFUSES, because it cannot read what is stored and its next act
-	// would be a whole-file replace.
+	// The write REFUSES: it cannot read what is stored.
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("PATCH over a null document = %d, want 500 (refuse, do not overwrite)", rec.Code)
 	}
@@ -446,24 +380,14 @@ func TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestSettingsRoundTrip_RunOutcomeToggle is the HTTP rung the per-key unit tests
-// cannot reach on their own. Each of those pins one hop — the registry seeds the
-// preference, syncPushPreferences carries the key to SetPreferences, preflightSend
-// consults it — and a toggle can be wired at every hop and still not round-trip,
-// because GET and PATCH resolve the value through different code (EffectiveDefaults
-// under the stored document, against a merge onto that document).
-//
-// So this drives the whole sequence a user's click performs: read the default,
-// write the opposite, read it back, and confirm the file holds it. The push gate is
-// asserted in the same pass, because a value that persists without reaching the
-// service is a switch that changes only what the settings page displays.
+// TestSettingsRoundTrip_RunOutcomeToggle drives a click's whole sequence over HTTP (read the
+// default, write the opposite, read it back, check the file) plus the push gate, since GET
+// and PATCH resolve the value through different code.
 func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 	dir := seedConfig(t, "")
 	path := filepath.Join(dir, settings.Filename)
 
-	// A fresh volume answers the registry default, which is ON for every keyed
-	// kind. Asserted rather than assumed: the whole round trip below is a
-	// statement about moving OFF this value.
+	// A fresh volume answers the registry default (ON).
 	if !getEffective(t, dir).NotifyRunOutcome {
 		t.Fatal("GET on a fresh config dir = notify_run_outcome false, want true (the registry row is DefaultOn)")
 	}
@@ -478,8 +402,7 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 		t.Fatalf("PATCH notify_run_outcome=false = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 
-	// The gate, not just the key: preflightSend drops a kind whose preference is
-	// false, so this is the hop that makes the toggle silence anything.
+	// The gate: preflightSend drops a kind whose preference is false.
 	if on, known := mp.prefs[marotte.PushKindRunOutcome]; !known || on {
 		t.Errorf("prefs[run_outcome] = (%v, known=%v) after the patch, want (false, true)", on, known)
 	}
@@ -503,7 +426,7 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 			settings.KeyNotifyRunOutcome, got, raw)
 	}
 
-	// Back on, so the test cannot pass by the key being stuck at one value.
+	// Back on, so a key stuck at one value cannot pass.
 	req = httptest.NewRequest(http.MethodPatch, "/api/settings",
 		bytes.NewReader([]byte(`{"notify_run_outcome":true}`)))
 	rec = httptest.NewRecorder()
@@ -519,14 +442,8 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 	}
 }
 
-// effectiveEqual compares two views over EVERY field, including any added later —
-// which is why it is one DeepEqual rather than a written-out list that would need
-// maintaining in step with the struct.
-//
-// DeepEqual is safe here because this package owns the type (no unexported fields,
-// no dependency's struct), and the one normalisation it needs is the slice: an
-// empty agent_ignore_files decoded from `[]` and a nil one from an absent key both
-// mean "no patterns", and DeepEqual would call them different.
+// effectiveEqual compares two views over EVERY field with one DeepEqual (this package owns
+// the type), normalising an empty agent_ignore_files to nil.
 func effectiveEqual(a, b marotte.EffectiveSettings) bool {
 	if len(a.AgentIgnoreFiles) == 0 {
 		a.AgentIgnoreFiles = nil

@@ -1,6 +1,3 @@
-// Unit tests for code-blocks.ts: the isRunnableShell predicate, the language
-// label the title bar prints, and the two-state decoration (a fence still
-// streaming vs. one that closed).
 import { describe, it, expect, vi } from "vitest";
 import {
   isRunnableShell,
@@ -36,8 +33,7 @@ describe("isRunnableShell", () => {
       text: "#!/usr/bin/env bash\nls",
       expected: false,
     },
-    // Any embedded terminator is a refusal: send() writes raw bytes, so the
-    // newline executes the line before it the moment the PTY reads it.
+    // Any embedded terminator is a refusal: send() writes raw bytes, so a newline executes the line before it.
     { name: "4-line script rejected", lang: "bash", text: "a\nb\nc\nd", expected: false },
     { name: "3-line script rejected", lang: "bash", text: "a\nb\nc", expected: false },
     { name: "2-line block rejected", lang: "bash", text: "cd /tmp\nls -la", expected: false },
@@ -71,8 +67,7 @@ describe("isRunnableShell", () => {
       text: "echo hi\r\n",
       expected: true,
     },
-    // The four-word denylist is GONE: nothing executes until a keystroke, so
-    // the words gated nothing Enter does not already gate.
+    // No word denylist: nothing executes until a keystroke.
     { name: "sudo command offered", lang: "bash", text: "sudo apt install foo", expected: true },
     { name: "ssh command offered", lang: "bash", text: "ssh user@host", expected: true },
     { name: "scp command offered", lang: "bash", text: "scp file.txt host:/tmp/", expected: true },
@@ -93,9 +88,7 @@ describe("isRunnableShell", () => {
 });
 
 describe("extractLang", () => {
-  // Two channels, and only the second is live on the markdown path: the
-  // renderer sets a bare `code` class on the <pre> and `language-<tag>` on the
-  // <code>. The <pre> channel is kept for callers that pass a lang there.
+  // The markdown renderer puts `language-<tag>` on the <code>; the <pre> channel serves callers that pass it there.
   const cases: { name: string; pre: string; code: string | null; want: string }[] = [
     { name: "the code element's language- class", pre: "code", code: "language-go", want: "go" },
     { name: "the pre element's own class", pre: "code python", code: null, want: "python" },
@@ -131,7 +124,6 @@ describe("extractLang", () => {
   }
 });
 
-/** A rendered code block as smd-renderer builds it. */
 function fixture(lang: string, text: string): { root: HTMLElement; pre: HTMLElement } {
   const root = document.createElement("div");
   const pre = document.createElement("pre");
@@ -158,8 +150,7 @@ describe("decorateCodeBlocks: the title bar", () => {
   });
 
   it("prints an unrecognised fence tag verbatim rather than dropping it", () => {
-    // The label is the author's tag; highlight.ts's normalizeLang decides
-    // HIGHLIGHTING and has no display-name map to consult.
+    // The label is the author's tag; `normalizeLang` decides highlighting only.
     const { root } = fixture("brainfuck", "++++");
     decorateCodeBlocks(root);
     expect(root.querySelector(".code-lang")?.textContent).toBe("brainfuck");
@@ -220,8 +211,7 @@ describe("decorateCodeBlocks: the title bar", () => {
 
 describe("decorateStreamingCodeTail: a fence that has not closed", () => {
   it("gives the open block its bar and its Copy button", () => {
-    // The renderer's per-block callback only fires on CLOSE, so without this
-    // sweep a streaming block has no language, no Copy and no wrapper at all.
+    // The renderer's per-block callback fires only on close, so without this sweep a streaming block has no chrome.
     const { root } = fixture("go", "func main() {");
     decorateStreamingCodeTail(root);
     expect(root.querySelector(".code-wrap")?.getAttribute("data-code-state")).toBe("streaming");
@@ -232,7 +222,7 @@ describe("decorateStreamingCodeTail: a fence that has not closed", () => {
   it("withholds highlighting and Run while the text is still growing", () => {
     const { root } = fixture("bash", "echo hi");
     decorateStreamingCodeTail(root);
-    // No Run: an incomplete command is the one that must not reach a shell.
+    // No Run: an incomplete command must not reach a shell.
     expect(root.querySelectorAll(".code-act-btn")).toHaveLength(1);
     expect(root.querySelector("code")?.children).toHaveLength(0);
   });
@@ -247,8 +237,7 @@ describe("decorateStreamingCodeTail: a fence that has not closed", () => {
   });
 
   it("leaves a block that already closed alone", () => {
-    // The close callback runs during the parse slice, so the tail sweep right
-    // after it sees the just-finalized block as "last".
+    // The close callback runs inside the parse slice, so the tail sweep after it sees the just-finalized block as last.
     const { root } = fixture("bash", "echo hi");
     decorateCodeBlocks(root);
     decorateStreamingCodeTail(root);
@@ -261,7 +250,6 @@ describe("decorateStreamingCodeTail: a fence that has not closed", () => {
     setCopyCallback((t) => copied.push(t));
     const { root } = fixture("go", "func main() {");
     decorateStreamingCodeTail(root);
-    // More of the block arrives, exactly as the parser appends it.
     const code = root.querySelector("code");
     code?.appendChild(document.createTextNode("\n\tprintln()\n}"));
     root.querySelector<HTMLButtonElement>(".code-act-btn")?.click();

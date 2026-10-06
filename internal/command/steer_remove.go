@@ -24,7 +24,8 @@ const steerRemoveBudget = 30 * time.Second
 
 // ResendBridgeWait bounds the wait for a dead bridge's frames to fold before its
 // unread steers are resent: a resend admitted earlier would reach the dying process.
-const ResendBridgeWait = 10 * time.Second
+// A var only so tests can shorten it.
+var ResendBridgeWait = 10 * time.Second
 
 var (
 	errSteerRemoveNotWaiting = errors.New("that message is no longer waiting, because the agent has read it or the turn ended")
@@ -73,12 +74,7 @@ func CmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 	if err != nil {
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
-	handedOff := false
-	defer func() {
-		if !handedOff {
-			unlock()
-		}
-	}()
+	defer unlock()
 	opID := ids.NewMessageID()
 	needsClear, refuse := roles.queue.BeginRemove(cmd.ChatID, p.SteerID, opID)
 	if refuse != "" {
@@ -89,7 +85,7 @@ func CmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 	}
 	rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)
 	defer cancel()
-	defer func() { handedOff = endSteerOp(ctx, roles, cmd.ChatID, opID, unlock) }()
+	defer endSteerOp(ctx, roles, cmd.ChatID, opID)
 	cleared, landed := clearSteerBuffer(rpcCtx, roles, cmd.ChatID)
 	res := roles.queue.RemoveCleared(cmd.ChatID, opID, cleared, landed)
 	if res.Reason != "" && res.Reason != SteerRefuseConsumed {
@@ -110,29 +106,20 @@ func removed(key string) map[string]any {
 	return responseWith(map[string]any{"deleted": key})
 }
 
-// endSteerOp ends an op that marked rows, still under the steer lock. A turn that
-// closed under it is resolved with its rows still the op's, on a goroutine that takes
-// over unlock and answers true, so the command replies without waiting out the
-// resend's admission. It runs on a turn context like runSteerJobs', not the op's RPC
-// budget, which the clear and the resend may already have spent.
-func endSteerOp(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, opID string, unlock func()) bool {
-	end := roles.queue.EndOp(chatID, opID)
-	if end == nil {
-		return false
-	}
-	roles.lifecycle.InflightAdd(1)
-	go func() {
-		defer roles.lifecycle.InflightDone()
-		defer unlock()
+// endSteerOp ends an op that marked rows, still under the steer lock. A stale bind
+// that ended the op's channel settled its rows, and they are routed here before
+// the lock is released; a close's rows wait for that close's pipeline. The route
+// runs on a turn context, not the op's RPC budget, which the clear may have spent.
+func endSteerOp(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, opID string) {
+	if roles.queue.EndOp(chatID, opID) {
 		tctx, cancel := roles.lifecycle.TurnContext(ctx)
 		defer cancel()
-		resolveTurnEnd(tctx, roles, chatID, opID, end)
-	}()
-	return true
+		routeIntoStartedPrompt(tctx, roles, chatID)
+	}
 }
 
-// runSteerJobs runs each job on its own goroutine under the chat's steer lock: the
-// record hands them out from a fold, which must never wait on a command.
+// runSteerJobs runs each flush on its own goroutine under the chat's steer lock:
+// the record hands them out from a fold, which must never wait on a command.
 func runSteerJobs(roles *promptRoles) func(SteerJob) {
 	return func(job SteerJob) {
 		roles.lifecycle.InflightAdd(1)
@@ -145,11 +132,8 @@ func runSteerJobs(roles *promptRoles) func(SteerJob) {
 				return
 			}
 			defer unlock()
-			if job.End == nil {
-				flushSteers(ctx, roles, job.Chat)
-				return
-			}
-			resolveTurnEnd(ctx, roles, job.Chat, job.Owner, job.End)
+			flushSteers(ctx, roles, job.Chat)
+			routeIntoStartedPrompt(ctx, roles, job.Chat)
 		}()
 	}
 }
@@ -160,91 +144,110 @@ func flushSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID)
 	})
 }
 
-// resolveTurnEnd resends a turn's unread rows together, in order, as the next
-// prompt. A dead bridge is waited out first, or a resend would reach the dying
-// process; the closing prompt still holds admission until its own reply.
-func resolveTurnEnd(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, owner string, end *SteerTurnEnd) {
-	rows, gone := roles.jobs.JobRows(chatID, owner, end.Lead)
-	if gone || len(rows) == 0 {
-		return
-	}
-	if end.BridgeDeath && end.Exit != nil {
-		select {
-		case <-end.Exit:
-		case <-time.After(ResendBridgeWait):
-			slog.Warn("steer resend: the dead bridge did not drain; the rows wait for the next prompt", "chat_id", chatID)
-			roles.jobs.Unsent(chatID, owner)
-			return
-		case <-ctx.Done():
-			roles.jobs.Unsent(chatID, owner)
-			return
-		}
-	}
-	if roles.admission.ReserveTurnForPrompt(ctx, chatID, AdmissionWait) != AdmissionAcquired {
-		rerouteRows(ctx, roles, chatID, owner, rows)
-		return
-	}
-	settleStrays(ctx, roles, chatID, owner, end, rows)
-	resendRows(ctx, roles, chatID, owner, end)
+// EndFacts is what resolving a chat's pending ends learned about bridge deaths:
+// Death when a death end was resolved, Undrained when its forwarder never drained.
+type EndFacts struct {
+	Death     bool
+	Undrained bool
 }
 
-// settleStrays: a row still in KAS when its turn closed was sent after the turn's
-// own clear. Resending one KAS still holds would deliver it twice, so a dead buffer
-// and a clear's reply are the only proofs it is gone.
-func settleStrays(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, owner string, end *SteerTurnEnd, rows []SteerRow) {
+// ResolveEnds settles every pending turn end whose turn opened at or before upTo,
+// oldest first, leaving each end's rows unsent and unowned. A newer close's end is
+// left for that close. The caller holds the steer lock; nothing is written to any
+// store, so resolving cannot fail.
+func ResolveEnds(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, upTo uint64) EndFacts {
+	var facts EndFacts
+	for _, e := range roles.jobs.Ends(chatID) {
+		if e.End.TurnSeq > upTo {
+			continue
+		}
+		rows, gone := roles.jobs.JobRows(chatID, e.Owner)
+		if gone {
+			return facts
+		}
+		switch {
+		case len(rows) == 0:
+		case e.End.BridgeDeath:
+			facts.Death = true
+			if !awaitForwarder(ctx, e.End.Exit) {
+				facts.Undrained = true
+				slog.Warn("steer resend: the dead bridge did not drain; the rows wait for the next prompt's clear",
+					"chat_id", chatID)
+			}
+			// A dead buffer holds nothing; KAS's own re-injection is the post-load
+			// clear's to decide.
+			roles.jobs.StraysCleared(chatID, e.Owner, nil, true)
+		default:
+			settleStrays(ctx, roles, chatID, e.Owner, rows)
+		}
+		roles.jobs.EndUnsent(chatID, e.Owner)
+	}
+	return facts
+}
+
+// awaitForwarder waits for a dead bridge's forward goroutine, bounded by
+// ResendBridgeWait and ctx. The old forwarder's folds take the record mutex, never
+// the steer lock, so the wait cannot deadlock on them.
+func awaitForwarder(ctx context.Context, exit <-chan struct{}) bool {
+	if exit == nil {
+		return true
+	}
+	timer := time.NewTimer(ResendBridgeWait)
+	defer timer.Stop()
+	select {
+	case <-exit:
+		return true
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// settleStrays handles a row still in KAS when its turn closed: resending one KAS still holds would
+// deliver it twice, so only a landed clear proves it gone. An admission holder (whose fresh cursor
+// may read it) or a waiting agent row (a clear drops it with no re-wake) releases the strays where
+// they are.
+func settleStrays(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, owner string, rows []SteerRow) {
 	stray := false
 	for _, r := range rows {
 		stray = stray || r.InKAS
 	}
-	switch {
-	case !stray:
-	case end.BridgeDeath:
-		roles.jobs.StraysCleared(chatID, owner, nil, true)
-	case roles.jobs.AgentRowsWaiting(chatID):
-		// A clear would drop an agent row with no re-wake; the next prompt's fresh
-		// cursor reads the strays where they are.
+	if !stray {
+		return
+	}
+	if _, held := roles.admission.AdmissionHolderSource(chatID); held || roles.jobs.AgentRowsWaiting(chatID) {
 		roles.jobs.Release(chatID, owner, true)
-	default:
-		if _, landed := clearSteerBuffer(ctx, roles, chatID); landed {
-			roles.jobs.StraysCleared(chatID, owner, nil, true)
-		} else {
-			roles.jobs.Release(chatID, owner, true)
-		}
+		return
+	}
+	if _, landed := clearSteerBuffer(ctx, roles, chatID); landed {
+		roles.jobs.StraysCleared(chatID, owner, nil, true)
+	} else {
+		roles.jobs.Release(chatID, owner, true)
 	}
 }
 
-// rerouteRows: a prompt the user sent takes the rows as its steers, its fresh cursor
-// reading the ones KAS holds; any other holder leaves them unsent.
-func rerouteRows(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, owner string, rows []SteerRow) {
-	source, held := roles.admission.AdmissionHolderSource(chatID)
-	if !held || !source.PromptClass() {
-		roles.jobs.Unsent(chatID, owner)
+// routeIntoStartedPrompt sends the chat's unread rows into the prompt turn that
+// holds admission, once that turn may be past its own delivery point. A prompt
+// that has not started is left alone: its own deliverParkedSteers takes them. The
+// caller holds the steer lock.
+func routeIntoStartedPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) {
+	turnID, ok := roles.admission.PromptHolder(chatID)
+	if !ok || roles.jobs.NeedsPostLoadClear(chatID) {
 		return
 	}
-	roles.jobs.Release(chatID, owner, false)
-	for _, r := range rows {
-		if r.InKAS {
-			continue
-		}
-		if refuse, _ := steerOne(ctx, roles, chatID, r.Key, r.Text, false); refuse != "" {
-			slog.Info("steer resend: a row waits for the next prompt", "chat_id", chatID, "reason", refuse)
-		}
-	}
+	deliverUnread(ctx, roles, chatID, turnID)
 }
 
-// resendRows keeps the rows in custody until their prompt has opened, so a refused
-// open leaves them unsent rather than lost.
-func resendRows(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, owner string, end *SteerTurnEnd) {
-	keys, text := roles.jobs.Resent(chatID, owner, end.Lead)
-	if len(keys) == 0 {
-		roles.admission.ReleaseTurnReservation(chatID)
-		return
+// resolveAfterClose is a close pipeline's first step: resolve the closed turn's
+// ends and older ones, then route what that left unsent into a started prompt.
+func resolveAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence) EndFacts {
+	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
+	if err != nil {
+		return EndFacts{}
 	}
-	p := &marotte.PromptCommand{Text: text, MessageID: ids.NewMessageID()}
-	if err := launchPrompt(ctx, roles, chatID, p, keys, false); err != nil {
-		slog.Warn("steer resend: the prompt could not open; the rows wait unsent", "chat_id", chatID, keyError, err)
-		roles.jobs.Unsent(chatID, owner)
-		return
-	}
-	roles.jobs.Delivered(chatID, owner)
+	defer unlock()
+	facts := ResolveEnds(ctx, roles, chatID, fence.Seq)
+	routeIntoStartedPrompt(ctx, roles, chatID)
+	return facts
 }

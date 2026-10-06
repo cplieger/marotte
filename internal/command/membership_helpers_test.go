@@ -1,15 +1,5 @@
 package command
 
-// Test construction for the membership coordinator.
-//
-// Two shapes, because the two halves of the coordinator are independently
-// interesting. Most command tests care only about the CHAT half — what a create
-// writes, what a refusal leaves behind — and get a coordinator with no tab store,
-// which is the same unwired state a build with no config dir has. The tests that
-// are about MEMBERSHIP get a real tabs.Store over a temp dir, because the
-// ordering, the versions and the events are what they assert and a fake store
-// would be asserting against the fake.
-
 import (
 	"context"
 	"sync"
@@ -19,25 +9,15 @@ import (
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
-// newTestMembership builds a coordinator over a chat store and NO tab store.
-//
-// Bus, Teardown and CloseChat are deliberately absent: a coordinator with no bus
-// emits nothing (which these tests do not read) and the two teardown seams are
-// only reached by the delete and close paths, which have their own tests with
-// their own doubles. Leaving them nil is what keeps this helper from being a
-// second wiring table to maintain.
+// newTestMembership builds a coordinator over a chat store and NO tab store, bus or teardown seams,
+// for tests of the chat half.
 func newTestMembership(t *testing.T, chats ChatStore) *Membership {
 	t.Helper()
 	return NewMembership(&MembershipDeps{Chats: chats})
 }
 
-// newTabbedMembership builds a coordinator over a chat store and a REAL tab store
-// in a temp dir, plus a recording bus.
-//
-// The real store rather than a fake, because every property these tests assert —
-// the version a mutation produced, the order it left behind, one event per
-// committed mutation — is the store's own behaviour under the coordinator's lock.
-// A fake would let both sides agree while being wrong together.
+// newTabbedMembership builds a coordinator over a chat store, a REAL tab store in a temp dir and a
+// recording bus, because the version, order and frames asserted are the real store's.
 func newTabbedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store, *tabBus) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
@@ -63,13 +43,8 @@ func newTornDownMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.St
 	return mem, st, bus, td
 }
 
-// tabBus records the tabs_changed frames a coordinator emitted, under its own
-// mutex.
-//
-// A second recording bus beside capturingBus rather than reusing it, for one
-// reason: these tests run under -race with several goroutines mutating one
-// coordinator, and capturingBus appends without a lock. A shared double that is
-// only safe for some of its users is worse than two.
+// tabBus records the tabs_changed frames a coordinator emitted, under its own mutex for the -race
+// tests.
 type tabBus struct {
 	events []marotte.ServerEvent
 	mu     sync.Mutex

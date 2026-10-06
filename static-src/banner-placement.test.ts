@@ -1,29 +1,8 @@
-// Structural and GEOMETRIC guard for the banner band's placement.
-//
-// A banner has to be CLICKABLE, and two elements take its clicks away if it is
-// put back where it used to be.
-//
-//   1. `#messages-wrap` is `position: absolute; inset: 0` inside
-//      `#messages-wrap-outer` (13-messages.css). A banner inside that wrapper is
-//      painted under the full-box scroller, so it reads fine and answers no
-//      pointer event. That is how the `agent_config_error` banner shipped an
-//      "Open custom instructions" button nobody could press.
-//   2. The band is out of flow and PRECEDES the transcript in DOM order, so two
-//      positioned `z-index: auto` boxes paint in that order and the transcript
-//      covers it. An explicit `z-index` is what keeps it reachable.
-//
-// A THIRD defect used to live here and is now structurally unreachable: the
-// toolbar was a floating pill anchored to the same top corner, opaque, at
-// z-index 10, so the band shared its row and had to dodge its measured width.
-// The bar is in flow and full width now (12-chat.css), which puts it ABOVE this
-// band in the flex column — nothing to overlap and nothing to measure.
-//
-// The band's position is the contract, so most of this reads RENDERED GEOMETRY
-// rather than CSS text: a substring assertion cannot tell a band level with the
-// toolbar from one 2px under it, and it goes green on a rule the cascade
-// overrides. `mountAppCSS` assembles the stylesheet from `css/MANIFEST` in
-// declared order, the way `cmd/bundle` concatenates it, because equal-specificity
-// ties in this app are decided by that order rather than by the selectors.
+// The banner band's placement must keep it CLICKABLE. Inside `#messages-wrap` (absolute,
+// inset 0) it would paint under the scroller and answer no pointer; out of flow and before
+// the transcript in DOM order, it needs an explicit `z-index`. Read as RENDERED GEOMETRY,
+// with `mountAppCSS` assembling `css/MANIFEST` in `cmd/bundle`'s order, because
+// equal-specificity ties are decided by that order.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import indexHtml from "../static/index.html?raw";
@@ -59,9 +38,10 @@ describe("the banner band sits under the title bar", () => {
   let wrapOuter: HTMLElement;
   let banner: HTMLElement;
 
-  /** The real ancestor chain, because every rule under test is scoped to it: the
-   *  band's containing block is `#chat-area` (`position: relative`; `#chat-view`
-   *  sets none), and `[data-tab-view]` is what makes `#chat-view` a flex column. */
+  /**
+   * The real ancestor chain: the band's containing block is `#chat-area`, and
+   * `[data-tab-view]` makes `#chat-view` a flex column.
+   */
   beforeAll(() => {
     styleEl = mountAppCSS();
 
@@ -97,11 +77,8 @@ describe("the banner band sits under the title bar", () => {
   });
 
   it("starts at or below the bar's bottom edge, so neither can cover the other", () => {
-    // The bar is a flex child of `#chat-area` and the band's containing block is
-    // that same element, so an overlap here would mean the bar had gone back out
-    // of flow. Both axes are covered by this one assertion: below the bar's
-    // bottom, horizontal position cannot overlap it at all, which is why the old
-    // width-dodging assertion is gone rather than relaxed.
+    // The bar is a flex child of the band's containing block, so an overlap means it left
+    // flow. Below the bar's bottom, horizontal position cannot overlap at all.
     expect(band.getBoundingClientRect().top).toBeGreaterThanOrEqual(
       toolbar.getBoundingClientRect().bottom - 0.5,
     );
@@ -114,10 +91,8 @@ describe("the banner band sits under the title bar", () => {
   });
 
   it("reserves no flow space, so a banner reveals no canvas above the transcript", () => {
-    // THE Q2 CONTRACT. In flow the band's `margin-block-start` shrank the
-    // transcript by 60px plus its own height, and the region it vacated painted
-    // the `body` canvas — read as a hard box from the top of the viewport down
-    // past the banner. An overlay moves nothing.
+    // An overlay moves nothing; in flow, the band's margin shrank the transcript and exposed
+    // the `body` canvas.
     const outerTop = wrapOuter.getBoundingClientRect().top;
     const viewTop = app.querySelector<HTMLElement>("#chat-view")!.getBoundingClientRect().top;
     expect(outerTop).toBeCloseTo(viewTop, 1);
@@ -130,11 +105,8 @@ describe("the banner band sits under the title bar", () => {
   });
 
   it("stacks above the transcript", () => {
-    // Out of flow it precedes `#messages-wrap-outer` in DOM order, and two
-    // positioned `z-index: auto` boxes paint in that order — so an explicit
-    // z-index is what stops the transcript covering it. There is no upper bound
-    // to assert any more: the bar carries no z-index at all now, because a bar in
-    // flow has nothing to sit above.
+    // Out of flow before `#messages-wrap-outer`, two `z-index: auto` boxes paint in DOM order,
+    // so an explicit z-index keeps the transcript off it.
     const bandZ = Number(getComputedStyle(band).zIndex);
     expect(Number.isNaN(bandZ), "the band needs an explicit z-index, not `auto`").toBe(false);
     expect(bandZ).toBeGreaterThan(0);
@@ -164,10 +136,7 @@ describe("--chat-toolbar-h is the toolbar's real box height", () => {
   });
 
   it("resolves to what the toolbar actually measures", () => {
-    // MEASURED rather than string-matched, which is what makes this catch the
-    // defect the old assertion could not see: the offset that reads this token
-    // omitted the toolbar's 1px borders, so the `--sp-2` gap it claims was 6px.
-    // A dropped term, a stale `--btn-h` or a padding change all fail here.
+    // Measured, not string-matched: the offset must account for the toolbar's 1px borders.
     const probe = document.createElement("div");
     probe.style.blockSize = "var(--chat-toolbar-h)";
     app.appendChild(probe);
@@ -182,10 +151,8 @@ describe("--chat-toolbar-h is the toolbar's real box height", () => {
 
 describe("the banner band on a phone", () => {
   it("returns to the flow", () => {
-    // The one rule the fixed 1280px test viewport cannot reach, so it is read off
-    // the CSSOM rather than rendered. This is about viewport HEIGHT rather than
-    // about the bar: on a short screen an overlay would sit on top of the live
-    // turn, so the band takes flow space instead.
+    // Read off the CSSOM: the 1280px test viewport cannot reach it. On a short screen an
+    // overlay would cover the live turn, so the band takes flow space.
     const media = messagesCss.match(/@media \(width <= 48rem\) \{\s*\.banner-stack \{([^}]*)\}/);
     expect(media, "13-messages.css must carry the band's own <=48rem block").not.toBeNull();
     expect(media?.[1]).toContain("position: static");

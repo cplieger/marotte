@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// recordingPresence is the table as the runtime feeds it, recording what arrived.
+// recordingPresence records what reached the table.
 type recordingPresence struct {
 	mu     sync.Mutex
 	events []sse.PresenceEvent
@@ -105,8 +105,7 @@ func TestHandleAlive_RefusesAnAbsentOrMalformedTag(t *testing.T) {
 	}
 }
 
-// A runtime wired without a table still answers the route: the receipt is dropped
-// and the client sees ok, which is the fail-open direction.
+// A runtime with no table still answers ok and drops the receipt: fail-open.
 func TestHandleAlive_WithoutATableAcceptsAndDrops(t *testing.T) {
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -115,15 +114,13 @@ func TestHandleAlive_WithoutATableAcceptsAndDrops(t *testing.T) {
 	}
 }
 
-// The hub's presence hook reaches the wired table with the tag the connect
-// presented: one connected and one disconnected per served connection.
+// The presence hook reaches the table with the connect's tag: one connected and one disconnected per connection.
 func TestPresenceHook_ForwardsConnectAndDisconnectWithTheTag(t *testing.T) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	table := &recordingPresence{}
 	h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs, WithPresence(table))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 
 	ctx := hookOnlyContext(t)

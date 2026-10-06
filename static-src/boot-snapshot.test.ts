@@ -1,10 +1,6 @@
-// The boot snapshot: a bounded projection of what this screen was showing, held in
-// IndexedDB so a resume paints before the network answers. Two properties carry the
-// design and both are asserted against REAL IndexedDB and the REAL store: a record that
-// does not decode is rejected without throwing, and what it paints is superseded by the
-// server's answer rather than competing with it. `tabs.js` is the one mocked collaborator,
-// because its import graph reaches the DOM strip and what matters here is which subjects
-// the snapshot hands it.
+// The boot snapshot, against REAL IndexedDB and the REAL store: an undecodable record is
+// rejected without throwing, and what it paints is superseded by the server's answer.
+// `tabs.js` alone is mocked: its graph reaches the DOM strip.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Session, TabSubject } from "./types.js";
@@ -195,10 +191,10 @@ function snapChat(
   return Object.assign(base, over);
 }
 
-/** A chat row for a PLANTED record, typed as the decoder sees it: `unknown`. The builder
- *  above cannot serve these cases, because the shape they exist to test is one the type
- *  refuses — and a fixture asserted into the shape it is about to be checked against is
- *  what makes a boundary test vacuous. */
+/**
+ * A chat row for a PLANTED record, typed `unknown` as the decoder sees it: a fixture typed
+ * into the shape under test would make the boundary test vacuous.
+ */
 function rawChat(id: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
@@ -216,9 +212,10 @@ function span(i: number): TextSpan {
   return { start: i, end: i + 1, fg: 1, bg: -1, attrs: 0 };
 }
 
-/** The module's own object store, opened separately so a test can plant a record the
- *  module would never write. Two connections are safe: the version never changes, so
- *  neither blocks the other. */
+/**
+ * The module's object store, opened separately to plant records; the version never
+ * changes, so two connections never block.
+ */
 async function withStore<T>(
   mode: IDBTransactionMode,
   fn: (store: IDBObjectStore) => IDBRequest,
@@ -292,9 +289,7 @@ describe("readBootSnapshot", () => {
   });
 
   it("rejects the WHOLE record for one undecodable entry", async () => {
-    // STRICT, unlike the window decoder on the network path: one undecodable entry there
-    // costs that entry and the range read fills the gap, while a dropped entry here would
-    // leave a `seq` hole in a hint nothing repairs.
+    // STRICT: a dropped entry would leave a `seq` hole in a hint nothing repairs.
     await plantRecord({
       tabs: [chatTab("t1", "c1")],
       chats: [snapChat("c1")],
@@ -311,18 +306,15 @@ describe("readBootSnapshot", () => {
   });
 
   it("refuses a record carrying no window field at all", async () => {
-    // `null` is the value for "no chat was active"; ABSENT is a foreign record, and it
-    // rejects like any other missing required field — which is what makes the first boot
-    // after this shape ships paint nothing rather than paint half a record.
+    // `null` means no chat was active; ABSENT is a foreign record and rejects, painting nothing.
     await plantRecord({ tabs: [chatTab("t1", "c1")], chats: [snapChat("c1")] });
 
     expect(await readBootSnapshot()).toBeNull();
   });
 
   it("reads an outcome the vocabulary does not name as ABSENT, not as a rejection", async () => {
-    // A member the generated union gains later must cost this record nothing: every other
-    // field is intact, so refusing the whole thing would leave a build older than the
-    // server's painting no first frame at all.
+    // A union member added later costs nothing: refusing would leave an older build with no
+    // first frame.
     await plantRecord({
       tabs: [chatTab("t1", "c1")],
       chats: [rawChat("c1", { last_turn_outcome: "reticulated", updated_at: 5 })],
@@ -337,9 +329,7 @@ describe("readBootSnapshot", () => {
   });
 
   it("reads a non-numeric updated_at as ABSENT rather than carrying it", async () => {
-    // The tolerant reader's ONE rule covers a wrong TYPE as well as a value the vocabulary
-    // does not name, and the field it feeds is spent as epoch millis by `relativeTime` — so
-    // a string reaching the row renders an age of NaN on the dot's tooltip.
+    // One rule covers a wrong TYPE too; `relativeTime` would render NaN from a string.
     await plantRecord({
       tabs: [chatTab("t1", "c1")],
       chats: [rawChat("c1", { last_turn_outcome: "completed", updated_at: "yesterday" })],
@@ -417,10 +407,8 @@ describe("the capture", () => {
     const win = capturedWindow();
 
     expect(win.entries).toHaveLength(MAX_ENTRIES);
-    // A PREFIX from `turn_open`, not a tail: `TurnState`'s invariant is
-    // `entries[i].seq === i`, so a tail cannot be seated at all, where a prefix is a card
-    // with its own header and a short body — and its header is what carries the turn's
-    // own ordinal, so the card is numbered without the record stating a base.
+    // A PREFIX from `turn_open` (`entries[i].seq === i` cannot seat a tail), whose header
+    // carries the turn's ordinal.
     expect(win.entries.map((e) => e.seq)).toEqual([...Array(MAX_ENTRIES).keys()]);
     expect(win.entries[0]?.kind).toBe("turn_open");
     expect(carriedIDs(win)).not.toContain("turn-1-e99");
@@ -445,10 +433,8 @@ describe("the capture", () => {
 
   it("drops WHOLE turns when the newest three do not fit", () => {
     oneOpenChat();
-    // 50 + 20 + 15 entries against the 80-entry cap. The two newest fit (35); adding the
-    // oldest would not, so all 50 of it go. The sizes are uneven on purpose: with three
-    // equal turns a tail slice of the flattened list lands on a turn boundary and both
-    // rules agree.
+    // 50 + 20 + 15 against the 80-entry cap: the two newest fit, the oldest goes whole. Uneven
+    // so a flat tail slice would disagree.
     for (const [n, size] of [
       [1, 50],
       [2, 20],
@@ -498,9 +484,7 @@ describe("the capture", () => {
     await clearBootSnapshot();
     expect(await readBootSnapshot()).toBeNull();
 
-    // And nothing writes it back: a login screen must not re-capture the workspace it is
-    // covering. `setActive` is one of the three reads the capture watches, so a live effect
-    // would schedule a write here.
+    // Nothing writes it back: a login screen must not re-capture what it covers.
     setActive("c1");
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await readBootSnapshot()).toBeNull();
@@ -512,9 +496,7 @@ describe("the capture", () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     await clearBootSnapshot();
-    // The last event a backgrounded PWA gets. It flushes the projection, which is exactly
-    // what must NOT happen once the user has signed out: the rows are still in the store,
-    // so a live listener would write the record straight back.
+    // The last event a backgrounded PWA gets; after sign-out it must not flush the record back.
     dispatchEvent(new Event("pagehide"));
     await vi.advanceTimersByTimeAsync(0);
 
@@ -540,11 +522,7 @@ describe("the capture", () => {
   });
 });
 
-// The BYTE bound, which is the one the count bound cannot stand in for: this record was
-// measured at 1,778,339 bytes over SEVEN messages on the live instance, 207 tool calls in
-// one of them. It is written on every quiet gap and read plus parsed before the first frame
-// of every boot, and on WebKit that storage is owned by the process that also owns the
-// page's sockets — so the size is a reload, not a slow write.
+// The BYTE bound, which a count bound cannot stand in for (see SNAPSHOT_MAX_BYTES).
 describe("the record's byte budget", () => {
   it("keeps a megabyte turn's record inside the budget", () => {
     oneOpenChat();
@@ -564,9 +542,8 @@ describe("the record's byte budget", () => {
 
   it("refuses an older turn the running total cannot afford", () => {
     oneOpenChat();
-    // TWO turns of ordinary prose, each of which fits on its own, so only a budget carried
-    // ACROSS turns can refuse the older one. 80 entries in total, which is exactly the
-    // entry cap — so the count bound admits both and the bytes are what refuse.
+    // Two prose turns totalling exactly the entry cap, so only the cross-turn byte budget
+    // refuses the older.
     for (const [n, id] of [
       [1, "turn-1"],
       [2, "turn-2"],
@@ -594,9 +571,7 @@ describe("the record's byte budget", () => {
 
     const call = toolPayload(capturedWindow().entries.at(-1));
 
-    // Truncated rather than DROPPED: `tool-card.ts` reads a non-blank output as "there is
-    // something to reveal", so an empty one withdraws the disclosure and pops the chevron
-    // in when the server's answer lands.
+    // Truncated, not dropped: an empty output withdraws the disclosure until the server answers.
     expect(call.output).not.toBe("");
     expect((call.output ?? "").length).toBeLessThanOrEqual(MAX_TOOL_OUTPUT);
     expect(call.output_spans).toBeUndefined();
@@ -640,9 +615,7 @@ describe("the record's byte budget", () => {
     const reply = textEntry("turn-1", 1);
     seedTurn("c1", "turn-1", 1, [reply, closeEntry("turn-1", 2)]);
 
-    // The record is smaller than the transcript only in the fields the tool trim touches,
-    // so every other entry rides through by identity — which is what makes a card's own
-    // ordinal, its lane and its `seq` the record's rather than something re-derived.
+    // Untrimmed entries ride through by identity, keeping ordinal, lane and `seq` the record's.
     expect(capturedWindow().entries[1]).toBe(reply);
   });
 });
@@ -659,9 +632,7 @@ describe("paintBootSnapshot", () => {
   });
 
   it("paints the chat rows, then the strip, then the transcript", () => {
-    // The ORDER is what this case is about, so it is observed from inside the strip's own
-    // call: both writes happen whichever way round they run, so asserting them afterwards
-    // pins nothing.
+    // The ORDER is observed from inside the strip's call; both writes happen either way.
     let nameWhenStripPainted = "";
     m.paintProvisionalTabs.mockImplementation(() => {
       nameWhenStripPainted = get("c1")?.name ?? "";
@@ -689,9 +660,8 @@ describe("paintBootSnapshot", () => {
       window: snapWindow("c1", [turnOpen("turn-1", 1)]),
     });
 
-    // The mechanism that makes the hint self-superseding: `transcriptStale` is what
-    // `activateChatView` keys its fetch on, and a painted window must not pass for one the
-    // server answered.
+    // `activateChatView` fetches on `transcriptStale`, so a painted window must not pass for an
+    // answered one.
     expect(transcriptStale(row("c1"))).toBe(true);
   });
 
@@ -804,9 +774,8 @@ describe("paintBootSnapshot", () => {
 
     const painted = row("c1");
     expect(painted.name, "the row was painted").toBe("c1");
-    // A hinted row STATES NO LIVENESS (`Session.provisional`), so `turnLive` reads it as
-    // live and both terminal arms of the dot are gated off: guessing the other way derives
-    // a settled verdict over a turn the server may still be streaming.
+    // A hinted row states no liveness, so `turnLive` reads it live and the dot shows no
+    // settled verdict.
     expect(tabStatusFor(painted), "the dot").toBe("working");
   });
 

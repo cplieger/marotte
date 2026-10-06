@@ -1,8 +1,5 @@
-// Must this tab's view fetch on activation? The one freshness question, for all nine
-// kinds, answered off the digest subjects' version map.
-//
-// It must never import `store.js` or `tabs.js`: a convenience helper over either
-// (`viewStaleForSession(s)`, `refreshActive()`) closes a cycle.
+// Must this tab's view fetch on activation? Answered for all nine kinds off the digest subjects'
+// version map. Never import `store.js` or `tabs.js`: a helper over either closes a cycle.
 import { forgetSubject, hasSubject } from "./subject-versions.js";
 import type { TabKind } from "./types.js";
 
@@ -22,21 +19,15 @@ function subjectChat(kind: TabKind, ref: string): string {
   }
 }
 
-/** A view whose kind has a digest subject is fresh while the map holds a version for it:
- *  a held version means the projection was applied and the wake digest will name it when
- *  it moves. Every other kind has no subject, so it reads STALE and refetches on every
- *  activation, as it always has — and for `files` that refetch is load-bearing: N
- *  browsers share one view element, so the activation is what re-points it at its own
- *  directory rather than the previous tab's. */
+/** A kind with a digest subject is fresh while the map holds its version. Other kinds read STALE
+ *  and refetch every activation, which `files` needs: N browsers share one view element. */
 export function viewStale(kind: TabKind, ref: string): boolean {
   const chat = subjectChat(kind, ref);
   return chat === "" || !hasSubject("chat", chat);
 }
 
-/** Drop a view's claim: the window behind it is gone (`evictChatMessages`) or the subject
- *  is (`removeChat`). Both of a chat's subjects go, since the live turn's content lived in
- *  the same window. NOT called from `tabs.ts` — a closed tab's subject still exists, and
- *  dropping its record would make reopening it pay a full message-window GET for nothing. */
+/** Drop a view's claim: its window (`evictChatMessages`) or subject (`removeChat`) is gone, so both
+ *  chat subjects go. Not called on tab close: the subject survives, and reopening would pay a GET. */
 export function forgetView(kind: TabKind, ref: string): void {
   const chat = subjectChat(kind, ref);
   if (chat === "") {

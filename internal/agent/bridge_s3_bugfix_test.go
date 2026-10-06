@@ -1,14 +1,7 @@
 package agent
 
-// Regression tests for the S3 (fs + terminal + auth) A→C handler bugs.
-//
-// These drive the REAL dispatch entry point (h.translateACPEvent), which
-// sets up a per-event context and cancels it via defer the instant it
-// returns. The pre-existing fs tests call the handlers directly with
-// context.Background() and use a Respond that ignores its context, so
-// they cannot observe the per-event-cancellation class of bug (C1/M2).
-// The bridges here mimic the real Bridge.Respond, which DROPS the write
-// when its context is already cancelled (internal/bridge/bridge_rpc.go).
+// These drive the real dispatch entry (h.translateACPEvent), which cancels its per-event ctx on
+// return; the bridges mimic Bridge.Respond, which drops a write on a cancelled ctx.
 
 import (
 	"context"
@@ -23,11 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// --- Shared harness ---
-
-// hubWithBridge wires a runtime whose chat "c1" bridge is br, mirroring
-// hubForFSTest but generic over the bridge implementation so a test can
-// supply a context-aware or recording bridge.
+// hubWithBridge wires a runtime whose chat "c1" bridge is br.
 func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	t.Helper()
 	cs := newTestChatStore()
@@ -51,14 +40,8 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	return h
 }
 
-// --- ctxAwareBridge: reproduces the real Respond ctx-drop (C1/M2) ---
-
-// ctxAwareBridge mimics the real Bridge.Respond, which returns early
-// (dropping the write) when the passed context is already cancelled. A
-// gate lets the test hold Respond until AFTER translateACPEvent has
-// returned (and fired its defer cancel()), making the ctx state at the
-// point of the check deterministic: cancelled before the fix, fresh
-// after it.
+// ctxAwareBridge mimics Bridge.Respond dropping a write on a cancelled ctx; its gate holds
+// Respond until translateACPEvent has returned.
 type ctxAwareBridge struct {
 	*fakeBridge
 	gate      chan struct{}
@@ -98,10 +81,7 @@ func (b *ctxAwareBridge) Respond(ctx context.Context, _ int64, result any, err e
 	return nil
 }
 
-// C1: fs/read_text_file must respond with the file content even though
-// translateACPEvent's per-event ctx is cancelled before the async
-// handler runs its Respond. Fails before the C1 fix (response dropped),
-// passes after.
+// fs/read_text_file must still answer after the per-event ctx is cancelled.
 func TestTranslateACPEvent_FSReadRespondsAfterEventCtxCancel_C1(t *testing.T) {
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "c1.txt"), []byte("C1-content\n"), 0o644); err != nil {
@@ -135,8 +115,7 @@ func TestTranslateACPEvent_FSReadRespondsAfterEventCtxCancel_C1(t *testing.T) {
 	}
 }
 
-// C1: fs/write_text_file must respond (and persist) after the per-event
-// ctx is cancelled. Fails before the C1 fix, passes after.
+// fs/write_text_file must still answer and persist after the per-event ctx is cancelled.
 func TestTranslateACPEvent_FSWriteRespondsAfterEventCtxCancel_C1(t *testing.T) {
 	work := t.TempDir()
 	br := newCtxAwareBridge()
@@ -168,8 +147,6 @@ func TestTranslateACPEvent_FSWriteRespondsAfterEventCtxCancel_C1(t *testing.T) {
 		t.Errorf("fs write did not persist: %q err=%v", string(data), err)
 	}
 }
-
-// --- recordingTermBridge: captures every Respond (ctx-agnostic) ---
 
 type recordedResp struct {
 	result any
@@ -241,11 +218,7 @@ func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
 	}
 }
 
-// C2: a command spawned by terminal/create must survive translateACPEvent
-// returning. Before the fix the command context is a child of the
-// per-event ctx, so it is SIGTERM'd the instant translateACPEvent returns
-// (mid-sleep) — a signal death, and the marker file is never written.
-// After the fix it runs to completion (exit 0, marker written).
+// A terminal/create command must survive translateACPEvent returning (exit 0, marker written).
 func TestTranslateACPEvent_TerminalSurvivesEventCtxCancel_C2(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
@@ -272,9 +245,7 @@ func TestTranslateACPEvent_TerminalSurvivesEventCtxCancel_C2(t *testing.T) {
 	}
 }
 
-// H1: a signal-killed terminal must report the signal (not exitCode:-1),
-// since KAS's zTerminalExitStatus requires exitCode>=0. The exit-status
-// object carries `signal` and omits `exitCode`.
+// A signal-killed terminal reports the signal and omits exitCode: KAS requires exitCode>=0.
 func TestTerminalSignalDeath_ReportsSignalNotExitCodeMinus1_H1(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
@@ -304,7 +275,7 @@ func TestTerminalSignalDeath_ReportsSignalNotExitCodeMinus1_H1(t *testing.T) {
 		t.Errorf("H1: term.exitCode = %d, must never be negative", code)
 	}
 
-	// The terminal_exited SSE mirrors the same rule: Signal set, ExitCode nil.
+	// terminal_exited follows the same rule: Signal set, ExitCode nil.
 	code2, signal := exitStatusFromState(term.cmd.ProcessState)
 	if signal == "" {
 		t.Errorf("H1: exitStatusFromState returned no signal for a killed process")
@@ -314,10 +285,7 @@ func TestTerminalSignalDeath_ReportsSignalNotExitCodeMinus1_H1(t *testing.T) {
 	}
 }
 
-// H2: terminal/output for an unknown terminalId must respond with an
-// error, not silently drop it. Before the fix the not-found path used an
-// empty chatID, so respondErr's bridge lookup missed and the agent's Call
-// hung. Driven through translateACPEvent so the real chatID is threaded.
+// terminal/output for an unknown id answers an error through the real chatID.
 func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
@@ -340,8 +308,7 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 	if !ok || last.err == nil {
 		t.Errorf("H2: expected an error response for unknown terminalId, got result=%+v err=%v", last.result, last.err)
 	}
-	// The code travels with it. KAS branches on the code, and the JSON-RPC
-	// error range is negative, so a positive one is not an error it recognises.
+	// KAS branches on the code, and JSON-RPC error codes are negative.
 	rpcErr, isRPC := errors.AsType[*marotte.RPCError](last.err)
 	if !isRPC {
 		t.Errorf("H2: response error = %T, want *marotte.RPCError", last.err)
@@ -350,8 +317,7 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 	}
 }
 
-// M1: terminal/create must populate cmd.Env from the ACP `env` array so
-// env-dependent agent commands see the requested variables.
+// terminal/create populates cmd.Env from the ACP `env` array.
 func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
@@ -373,17 +339,8 @@ func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 	}
 }
 
-// TestTermCreate_RefusesExecutionRedirectingEnv is the WIRING test for the
-// environment guard, and it exists because the unit tests beside
-// screenAgentEnv cannot fail if the call is deleted from create.
-//
-// Two assertions, and the second is the one that matters: the request is answered
-// with an error, and NO terminal is created — so nothing was spawned before the
-// refusal. It drives the real handler through translateACPEvent rather than
-// calling screenAgentEnv, which is the whole point.
-//
-// LD_PRELOAD with a real sentinel path: had this been allowed, cmd.Env would carry
-// it last and the loader would win over the process environment.
+// TestTermCreate_RefusesExecutionRedirectingEnv is the wiring test for the env guard: an error
+// answer and NO terminal created.
 func TestTermCreate_RefusesExecutionRedirectingEnv(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
@@ -412,9 +369,7 @@ func TestTermCreate_RefusesExecutionRedirectingEnv(t *testing.T) {
 	}
 }
 
-// TestTermCreate_AllowsInertPagerEnv is the other half: the guard must not refuse
-// the shape an agent actually uses. `GIT_PAGER=cat` is how anything
-// non-interactive stops git paging, and a guard that blocks it gets switched off.
+// TestTermCreate_AllowsInertPagerEnv pins that `GIT_PAGER=cat` passes.
 func TestTermCreate_AllowsInertPagerEnv(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
@@ -428,8 +383,7 @@ func TestTermCreate_AllowsInertPagerEnv(t *testing.T) {
 	waitClosed(t, term.done, "terminal")
 }
 
-// termEnv layers requested vars on top of os.Environ and returns nil when
-// none are requested (so cmd.Env stays nil and inherits the environment).
+// termEnv layers requested vars over os.Environ and returns nil when none are requested.
 func TestTermEnv(t *testing.T) {
 	t.Parallel()
 	if termEnv(nil) != nil {

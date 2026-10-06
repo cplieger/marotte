@@ -16,9 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// Tests for the translate*.go family: ACP notification → entry log + broadcast.
-// Shared fixtures + helpers live in shared_test.go.
-
 // toolCallsOf decodes every tool_call entry in entries, in file order.
 func toolCallsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolCall {
 	t.Helper()
@@ -53,8 +50,7 @@ func toolResultsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolRes
 	return out
 }
 
-// openTextEntry is the chat's one open text entry, failing when the turn holds
-// none or more than one.
+// openTextEntry is the chat's one open text entry, failing on none or several.
 func openTextEntry(t *testing.T, h *Runtime, chatID marotte.ChatID) marotte.OpenEntry {
 	t.Helper()
 	turn := h.liveTurn(chatID)
@@ -118,9 +114,8 @@ func TestTranslateACPEvent_ASecondChunkExtendsTheOpenEntry(t *testing.T) {
 	}
 }
 
-// A tool_call frame is a tool_call entry held open on the turn until its terminal
-// update seals the tool_result; the create's locations and diffs ride the entry
-// and the update's ride the result.
+// A tool_call frame is held open until its terminal update seals the tool_result; the create's locations and
+// diffs ride the entry, the update's the result.
 func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 	cases := []struct {
 		assert func(*testing.T, []marotte.Entry, *turnlog.Turn)
@@ -168,8 +163,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 			},
 		},
 		{
-			// v3: subagents ARE ordinary tool calls now — there is no
-			// noise-title filter, so every tool_call passes through.
+			// v3: subagents are ordinary tool calls, with no noise-title filter.
 			name: "tool_call_passes_through_without_noise_filter",
 			events: []json.RawMessage{
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-noise","title":"Summarizing","kind":"read","status":"pending"}`),
@@ -292,11 +286,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	before := h.bus.fanout.Position().Head
-	// v3 wire shape: the correlation id is on the JSON-RPC envelope (msg.ID)
-	// and the params are FLAT ({sessionId, toolCall, options}); the option id
-	// is camelCase `optionId`. (The pre-fix shape nested id+params inside
-	// msg.Params and used option_id — which decoded to an empty, unanswerable
-	// request; see HandlePermissionRequest.)
+	// v3: the correlation id is the envelope's msg.ID, the params are flat ({sessionId, toolCall, options}), and the option id is `optionId`.
 	permID := int64(42)
 	msg := &marotte.RPCResponse{
 		ID:     &permID,
@@ -321,7 +311,7 @@ func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Each of these must be a silent no-op, not a panic.
+	// Each must be a silent no-op, not a panic.
 	bad := []*marotte.RPCResponse{
 		{Method: "session/update", Params: json.RawMessage(`{bad`)},
 		{Method: "session/update", Params: json.RawMessage(`{"params":{"update":null}}`)},
@@ -335,12 +325,7 @@ func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 	}
 }
 
-// --- Benchmarks ---
-
-// BenchmarkTranslateACPEvent exercises the session/update dispatch hot
-// path with representative payloads (agent_message_chunk, tool_call,
-// tool_call_update). Surfaces JSON decode regressions and allocation
-// growth under varying iteration counts.
+// BenchmarkTranslateACPEvent exercises the session/update dispatch hot path with representative payloads.
 func BenchmarkTranslateACPEvent(b *testing.B) {
 	payloads := []struct {
 		msg  *marotte.RPCResponse
@@ -376,8 +361,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 				c.Name = "bench"
 				return true
 			})
-			// Pre-seed an unsettled call for tool_call_update to fold into; a
-			// terminal update settles it, so the loop's later frames fold nothing.
+			// Pre-seed an unsettled call for tool_call_update; once settled, later frames fold nothing.
 			if p.name == "tool_call_update" {
 				_, turn := h.stagePromptTurn(b, "bench")
 				call := marotte.EntryToolCall{ID: "tc-bench-1", Status: marotte.ToolPending}
@@ -394,15 +378,8 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 	}
 }
 
-// --- Fuzz targets ---
-
-// FuzzTranslateInitErrors feeds arbitrary byte sequences through the v3
-// init-error / notice JSON parsing paths (init_errors.go: rate_limit,
-// customAgent/not_found, customAgent/config_error, system/notify). Verifies
-// that malformed payloads are silent no-ops (no panics) and that the replay
-// buffer length is non-decreasing (no corruption). The v2 commands/available
-// path this target used to fuzz is, on v3, a session/update sub-kind covered
-// by FuzzHandleSessionUpdate.
+// FuzzTranslateInitErrors fuzzes the v3 init-error and notice parsing (rate_limit, customAgent/*, system/notify):
+// no panics and a non-decreasing replay buffer.
 func FuzzTranslateInitErrors(f *testing.F) {
 	seeds := []string{
 		`{"message":"rate limited, retry in 30s"}`,
@@ -449,11 +426,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 	})
 }
 
-// FuzzTranslateMCP feeds arbitrary byte sequences through the v3
-// _kiro/mcp/status JSON parsing path (HandleMCPStatus, which consolidates
-// v2's per-server server_initialized / oauth_request / server_init_failure
-// into one status list). Verifies that arbitrary payloads never panic and
-// that mcpRegistry state remains consistent.
+// FuzzTranslateMCP fuzzes `_kiro/mcp/status` (HandleMCPStatus): no panics and a consistent mcpRegistry.
 func FuzzTranslateMCP(f *testing.F) {
 	seeds := []string{
 		`{"servers":[{"name":"my-server","status":"connected","tools":[{"name":"t1"}]}]}`,
@@ -483,17 +456,13 @@ func FuzzTranslateMCP(f *testing.F) {
 		}
 		// Must not panic.
 		h.translateACPEvent("fuzz", msg)
-		// mcpRegistry.Snapshot must not panic (concurrent-safe read).
+		// Snapshot must not panic (concurrent-safe read).
 		_ = h.mcpRegistry.Snapshot()
 	})
 }
 
-// FuzzHandleSessionUpdate feeds arbitrary byte sequences through the
-// session/update JSON-envelope dispatcher. Verifies that malformed
-// JSON and unknown sessionUpdate subtypes are silent no-ops (no panics).
-// Seed corpus covers known update shapes.
+// FuzzHandleSessionUpdate fuzzes the session/update dispatcher: malformed JSON and unknown subtypes are silent no-ops.
 func FuzzHandleSessionUpdate(f *testing.F) {
-	// Seed corpus: known sessionUpdate subtypes.
 	seeds := []string{
 		`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}}`,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"read","kind":"read","status":"pending"}`,
@@ -524,10 +493,7 @@ func FuzzHandleSessionUpdate(f *testing.F) {
 	})
 }
 
-// --- Request routing (folded mutant-killing coverage) ---
-
-// An fs/* request (ID != nil) is routed to the FS handler, which
-// responds back through the bridge.
+// An fs/* request is routed to the FS handler, which answers through the bridge.
 func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "r.txt"), []byte("hi"), 0o644); err != nil {
@@ -548,12 +514,10 @@ func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
 	}
 }
 
-// A terminal/* request (ID != nil) is routed to the terminal handler,
-// which responds back through the bridge.
+// A terminal/* request is routed to the terminal handler, which answers through the bridge.
 func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
-	// Pre-register a terminal owned by "c1" so output resolves it
-	// and responds through the registered respondingBridge.
+	// A terminal owned by c1, so output resolves and answers through its bridge.
 	h.agentTerms.mu.Lock()
 	h.agentTerms.terms["term-1"] = newAgentTerminal(nil, "c1", 64)
 	h.agentTerms.mu.Unlock()
@@ -572,8 +536,6 @@ func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 	}
 }
 
-// --- Subagent attribution in handleSessionUpdate ---
-
 // registerParentSession registers a bridge for chatID whose SessionID
 // is parentSession, so h.parentACPSession(chatID) returns it.
 func registerParentSession(t *testing.T, h *Runtime, chatID marotte.ChatID, parentSession string) {
@@ -585,11 +547,8 @@ func registerParentSession(t *testing.T, h *Runtime, chatID marotte.ChatID, pare
 	sb.state = bridgeIdle
 }
 
-// captureSubSession installs a capturing sub-handler for the
-// agent_message_chunk kind, drives handleSessionUpdate with a
-// notification carrying sessionID, and returns the subSessionID the
-// dispatcher computed plus whether the handler ran (false => sub
-// dispatch returned early).
+// captureSubSession installs a capturing agent_message_chunk handler, drives handleSessionUpdate with sessionID,
+// and returns the computed subSessionID and whether the handler ran.
 func captureSubSession(t *testing.T, h *Runtime, chatID marotte.ChatID, sessionID string) (got string, called bool) {
 	t.Helper()
 	h.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
@@ -611,9 +570,7 @@ func captureSubSession(t *testing.T, h *Runtime, chatID marotte.ChatID, sessionI
 	return got, called
 }
 
-// subSessionID is the notification's sessionId only when it is
-// non-empty AND a parent session exists AND they differ; otherwise the
-// update is attributed to the parent (subSessionID == "").
+// subSessionID is the frame's sessionId only when non-empty, a parent exists, and they differ; otherwise "".
 func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -663,11 +620,7 @@ func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 	}
 }
 
-// captureAttribution is captureSubSession's sibling for the whole attribution.
-//
-// Separate rather than a widened return, because the table above asserts only
-// the subagent id and reads better for it; this one exists for the STEP case,
-// which cannot be expressed as a string at all.
+// captureAttribution is captureSubSession's sibling for the whole attribution, for the step case a string cannot express.
 func captureAttribution(t *testing.T, h *Runtime, chatID marotte.ChatID, sessionID string) (got translate.FrameAttribution, called bool) {
 	t.Helper()
 	h.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
@@ -685,16 +638,8 @@ func captureAttribution(t *testing.T, h *Runtime, chatID marotte.ChatID, session
 	return got, called
 }
 
-// TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock is the
-// regression test for a shipped defect, and the frame it sends is the whole
-// point: a `session_info_update` carrying NO `_meta.kiro.workflow`.
-//
-// KAS's `buildSessionInfoUpdate` composes `_meta.kiro` from `legacyFields(update)`
-// plus the update object and merges no `promptMeta`, so a workflow step's
-// `turn_completion` is byte-identical to the chat's own. The handler used to
-// derive its step flag from that absent block, which made the flag permanently
-// false and counted every step of every run as one of the launching chat's turns.
-// The step fact can only come from the SESSION, which is what this pins.
+// TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock pins that KAS's session_info_update carries no
+// `_meta.kiro.workflow` (buildSessionInfoUpdate merges no promptMeta), so the step fact must come from the session.
 func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T) {
 	const (
 		chatID  = marotte.ChatID("chat-step")
@@ -716,9 +661,7 @@ func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T
 	}
 }
 
-// A step's config_option_update reaches the translator WITH its attribution through
-// the real dispatch table: the frame arrives under the launching chat's id, and a
-// wrapper discarding the attribution there is how the step's model became the chat's.
+// A step's config_option_update keeps its attribution through the dispatch table, or the step's model becomes the chat's.
 func TestHandleSessionUpdate_AStepsConfigFrameLeavesTheChatsModelAlone(t *testing.T) {
 	const (
 		chatID  = marotte.ChatID("chat-step")
@@ -751,11 +694,7 @@ func TestHandleSessionUpdate_AStepsConfigFrameLeavesTheChatsModelAlone(t *testin
 	}
 }
 
-// --- Replayed frames must not reach the live handlers ---
-
-// dispatchUpdate installs a capturing sub-handler for `kind`, drives
-// handleSessionUpdate with an update carrying that kind plus whatever extra
-// fields `extra` supplies, and reports whether the live handler ran.
+// dispatchUpdate drives handleSessionUpdate with an update of `kind` plus extra fields and reports whether the live handler ran.
 func dispatchUpdate(t *testing.T, h *Runtime, kind marotte.ACPUpdateKind, extra map[string]any) (called bool) {
 	t.Helper()
 	h.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
@@ -771,22 +710,9 @@ func dispatchUpdate(t *testing.T, h *Runtime, kind marotte.ACPUpdateKind, extra 
 	return called
 }
 
-// TestHandleSessionUpdate_DropsReplayedFrames pins the gate that keeps stored
-// history out of the live path.
-//
-// KAS replays a session's entire transcript as ordinary session/update
-// notifications when marotte calls session/load — which it does on every
-// container-restart resume and every model-switch fallback. Measured against
-// kiro-cli 2.16.0: a load of a one-turn session returns 9 frames, 6 of them
-// tagged `_meta.kiro.replay: true`.
-//
-// Ungated, the replayed agent_message_chunk reaches HandleAssistantChunk, which
-// opens a PHANTOM turn whose entry frames re-stream history to every connected
-// client as though the agent were typing it now.
-//
-// The nesting is the trap this pins. The flag rides `update._meta.kiro.replay`,
-// NOT `params._meta` — reading it a level up yields false for every frame,
-// which is indistinguishable from a wire that never sets it.
+// TestHandleSessionUpdate_DropsReplayedFrames pins that session/load replays the transcript as session/update frames
+// (kiro-cli 2.16.0: 9 frames, 6 tagged), and ungated they open a phantom turn. The flag is at
+// `update._meta.kiro.replay`, not `params._meta`.
 func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
 	replayMeta := map[string]any{"kiro": map[string]any{"replay": true}}
 
@@ -835,19 +761,8 @@ func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
 	}
 }
 
-// TestHandleSessionUpdate_CatalogFrameSurvivesALoad pins that the gate is
-// per-frame rather than "suppress everything while loading".
-//
-// KAS does NOT tag config_option_update as replay (3 of the 9 measured frames
-// are untagged and this is one): it carries the session's CURRENT model/mode
-// selection, not its history. Gating on the load OPERATION instead of the
-// per-frame flag would drop it, and the mode pill would come back empty after
-// every resume.
-//
-// available_commands_update was the other witness to this property and is no
-// longer dispatched at all (the slash-command catalog had no consumer), so
-// config_option_update is the only one left — which makes this test MORE
-// load-bearing, not less.
+// TestHandleSessionUpdate_CatalogFrameSurvivesALoad pins that the gate is per frame. config_option_update is untagged
+// current state; gating on the load would empty the mode pill on every resume.
 func TestHandleSessionUpdate_CatalogFrameSurvivesALoad(t *testing.T) {
 	h, _, _ := newTestHub()
 	if !dispatchUpdate(t, h, marotte.ACPUpdateConfigOption, nil) {

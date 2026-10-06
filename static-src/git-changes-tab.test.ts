@@ -1,34 +1,17 @@
-// The Changes tab's file list, which is where "what is staged" is answered.
-//
-// It used to be ONE flat list sorted staged-first, and the only thing marking a
-// staged row was a 6% teal wash on its background: measured 1.09:1 against that
-// background in dark and 1.03:1 in light, under the >= 1.25:1 floor
-// 01-tokens.css states for a step on its own ramp and far under WCAG 1.4.11's
-// 3:1 for a state boundary. The status cell read "Modified" on both sides of the
-// index and the per-row Unstage button was hidden until hover, so at rest a
-// staged row and an unstaged one were the same row. The reported symptom was
-// that the panel had nowhere to view staged files at all.
-//
-// So this suite's subject is the GROUPING and its counts, and the counts are the
-// half with a real bug behind them: entries are per side of the index, a person
-// counts files, and the two differ on exactly the file that is staged and then
-// edited again. That file made a destructive confirm offer to discard "2
-// uncommitted changes".
+// The Changes tab's file list, grouped by side of the index, and its counts: entries are per side, a person counts
+// files, and the two differ on a file staged and then edited again.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import type * as ModChanges from "./git-changes-tab.js";
 import type { GitFileEntry, GitRepoStatus } from "./git-types.js";
 
-// Cache-buster for the re-imports below: `vi.resetModules()` does not
-// re-evaluate a module in Browser Mode (the module map is URL-keyed), and this
-// suite depends on fresh module state — `refreshGeneration` and the abort
-// controller are module-level.
+// Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map), and
+// `refreshGeneration` and the abort controller are module state.
 let bootSeq = 0;
 
 const apiGet = vi.fn();
-// Typed with the real signature so `mock.calls[0][0]` is the message rather
-// than an index into an empty tuple.
+// Typed with the real signature so `mock.calls[0][0]` is the message.
 const confirmDialog = vi.fn(
   async (_message: string, _label?: string, _variant?: "destructive" | "normal") => true,
 );
@@ -36,11 +19,9 @@ const openChange = vi.fn();
 
 const dispatches: { name: string; args: unknown }[] = [];
 
-/** What the mocked `git.pull_all` action resolves to. Set per test, because the
- *  verdicts ARE the subject: everything the panel marks is derived from them. */
+/** Set per test: everything the panel marks is derived from the verdicts. */
 let pullAllResult: unknown = [];
 
-/** The two callbacks the tab hands to its filter popup. */
 interface FilterSeam {
   query: (q: string, ctx: unknown) => unknown;
   render: (result: unknown, q: string) => void;
@@ -48,8 +29,7 @@ interface FilterSeam {
 
 let filterSeam: FilterSeam | null = null;
 
-/** Type into the filter box, exactly as the popup does: `query` records the
- *  text, `render` repaints. */
+/** Exactly as the popup does: `query` records the text, `render` repaints. */
 function applyFilter(q: string): void {
   if (filterSeam === null) {
     throw new Error("filter seam not captured — the module never built its popup");
@@ -58,16 +38,12 @@ function applyFilter(q: string): void {
   filterSeam.render(result, q);
 }
 
-/** A dispatch handle answering `value`, as the action framework's does: the
- *  panel reads its typed outcome. */
 function handle(value: unknown): Promise<unknown> & { outcome: Promise<unknown> } {
   return Object.assign(Promise.resolve(value), {
     outcome: Promise.resolve({ status: "success", value }),
   });
 }
 
-/** A stand-in action that records what the panel asked for. Every git
- *  mutation lands. */
 function recorder(name: string): { dispatch: (args: unknown) => Promise<unknown> } {
   return {
     dispatch: (args: unknown) => {
@@ -108,15 +84,12 @@ vi.mock("./actions/git-changes.js", () => ({
 }));
 vi.mock("./search-popup.js", () => ({
   createSearchPopup: vi.fn((spec: unknown) => {
-    // The filter is module state written by the popup's `query` callback and
-    // published by its `render` callback. Capturing the spec lets a test drive
-    // that exact seam instead of reaching into the module.
+    // Capturing the spec lets a test drive the popup's query/render seam instead of reaching into the module.
     filterSeam = spec as FilterSeam;
     return { open: vi.fn(), close: vi.fn(), toggle: vi.fn() };
   }),
 }));
-// Pass-through: the feedback wrapper's own ✓/✗ behaviour is not the subject here
-// (git-changes-press-feedback.test.ts pins it), and a refused press rejects through it.
+// Pass-through: the ✓/✗ feedback is pinned in git-changes-press-feedback.test.ts, and a refused press rejects through it.
 vi.mock("./async-button.js", () => ({
   withAsyncFeedback: async (_b: HTMLElement, fn: () => Promise<unknown>) => {
     try {
@@ -131,10 +104,8 @@ vi.mock("./git-scroll.js", () => ({
     fn();
   },
 }));
-// The real disclosure animates a height and owns aria-hidden/inert; the parts
-// this suite reads are the trigger's aria-expanded, the body staying in the
-// tree, and a click on the trigger reaching `onToggle` as the reader's own, so
-// the stub supplies exactly those.
+// The stub supplies what this suite reads: the trigger's aria-expanded, the body staying in the tree, and a trigger
+// click reaching `onToggle` as the reader's own.
 vi.mock("@cplieger/ui-primitives/disclosure", () => ({
   createDisclosure: (
     trigger: HTMLElement,
@@ -154,8 +125,6 @@ vi.mock("@cplieger/ui-primitives/disclosure", () => ({
 vi.mock("./chevron.js", () => ({
   chevronEl: () => document.createElement("span"),
 }));
-
-// --- Fixtures ---
 
 function file(path: string, status: string, staged = false, orig?: string): GitFileEntry {
   const labels: Record<string, string> = {
@@ -197,7 +166,6 @@ async function load(): Promise<typeof ModChanges> {
   )) as typeof ModChanges;
 }
 
-/** Fetch the given repos and paint. Returns the mount. */
 async function paintRepos(repos: GitRepoStatus[]): Promise<HTMLElement> {
   apiGet.mockResolvedValue({ repos });
   const { refreshChanges } = await load();
@@ -220,7 +188,6 @@ function rowPaths(scope: HTMLElement | null): string[] {
   return [...scope.querySelectorAll(".git-file-path")].map((e) => e.textContent ?? "");
 }
 
-/** Click the button whose visible label matches, within a scope. */
 async function clickBtn(scope: HTMLElement, label: string): Promise<void> {
   const btn = [...scope.querySelectorAll("button")].find((b) => b.textContent === label);
   if (btn === undefined) {
@@ -231,7 +198,6 @@ async function clickBtn(scope: HTMLElement, label: string): Promise<void> {
     );
   }
   btn.click();
-  // Let the click handler's promise chain settle.
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
@@ -291,20 +257,15 @@ describe("the file list is grouped by side of the index", () => {
   });
 
   it("no longer marks staged-ness with a class on the row", async () => {
-    // The class existed only to hang the invisible tint on. Staged-ness is the
-    // group heading now, so a row carrying it again would be a second, weaker
-    // channel for the same fact.
+    // Staged-ness is the group heading; a row class would be a second, weaker channel for the same fact.
     const mount = await paintRepos([repo([file("a.ts", "M", true)])]);
 
     expect(mount.querySelector(".git-file-row.staged")).toBeNull();
   });
 
   it("announces each group to a screen reader, with its size", async () => {
-    // The heading is a sibling div, so nothing connects it to the list. A row's
-    // own status cell reads "Status: Modified" on both sides of the index, so
-    // without a label on the list the grouping is visual only and staged-ness
-    // stays unannounced — the same defect this rework fixes for a sighted
-    // reader, one reader over.
+    // The heading is a sibling div, and a row's status cell reads the same on both sides of the index, so without a
+    // label on the list the grouping is visual only.
     const mount = await paintRepos([
       repo([file("a.ts", "M", true), file("b.ts", "M"), file("c.ts", "?")]),
     ]);
@@ -328,10 +289,7 @@ describe("the file list is grouped by side of the index", () => {
 });
 
 describe("a file staged and then changed again", () => {
-  // git reports `MM p.ts`, which the server splits into one entry per side so
-  // each can be staged or discarded independently. Grouped, that puts the same
-  // filename in both groups — correct, and indistinguishable from a duplicate
-  // unless the panel says so.
+  // git's `MM p.ts` is split into one entry per side, so the same name appears in both groups and the panel must say why.
   const partial = () => repo([file("p.ts", "M", true), file("p.ts", "M"), file("q.ts", "M")]);
 
   it("appears in both groups", async () => {
@@ -363,8 +321,7 @@ describe("a file staged and then changed again", () => {
   });
 
   it("counts as ONE file in each group, not as two changes", async () => {
-    // The bug this pins: entries are per side of the index, and a count a
-    // person reads has to be per file.
+    // Entries are per side of the index; a count a person reads is per file.
     const mount = await paintRepos([partial()]);
 
     expect(group(mount, "staged")?.querySelector(".git-file-group-count")?.textContent).toBe(
@@ -378,12 +335,7 @@ describe("a file staged and then changed again", () => {
 
 describe("each group owns the bulk action that acts on it", () => {
   it("offers Unstage all on the staged group, scoped to it", async () => {
-    // A new capability: staging everything was one click and reversing it was
-    // one click PER ROW, each hidden until that row was hovered.
-    //
-    // The fixture MIXES the two sides deliberately. With everything staged,
-    // `files` and `r.files` are the same array and the test cannot tell a
-    // group-scoped action from one that reaches the whole repo.
+    // The fixture mixes both sides: with everything staged a group-scoped action and a whole-repo one are the same.
     const mount = await paintRepos([
       repo([file("a.ts", "M", true), file("b.ts", "M", true), file("c.ts", "?")]),
     ]);
@@ -406,8 +358,6 @@ describe("each group owns the bulk action that acts on it", () => {
   });
 
   it("keeps the repo action bar to sync operations", async () => {
-    // Stage all and Discard all used to lead that bar, where their scope was
-    // "the whole repo" and invisible.
     const mount = await paintRepos([repo([file("a.ts", "M"), file("b.ts", "M", true)])]);
     const bar = mount.querySelector<HTMLElement>(".git-repo-action-bar");
 
@@ -432,8 +382,7 @@ describe("each group owns the bulk action that acts on it", () => {
 
 describe("Discard all", () => {
   it("discards the unstaged group only, and sends each path once", async () => {
-    // It used to send `r.files.map(f => f.path)` — every entry, staged
-    // included — so a partially-staged path went out twice.
+    // Only unstaged entries, so a partially-staged path goes out once.
     const mount = await paintRepos([
       repo([file("p.ts", "M", true), file("p.ts", "M"), file("s.ts", "A", true)]),
     ]);
@@ -456,8 +405,7 @@ describe("Discard all", () => {
   });
 
   it("tells the reader the staged files survive it", async () => {
-    // The scope has to be stated: a reader who expects a clean tree afterwards
-    // is about to not get one, and the confirm is the last place to say so.
+    // The scope must be stated: a reader expecting a clean tree afterwards will not get one.
     const mount = await paintRepos([
       repo([file("a.ts", "M"), file("s.ts", "A", true), file("t.ts", "A", true)]),
     ]);
@@ -492,9 +440,7 @@ describe("Discard all", () => {
 
 describe("the status cell", () => {
   it("is git's letter, carrying the shared per-letter colour class", async () => {
-    // The app already had a `git-st-*` palette that the file browser emits and
-    // this panel did not, so the same change read as a coloured letter in one
-    // view and a grey word in the other.
+    // The file browser's `git-st-*` palette, so a change reads the same in both views.
     const mount = await paintRepos([repo([file("a.ts", "M")])]);
     const cell = mount.querySelector<HTMLElement>(".git-file-status");
 
@@ -503,8 +449,7 @@ describe("the status cell", () => {
   });
 
   it("keeps the word as the accessible name and the tooltip", async () => {
-    // Nothing is lost by dropping the word from the cell: it printed
-    // "Untracked" beside "M", so every row's filename began at a different x.
+    // A letter, not a word, so every filename starts at the same x.
     const mount = await paintRepos([repo([file("a.ts", "?")])]);
     const cell = mount.querySelector<HTMLElement>(".git-file-status");
 
@@ -514,8 +459,7 @@ describe("the status cell", () => {
   });
 
   it("prefers the server's label over the local table", async () => {
-    // The server owns the status vocabulary; a letter it grows before this
-    // client does must still read as a word.
+    // The server owns the status vocabulary; a letter this client does not know yet still reads as a word.
     const mount = await paintRepos([
       repo([{ path: "a.ts", status: "Z", staged: false, display: "Something New" }]),
     ]);
@@ -526,12 +470,8 @@ describe("the status cell", () => {
   });
 
   it("gives its tooltip the name to point at", async () => {
-    // The path button is `flex: 1` — it is what pushes the row's actions to the
-    // trailing edge — so its box is the row's slack while the name sits at the
-    // leading edge, and a tooltip anchored at that box's centre landed 243px away
-    // from the name (measured over 320 rows). `data-tooltip-anchor` on the label is
-    // what the delegated controller positions against; the tooltip itself stays on
-    // the button, which is what takes focus and carries the accessible name.
+    // The path button is `flex: 1`, so its centre is far from the name; the tooltip anchors on the label via
+    // `data-tooltip-anchor` and stays on the button, which takes focus and carries the name.
     const mount = await paintRepos([repo([file("README.md", "M")])]);
     const btn = mount.querySelector<HTMLElement>(".git-file-path");
 
@@ -542,8 +482,7 @@ describe("the status cell", () => {
   });
 
   it("gives a typechange its word rather than a bare T", async () => {
-    // ` T`/`T ` is what git reports for a file swapped with a symlink. It used
-    // to reach the label table on neither side and rendered as "Unknown".
+    // ` T`/`T ` is a file swapped with a symlink.
     const mount = await paintRepos([repo([file("link.txt", "T")])]);
     const cell = mount.querySelector<HTMLElement>(".git-file-status");
 
@@ -555,9 +494,7 @@ describe("the status cell", () => {
 
 describe("a renamed or copied file says where it came from", () => {
   it("shows the origin path beside the new one", async () => {
-    // The server parsed this field out of porcelain's second NUL record and
-    // threw it away, so a move rendered as "Renamed new.ts" with no way to see
-    // what had moved — the one status whose meaning IS the pair of paths.
+    // A rename's meaning is the pair of paths, so the old path must render.
     const mount = await paintRepos([repo([file("new.ts", "R", true, "old.ts")])]);
 
     expect(mount.querySelector(".git-file-path")?.textContent).toBe("new.ts");
@@ -584,8 +521,7 @@ describe("a renamed or copied file says where it came from", () => {
 
 describe("the commit affordance", () => {
   it("names how many files it will commit", async () => {
-    // The index IS the selection, so a bare "Commit" left the one control that
-    // writes history saying nothing about what it was about to write.
+    // The index is the selection, so Commit names what it will write.
     const mount = await paintRepos([repo([file("a.ts", "M", true), file("b.ts", "A", true)])]);
 
     const labels = [...mount.querySelectorAll(".git-commit-area button")].map((b) => b.textContent);
@@ -607,32 +543,24 @@ describe("the commit affordance", () => {
 });
 
 describe("the shipped stylesheet, for the three facts the DOM cannot show", () => {
-  // The test page links no app stylesheet, so `getComputedStyle` has no cascade
-  // to report on. These read the sheet as source, the same way
-  // search-centring.test.ts and tab-dot.test.ts do.
+  // The test page links no app stylesheet, so these read the sheet as source.
   const multirepo = loadCSS("22-git-multirepo.css");
   const tools = loadCSS("14-tools.css");
 
   it("carries no per-row staged tint at all", () => {
-    // The tint was `color-mix(in srgb, var(--c-teal) 6%, var(--c-bg-primary))`
-    // on `.git-file-row.staged > .git-file-row-top`: 1.09:1 against that
-    // background in dark, 1.03:1 in light, so it was the whole of the staged
-    // signal and it was invisible. Staged-ness is a heading now.
+    // A row tint measures about 1.1:1 against the pane, invisible, so staged-ness is a heading.
     expect(multirepo).not.toContain(".git-file-row.staged");
   });
 
   it("leaves hover as the one background a row row-top declares for a state", () => {
-    // The deleted rule scored (0,4,0) against this one's (0,3,0), so the one row
-    // in the list that could not respond to hover was the staged one — while
-    // still being clickable.
+    // The deleted rule outscored this one, so a staged row could not respond to hover.
     const hover = ruleContaining(multirepo, ".git-repo-section-body .git-file-row-top:hover");
     expect(hover.body).toContain("background: var(--c-bg-secondary)");
   });
 
   it("reveals a row's actions on keyboard focus as well as on hover", () => {
-    // `.git-file-actions` sits at `opacity: 0`. With only `:hover` to lift it,
-    // tabbing through a file list put the caret on Stage and Discard buttons
-    // that could not be seen (WCAG 2.4.7), Discard being destructive.
+    // `.git-file-actions` rests at `opacity: 0`; without a focus reveal, Tab lands on invisible Stage and Discard buttons
+    // (WCAG 2.4.7).
     const reveal = ruleContaining(
       multirepo,
       ".git-repo-section-body .git-file-row:focus-within .git-file-actions",
@@ -642,28 +570,23 @@ describe("the shipped stylesheet, for the three facts the DOM cannot show", () =
   });
 
   it("gives the status cell a FIXED width so every filename starts at one x", () => {
-    // It used to size to the status WORD with an 18px floor, and the words run
-    // from "M" to "Untracked", so the column width varied per row and the list
-    // had a ragged left edge exactly where a reader scans.
+    // A fixed width: sized to the status word, the column left a ragged edge where a reader scans.
     const cell = ruleContaining(multirepo, ".git-file-status");
     expect(cell.body).toContain("width: 1rem");
     expect(cell.body).not.toContain("min-width");
-    // No colour of its own: the per-letter class supplies it.
+    // The per-letter class supplies the colour.
     expect(cell.body).not.toContain("color:");
   });
 
   it("has a colour for every status letter the server can emit", () => {
-    // 'C' and 'T' had no rule, so a copy and a typechange were the two statuses
-    // with no colour channel, inheriting the surrounding grey.
+    // Every letter has a rule, or that status inherits the surrounding grey.
     for (const letter of ["m", "a", "d", "r", "c", "t", "u"]) {
       expect(tools, `.git-st-${letter} missing`).toContain(`.git-st-${letter}`);
     }
   });
 
   it("keeps no separator rule now that nothing emits one", () => {
-    // `.action-bar-sep` existed for the boundary between the file-op cluster and
-    // the sync cluster in the repo action bar. The file ops moved onto their
-    // groups, so the bar holds one cluster and the separator has no emitter.
+    // The file ops moved onto their groups, so the bar holds one cluster and the separator has no emitter.
     expect(tools).not.toContain(".action-bar-sep");
   });
 });
@@ -679,10 +602,7 @@ describe("the path filter", () => {
   });
 
   it("shows every file in a repo whose NAME matches", async () => {
-    // The path filter used to run regardless of a repo-name match, so naming a
-    // repo kept its section and then emptied it: a repo whose changed paths did
-    // not happen to repeat the repo name rendered "No paths match the filter."
-    // under its own heading, which is the opposite of what naming it asked for.
+    // Naming a repo keeps its section whole; filtering its paths too would empty the section the reader asked for.
     const mount = await paintRepos([
       repo([file("src/a.ts", "M"), file("src/b.ts", "M")], { repo: "marotte" }),
     ]);
@@ -701,7 +621,6 @@ describe("the path filter", () => {
 
     applyFilter("zzz-matches-nothing");
 
-    // Neither repo survives, so neither is described inside a section either.
     expect(mount.querySelector(".git-repo-row-clean")).toBeNull();
     expect(mount.querySelector(".git-multirepo-empty-title")?.textContent).toBe(
       "No matching changes",
@@ -735,11 +654,8 @@ describe("the path filter", () => {
   });
 
   it("opens a section the reader had collapsed when it holds a matching path", async () => {
-    // A filtered pane is not the resting arrangement, so the filter outranks the
-    // reader's latch while a query stands and the latch is read again once it
-    // clears; read the other way round, a filter typed after a collapse keeps its
-    // one selected row inside an aria-hidden, inert region, with nothing saying
-    // it is there.
+    // The filter outranks the reader's collapse latch while a query stands, or a match sits inside an aria-hidden,
+    // inert region; the latch is read again once it clears.
     const mount = await paintRepos([repo([file("src/upload-policy.ts", "M")])]);
     const header = mount.querySelector<HTMLElement>(".git-repo-section-header");
     expect(header?.getAttribute("aria-expanded")).toBe("true");
@@ -759,10 +675,7 @@ describe("the path filter", () => {
   });
 
   it("does not trim the query itself: the popup already did", async () => {
-    // The trim rule is the popup's, per kind, and this box is a filter, so what
-    // arrives here is already trimmed. A second trim here was the divergence the
-    // shared rule removed; folding case stays this module's, because it is the
-    // fold its own haystack pairs with.
+    // The popup already trims per kind; case folding stays here, paired with this module's haystack.
     const mount = await paintRepos([repo([file("src/a.ts", "M"), file("docs/b.md", "M")])]);
 
     applyFilter("DOCS/");
@@ -773,9 +686,7 @@ describe("the path filter", () => {
   });
 });
 
-// A repo with no file changes is not the same thing as a repo with nothing to
-// do, and this tab used to spend one word ("Clean.") on both readings — once per
-// section, and once as an aggregate card that replaced the whole list.
+// A repo with no file changes is not a repo with nothing to do.
 describe("a repo with nothing uncommitted", () => {
   it("scopes its sentence to the working tree", async () => {
     const mount = await paintRepos([
@@ -790,9 +701,7 @@ describe("a repo with nothing uncommitted", () => {
   });
 
   it("keeps that sentence true beside Pull, Push and Pop", async () => {
-    // The row renders under the sync actions, so it reaches a repo that is out
-    // of sync or holding a stash. It read "Clean." there, contradicting the Pull
-    // button one line above it.
+    // The row sits under the sync actions, so it reaches a repo out of sync or holding a stash.
     const mount = await paintRepos([
       repo([], { repo: "behind", has_dirty: false, behind: 3 }),
       repo([], { repo: "ahead", has_dirty: false, ahead: 2 }),
@@ -804,7 +713,6 @@ describe("a repo with nothing uncommitted", () => {
       expect(section?.querySelector(".git-repo-row-clean")?.textContent).toBe(
         "No uncommitted changes.",
       );
-      // The sentence claims nothing the action bar denies.
       expect(section?.querySelector(".git-repo-row-clean")?.textContent).not.toContain("Clean");
     }
 
@@ -814,9 +722,7 @@ describe("a repo with nothing uncommitted", () => {
   });
 
   it("still gets a section on a workspace where every repo is quiet", async () => {
-    // No aggregate empty state: an "All clean" card here would replace the repo
-    // list, and with it the Pull button of a repo that is merely behind AND the
-    // branch chip, which is the only door to the branch switcher.
+    // No aggregate empty state: a card replacing the list would hide a behind repo's Pull button and the branch chip.
     const mount = await paintRepos([
       repo([], { repo: "one", has_dirty: false }),
       repo([], { repo: "two", has_dirty: false, behind: 1 }),
@@ -833,15 +739,9 @@ describe("a repo with nothing uncommitted", () => {
   });
 });
 
-// Pull all fast-forwards every repo it safely can and leaves the rest alone. The
-// pass itself is the server's (internal/git/handlers_pullall.go judges each repo
-// beside the pull it guards, which is the only place that judgement is atomic
-// with the action); what this suite covers is the half that is the panel's — that
-// a repo the pass could NOT pull says so on its own block, and that the mark
-// expires rather than outliving the fact it reports.
+// The pass is the server's; the panel's half is that a repo it could not pull says so on its own block, and the mark
+// expires with the fact it reports.
 describe("Pull all", () => {
-  /** The toolbar plus the mount, and the wiring that binds the button. Returns
-   *  the Pull-all button. */
   async function bootToolbar(repos: GitRepoStatus[]): Promise<HTMLButtonElement> {
     document.body.innerHTML = `<div id="git-view">
       <div class="git-tab-toolbar">
@@ -869,9 +769,7 @@ describe("Pull all", () => {
     return mount;
   }
 
-  /** Press the button and wait for the pass plus its follow-up repaint. The
-   *  click handler is fire-and-forget, so the settle has to be observed rather
-   *  than counted in microtasks. */
+  /** The click handler is fire-and-forget, so the settle is observed, not counted in microtasks. */
   async function pressPullAll(btn: HTMLButtonElement, after: GitRepoStatus[]): Promise<void> {
     apiGet.mockResolvedValue({ repos: after });
     btn.click();
@@ -883,7 +781,7 @@ describe("Pull all", () => {
 
   it("gives the toolbar a button that dispatches one pass", async () => {
     const btn = await bootToolbar([repo([], { repo: "demo", behind: 1, has_dirty: false })]);
-    // An icon, because the toolbar renders its glyphs from TS rather than markup.
+    // The toolbar renders its glyphs from TS.
     expect(btn.innerHTML).toContain("<svg");
 
     await pressPullAll(btn, [repo([], { repo: "demo", has_dirty: false })]);
@@ -901,21 +799,18 @@ describe("Pull all", () => {
       },
     ];
 
-    // Still behind afterwards: nothing was pulled, which is what the mark says.
     await pressPullAll(btn, [repo([], { repo: "demo", behind: 2, has_dirty: false })]);
 
     const flag = mountEl().querySelector<HTMLElement>(".git-repo-pull-flag");
     expect(flag?.textContent).toContain("diverged");
     expect(flag?.dataset["verdict"]).toBe("blocked");
-    // The glyph as well as the hue, so the state does not rest on colour alone.
+    // Glyph as well as hue, so the state does not rest on colour alone.
     expect(flag?.querySelector("svg")).not.toBeNull();
 
     const note = mountEl().querySelector<HTMLElement>(".git-repo-note");
     expect(note?.textContent).toContain("Not pulled.");
     expect(note?.textContent).toContain("1 local commit");
-    // And the section is open, so that sentence is read without a click. Carried
-    // by `behind > 0` in the collapse default rather than by the mark, which is
-    // why no separate clause exists for it.
+    // Carried by `behind > 0` in the collapse default, not by the mark.
     expect(
       mountEl()
         .querySelector('[data-repo="demo"] .git-repo-section-header')
@@ -957,9 +852,7 @@ describe("Pull all", () => {
   });
 
   it("drops the mark once the repo stops being behind", async () => {
-    // The mark reports what the pass could not pull. Once something else pulls
-    // the repo there is nothing left to pull, so the sentence has stopped
-    // describing anything and keeping it would be a stale warning.
+    // Once something else pulls the repo, the mark would be a stale warning.
     const btn = await bootToolbar([repo([], { repo: "demo", behind: 1, has_dirty: false })]);
     pullAllResult = [
       {
@@ -972,7 +865,6 @@ describe("Pull all", () => {
     await pressPullAll(btn, [repo([], { repo: "demo", behind: 1, has_dirty: false })]);
     expect(mountEl().querySelectorAll(".git-repo-pull-flag").length).toBe(1);
 
-    // Something else pulls it: Refresh now reports it in sync.
     apiGet.mockResolvedValue({ repos: [repo([], { repo: "demo", has_dirty: false })] });
     document.getElementById("git-refresh-all-btn")?.click();
     await vi.waitFor(() => {
@@ -981,8 +873,7 @@ describe("Pull all", () => {
   });
 
   it("keeps the mark while the repo is still behind, across a refresh", async () => {
-    // The other side of the rule: a reader who walked away must still find the
-    // reason their repos did not move.
+    // A reader who walked away must still find why their repos did not move.
     const btn = await bootToolbar([repo([], { repo: "demo", behind: 4, has_dirty: false })]);
     pullAllResult = [
       {
@@ -1002,8 +893,7 @@ describe("Pull all", () => {
   });
 
   it("marks a repo the server describes with a reason this build does not know", async () => {
-    // The wire vocabulary can grow; an unrecognised reason still earns a mark,
-    // because the fact that the repo was not pulled is the part that matters.
+    // An unrecognised reason still earns a mark: the repo was not pulled.
     const btn = await bootToolbar([repo([], { repo: "demo", behind: 1, has_dirty: false })]);
     pullAllResult = [
       { repo: "demo", verdict: "blocked", reason: "something_new", detail: "A newer reason." },
@@ -1015,14 +905,9 @@ describe("Pull all", () => {
   });
 });
 
-// The loading placeholder. The SECOND case is the trap: `status-all` is polled (SSE
-// debounce, post-action refreshes, tab activation), so a skeleton armed on "a
-// request is in flight" rather than on "the mount is empty" would paint over real
-// content several times a minute; a skeleton may only paint over an empty container.
-// Fake timers are scoped to this block: the suite above runs on real ones and the
-// 150ms show delay is the only thing here that needs them.
+// `status-all` is polled, so the skeleton arms on an empty mount, not on a request in flight, or it would paint
+// over real content. Fake timers are scoped to this block: only the 150ms show delay needs them.
 describe("the loading placeholder", () => {
-  /** Resolve the pending `status-all`. */
   let settle: ((value: unknown) => void) | null = null;
 
   beforeEach(() => {
@@ -1052,7 +937,7 @@ describe("the loading placeholder", () => {
     const { refreshChanges } = await load();
     const done = refreshChanges();
 
-    // The show delay is 150ms, so a fast answer paints no placeholder at all.
+    // The show delay is 150ms, so a fast answer paints no placeholder.
     expect(mountEl().querySelector(".git-repo-skeleton")).toBeNull();
     await vi.advanceTimersByTimeAsync(150);
 
@@ -1061,11 +946,10 @@ describe("the loading placeholder", () => {
       skel,
       "an empty mount must stand in for the sections the paint will build",
     ).not.toBeNull();
-    // aria-hidden: the mount is aria-live="polite", so placeholder bars must not
-    // be announced.
+    // The mount is aria-live="polite", so placeholder bars must not be announced.
     expect(skel?.getAttribute("aria-hidden")).toBe("true");
     expect(skel?.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
-    // No label: only the PRs tab names a connection on its skeleton.
+    // Only the PRs tab names a connection on its skeleton.
     expect(mountEl().querySelector(".git-repo-skel-label")).toBeNull();
 
     settle?.({ repos: [] });
@@ -1093,10 +977,8 @@ describe("the loading placeholder", () => {
   });
 
   it("arms nothing on a CLEAN worktree once status-all has answered", async () => {
-    // The container cannot tell a clean worktree from one nobody has read: the
-    // empty-state row it paints is unkeyed, so the ARM has to key on ANSWERED. A gap
-    // and a resume both reach a refresh with no tab switch behind them, so without
-    // this a clean worktree flashes a shimmer over a view the reader is looking at.
+    // The empty-state row is unkeyed, so the arm keys on answered; a gap or resume refreshes without a tab switch, and a
+    // clean worktree would otherwise flash a shimmer.
     const { refreshChanges } = await load();
     const first = refreshChanges();
     settle?.({ repos: [] });

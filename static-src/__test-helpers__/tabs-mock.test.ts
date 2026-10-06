@@ -1,10 +1,5 @@
-// The helper's own drift guard. `tabsMock()` is only useful while it is TOTAL:
-// the moment `tabs.ts` exports a name the helper omits, every file that spreads
-// it goes back to the failure mode the helper exists to remove, and that failure
-// does not name the missing export.
-//
-// A browser test, not a node one: `tabs.ts` reaches `router.ts`, which registers a
-// popstate listener at module scope, so importing the real surface needs a window.
+// Drift guard: `tabsMock()` must stay TOTAL, or every spreading file fails without naming the
+// missing export. Browser, not node: `tabs.ts` reaches `router.ts`, which needs a window.
 import { describe, it, expect } from "vitest";
 
 import { tabsMock } from "./tabs-mock.js";
@@ -12,8 +7,7 @@ import * as tabs from "../tabs.js";
 
 describe("the tabs.js mock helper stays total", () => {
   it("names every value tabs.ts exports", () => {
-    // Types are erased at runtime, so this compares the VALUE surface, which is
-    // exactly what an ESM link needs to resolve.
+    // Types are erased at runtime, so this compares the value surface an ESM link resolves.
     const real = Object.keys(tabs as Record<string, unknown>).sort();
     const mocked = Object.keys(tabsMock()).sort();
     const missing = real.filter((k) => !mocked.includes(k));

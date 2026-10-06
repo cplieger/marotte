@@ -12,16 +12,8 @@ import (
 	"github.com/cplieger/pinstall/v3"
 )
 
-// TestKiroReasonTextIsTheClientContract pins the four reason literals
-// /api/health puts on the wire. They are not internal wording: the browser
-// banner (static-src/runtime-health.ts) prefix-matches "kiro-cli" to decide the
-// verdict is a kiro-cli one AT ALL, then keys its per-state copy on each literal
-// in full — so a rename here degrades every named state to the terminal
-// "install failed and its retries are exhausted" copy, silently and only in the
-// browser. Change a string here and change STATES there in the same commit.
-//
-// It also pins the mapping's totality: a reason this build cannot name (a value
-// a future pinstall adds) must still read as blocking, not as ready.
+// TestKiroReasonTextIsTheClientContract pins the four reason literals runtime-health.ts keys
+// on (change STATES there in the same commit), and that an unknown reason reads as blocking.
 func TestKiroReasonTextIsTheClientContract(t *testing.T) {
 	tests := map[pinstall.Reason]string{
 		pinstall.ReasonReady:       "",
@@ -49,11 +41,7 @@ func TestKiroReasonTextIsTheClientContract(t *testing.T) {
 	}
 }
 
-// TestHandleKiroRescanReportsTheResultingReadiness pins the repair hook's two
-// answers. It exists so an operator who fixes an install inside the container
-// learns whether it took WITHOUT polling /api/health, and so a failed rescan
-// reports the manager's own verdict rather than the error text, which can name a
-// path on the volume.
+// TestHandleKiroRescanReportsTheResultingReadiness pins the repair hook's two answers.
 func TestHandleKiroRescanReportsTheResultingReadiness(t *testing.T) {
 	tests := map[string]struct {
 		ok         bool
@@ -102,10 +90,7 @@ func TestHandleKiroRescanReportsTheResultingReadiness(t *testing.T) {
 	}
 }
 
-// TestHandleKiroRescanNeverLeaksTheErrorText pins the disclosure rule: the hook
-// answers on an unauthenticated port, and a rescan failure can carry a
-// filesystem path from the volume. The manager has already logged the specific
-// fault, so the response reports the verdict only.
+// TestHandleKiroRescanNeverLeaksTheErrorText pins that the response carries the verdict only.
 func TestHandleKiroRescanNeverLeaksTheErrorText(t *testing.T) {
 	const secretish = "/config/home/.aws/sso/cache/token.json"
 	s := &Server{
@@ -120,11 +105,8 @@ func TestHandleKiroRescanNeverLeaksTheErrorText(t *testing.T) {
 	}
 }
 
-// TestLoopbackOnlyAdmitsOnlyInContainerCallers pins the repair hook's only
-// boundary. A rescan spawns bounded kiro-cli subprocesses, so reachability from
-// the LAN would hand an unauthenticated caller a process-spawn lever; and BOTH
-// ends have to be loopback, because a DNS-rebound page arrives with a loopback
-// socket peer and the attacker's own Host.
+// TestLoopbackOnlyAdmitsOnlyInContainerCallers pins that BOTH ends must be loopback: a
+// DNS-rebound page arrives with a loopback peer and the attacker's Host.
 func TestLoopbackOnlyAdmitsOnlyInContainerCallers(t *testing.T) {
 	tests := map[string]struct {
 		remote     string
@@ -169,10 +151,7 @@ func TestLoopbackOnlyAdmitsOnlyInContainerCallers(t *testing.T) {
 				if body["error"] == "" {
 					t.Errorf("body = %v, want the canonical error envelope", body)
 				}
-				// The refusal names THIS surface. It is the whole of what a
-				// rejected caller learns, and the same middleware now backs
-				// /debug/pprof/ too, so a generic message would send an
-				// operator to retry the wrong path.
+				// The refusal names THIS surface; the middleware also backs /debug/pprof/.
 				if !strings.Contains(body["error"], kiroRescanSurface) {
 					t.Errorf("refusal = %q, want it to name %q", body["error"], kiroRescanSurface)
 				}

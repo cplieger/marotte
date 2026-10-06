@@ -4,7 +4,7 @@
 
 /* EVIDENCE IS UNCAPPED AND UNINDENTED, and both halves of that are deletions
  * of bubble-era residue. This comment is the one copy; the other evidence
- * blocks (.tool-group, .subagent-block, .todo-list, .plan-message) point here.
+ * blocks (.tool-group, .subagent-block, .plan-message) point here.
  *
  * The cap was `max-width: 39.25rem` — the assistant bubble's stagger (40.75rem,
  * which has since been deleted from `.message.assistant` too) minus the avatar
@@ -85,6 +85,27 @@
    tool card, a pitch-black box in dark mode. */
 .tool-output-reveal {
   margin-block-start: var(--sp-1);
+}
+
+/* How the call's approval or question was answered, on the claim row so it reads
+   without opening the card. Clamped, because a typed answer is free text. */
+.tool-fact {
+  display: -webkit-box;
+  padding: 0 0.75rem var(--sp-2);
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* The full file behind an offloaded output; the region above holds KAS's preview. */
+.tool-offload-link {
+  display: inline-block;
+  margin: var(--sp-1) 0.75rem var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--c-accent);
 }
 
 /* `from -> to`, the two facts a move's claim line cannot carry. */
@@ -357,9 +378,21 @@
   user-select: none;
 }
 
+/* A hook card's claim row opens its file (`tool-card.ts` `wireFileRow`), so it
+   takes the same pointer treatment. `box-shadow` is listed for the base press wash. */
+.tool-summary.opens-file {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
 /* The shared recipe; gated for `.tool-group-header`'s reason. */
 @media (any-hover: hover) {
-  .tool-summary.has-disclosure:hover {
+  .tool-summary.has-disclosure:hover,
+  .tool-summary.opens-file:hover {
     background: var(--c-hover);
   }
 }
@@ -402,8 +435,14 @@
 
 .tool-header,
 .tool-subtitle,
+.tool-fact,
 .tool-move-row {
   padding-inline-start: calc(0.75rem + var(--tool-chev-box) + var(--sp-2));
+}
+
+/* A claim-only card has no output region, so its offload link joins the claim row. */
+.tool-summary > .tool-offload-link {
+  margin: 0 0.75rem var(--sp-2) calc(0.75rem + var(--tool-chev-box) + var(--sp-2));
 }
 
 /* THE OUTCOME LIVES HERE, AS THE ROW'S ONE MARK. On success the row keeps its own
@@ -1062,6 +1101,19 @@ a.subagent-header {
   white-space: nowrap;
 }
 
+/* An inline helper's model and effort. `:empty` takes it out of the flex line, or
+   the header's gap would still be charged for a saved agent's card. */
+.subagent-detail {
+  flex-shrink: 0;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+
+  &:empty {
+    display: none;
+  }
+}
+
 /* The glyph at the trailing edge of a header, in one slot with two meanings:
    `.subagent-toggle` is a PIPELINE's disclosure glyph, `.subagent-head-chevron` is a
    leaf's NAVIGATION glyph. The second declares no `--chev-turn`, deliberately, so the
@@ -1165,11 +1217,9 @@ a.subagent-header {
    word. No `.collapsed` in the gate any more — a card has nothing to collapse, and
    the running class is the whole condition.
 
-   NO block-size cap, deliberately: the bound is per-line and horizontal —
-   `TAIL_LINES` (3) caps the count and each line is `nowrap`, so a burst of long
-   lines cannot grow the card. Adding a cap would reproduce `.run-step-capture`'s
-   defect, since `overflow: hidden` clips at the PADDING box and a capped box with
-   block-end padding paints the clipped line inside that band.
+   Lines WRAP, and the cap is on `.subagent-tail-window` below rather than here:
+   that box has no padding, so its clip edge is the text's edge, where a cap on this
+   padded box would paint a clipped line inside the padding band.
 
    THE RESTING STATE IS EMPTY AND ZERO-SIZED, and the shown state is the
    `:not(:empty)` pair below — `.page-find-note` (24-find.css) exactly, for the
@@ -1190,11 +1240,12 @@ a.subagent-header {
    transitions at all: measured on a real card, a delta that rewrites the last
    line re-runs nothing and holds 27px, and the two line-COUNT steps a rolling
    3-line window has left (27 → 42 → 57) jump, because auto → auto is not a change
-   in the computed value and no CSS-only transition can observe it. Animating
-   those needs the line count expressed as a length, which is the block-size cap
-   the paragraph above refuses. Reduced motion is 40-a11y.css's global duration
-   override, and nothing waits on transitionend. */
+   in the computed value and no CSS-only transition can observe it. Reduced motion
+   is 40-a11y.css's global duration override, and nothing waits on transitionend. */
 .subagent-tail {
+  /* Stated rather than `normal`, so the window's `lh` cap is a whole number of
+     the lines it holds in every font. */
+  line-height: 1.5;
   padding-inline: var(--sp-3);
   padding-block: 0;
   block-size: 0;
@@ -1259,10 +1310,21 @@ a.subagent-header {
   background: transparent;
 }
 
+/* The tail's last `TAIL_LINES` (3, subagent-tail.ts) VISUAL lines: the lines wrap,
+   and `flex-end` packs them against the bottom so the overflow is the OLDEST text,
+   clipped above. `clip` rather than `hidden`, because a scroll container would make
+   that start-edge overflow a scroll position instead of a cut. */
+.subagent-tail-window {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-block-size: 3lh;
+  overflow: clip;
+}
+
 .subagent-tail-line {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex-shrink: 0;
+  overflow-wrap: anywhere;
 }
 
 /* The FOOT ROW: the ledger, and nothing else. The LAST region of either box, so a
@@ -1316,79 +1378,8 @@ a.subagent-header {
  * prose skin no longer sets: `.message.assistant`'s `40.75rem` was deleted (it
  * was the old bubble's stagger, see 13-messages.css) and `.reasoning-block`'s
  * cap is `--content-max-w`, which is wider than any subagent body, so both
- * declarations had become no-ops. The `.tool-group` / `.todo-list` entries went
+ * declarations had become no-ops. The `.tool-group` entry went
  * earlier with the caps they cancelled (see .tool-call). Nothing replaced it. */
-
-/* Todo checklist (kiro-cli todo_list tool → a first-class checklist).
-   Uncapped and unindented — see .tool-call. */
-.todo-list {
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: var(--sp-2) var(--sp-3);
-  flex-shrink: 0;
-}
-
-.todo-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  margin-block-end: var(--sp-2);
-}
-
-.todo-title {
-  font-weight: var(--fw-semibold);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-}
-
-.todo-progress {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.todo-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-
-.todo-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.todo-glyph {
-  flex-shrink: 0;
-  font-size: var(--fs-base);
-  line-height: 1.2;
-}
-
-.todo-row[data-status="completed"] .todo-glyph {
-  color: var(--c-green);
-}
-
-.todo-row[data-status="in_progress"] .todo-glyph {
-  color: var(--c-accent);
-}
-
-.todo-row[data-status="pending"] .todo-glyph {
-  color: var(--c-text-tertiary);
-}
-
-.todo-row[data-status="completed"] .todo-text {
-  color: var(--c-text-tertiary);
-  text-decoration: line-through;
-}
-
-.todo-text {
-  overflow-wrap: anywhere;
-}
 
 /* Subagent full-output modal */
 .subagent-modal-card {

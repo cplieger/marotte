@@ -11,8 +11,7 @@ import (
 	"pgregory.net/rapid"
 )
 
-// pendingFixture is a Runtime holding only what the pending snapshot reads: the
-// three stores and the registry they mint into.
+// pendingFixture is a Runtime holding only the three stores and their registry.
 func pendingFixture() *Runtime {
 	v := &subject.Versions{}
 	rt := &Runtime{
@@ -58,18 +57,12 @@ func serverKeys(t rapid.TB, rt *Runtime) []string {
 	return snapshotKeys(t, payload.Items)
 }
 
-// TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks is the 12.7
-// interleaving property. A permission is added and another resolved at random
-// points during the snapshot's four reads. The client then holds the snapshot's
-// set at the snapshot's version, and the digest compares that version by
-// equality against the server's. The property: whenever the two versions are
-// EQUAL (the digest would answer unchanged), the client's set is the server's
-// set. Counter-first makes it hold by construction: a mutation landing after the
-// counter read bumps the server past the stamp.
+// TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks pins the interleaving property:
+// whenever the client's version equals the server's, the sets are equal.
 func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		rt := pendingFixture()
-		// A resident population the schedule can resolve from.
+		// A resident population to resolve from.
 		for id := int64(1); id <= 3; id++ {
 			rt.bus.pendingPerms.Add(id, permNeeded("c1", id))
 		}
@@ -87,8 +80,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 				rt.bus.pendingPerms.TakeIfPresent("c1", resolveID)
 			}
 		})
-		// The schedule's late arms (-1) land after the snapshot, like a mutation the
-		// connection's queued live frame carries.
+		// The late arms (-1) land after the snapshot, like a queued live frame.
 		if addAt == -1 {
 			rt.bus.pendingPerms.Add(9, permNeeded("c1", 9))
 		}
@@ -115,12 +107,8 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 	})
 }
 
-// TestPendingSnapshot_CounterLastHasAFalseUnchanged is the red check the design
-// asks for: the same schedule against a counter-LAST read (a test-local copy of
-// the procedure with the counter moved to the end) produces a set missing the
-// added item at the server's own version, so a digest would answer unchanged
-// for a set the client lacks. It exists to show why the order in
-// pendingSnapshot is normative; it tests no production path.
+// TestPendingSnapshot_CounterLastHasAFalseUnchanged is the red check: a test-local counter-last copy
+// yields a false unchanged, which is why the order is normative.
 func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 	rt := pendingFixture()
 	rt.bus.pendingPerms.Add(1, permNeeded("c1", 1))
@@ -140,15 +128,13 @@ func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("counter-last snapshot holds %d items; the demonstration needs the added item missing", len(events))
 	}
-	// One item at the server's version: the false unchanged counter-first forbids.
+	// One item at the server's version: the false unchanged.
 	if got := len(rt.bus.pendingPerms.List("")); got != 2 {
 		t.Fatalf("server holds %d permissions, want 2", got)
 	}
 }
 
-// TestPendingSnapshot_EmptySetIsOneFrameWithItems pins the wire shape the client
-// clears on: an empty pending set is `items: []`, never null, at the unminted
-// version.
+// TestPendingSnapshot_EmptySetIsOneFrameWithItems pins `items: []`, never null, at the unminted version.
 func TestPendingSnapshot_EmptySetIsOneFrameWithItems(t *testing.T) {
 	rt := pendingFixture()
 	payload, stamp := rt.pendingSnapshotStamped()

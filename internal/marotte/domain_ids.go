@@ -14,24 +14,12 @@ const SecretMask = "***"
 // client does not supply one.
 const DefaultChatName = "New conversation"
 
-// MaxDraftBytes caps a chat's persisted composer draft.
-//
-// Two orders of magnitude below a prompt's 512 KiB cap on purpose. A draft is
-// re-saved on a 600ms debounce while the user types and is read back on every
-// chat open, so its cost is paid repeatedly where a prompt's is paid once; and
-// text long enough to exceed this has been pasted rather than typed, which is
-// what attachments are for. Shared by the command boundary (which answers 413)
-// and the store (which refuses defensively).
+// MaxDraftBytes caps a chat's persisted composer draft, far below a prompt's 512 KiB because a
+// draft is re-saved every 600ms of typing and read on every chat open.
 const MaxDraftBytes = 16 * 1024
 
-// MaxAttachments caps how many files one chat may have staged beside its draft.
-//
-// A product limit rather than a decode bound: the pill row is a single line
-// under the composer and a prompt naming dozens of files is a directory, which
-// the agent reads with its own tools. It sits beside MaxDraftBytes because the
-// two bound the same thing — the composer state a debounced autosave rewrites —
-// and are enforced at the same two layers: the command boundary answers 413,
-// the store refuses defensively.
+// MaxAttachments caps how many files one chat may stage beside its draft: a product limit for a
+// one-line pill row, not a decode bound.
 const MaxAttachments = 32
 
 // MaxAttachmentPathBytes caps one staged path. Deliberately MaxChatNameBytes
@@ -45,13 +33,9 @@ const MaxAttachmentPathBytes = MaxChatNameBytes
 // this limit.
 const MaxChatNameBytes = 512
 
-// NewChatID mints a chat identifier: "c-" followed by the hex of 16 bytes, a
-// shape ids.ValidChatID accepts.
-//
-// crypto/rand, not math/rand/v2: the id is the path segment of /chat/{id}, the
-// chat's file name and the key its ACP session chain hangs off, so a guessable id
-// is one a stranger can name. rand.Read never fails since Go 1.24, so there is no
-// error to return.
+// NewChatID mints a chat identifier: "c-" plus the hex of 16 bytes from crypto/rand, since the id
+// addresses a conversation (URL segment, file name, session-chain key) and must not be guessable.
+// The shape satisfies ids.ValidChatID, as the older c-<ts>-<rand> does.
 func NewChatID() ChatID {
 	var b [16]byte
 	rand.Read(b[:])

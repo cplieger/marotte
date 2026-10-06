@@ -1,23 +1,8 @@
-// The two-frame publish and the stamp it must not carry, against the REAL marotte binary
-// (Part IV item 15). One saved Mutate publishes a header frame (`chat_updated`, stamped
-// `chats`) and then its transcript frames (`turn_opened`, or `turn_opened` then
-// `draft_changed`), with the ONE `chat` stamp on the last of them. A client that loses the
-// stream between the frames holds the transcript one turn short, and must not hold a
-// `chat` version that says otherwise.
-//
-// Each case arms the test binary's close-after hook so the stream dies between the frames,
-// reconnects FRESH (cursor dropped first, so no replay can repair it), and requires the
-// fresh hello's digest to answer `changed` for chat:X off the version the client held before
-// the kill. A server that stamped the header frame `chat`, or every frame of one Mutate,
-// answers `unchanged` here and leaves the client one message (or one stale draft) behind
-// until the next unrelated mutation.
-//
-// The client is the library's stream over marotte's envelope door and version map, the
-// three pieces `sse-adapter.ts` composes minus the page: the page modules the adapter's
-// loaders reach need the SPA's DOM, and the property under test is the server's stamping
-// seen through the client's map, not the store. Node rather than the browser because the
-// fixture answers a cross-site POST with 403 and sets no CORS header, so a page on vite's
-// origin could neither command it nor read its stream.
+// Against the REAL binary: one Mutate publishes a header frame (`chat_updated`, stamped `chats`)
+// then its transcript frames, with the ONE `chat` stamp on the last. Each case kills the stream
+// between the frames (close-after hook), reconnects FRESH (no replay) and requires the hello's
+// digest to answer `changed` for chat:X. Node, not browser: the fixture refuses cross-site POSTs
+// and sets no CORS header.
 
 import { afterEach, beforeEach, describe, expect, inject, it } from "vitest";
 
@@ -43,9 +28,8 @@ if (FIXTURE === undefined || FIXTURE === "") {
   console.warn(`[vitest] ${SKIP_REASON}`);
 }
 
-/** Frames a FRESH connect writes ahead of any live frame: hello, connected, pending_snapshot,
- *  status_snapshot. The close-after hook counts data frames, hello included, so a live
- *  frame's ordinal is HOOK_FRAMES + its position. */
+/** Frames a FRESH connect writes before any live frame (hello, connected, pending_snapshot,
+ *  status_snapshot); the hook counts data frames, so a live frame's ordinal is HOOK_FRAMES + n. */
 const HOOK_FRAMES = 4;
 
 interface Client {
@@ -240,14 +224,12 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     expect(before.promptIDs).toEqual([]);
     expect(heldVersion(id)).toBe(before.version);
 
-    // Frame 5 is the header frame of the publish below; frame 6, the transcript frame, is
-    // the write that fails.
+    // Frame 5 is the header frame; frame 6, the transcript frame, is the write that fails.
     await reconnectArmed(c, HOOK_FRAMES + 1);
     const seenBefore = c.frames.length;
     const dropsBefore = dropped(c);
 
-    // A prompt persists and broadcasts the user row before the bridge answers; the fixture's
-    // kiro-cli never does, so this Mutate is the only chat:X mutation.
+    // The fixture's kiro-cli never answers, so this Mutate is the only chat:X mutation.
     const sent = messageID();
     await command("prompt", id, { text: "hello", message_id: sent });
     await until(() => dropped(c) === dropsBefore + 1, "the armed connection to be cut");
@@ -284,14 +266,12 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     expect(before.draft).toBe("typed on B");
     expect(heldVersion(id)).toBe(before.version);
 
-    // Frame 5 is the header, frame 6 `turn_opened` (unstamped, because a
-    // `draft_changed` follows for the same Mutate), frame 7 `draft_changed`: the cut.
+    // Frame 5 the header, 6 `turn_opened` (unstamped: a `draft_changed` follows), 7 `draft_changed`.
     await reconnectArmed(c, HOOK_FRAMES + 2);
     const seenBefore = c.frames.length;
     const dropsBefore = dropped(c);
 
-    // B sends the prompt: the text leaves the composer and the draft is cleared in the
-    // same Mutate.
+    // The prompt leaves the composer and clears the draft in the same Mutate.
     const sent = messageID();
     await command("prompt", id, { text: "typed on B", message_id: sent });
     await until(() => dropped(c) === dropsBefore + 1, "the armed connection to be cut");

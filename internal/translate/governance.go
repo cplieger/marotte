@@ -1,31 +1,7 @@
 package translate
 
-// v3 (KAS) _kiro/governance/state handler.
-//
-// KAS pushes the account/workspace feature-flag policy as a notification on
-// every session/new and session/load (newSession / hydrateSessionForLoad in the
-// acp-server bundle), and re-pushes it during a prompt when
-// governance.refreshIfChanged() detects a change. It is an A→C notification
-// (outbound.extNotification) marotte just receives — there is no request/reply.
-//
-// Wire shape (verified against the KAS 2.12 acp-server bundle + a live probe):
-//
-//	{ "sessionId", "isEnterprise", "features": { … 7 bools … }, "disabledReason"? }
-//
-//	features = {
-//	  mcpEnabled, webToolsEnabled, usageAnalytics, contentCollection,
-//	  promptLogging, codeReferenceTracker, autonomousAgents
-//	}
-//
-// Actual values on an individual / Builder-ID login (verified live): isEnterprise
-// false; mcp/webTools/autonomousAgents/contentCollection true; usageAnalytics/
-// promptLogging/codeReferenceTracker false; no disabledReason. Infrastructure-
-// Safety (infraSafety*) is NOT here — it is a separate isFeatureEnabled channel.
-//
-// The state is account-GLOBAL (identical across a connection's sessions), so the
-// SSE is broadcast with an empty chat id (every client, including one on Settings
-// with no active chat, receives it) and the latest is cached runtime-side
-// (deps.SetGovernance) so GET /api/governance can serve it on a fresh page load.
+// _kiro/governance/state, pushed at session/new and session/load and on change. The state is
+// account-global: the runtime caches it and owns the governance_state SSE, which adds the lock map.
 
 import (
 	"context"
@@ -53,9 +29,8 @@ type v3GovernanceFeatures struct {
 	AutonomousAgents     bool `json:"autonomousAgents"`
 }
 
-// payload converts the wire shape into the domain SSE/REST payload, stamping
-// Known=true (this only runs on a real notification). SessionID is intentionally
-// dropped — governance is account-global, not session-scoped.
+// payload converts the wire shape into the domain payload with Known=true; SessionID is
+// dropped (governance is account-global).
 func (w v3GovernanceState) payload() marotte.GovernanceStatePayload {
 	return marotte.GovernanceStatePayload{
 		Known:          true,
@@ -73,10 +48,8 @@ func (w v3GovernanceState) payload() marotte.GovernanceStatePayload {
 	}
 }
 
-// DecodeGovernanceState decodes a raw _kiro/governance/state params object into
-// the domain payload. Exported so the runtime can reuse it for the copy the utility
-// bridge receives (whose notifications don't flow through this dispatcher) —
-// keeping one wire→domain conversion. Returns false on empty/invalid params.
+// DecodeGovernanceState decodes a raw _kiro/governance/state params object into the domain
+// payload, false on empty/invalid params. Exported for the utility bridge's copy.
 func DecodeGovernanceState(raw json.RawMessage) (marotte.GovernanceStatePayload, bool) {
 	if len(raw) == 0 {
 		return marotte.GovernanceStatePayload{}, false
@@ -88,13 +61,8 @@ func DecodeGovernanceState(raw json.RawMessage) (marotte.GovernanceStatePayload,
 	return w.payload(), true
 }
 
-// HandleGovernanceState translates _kiro/governance/state into a
-// governance_state SSE and caches the latest state runtime-side. The SSE is
-// broadcast with an empty chat id because the policy is account-global (a
-// client on Settings with no active chat must still receive it). A
-// subagent-session copy is skipped (KAS may re-emit per session; the parent
-// copy carries the identical account-global flags) — the same dedup guard
-// safety.go / code_references.go use.
+// HandleGovernanceState hands _kiro/governance/state to the runtime's cache. A subagent-session
+// copy is skipped: the parent copy carries the identical flags.
 func (t *Translator) HandleGovernanceState(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3GovernanceState](msg, "governance/state")
 	if !ok {
@@ -103,7 +71,5 @@ func (t *Translator) HandleGovernanceState(ctx context.Context, chatID marotte.C
 	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}
-	payload := p.payload()
-	t.governance.SetGovernance(payload)
-	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventGovernanceState, "", payload))
+	t.governance.SetGovernance(ctx, p.payload())
 }

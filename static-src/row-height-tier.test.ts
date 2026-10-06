@@ -2,18 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-// ---------------------------------------------------------------------------
 // A repeated list row takes its height from the TIER, not from its font.
-//
-// Row families declared no height at all, so each resolved to its line box
-// plus padding — measured 23px to 36px, and identical on a coarse pointer and a
-// fine one, while `.tab` beside them correctly went 36px to 44px. A finger got
-// the same 23px git-changes row as a mouse.
-//
-// `--ctl-h-sm` is 24px fine / 36px coarse, which is why it is the right rung
-// here: as a FLOOR it moves desktop by at most 1px (only the git row was under
-// 24) while giving every list row a real target on touch.
-// ---------------------------------------------------------------------------
 
 /** Repeated rows in a list. Each is floored. */
 const LIST_ROWS = [
@@ -21,28 +10,24 @@ const LIST_ROWS = [
   ["popup-item", []],
   ["mcp-row", ["mcp-row-name"]],
   ["git-file-row", ["git-file-path"]],
-  // The page-list row (History, and the configuration browser): its height is
-  // the `--row-h` tier outright rather than a floor, so it moves with the pointer
-  // for the same reason and by a larger step.
+  // The page-list row (History, and the configuration browser): its height is the `--row-h` tier
+  // outright rather than a floor, so it moves with the pointer for the same reason and by a larger
+  // step.
   ["entry", ["entry-body", "entry-line", "entry-name", "entry-title"]],
   ["pill-model-item", []],
   ["pill-role-item", []],
   ["forge-account-repo-row", []],
   ["turn-file-row", []],
-  // Settings > Permissions. Its two variants disagreed by ~10px on a mouse and
-  // ~30px under a finger: a writable rule row carries a select AND a remove
-  // button, both floored at `--hit-floor`, while a read-only one is 12px mono
-  // spans that answer no tier at all. Its floor is `--hit-floor` plus the row's
-  // own chrome rather than `--ctl-h-sm`, which would satisfy this test and still
-  // leave the coarse tier 18px short.
+  // Settings > Permissions. Its two variants disagreed by ~10px on a mouse and ~30px under a
+  // finger: a writable rule row carries a select AND a remove button, both floored at
+  // `--hit-floor`, while a read-only one is 12px mono spans that answer no tier at all.
   ["native-rule", ["native-rule-cap"]],
 ] as const;
 
-/** Form WRAPPERS, deliberately NOT floored: each holds a control that carries
- *  its own tokenised height, so a floor here would be a second answer to one
- *  question. `.section-option` wraps a checkbox whose own hit floor is already
- *  44px on touch; `.sched-row` wraps a select at the dense tier. Both are listed
- *  so the distinction is testable rather than remembered. */
+/** Form WRAPPERS, deliberately NOT floored: each holds a control that carries its own tokenised
+ *  height, so a floor here would be a second answer to one question. `.section-option` wraps a
+ *  checkbox whose own hit floor is already 44px on touch; `.sched-row` wraps a select at the
+ *  dense tier. Both are listed so the distinction is testable rather than remembered. */
 const FORM_WRAPPERS = ["section-option", "sched-row"] as const;
 
 const host = document.createElement("div");
@@ -91,12 +76,12 @@ describe("every repeated list row answers the pointer tier", () => {
       document.documentElement.dataset["pointer"] = "coarse";
       const coarse = row.getBoundingClientRect().height;
 
-      // 36px is --ctl-h-sm on coarse. The floor is what makes this true; without
-      // it every one of these measured its font's line box on both tiers.
+      // 36px is --ctl-h-sm on coarse. The floor is what makes this true; without it every one of
+      // these measured its font's line box on both tiers.
       expect(coarse, `${cls} must reach the coarse rung`).toBeGreaterThanOrEqual(36);
       expect(coarse, `${cls} must actually RESPOND to the tier`).toBeGreaterThan(fine - 0.5);
-      // And the fine tier keeps its own compact height: the rung is 24px, so a row
-      // that already renders taller is untouched.
+      // And the fine tier keeps its own compact height: the rung is 24px, so a row that already
+      // renders taller is untouched.
       expect(
         fine,
         `${cls} must clear WCAG 2.5.8's 24px on a fine pointer too`,
@@ -105,9 +90,9 @@ describe("every repeated list row answers the pointer tier", () => {
   );
 
   it("reads the height from a token, never a literal", () => {
-    // `.turn-file-row` spelled `min-height: 1.5rem`. Both are 24px on a fine
-    // pointer, so nothing moved there — but a literal cannot flip, so that row
-    // stayed 24px under a finger while every control around it grew.
+    // `.turn-file-row` spelled `min-height: 1.5rem`. Both are 24px on a fine pointer, so nothing
+    // moved there — but a literal cannot flip, so that row stayed 24px under a finger while every
+    // control around it grew.
     const row = mountRow("turn-file-row", []);
     document.documentElement.dataset["pointer"] = "coarse";
     expect(row.getBoundingClientRect().height).toBeGreaterThanOrEqual(36);

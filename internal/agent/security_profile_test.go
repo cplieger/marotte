@@ -11,10 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// writeProfileSetting writes a config.json carrying just the security profile.
-// A helper that FAILS inside itself rather than returning an error, because a
-// fixture that cannot be staged is an environment failure and not a result any
-// case wants to branch on.
+// writeProfileSetting writes a config.json with just the security profile, failing inside itself.
 func writeProfileSetting(t *testing.T, dir, value string) {
 	t.Helper()
 	body := map[string]any{}
@@ -30,12 +27,7 @@ func writeProfileSetting(t *testing.T, dir, value string) {
 	}
 }
 
-// TestSecurityPresets_ResolvesEachProfile pins that every profile in the ladder
-// reaches the session door as its own preset set, and that Custom reaches it as
-// none. The Custom row is the one that matters most: an empty result is what
-// withholds the wire key and makes the permissions files the whole policy, so a
-// fallback creeping in there would put a floor back that the editable table does
-// not show.
+// TestSecurityPresets_ResolvesEachProfile pins each profile's preset set; Custom resolves to none, withholding the wire key.
 func TestSecurityPresets_ResolvesEachProfile(t *testing.T) {
 	for _, p := range policyfile.Profiles() {
 		t.Run(p.ID, func(t *testing.T) {
@@ -49,13 +41,7 @@ func TestSecurityPresets_ResolvesEachProfile(t *testing.T) {
 	}
 }
 
-// TestSecurityPresets_FallsBackLoudlyNotSilently is the guard on the failure that
-// would look like a broken agent rather than a bad setting.
-//
-// An unknown id must resolve to the default profile, NOT to an empty set. Empty
-// is the Custom profile's wire, so a typo in config.json would otherwise remove
-// the fs_read floor and leave the agent asking permission to read a file, with
-// nothing anywhere naming the cause.
+// TestSecurityPresets_FallsBackLoudlyNotSilently pins that an unknown id resolves to the default, never to Custom's empty set.
 func TestSecurityPresets_FallsBackLoudlyNotSilently(t *testing.T) {
 	fallback, ok := policyfile.ProfileFor(policyfile.DefaultProfile)
 	if !ok {
@@ -76,9 +62,7 @@ func TestSecurityPresets_FallsBackLoudlyNotSilently(t *testing.T) {
 	}
 }
 
-// TestSecurityPresets_AbsentConfigResolvesToDefault covers a first boot, where no
-// config.json exists at all. Same requirement as a malformed value and a separate
-// case because it takes a different path through the settings reader.
+// TestSecurityPresets_AbsentConfigResolvesToDefault covers a first boot, a different reader path.
 func TestSecurityPresets_AbsentConfigResolvesToDefault(t *testing.T) {
 	fallback, _ := policyfile.ProfileFor(policyfile.DefaultProfile)
 	got := securityPresets(t.Context(), t.TempDir())
@@ -87,9 +71,7 @@ func TestSecurityPresets_AbsentConfigResolvesToDefault(t *testing.T) {
 	}
 }
 
-// TestSecurityPresets_CallerCannotMutateTheProfile: the returned slice reaches
-// StartOpts and then the wire, and a caller appending to it must not rewrite the
-// profile for every later session in the process.
+// TestSecurityPresets_CallerCannotMutateTheProfile pins that the returned slice must not alias the profile.
 func TestSecurityPresets_CallerCannotMutateTheProfile(t *testing.T) {
 	dir := t.TempDir()
 	writeProfileSetting(t, dir, policyfile.ProfileTrusted)

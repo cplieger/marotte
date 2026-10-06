@@ -11,14 +11,8 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// The fixture mirrors the real mount shape ListenAndServe builds: the SPA/static
-// catch-all at "/" (the REAL spaHandler, not a stub, so the static leg's
-// before/after behaviour is the production one), a plain-path API route
-// (/api/health, the baked probe), a method-pattern mutating route
-// (POST /api/kiro-cli/rescan, the README's repair call), an exact+subtree pair
-// (/api/chats and /api/chats/, the shape every marotte subtree uses), and a
-// wildcard route (DELETE /api/knowledge/{name}) so the decoded-path verdict is
-// exercised against a real path parameter.
+// The fixture mirrors ListenAndServe's mount shape: the real spaHandler at "/", a plain API
+// route, a method-pattern route, an exact+subtree pair and a wildcard route.
 const (
 	indexBody = "<html>index</html>"
 	assetBody = "console.log('asset')"
@@ -63,12 +57,8 @@ func do(h http.Handler, method, target string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// TestCanonicalAPIPath is the behaviour contract of the guard: on the API
-// surface a non-canonical spelling is REFUSED (400, marotte's bare error
-// envelope, handler never reached) where ServeMux would have answered 307 — a
-// status a `curl -f` sender reads as success — while a canonical spelling
-// reaches its handler untouched and the static/SPA mount keeps every redirect
-// and fallback it had.
+// TestCanonicalAPIPath pins that a non-canonical API spelling is REFUSED (400, handler not
+// reached), a canonical one reaches its handler, and the SPA mount keeps its redirects.
 func TestCanonicalAPIPath(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -128,10 +118,7 @@ func TestCanonicalAPIPath(t *testing.T) {
 			method: http.MethodPost, target: "/api/kiro-cli/../kiro-cli/rescan",
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
-		// The encoded spellings are the ones ServeMux does NOT redirect: they
-		// are canonical on the wire, match no pattern once decoded, and so land
-		// on the SPA catch-all with 200 + index.html. Feeding the DECODED path
-		// to the library is what converts those into refusals.
+		// The encoded spellings ServeMux does NOT redirect: decoding is what refuses them.
 		{
 			name:   "encoded dotdot below the prefix is refused (would be 200 index.html)",
 			method: http.MethodGet, target: "/api/%2e%2e/api/health",
@@ -147,9 +134,7 @@ func TestCanonicalAPIPath(t *testing.T) {
 			method: http.MethodDelete, target: "/api/knowledge/%2e%2e",
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
-		// A trailing ".." pops the segment before it, so this one's CLEAN is
-		// "/api" — outside the guarded prefix. It is refused on the RAW leg of
-		// the scope test, which is why that leg exists.
+		// This one's clean is "/api", outside the prefix: refused on the RAW leg.
 		{
 			name:   "a trailing dotdot that cleans ABOVE the prefix is refused",
 			method: http.MethodGet, target: "/api/health/..",
@@ -187,10 +172,7 @@ func TestCanonicalAPIPath(t *testing.T) {
 			method: http.MethodGet, target: "/api/../app.js",
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
-		// The trailing-slash class is outside CanonicalRequestPath's claim, and
-		// this pins that the guard leaves it exactly where it was: /api/health/
-		// is canonical, matches no pattern, and falls to the SPA as it always
-		// did.
+		// The trailing-slash class is outside the guard's claim and left where it was.
 		{
 			name:   "a canonical trailing slash on an API route is untouched",
 			method: http.MethodGet, target: "/api/health/",
@@ -219,10 +201,8 @@ func TestCanonicalAPIPath(t *testing.T) {
 	}
 }
 
-// TestCanonicalAPIPath_RefusalIsMarottesEnvelope: the refusal must be the
-// repo's bare {"error": …} shape, and — the load-bearing half — a status a
-// non-following sender reads as failure. `curl -f` keys on >= 400, which is why
-// the whole guard exists rather than leaving the 307 in place.
+// TestCanonicalAPIPath_RefusalIsMarottesEnvelope pins the bare {"error": …} shape and a
+// status `curl -f` reads as failure.
 func TestCanonicalAPIPath_RefusalIsMarottesEnvelope(t *testing.T) {
 	mux, _ := requestPathMux()
 	rec := do(canonicalAPIPath(mux), http.MethodPost, "/"+kiroRescanPath)
@@ -242,11 +222,8 @@ func TestCanonicalAPIPath_RefusalIsMarottesEnvelope(t *testing.T) {
 	}
 }
 
-// TestMiddlewareStack_GuardOrder pins the PLACEMENT, read off the production
-// stack (s.middlewareStack) rather than a hand-assembled copy: the canonical
-// -path gate runs inside the ALLOWED_HOSTS allowlist and inside the CSRF check,
-// so neither 403 is shadowed by a 400 about spelling, and it runs outside the
-// routes it protects.
+// TestMiddlewareStack_GuardOrder pins the placement on the production stack: inside the
+// ALLOWED_HOSTS and CSRF checks (neither 403 is shadowed by a 400), outside the routes.
 func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"marotte.example.com"},
 		webhttp.WithLoopbackExempt(true),
@@ -261,8 +238,7 @@ func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	h := webhttp.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
 
 	post := func(host, origin string) *httptest.ResponseRecorder {
-		// A non-canonical spelling of the mutating repair route: whichever gate
-		// answers first decides the status.
+		// A non-canonical spelling of the repair route: the first gate to answer decides the status.
 		req := httptest.NewRequest(http.MethodPost, "http://"+host+"/"+kiroRescanPath, strings.NewReader(""))
 		req.RemoteAddr = "192.168.1.50:44444"
 		if origin != "" {
@@ -301,25 +277,16 @@ func TestMiddlewareStack_GuardOrder(t *testing.T) {
 		if *reached != "" {
 			t.Errorf("handler %q ran; the guard must refuse outside the routing", *reached)
 		}
-		// The baseline security headers still apply to the refusal (the guard is
-		// inside SecurityHeaders).
+		// Baseline security headers still apply (the guard is inside SecurityHeaders).
 		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 			t.Error("the path refusal lost the baseline security headers")
 		}
 	})
 }
 
-// FuzzCanonicalAPIPath asserts three invariants against the unguarded mux as an
-// oracle, for any request target:
-//
-//  1. No third outcome. The guarded chain is either transparent (same status
-//     and Location as the bare mux) or exactly the 400 refusal envelope.
-//  2. The misleading class is gone. A 3xx never comes back for a request that
-//     addresses or would land on the API surface — that redirect is the whole
-//     defect, and no spelling may reach it.
-//  3. No over-refusal. When the guard refuses where the bare mux did not, the
-//     path really was non-canonical, so a well-formed request can never be
-//     turned away.
+// FuzzCanonicalAPIPath asserts, against the unguarded mux as oracle: the guarded chain is
+// transparent or exactly the 400 refusal; no 3xx survives on the API surface; and a guard
+// refusal implies a non-canonical path.
 func FuzzCanonicalAPIPath(f *testing.F) {
 	for _, seed := range []string{
 		"/api/health", "//api/health", "/api/./health", "/api/x/../health",
@@ -336,8 +303,7 @@ func FuzzCanonicalAPIPath(f *testing.F) {
 		}
 	}
 
-	// Methods come from a fixed set rather than the fuzzer so every input is a
-	// legal request line and no case is skipped for an unrelated reason.
+	// Methods from a fixed set so every input is a legal request line.
 	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodPut}
 	guardedMux, _ := requestPathMux()
 	bareMux, _ := requestPathMux()

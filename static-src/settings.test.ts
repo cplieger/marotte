@@ -1,10 +1,9 @@
-// ---------------------------------------------------------------------------
-// Tests for settings.ts's diagnostics surface: the pure version extractor and
-// the initDiagnostics DOM flow (copyable textarea + version row + Copy button +
-// clipboard fallback), plus the chat-retention row's Keep-forever reveal.
-// settings.ts's many feature-module imports are stubbed so the module loads in
-// isolation; only runDiagnostics + bindLoadingState are given behaviour.
-// ---------------------------------------------------------------------------
+// Tests for settings.ts's diagnostics surface: the pure version extractor and the initDiagnostics
+// DOM flow (copyable textarea + version row + Copy button + clipboard fallback), plus the
+// chat-retention row's Keep-forever reveal. settings.ts's many feature-module imports are stubbed
+// so the module loads in isolation; only runDiagnostics + bindLoadingState are given behaviour.
+// A mock export set to `undefined` exists because Browser Mode links ESM for real, so every name
+// the graph imports must be present; `undefined` is what the node runner gave it.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -29,8 +28,8 @@ vi.mock("./actions/index.js", () => ({
     Object.assign(() => undefined, { isPending: () => false, flush: vi.fn() }),
   ),
   subscribeByName: vi.fn(() => () => undefined),
-  // retention.js defines an action at module scope. Browser Mode links this
-  // factory for real, so a name anywhere in the graph has to exist on it.
+  // retention.js defines an action at module scope. Browser Mode links this factory for real, so a
+  // name anywhere in the graph has to exist on it.
   defineAction: vi.fn(() => ({ dispatch: vi.fn() })),
   retryNetwork: vi.fn(),
 }));
@@ -39,17 +38,22 @@ vi.mock("./actions/settings.js", () => ({
   logout: {},
   setKiroSetting: { dispatch: (...a: unknown[]) => H.mockKiroDispatch(...a) },
 }));
-// apiGet resolves rather than returning undefined: the flag read awaits it
-// directly now (one request for every flag), where it used to be one of several
-// inside a Promise.all, which resolves a non-promise silently.
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(undefined)),
   apiGetTyped: vi.fn(),
-  // settings-steering.ts is in this graph and reads the ETag off the response
-  // headers, so the name has to exist for Browser Mode's real linking.
+  // settings-steering.ts is in this graph and reads the ETag off the response headers, so the name
+  // has to exist for Browser Mode's real linking.
   apiGetWithHeaders: vi.fn(() => Promise.resolve({ data: null, headers: null })),
 }));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
+// governance.ts reaches the SSE bus and its decoders, which the partial decoder mock above does not
+// carry; the lock painter has its own suite.
+vi.mock("./governance.js", () => ({
+  paintSettingLocks: vi.fn(),
+  writeSwitch: (input: HTMLInputElement, value: boolean) => {
+    input.checked = value;
+  },
+}));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
   showSaved: vi.fn(),
@@ -61,127 +65,61 @@ vi.mock("./persist.js", () => ({
   patchSettings: vi.fn(),
   initSettingsTracking: vi.fn(),
 }));
-// Feature modules settings.ts wires in initUI — inert stubs so the import graph
-// loads without side effects (initUI is never called here).
+// Feature modules settings.ts wires in initUI — inert stubs so the import graph loads without side
+// effects (initUI is never called here).
 vi.mock("./modals.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initAllModals: undefined,
 }));
 vi.mock("./tabs.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   toggleSettingsView: undefined,
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   toggleGitView: undefined,
 }));
-// The badge, not the git view: `initPostAuthUI` wires only this at boot now, and
-// the real module reaches git-status-store.ts, whose `apiAction` import this file's
-// partial `./actions/index.js` factory does not provide.
+// The badge, not the git view: `initPostAuthUI` wires only this at boot now, and the real module
+// reaches git-status-store.ts, whose `apiAction` import this file's partial `./actions/index.js`
+// factory does not provide.
 vi.mock("./git-badge.js", () => ({ initGitBadge: H.mockInitGitBadge }));
-// The git VIEW. Nothing in settings.ts imports it any more, and the case below is
-// what keeps it that way: wiring it at boot fired `refreshChanges(true)`, a forced
-// `git fetch` across every worktree, for a view nobody had opened.
+// The git VIEW.
 vi.mock("./git.js", () => ({ initGitPanel: H.mockInitGitPanel, loadGitRepos: vi.fn() }));
 vi.mock("./versions.js", () => ({
   loadVersions: vi.fn(),
   getVersions: () => ({ marotte: "", kiroCli: "" }),
 }));
 vi.mock("./git-tabs.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   getGitTab: undefined,
 }));
 vi.mock("./files.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   noteDefaultBrowsePath: undefined,
 }));
 vi.mock("./editor-core.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   restoreEditorTabs: undefined,
 }));
 vi.mock("./tools.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   loadToolsList: undefined,
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initTools: undefined,
 }));
 vi.mock("./notify.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   restoreNotifications: undefined,
 }));
 vi.mock("./theme.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initThemeToggle: undefined,
   applyThemeChoice: H.mockApplyTheme,
 }));
 vi.mock("./settings-tabs.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initSettingsTabs: undefined,
 }));
 vi.mock("./permissions-ui.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   loadNativePolicy: undefined,
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initNativePolicyUI: undefined,
   initPermissionsUI: undefined,
 }));
 vi.mock("./mcp-ui.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initMCP: undefined,
 }));
 vi.mock("./knowledge.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initKnowledge: undefined,
   loadKnowledge: undefined,
 }));
 vi.mock("./settings-notifications.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   initNotificationToggles: undefined,
 }));
 
@@ -193,12 +131,13 @@ const {
   initExperimentalToggles,
   initGeneralPanelControls,
   initPostAuthUI,
+  shellTimeoutMs,
   themeStorage,
   _resetThemeForTest,
 } = await import("./settings.js");
 
-/** Wire the General panel's listeners once, then seed it — the two halves the
- *  `settings_updated` arm keeps apart, in the order boot runs them. */
+/** Wire the General panel's listeners once, then seed it — the two halves the `settings_updated`
+ *  arm keeps apart, in the order boot runs them. */
 function initRetention(s: Parameters<typeof applyGeneralPanel>[0]): void {
   initGeneralPanelControls();
   applyGeneralPanel(s);
@@ -333,9 +272,9 @@ describe("initDiagnostics", () => {
     );
   });
 
-  // The Copy control takes the run button's own slot, so hiding goes through the
-  // `.hidden` utility for both: `.btn`/`.btn-small` each declare `display`, and an
-  // author-origin `display` beats the UA's `[hidden]` rule at any specificity.
+  // The Copy control takes the run button's own slot, so hiding goes through the `.hidden` utility
+  // for both: `.btn`/`.btn-small` each declare `display`, and an author-origin `display` beats the
+  // UA's `[hidden]` rule at any specificity.
   it("offers no Copy control until a report exists", () => {
     initDiagnostics();
 
@@ -403,10 +342,9 @@ describe("initDiagnostics", () => {
   });
 });
 
-// Keep forever means -1, which has no day count, so the Days-kept field is
-// HIDDEN rather than disabled — a greyed-out field still showing the last
-// number reads as the value in force. The number survives in the DOM, so
-// unchecking restores it instead of falling back to a default.
+// Keep forever means -1, which has no day count, so the Days-kept field is HIDDEN rather than
+// disabled — a greyed-out field still showing the last number reads as the value in force. The
+// number survives in the DOM, so unchecking restores it instead of falling back to a default.
 describe("the chat-retention row", () => {
   function seedRetentionDom(): void {
     document.body.innerHTML = `
@@ -454,15 +392,13 @@ describe("the chat-retention row", () => {
 
     expect(foreverInput().checked).toBe(true);
     expect(daysRow().classList.contains("hidden")).toBe(true);
-    // Hidden, never disabled: a disabled field greys out the last number and
-    // presents it as the value in force.
+    // Hidden, never disabled: a disabled field greys out the last number and presents it as the
+    // value in force.
     expect(daysInput().disabled).toBe(false);
   });
 
-  // The seed half runs again on every `settings_updated`, which is what makes a
-  // retention window chosen on another device reach THIS screen's controls rather
-  // than only its behaviour. The listeners must not run again with it: N seeds
-  // would mean N listeners and N identical writes per click.
+  // The seed half runs again on every `settings_updated`, which is what makes a retention window
+  // chosen on another device reach THIS screen's controls rather than only its behaviour.
   it("follows a remote change and still writes once per click", async () => {
     const { patchSettings } = await import("./persist.js");
     initRetention(settingsPayload({ chat_retention_days: 14 }));
@@ -500,30 +436,17 @@ describe("the chat-retention row", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The theme's authority is a config.json key; the localStorage blob holds a
-// pre-paint CACHE of it. This is the policy joining the two, and each case here
-// is a way that policy can be wrong in a manner a reader would notice:
-//
-//   - a stale cache overwriting a deliberate change (a migration path pretending
-//     to be a cache),
-//   - the value not repainting when another device chose it,
-//   - an adopted value going straight back out as a write, which on the
-//     settings_updated path re-broadcasts settings_updated.
-//
-// The one-time carry-across is the single value the deletion of the old
-// whole-document arrangement hands over, because the theme is the only loss a
-// reader would SEE — on the very next load, as the wrong colour.
-// ---------------------------------------------------------------------------
+// The theme's authority is a config.json key; the localStorage blob holds a pre-paint CACHE of it.
+// This is the policy joining the two, and each case here is a way that policy can be wrong in a
+// manner a reader would notice:
 
 describe("the theme, between config.json and its paint cache", () => {
   beforeEach(async () => {
     localStorage.clear();
     _resetThemeForTest();
-    // The real controller's set() calls back through the storage adapter, and
-    // that call is the ONLY path to the write-back guard. A mock that merely
-    // records the call would make every case below vacuous — measured: with the
-    // guard deleted the suite stayed green until this line existed.
+    // The real controller's set() calls back through the storage adapter, and that call is the ONLY
+    // path to the write-back guard. A mock that merely records the call would make every case below
+    // vacuous — measured: with the guard deleted the suite stayed green until this line existed.
     H.mockApplyTheme.mockReset();
     H.mockApplyTheme.mockImplementation((choice: unknown) => {
       themeStorage.set(choice as string);
@@ -553,8 +476,8 @@ describe("the theme, between config.json and its paint cache", () => {
 
     adoptThemeFromSettings(settingsPayload({}));
 
-    // Written through, so the value stops being cache-only and starts travelling
-    // to every other device — which is exactly what it could not do before.
+    // Written through, so the value stops being cache-only and starts travelling to every other
+    // device — which is exactly what it could not do before.
     expect(patchSettings).toHaveBeenCalledWith({ theme: "light" });
   });
 
@@ -567,9 +490,8 @@ describe("the theme, between config.json and its paint cache", () => {
   it("does not re-adopt the cache on a LATER payload with no theme", async () => {
     const { cacheTheme } = await import("./device-view.js");
     const { patchSettings } = await import("./persist.js");
-    // The reader chose a theme, then cleared it. A second adoption of the cache
-    // would bring the cleared value back, which is the difference between a cache
-    // and a migration path.
+    // The reader chose a theme, then cleared it. A second adoption of the cache would bring the
+    // cleared value back, which is the difference between a cache and a migration path.
     adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
     vi.mocked(patchSettings).mockClear();
     cacheTheme("dark");
@@ -583,8 +505,8 @@ describe("the theme, between config.json and its paint cache", () => {
     adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
     expect(H.mockApplyTheme).toHaveBeenCalledTimes(1);
 
-    // The writer's own echo. Repainting anyway would be a second theme transition
-    // for a change this device made itself.
+    // The writer's own echo. Repainting anyway would be a second theme transition for a change this
+    // device made itself.
     adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
     expect(H.mockApplyTheme).toHaveBeenCalledTimes(1);
 
@@ -600,19 +522,7 @@ describe("the theme, between config.json and its paint cache", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The experimental flags each report against their OWN key.
-//
-// Every kiro-cli flag has its own indicator slot beside its own label, so a write
-// names the key it wrote and the generation guard is per key. It used to be one
-// counter for the whole endpoint, which was correct for a single page-wide
-// indicator and wrong here in both directions: flipping a second flag while the
-// first was in flight suppressed the first flag's report entirely, leaving its
-// slot spinning with nothing left to answer it.
-//
-// These need a dispatch that stays OUTSTANDING while the next one is made, which
-// is what the deferred mock below hands back.
-// ---------------------------------------------------------------------------
 
 describe("initExperimentalToggles", () => {
   /** Resolvers for the dispatches made so far, in order. */
@@ -634,10 +544,10 @@ describe("initExperimentalToggles", () => {
     box(id).dispatchEvent(new Event("change"));
   }
 
-  /** Wire the toggles and wait out the initial read, so a late arrival of it
-   *  cannot land between a test's own toggle and its assertion. The default mock
-   *  answers no value for any key, and `hooks.showStatus` is the one row whose own
-   *  default is ON, so it is what says the read has landed. */
+  /** Wire the toggles and wait out the initial read, so a late arrival of it cannot land between
+   *  a test's own toggle and its assertion. The default mock answers no value for any key, and
+   *  `hooks.showStatus` is the one row whose own default is ON, so it is what says the read has
+   *  landed. */
   async function initFlags(): Promise<void> {
     initExperimentalToggles();
     await vi.waitFor(() => {
@@ -673,9 +583,7 @@ describe("initExperimentalToggles", () => {
     toggle("flag-hooks-status", false);
     expect(H.mockKiroDispatch).toHaveBeenCalledTimes(2);
 
-    // The first flag answers while the second is still outstanding. Under one
-    // shared counter the second write had already claimed it, so this report was
-    // dropped and the telemetry slot never settled.
+    // The first flag answers while the second is still outstanding.
     answer[0]?.({});
     await vi.waitFor(() => {
       expect(showSaved).toHaveBeenCalledWith("telemetry.enabled");
@@ -696,8 +604,8 @@ describe("initExperimentalToggles", () => {
     toggle("flag-telemetry", true);
     expect(H.mockKiroDispatch).toHaveBeenCalledTimes(2);
 
-    // Both answer; only the newer one owns the slot, so a broken guard shows up
-    // as a second call rather than as a missing one.
+    // Both answer; only the newer one owns the slot, so a broken guard shows up as a second call
+    // rather than as a missing one.
     answer[0]?.({});
     answer[1]?.({});
     await vi.waitFor(() => {
@@ -718,9 +626,7 @@ describe("initExperimentalToggles", () => {
     });
   });
 
-  // ONE request for every flag, naming them all. It used to be one request per
-  // flag, and each one cost the server a `kiro-cli settings` SUBPROCESS with its
-  // own 3 s budget — three of them, concurrently, every time this panel opened.
+  // ONE request for every flag, naming them all.
   it("reads every flag in one request", async () => {
     const { apiGet } = await import("./api-client.js");
     await initFlags();
@@ -735,8 +641,8 @@ describe("initExperimentalToggles", () => {
     ]);
   });
 
-  // The answer is read BY KEY, not by position: the server sorts the document it
-  // returns, so a reader that trusted request order would flip two checkboxes.
+  // The answer is read BY KEY, not by position: the server sorts the document it returns, so a
+  // reader that trusted request order would flip two checkboxes.
   it("adopts each flag's value by key rather than by response order", async () => {
     const { apiGet } = await import("./api-client.js");
     vi.mocked(apiGet).mockResolvedValueOnce({
@@ -756,10 +662,10 @@ describe("initExperimentalToggles", () => {
     expect(box("flag-disable-inherit-resources").checked).toBe(true);
   });
 
-  // The endpoint answers "" for a key `cli.json` does not carry AND for a read it
-  // could not make, and the three rows do not share a polarity — so one blanket
-  // unset-means-on rule claimed telemetry was on while it was off, and claimed
-  // default-resource inheritance was disabled while it was not.
+  // The endpoint answers "" for a key `cli.json` does not carry AND for a read it could not make,
+  // and the three rows do not share a polarity — so one blanket unset-means-on rule claimed
+  // telemetry was on while it was off, and claimed default-resource inheritance was disabled while
+  // it was not.
   it("renders an absent key at that row's own default, not at one shared rule", async () => {
     const { apiGet } = await import("./api-client.js");
     vi.mocked(apiGet).mockResolvedValueOnce({ settings: {} });
@@ -773,9 +679,8 @@ describe("initExperimentalToggles", () => {
     expect(box("flag-disable-inherit-resources").checked).toBe(false);
   });
 
-  // The loader runs on every General-tab activation. Each listener it left behind
-  // meant another identical PUT per click, and each of those is a `kiro-cli
-  // settings` SPAWN on the server.
+  // The loader runs on every General-tab activation. Each listener it left behind meant another
+  // identical PUT per click, and each of those is a `kiro-cli settings` SPAWN on the server.
   it("leaves one listener per checkbox however many times the panel is opened", async () => {
     await initFlags();
     await initFlags();
@@ -787,9 +692,6 @@ describe("initExperimentalToggles", () => {
   });
 
   it("discards a superseded read rather than painting it over a newer one", async () => {
-    // The panel's loader is reached on EVERY settings activation once the
-    // once-per-page latch is gone, and the read behind it is a `kiro-cli settings`
-    // spawn with no signal, no dedupe and no coalescing of its own.
     const { apiGet } = await import("./api-client.js");
     let releaseFirst = (): void => {
       /* replaced below */
@@ -816,18 +718,12 @@ describe("initExperimentalToggles", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The post-auth door, and what it may NOT reach.
-// ---------------------------------------------------------------------------
 
 describe("initPostAuthUI", () => {
   it("wires the sidebar badge and not the git view", async () => {
-    // The badge is boot-visible chrome in the toolbar, so the one `status-all`
-    // scan its subscription starts is a read for something on screen. The git
-    // VIEW is not: `initGitPanel` subscribes to its own tab signal, which fires
-    // immediately, so wiring it here ran `refreshChanges(true)` — a forced
-    // `git fetch` across every worktree — plus three tab inits, on the boot path,
-    // for a panel nobody had opened.
+    // The badge is boot-visible chrome in the toolbar, so the one `status-all` scan its
+    // subscription starts is a read for something on screen.
     initPostAuthUI();
 
     expect(H.mockInitGitBadge).toHaveBeenCalledTimes(1);
@@ -835,10 +731,209 @@ describe("initPostAuthUI", () => {
   });
 });
 
-// NOT TESTED, and the absence is deliberate rather than an oversight: that `initUI`
-// issues no `GET /api/steering`. The read is `settings-steering.ts`'s
-// `loadSteeringDoc` (pinned in `settings-steering.test.ts`), reachable only through
-// the loader map `initUI` hands `initSettingsTabs` — and `initUI` cannot run here,
-// because eight of the feature modules it calls are mocked present-but-undefined
-// for real-ESM linking. A test asserting it against `initPostAuthUI` was written,
-// passed, and deleted: that door never touched the editor, so it held either way.
+// NOT TESTED, and the absence is deliberate rather than an oversight: that `initUI` issues no `GET
+// /api/steering`.
+
+describe("the payload-link guard switch", () => {
+  const box = (): HTMLInputElement =>
+    document.getElementById("flag-guard-payload-links") as HTMLInputElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = `<input type="checkbox" id="flag-guard-payload-links">`;
+  });
+
+  it.each([true, false])("seeds the switch from guard_payload_links = %s", (on) => {
+    box().checked = !on;
+    applyGeneralPanel(settingsPayload({ guard_payload_links: on }));
+    expect(box().checked).toBe(on);
+  });
+
+  it("writes guard_payload_links when the reader flips it", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ guard_payload_links: true }));
+    box().checked = false;
+    box().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ guard_payload_links: false }, box());
+  });
+});
+
+describe("the wait-for-MCP-servers switch", () => {
+  const box = (): HTMLInputElement =>
+    document.getElementById("mcp-wait-for-ready") as HTMLInputElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = `<input type="checkbox" id="mcp-wait-for-ready">`;
+  });
+
+  it.each([true, false])("seeds the switch from mcp_wait_for_ready = %s", (on) => {
+    box().checked = !on;
+    applyGeneralPanel(settingsPayload({ mcp_wait_for_ready: on }));
+    expect(box().checked).toBe(on);
+  });
+
+  it("writes mcp_wait_for_ready when the reader flips it", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ mcp_wait_for_ready: false }));
+    box().checked = true;
+    box().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ mcp_wait_for_ready: true }, box());
+  });
+});
+
+describe("the automatic-compaction switch and slider", () => {
+  const toggle = (): HTMLInputElement =>
+    document.getElementById("flag-auto-compaction") as HTMLInputElement;
+  const range = (): HTMLInputElement =>
+    document.getElementById("auto-compact-pct") as HTMLInputElement;
+  const row = (): HTMLElement => document.getElementById("auto-compact-row") as HTMLElement;
+  const warning = (): HTMLElement => document.getElementById("auto-compact-warning") as HTMLElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <input type="checkbox" id="flag-auto-compaction">
+      <div id="auto-compact-row">
+        <output id="auto-compact-pct-value"></output>
+        <input type="range" id="auto-compact-pct" min="50" max="90" step="5">
+        <p id="auto-compact-warning"></p>
+      </div>`;
+  });
+
+  it("hides the slider while the switch is off and publishes the policy", async () => {
+    const { compactionPolicy } = await import("./context-ring.js");
+    applyGeneralPanel(settingsPayload({ auto_compaction_enabled: false, auto_compact_pct: 70 }));
+    expect(toggle().checked).toBe(false);
+    expect(row().classList.contains("hidden")).toBe(true);
+    expect(compactionPolicy.value).toEqual({ enabled: false, pct: 70 });
+  });
+
+  it.each([
+    [80, true],
+    [85, false],
+  ])("at %i the warning hidden is %s", (pct, hidden) => {
+    applyGeneralPanel(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: pct }));
+    expect(row().classList.contains("hidden")).toBe(false);
+    expect(range().value).toBe(String(pct));
+    expect(warning().classList.contains("hidden")).toBe(hidden);
+  });
+
+  it("writes the value on change and not while dragging", async () => {
+    const { patchSettings } = await import("./persist.js");
+    const { compactionPolicy } = await import("./context-ring.js");
+    initRetention(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 80 }));
+    vi.mocked(patchSettings).mockClear();
+    range().value = "65";
+    range().dispatchEvent(new Event("input"));
+    expect(patchSettings).not.toHaveBeenCalled();
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 65 });
+    range().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ auto_compact_pct: 65 }, range());
+  });
+
+  it("writes the switch and hides the slider when the reader turns it off", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 80 }));
+    vi.mocked(patchSettings).mockClear();
+    toggle().checked = false;
+    toggle().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
+      { auto_compaction_enabled: false },
+      toggle(),
+    );
+    expect(row().classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("the agent-capability selects and the shell timeout", () => {
+  const sel = (id: string): HTMLSelectElement => document.getElementById(id) as HTMLSelectElement;
+  const box = (id: string): HTMLInputElement => document.getElementById(id) as HTMLInputElement;
+  const timeout = (): HTMLInputElement =>
+    document.getElementById("shell-command-timeout") as HTMLInputElement;
+  const askRow = (): HTMLElement => document.getElementById("spec-planning-ask-row") as HTMLElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <select id="spec-planning"><option value="off">Off</option><option value="quick">Quick</option><option value="full">Full</option></select>
+      <div id="spec-planning-ask-row" class="hidden"><input type="checkbox" id="flag-spec-ask-first"></div>
+      <input type="checkbox" id="flag-work-validation">
+      <input type="checkbox" id="flag-cloudformation-safety">
+      <select id="output-style"><option value="default">Default</option><option value="concise">Concise</option></select>
+      <input type="number" id="shell-command-timeout">`;
+  });
+
+  it("seeds every select and shows the ask-first row only while spec planning is on", () => {
+    applyGeneralPanel(
+      settingsPayload({
+        spec_planning: "quick",
+        output_style: "concise",
+        terminal_command_timeout_ms: 300_000,
+      }),
+    );
+    expect(sel("spec-planning").value).toBe("quick");
+    expect(sel("output-style").value).toBe("concise");
+    expect(timeout().value).toBe("300");
+    expect(askRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("leaves the timeout box empty when no timeout is set", () => {
+    applyGeneralPanel(settingsPayload({ terminal_command_timeout_ms: 0 }));
+    expect(timeout().value).toBe("");
+    expect(askRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it.each([
+    ["an unset", "", "unchecked"],
+    ["an off", "off", "unchecked"],
+    ["an on", "on", "checked"],
+  ] as const)("renders %s feature switch %s", (_name, value, shown) => {
+    applyGeneralPanel(
+      settingsPayload({ work_validation: value, cloudformation_safety_check: value }),
+    );
+    expect(box("flag-work-validation").checked).toBe(shown === "checked");
+    expect(box("flag-cloudformation-safety").checked).toBe(shown === "checked");
+  });
+
+  it("stores a flipped feature switch as on or off, never unset", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    vi.mocked(patchSettings).mockClear();
+    box("flag-work-validation").checked = true;
+    box("flag-work-validation").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith(
+      { work_validation: "on" },
+      box("flag-work-validation"),
+    );
+    box("flag-cloudformation-safety").checked = false;
+    box("flag-cloudformation-safety").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith(
+      { cloudformation_safety_check: "off" },
+      box("flag-cloudformation-safety"),
+    );
+  });
+
+  it("writes seconds as milliseconds and clears the box on an empty entry", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    vi.mocked(patchSettings).mockClear();
+    timeout().value = "45";
+    timeout().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith(
+      { terminal_command_timeout_ms: 45_000 },
+      timeout(),
+    );
+    timeout().value = "";
+    timeout().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ terminal_command_timeout_ms: 0 }, timeout());
+  });
+
+  it.each([
+    ["", 0],
+    ["0", 0],
+    ["-5", 0],
+    ["abc", 0],
+    ["1", 1000],
+    ["1800", 1_800_000],
+    ["5000", 1_800_000],
+  ])("shellTimeoutMs(%j) is %i", (raw, want) => {
+    expect(shellTimeoutMs(raw)).toBe(want);
+  });
+});

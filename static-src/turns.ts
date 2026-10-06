@@ -1,13 +1,9 @@
-// ---------------------------------------------------------------------------
-// The turn projection: the store's `TurnState` per turn read into the `Turn`
-// objects the transcript renders. Nothing here INFERS a boundary — every entry
-// names its own turn, so grouping is a partition the store already performed,
-// an ordinal is `turn_open.n` and a verdict is `turn_close.outcome`. Pure and
-// DOM-free, so the collapse model, search and the rail reason about turns
-// without touching the renderer.
-// ---------------------------------------------------------------------------
+// The turn projection: the store's `TurnState` per turn read into the `Turn`s the transcript
+// renders. Nothing INFERS a boundary: the store already partitioned entries, an ordinal is
+// `turn_open.n`, a verdict `turn_close.outcome`. Pure and DOM-free.
 
 import { callIDOfToolResult } from "./entry-ids.js";
+import { askBucket, type AskBucket } from "./interaction.js";
 import { defaultFailureReason, severityOf } from "./turn-severity.js";
 import type {
   AnyEntry,
@@ -24,17 +20,13 @@ import type {
   OpenEntry,
   ToolKind,
   TurnState,
+  TurnThroughput,
 } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 
-/** A turn's result, as scannable colour down the transcript.
- *
- *  RE-EXPORTED from the generated wire types rather than declared here: the rule
- *  that produces it is implemented in both languages, so a hand-written union
- *  would be a second enumeration of one vocabulary with nothing holding the two
- *  spellings together. `running` is the one member no `turn_close` carries — a
- *  turn with no close IS running, which is exact rather than inferred, because
- *  every crash-orphaned turn is closed before its log is served. */
+/** A turn's result, as scannable colour down the transcript. Re-exported from the generated wire
+ *  types (the rule exists in both languages). `running` is the member no `turn_close` carries: a
+ *  turn with no close IS running, since crash-orphaned turns are closed before the log is served. */
 export type { TurnOutcome };
 
 // --- Reading an entry ---
@@ -112,32 +104,22 @@ export interface Turn {
   /** Everything the trigger caused: the turn's entries after `turn_open` in `seq`
    *  order, with `turn_close` among them as an ordinary entry. */
   body: Entry[];
-  /** Each lane's OPEN entry, verbatim from the store. It has no `seq` and no position
-   *  (section 3.4: an open entry never reaches the log), so it is beside `body` rather
-   *  than in it, and it renders at the tail of its lane's view (section 8.3). Empty on
-   *  every settled turn. */
+  /** Each lane's OPEN entry, verbatim from the store. It never reaches the log (no `seq`, no
+   *  position), so it sits beside `body` and renders at its lane's tail. Empty on settled turns. */
   openEntries: ReadonlyMap<string, OpenEntry>;
   /** Turn start — the `turn_open`'s own append stamp. Metadata, never compared. */
   ts: number;
   outcome: TurnOutcome;
-  /** The NEXT turn's prompt — what a rewind from this turn's footer addresses.
-   *
-   *  Rewind reverts to the state right AFTER this turn: KAS drops the message it is
-   *  given plus everything following, so keeping turn N means addressing turn N+1's
-   *  prompt. Undefined on the last turn (nothing after it to discard, so no button)
-   *  and when the next turn has no prompt (KAS refuses to revert to anything else). */
+  /** The NEXT turn's prompt, which a rewind from this turn's footer addresses: KAS drops the given
+   *  message and everything after, so keeping turn N means addressing N+1's prompt. Undefined on the
+   *  last turn and when the next turn has no prompt. */
   rewindTo: EntryPrompt | undefined;
 }
 
-/** Whether a turn is DRAWN — the one predicate, with the server's rail index over envelopes
- *  as its twin.
- *
- *  Three clauses: a reader-opened turn (its header renders), a body holding an entry that
- *  renders AT ITS OWN POSITION — which is the only thing this asks, and `entryRenders`
- *  (block-window.ts) owns where each excluded kind renders instead; an ACK is not among
- *  them — and the CLIENT-ONLY clause an open entry in lane `""`
- *  satisfies — a headerless turn's first text streams as one and never reaches the log, so
- *  without it the card its bubble mounts into would not exist until the turn ended. */
+/** Whether a turn is DRAWN: the one predicate, twinned by the server's rail index. A reader-opened
+ *  turn, a body entry rendering AT ITS OWN POSITION (`entryRenders`, block-window.ts; not an ACK),
+ *  or the CLIENT-ONLY clause: an open lane-`""` entry, so a headerless turn's streaming first text
+ *  has a card to mount into. */
 export function turnIsDrawn(t: TurnState): boolean {
   const open = turnOpenOf(t);
   if (open === undefined) {
@@ -223,12 +205,8 @@ export function projectTurns(src: TurnSource): Turn[] {
   return turns;
 }
 
-/** ONE turn of the source, or undefined when it is absent or `turnIsDrawn` refuses it.
- *
- *  For a keyed pass that already knows which turn moved: the whole projection allocates
- *  a `Turn` and slices a body per resident turn, which a per-frame tool update must not
- *  do. `rewindTo` is resolved the same way — the NEXT drawn turn's trigger — so the
- *  answer is a complete `Turn` rather than one with a field left empty. */
+/** ONE turn of the source, or undefined when absent or not drawn. For a keyed pass that knows which
+ *  turn moved, so a per-frame tool update builds no whole projection; `rewindTo` is resolved too. */
 export function projectTurn(src: TurnSource, turnID: string): Turn | undefined {
   const at = src.turn_order.indexOf(turnID);
   if (at < 0) {
@@ -262,11 +240,8 @@ function nextTrigger(src: TurnSource, at: number): EntryPrompt | undefined {
 
 // --- The ledger ---
 
-/** Per-turn ledger inputs: the aggregate `turn_close` carries plus what the turn's
- *  tool entries add up to.
- *
- *  `changedFiles` is `turn_close`'s map verbatim — it is a cumulative snapshot
- *  rather than a delta, and one turn now has exactly one close, so nothing merges. */
+/** Per-turn ledger inputs: what `turn_close` carries plus the turn's tool totals. `changedFiles` is
+ *  the close's cumulative map verbatim; one turn has one close, so nothing merges. */
 export interface TurnLedger {
   credits: number;
   elapsedMs: number;
@@ -275,11 +250,8 @@ export interface TurnLedger {
    *  `model_switched` entries closed with `turn_close.model`, which records only the
    *  model that finished. Empty renders nothing rather than "unknown". */
   models: string[];
-  /** Time the turn spent INSIDE tool calls: Σ the settled `tool_result.duration_ms`.
-   *
-   *  ZERO MEANS NOBODY STAMPED ONE, `elapsedMs`' own absence rule, so a reader is
-   *  never shown "0.0s of tool time". Calls overlap, so it is NOT bounded by
-   *  `elapsedMs` either and a derived model time can go negative. */
+  /** Time INSIDE tool calls: Σ settled `tool_result.duration_ms`. ZERO MEANS NOBODY STAMPED ONE. Calls
+   *  overlap, so it is not bounded by `elapsedMs` and a derived model time can go negative. */
   toolMs: number;
   /** How many calls of each kind the turn made. PARTIAL over `ToolKind`: a kind with
    *  no calls has NO ENTRY, which is not an entry reading zero. */
@@ -299,6 +271,15 @@ export interface TurnLedger {
    *  OPEN: a reader renders it and `outcome` is what it decides on. */
   stopReasonRaw: string;
   truncated: boolean;
+  /** How the turn's asks were answered, off each `tool_result.interaction`. Partial
+   *  like `kindCounts`: no entry is not an entry reading zero. */
+  asks: Partial<Record<AskBucket, number>>;
+  /** The rest are `turn_close`'s verbatim; empty or undefined means KAS sent none. */
+  requestIds: string[];
+  throughput: TurnThroughput | undefined;
+  recoveries: string[];
+  steering: string[];
+  engineErrorClass: string;
 }
 
 /** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
@@ -325,6 +306,12 @@ export function turnLedger(t: Turn): TurnLedger {
     endedAt: t.body[t.body.length - 1]?.ts ?? 0,
     stopReasonRaw: close?.stop_reason_raw ?? "",
     truncated: close?.truncated ?? false,
+    asks: {},
+    requestIds: close?.request_ids ?? [],
+    throughput: close?.throughput,
+    recoveries: close?.recoveries ?? [],
+    steering: close?.steering ?? [],
+    engineErrorClass: close?.engine_error_class ?? "",
   };
   const delegateCalls = new Set<string>();
   const noteModel = (m: string): void => {
@@ -371,6 +358,10 @@ function countResult(
 ): void {
   const ms = result.duration_ms ?? 0;
   led.toolMs += ms;
+  if (result.interaction !== undefined) {
+    const bucket = askBucket(result.interaction);
+    led.asks[bucket] = (led.asks[bucket] ?? 0) + 1;
+  }
   const callID = callIDOfToolResult(entryID);
   if (callID !== null && delegateCalls.has(callID)) {
     led.delegateMs += ms;
@@ -379,26 +370,16 @@ function countResult(
 
 // --- Per-turn reads the renderer and the rail share ---
 
-/** The stable DOM id a turn anchor targets. Lives here rather than in the renderer
- *  because the anchor is a property of the turn, and more than one surface computes
- *  it without reaching into the DOM.
- *
- *  A genuine SESSION anchor, so it agrees with the rail's `TurnSummary.n`. Still not
- *  a working PERMALINK: `router.ts parseHashLine` matches only `/^#L(\d+)/`, so
- *  nothing resolves a `#turn-` fragment. */
+/** The stable DOM id a turn anchor targets, computed by more than one surface. A SESSION anchor,
+ *  matching the rail's `TurnSummary.n` and the permalink fragment (`route-path.ts` parses
+ *  `#turn-<n>`, `route-apply.ts` lands it through the rail's jump). */
 export function turnAnchorID(n: number): string {
   return `turn-${String(n)}`;
 }
 
-/** Whether folding this turn would HIDE anything.
- *
- *  The face shows the turn's run cards, its final top-level prose in full and a
- *  failed turn's error row; the fold hides everything else — tool cards, reasoning,
- *  delegate output, intermediate prose, plan cards and the inline event entries. A
- *  turn with none of those folds to a face identical to its open body, so the
- *  renderer offers no fold rather than a control that lies. A revert's boundary row
- *  is deliberately not counted, so a carrier holding only the revert keeps it on
- *  screen. */
+/** Whether folding this turn would HIDE anything. The face shows run cards, the final top-level
+ *  prose and a failed turn's error row; a turn with nothing else folds to an identical face, so no
+ *  fold is offered. A revert's boundary row is not counted, so it stays on screen. */
 export function turnFoldHides(t: Turn): boolean {
   let texts = 0;
   for (const e of t.body) {
@@ -445,14 +426,10 @@ export function turnFaceProse(t: Turn): string {
   return "";
 }
 
-/** What a turn that did not end cleanly SAYS. "" for a clean or running turn, so a
- *  caller reads the empty string as "nothing to report".
- *
- *  A CANCELLED TURN HAS NO ACCOUNT TO GIVE and is refused ahead of both sources, the
- *  footer's outcome word reading "Cancelled" a row away. The test is the OUTCOME, because
- *  `severityOf` grades `cancelled` and `unknown` alike and `unknown` must keep speaking.
- *  `turn_close.failure_reason` is the specific source and the outcome's default sentence
- *  the fallback. THIS NOTICE OWNS THE PROSE, being present in both fold states. */
+/** What a turn that did not end cleanly SAYS; "" for clean or running. A CANCELLED turn says
+ *  nothing (its footer reads "Cancelled"); tested on the OUTCOME, since `unknown` shares its
+ *  severity and must keep speaking. `failure_reason` first, then the outcome's default sentence.
+ *  This notice owns the prose, present in both fold states. */
 export function turnFailureText(t: Turn): string {
   const severity = severityOf(t.outcome);
   if (severity === "clean" || severity === "running") {

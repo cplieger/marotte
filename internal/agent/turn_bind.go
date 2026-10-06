@@ -11,11 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// withLifecycle runs fn with the chat's mutex HELD, after waiting out a finalizing
-// own turn, and reports ctx.Err() when ctx died first. It is the one door through
-// which a turn_open append and its registry record become one operation: fn
-// appends through the store and then calls openLocked, so lock order is lifecycle
-// then store and no fold can open a turn between the two.
+// withLifecycle runs fn with the chat's mutex held, after waiting out a finalizing own turn, or returns ctx.Err().
+// It is the one door making a turn_open append and its registry record one operation (lifecycle then store).
 func (r *turnRegistry) withLifecycle(ctx context.Context, chatID marotte.ChatID, fn func(lc *chatLifecycle) error) error {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
@@ -25,13 +22,9 @@ func (r *turnRegistry) withLifecycle(ctx context.Context, chatID marotte.ChatID,
 	return fn(lc)
 }
 
-// bindPending binds an unacknowledged wire turn_start to this chat's pending turn,
-// reporting whether one took it and, when it did not, the id of a DIFFERENT
-// bracketed own turn whose turn_end was lost and which the caller closes first. The
-// pending turn leaves that slot and BECOMES own. An empty lost id with bound false
-// means the chat holds no turn for the bracket, and the caller opens one. It waits
-// out a finalizing own turn like every other door, so a finalizing turn is absent
-// by the time the three cases are read; false on both when ctx died first.
+// bindPending binds an unacknowledged turn_start to the pending turn, which becomes own, reporting whether it did;
+// if not, it returns the id of a bracketed own turn whose turn_end was lost, for the caller to close. Neither
+// means open a turn. It waits out finalizing; false on both when ctx died.
 func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID) (bound bool, lost string) {
 	err := r.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		p := lc.pending
@@ -58,9 +51,7 @@ func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID) (
 	return bound, lost
 }
 
-// foldTarget is the own turn's accumulator, or false when the chat has none. False
-// also for a turn mid-finalize, so the caller opens a wire_turn_start turn rather
-// than folding into one whose closer already took its content.
+// foldTarget is the own turn's accumulator, false when none or finalizing, so the caller opens a wire turn instead.
 func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -71,8 +62,7 @@ func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	return lc.own.Log, true
 }
 
-// promptTurn is the chat's prompt-class turn awaiting or holding its bracket, the
-// one a turn_bind joins; false when none is open.
+// promptTurn is the prompt-class turn awaiting or holding its bracket, which a turn_bind joins.
 func (r *turnRegistry) promptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -96,10 +86,8 @@ func (lc *chatLifecycle) revisableLocked() *Turn {
 	return pre
 }
 
-// reviseLocked re-targets routing after the caller appended the agent turn's
-// turn_open and opened it as own: the agent's turn began when the bracket did, and
-// the prompt's turn drops back to pending-only, owed its bracket again. Entries
-// already sealed into the prompt's turn stay where they are. Caller holds mu.
+// reviseLocked re-targets routing after the agent turn's turn_open was appended and opened as own: the prompt's
+// turn drops back to pending, owed its bracket. Sealed entries stay. Caller holds mu.
 func (lc *chatLifecycle) reviseLocked(pre, agent *Turn) {
 	agent.acked = true
 	agent.Opened = pre.Opened

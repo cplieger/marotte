@@ -10,35 +10,26 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 )
 
-// The grace is armed against a specific turn generation, so these tests use a
-// short duration rather than the production cancelGrace.
+// A short grace: it is armed against a specific turn generation.
 const testGrace = 20 * time.Millisecond
 
-// newPromptingBridge returns a bridge holding the prompt slot with a
-// registered prompt context, plus that context.
+// newPromptingBridge returns a bridge holding the prompt slot with a registered prompt context.
 func newPromptingBridge(t *testing.T) (*sharedBridge, context.Context, uint64) {
 	t.Helper()
 	sb := &sharedBridge{}
 	if !sb.tryAcquireForPrompt() {
 		t.Fatalf("fresh bridge must be acquirable")
 	}
-	// Not t.Context(): cancel runs from t.Cleanup, by which point t.Context()
-	// is already cancelled, so the prompt context must have its own root.
+	// Not t.Context(): cancel runs from t.Cleanup, after t.Context() is already done.
 	ctx, cancel := context.WithCancelCause(context.Background())
 	t.Cleanup(func() { cancel(nil) })
 	gen := sb.BeginPromptCall(cancel)
 	return sb, ctx, gen
 }
 
-// TestArmCancelGrace_UnblocksAnUnackedCancel is the whole point of the budget:
-// KAS never answers the pending prompt, so marotte cancels its context itself
-// and the blocked Call returns.
+// TestArmCancelGrace_UnblocksAnUnackedCancel pins that KAS never answers, so marotte cancels the prompt itself.
 func TestArmCancelGrace_UnblocksAnUnackedCancel(t *testing.T) {
-	// In a bubble the WHEN is assertable, not just the whether. On a real clock
-	// this could only say "cancelled inside a 2s ceiling", which a budget armed
-	// for any duration up to 2s satisfies — including one armed for zero. Here
-	// the elapsed time is exactly the grace, so an arm that fires early or late
-	// fails.
+	// The bubble makes the elapsed time exactly the grace, so an early or late arm fails.
 	synctest.Test(t, func(t *testing.T) {
 		sb, ctx, gen := newPromptingBridge(t)
 		start := time.Now()
@@ -53,21 +44,14 @@ func TestArmCancelGrace_UnblocksAnUnackedCancel(t *testing.T) {
 	})
 }
 
-// TestArmCancelGrace_AckedCancelLeavesContextAlone covers the ordinary path: the
-// turn ended within the grace, so the timer must be disarmed rather than firing
-// into a finished turn.
+// TestArmCancelGrace_AckedCancelLeavesContextAlone pins that a turn ending within the grace disarms the timer.
 func TestArmCancelGrace_AckedCancelLeavesContextAlone(t *testing.T) {
-	// A fake clock makes "the timer did NOT fire" exact. On a real clock this
-	// assertion was only probabilistic: sleeping 4x the grace and finding the
-	// context alive is evidence, not proof, and a loaded machine could return
-	// either verdict. Inside the bubble the advance is complete by definition,
-	// and synctest.Wait drains every goroutine the timer could have woken.
+	// The bubble makes "the timer did not fire" exact rather than probabilistic.
 	synctest.Test(t, func(t *testing.T) {
 		sb, ctx, gen := newPromptingBridge(t)
 		sb.ArmCancelGrace(gen, testGrace)
 		sb.releaseAfterPrompt() // KAS answered; the prompt handler's defer runs.
 
-		// synctest.Sleep (Go 1.27) is time.Sleep + synctest.Wait in one call.
 		synctest.Sleep(4 * testGrace)
 		if ctx.Err() != nil {
 			t.Errorf("context cancelled after the turn already ended: %v", ctx.Err())
@@ -75,15 +59,12 @@ func TestArmCancelGrace_AckedCancelLeavesContextAlone(t *testing.T) {
 	})
 }
 
-// TestShouldTripCancelGrace_RefusesANewerTurn is the generation guard, tested at
-// the decision rather than through the timer: Timer.Stop does not halt a func
-// that is already running, so an expired budget CAN reach its decision after
-// the turn ended and another began. Cancelling then would kill work the user
-// just started.
+// TestShouldTripCancelGrace_RefusesANewerTurn pins the generation guard at the decision: a
+// running timer func can outlive its turn.
 func TestShouldTripCancelGrace_RefusesANewerTurn(t *testing.T) {
 	sb, _, gen := newPromptingBridge(t)
 
-	// Turn 1 ends, turn 2 starts — the state the racing timer func observes.
+	// Turn 1 ends, turn 2 starts.
 	sb.releaseAfterPrompt()
 	if !sb.tryAcquireForPrompt() {
 		t.Fatalf("bridge must be acquirable again after release")
@@ -98,16 +79,14 @@ func TestShouldTripCancelGrace_RefusesANewerTurn(t *testing.T) {
 	if _, ok := sb.shouldTripCancelGrace(gen); ok {
 		t.Errorf("turn %d's grace must not apply to turn %d", gen, nextGen)
 	}
-	// The budget armed for the CURRENT turn still applies.
+	// The budget armed for the current turn still applies.
 	if _, ok := sb.shouldTripCancelGrace(nextGen); !ok {
 		t.Errorf("turn %d's own grace must still apply", nextGen)
 	}
 }
 
-// TestArmCancelGrace_ExpiryCarriesTheGraceCause is what lets the failure site tell a
-// user's unacked cancel from every other cancellation of the prompt context: ctx.Err()
-// reads context.Canceled either way, so the sentinel on the CAUSE channel is the whole
-// discriminator behind concluding `cancelled` instead of `interrupted`.
+// TestArmCancelGrace_ExpiryCarriesTheGraceCause pins that ctx.Err() is context.Canceled either way, so
+// the cause sentinel decides `cancelled` over `interrupted`.
 func TestArmCancelGrace_ExpiryCarriesTheGraceCause(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sb, ctx, gen := newPromptingBridge(t)
@@ -126,9 +105,7 @@ func TestArmCancelGrace_ExpiryCarriesTheGraceCause(t *testing.T) {
 	})
 }
 
-// TestCancelPromptCall_CarriesNoCause is the other direction, and it is what keeps the
-// interrupted population where it was: a wire interrupt cancels with a nil cause, so the
-// cause stays context.Canceled and the turn still concludes `interrupted`.
+// TestCancelPromptCall_CarriesNoCause pins that a wire interrupt keeps context.Canceled, so the turn concludes `interrupted`.
 func TestCancelPromptCall_CarriesNoCause(t *testing.T) {
 	sb, ctx, _ := newPromptingBridge(t)
 	if !sb.cancelPromptCall() {
@@ -141,8 +118,7 @@ func TestCancelPromptCall_CarriesNoCause(t *testing.T) {
 	}
 }
 
-// TestShouldTripCancelGrace_RefusesAFinishedTurn covers the ordinary ack: the
-// turn ended, so an already-running timer func must decline.
+// TestShouldTripCancelGrace_RefusesAFinishedTurn covers the ordinary ack.
 func TestShouldTripCancelGrace_RefusesAFinishedTurn(t *testing.T) {
 	sb, _, gen := newPromptingBridge(t)
 	sb.releaseAfterPrompt()
@@ -151,15 +127,14 @@ func TestShouldTripCancelGrace_RefusesAFinishedTurn(t *testing.T) {
 	}
 }
 
-// TestArmCancelGrace_RefusesWhenNoPromptInFlight keeps a cancel on an idle chat
-// from arming a timer against nothing.
+// TestArmCancelGrace_RefusesWhenNoPromptInFlight keeps an idle chat from arming a timer.
 func TestArmCancelGrace_RefusesWhenNoPromptInFlight(t *testing.T) {
 	sb := &sharedBridge{}
 	if sb.ArmCancelGrace(sb.PromptGeneration(), testGrace) {
 		t.Errorf("arming on an idle bridge must report false")
 	}
 
-	// Prompting, but the prompt context was never registered.
+	// Prompting, but no prompt context registered.
 	if !sb.tryAcquireForPrompt() {
 		t.Fatalf("acquire failed")
 	}
@@ -168,11 +143,9 @@ func TestArmCancelGrace_RefusesWhenNoPromptInFlight(t *testing.T) {
 	}
 }
 
-// TestEndPromptCall_DisarmsTheTimer covers the prompt handler's own defer path,
-// which forgets the cancel func without changing the bridge state.
+// TestEndPromptCall_DisarmsTheTimer covers the prompt handler's own defer path.
 func TestEndPromptCall_DisarmsTheTimer(t *testing.T) {
-	// Same negative-timer assertion as above; see that comment for why the
-	// bubble is what makes it a proof rather than an observation.
+	// Same bubble-based negative assertion as above.
 	synctest.Test(t, func(t *testing.T) {
 		sb, ctx, gen := newPromptingBridge(t)
 		sb.ArmCancelGrace(gen, testGrace)
@@ -185,11 +158,8 @@ func TestEndPromptCall_DisarmsTheTimer(t *testing.T) {
 	})
 }
 
-// TestCancelPromptCall_TripsTheInFlightCall is the bridge half of an
-// interruption: kiro-cli abandoned the turn without answering it, so the prompt's
-// context is what has to be tripped or the blocked Call never returns and the
-// slot stays held. WHY it was interrupted is the turn record's half — see
-// TestTurnRegistry_InterruptIsFirstWinsPerEpoch.
+// TestCancelPromptCall_TripsTheInFlightCall is the bridge half of an interruption; the cause is
+// the turn record's (TestTurnRegistry_InterruptIsFirstWinsPerEpoch).
 func TestCancelPromptCall_TripsTheInFlightCall(t *testing.T) {
 	sb, ctx, _ := newPromptingBridge(t)
 
@@ -204,10 +174,7 @@ func TestCancelPromptCall_TripsTheInFlightCall(t *testing.T) {
 	}
 }
 
-// TestCancelPromptCall_RefusesWithNoCallInFlight: the sentinel can arrive after a
-// user cancel already ended the same turn, or on a chat whose turn is over. Both
-// are benign races rather than failures, and acting on them would cancel a turn
-// the user had just started.
+// TestCancelPromptCall_RefusesWithNoCallInFlight pins that a late sentinel must not cancel a turn the user just started.
 func TestCancelPromptCall_RefusesWithNoCallInFlight(t *testing.T) {
 	t.Run("idle bridge", func(t *testing.T) {
 		sb := &sharedBridge{}
@@ -221,8 +188,7 @@ func TestCancelPromptCall_RefusesWithNoCallInFlight(t *testing.T) {
 		if !sb.tryAcquireForPrompt() {
 			t.Fatal("fresh bridge must be acquirable")
 		}
-		// The window between TryAcquireForPrompt and BeginPromptCall: there is a
-		// turn, but nothing to cancel yet.
+		// Between TryAcquireForPrompt and BeginPromptCall: a turn, nothing to cancel yet.
 		if sb.cancelPromptCall() {
 			t.Error("a cancel was taken with no prompt context to trip")
 		}

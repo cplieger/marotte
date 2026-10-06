@@ -124,9 +124,12 @@ const (
 	EventMCPDisconnected   EventType = "mcp_disconnected"
 	EventMCPFailed         EventType = "mcp_failed"
 	EventMCPOAuthNeeded    EventType = "mcp_oauth_needed"
-	EventMCPPrewarm        EventType = "mcp_prewarm"
-	EventModeChanged       EventType = "mode_changed"
-	EventOpenExternalURL   EventType = "open_external_url"
+	// EventMCPPoolChanged is an empty refetch signal for GET /api/mcp/pool: a
+	// bridge's pool was replaced or dropped.
+	EventMCPPoolChanged  EventType = "mcp_pool_changed"
+	EventMCPPrewarm      EventType = "mcp_prewarm"
+	EventModeChanged     EventType = "mode_changed"
+	EventOpenExternalURL EventType = "open_external_url"
 	// EventPermissionNeeded carries a turn's verdict as well as an individual
 	// tool ask. There are no pending_change_* or pending_trust_* events:
 	// staged writes are KAS's.
@@ -144,28 +147,31 @@ const (
 	EventRunStarted  EventType = "run_started"
 	EventRunProgress EventType = "run_progress"
 	EventRunFinished EventType = "run_finished"
-	// EventRunInputNeeded is a workflow STEP asking a person a question, and the
-	// FOURTH run event. Unlike the three lifecycle frames above it carries its
-	// payload rather than being an invalidation, and for a stronger reason: the
-	// question is on no endpoint at all. KAS parks the run with one fixed
-	// pauseReason literal and an empty pauseDetail, so a client refetching
-	// `inspect` learns that a step wants input and can never learn what it asked.
-	//
-	// Keyed to the LAUNCHING chat when the run has one and to `run:<workflowId>`
-	// when it does not, so it reaches the parent tab's dock in the first case and
-	// the run tab's in the second — the same two keys the three ask kinds already
-	// use.
+	// EventRunInputNeeded is a workflow STEP asking a person a question. It carries its payload
+	// because the question is on no endpoint: KAS parks the run with a fixed pauseReason. Keyed to
+	// the launching chat, else to `run:<workflowId>`.
 	EventRunInputNeeded EventType = "run_input_needed"
 	// EventRunInputSettled retires a run ask on every surface that did not answer
 	// it, the run-shaped twin of decision_settled. Separate from that event
 	// because a run ask is identified by a string, not by an int64 request id.
-	EventRunInputSettled  EventType = "run_input_settled"
-	EventForgesChanged    EventType = "forges_changed"
-	EventGovernanceState  EventType = "governance_state"
-	EventHooksChanged     EventType = "hooks_changed"
-	EventSafetyStatus     EventType = "safety_status"
-	EventSafetyProperties EventType = "safety_properties"
-	EventSettingsUpdated  EventType = "settings_updated"
+	EventRunInputSettled EventType = "run_input_settled"
+	EventForgesChanged   EventType = "forges_changed"
+	EventGovernanceState EventType = "governance_state"
+	EventHooksChanged    EventType = "hooks_changed"
+	// EventSlashCommandsChanged and EventSteeringIssuesChanged are empty refetch
+	// signals for GET /api/slash-commands and GET /api/steering/issues.
+	EventSlashCommandsChanged  EventType = "slash_commands_changed"
+	EventSteeringIssuesChanged EventType = "steering_issues_changed"
+	EventSafetyStatus          EventType = "safety_status"
+	EventSafetyProperties      EventType = "safety_properties"
+	// EventKnowledgeIndexing reports a custom agent's own knowledge base being
+	// indexed, chat-scoped. The Settings list never shows these bases.
+	EventKnowledgeIndexing EventType = "knowledge_indexing"
+	// EventRecipesChanged is an empty refetch signal for GET /api/recipes.
+	EventRecipesChanged EventType = "recipes_changed"
+	// EventPowersChanged is an empty refetch signal for GET /api/powers.
+	EventPowersChanged   EventType = "powers_changed"
+	EventSettingsUpdated EventType = "settings_updated"
 	// EventStatusSnapshot is every retained waiting_on_user row as ONE frame on a
 	// v3 connect, stamped with the `status` version; the per-row chat_status
 	// replay is the legacy-connect form. Possibly empty, for pending_snapshot's
@@ -180,17 +186,9 @@ const (
 	// entry each time a cycle writes it, stamped with its forge_inventory version.
 	// Workspace-global; the payload type is forges.InventoryChangedPayload.
 	EventForgeInventory EventType = "forge_inventory"
-	// EventTabsChanged is ONE aggregate frame per committed mutation of the
-	// open-tab set: what changed, what was removed, and the order the set is now
-	// in, stamped with the version that mutation produced.
-	//
-	// ONE event type rather than a membership event beside an order event. Two
-	// types can be applied in either order by a client and a Close of a parent
-	// with children is ONE mutation, so a singular event would have forced either
-	// several frames sharing one version (the second reads as a duplicate) or
-	// several version bumps for one mutation. Neither is reachable with one
-	// aggregate frame: the version and the event are one-to-one, and there is no
-	// second channel to race.
+	// EventTabsChanged is ONE aggregate frame per committed mutation of the open-tab set (changed,
+	// removed, the new order), stamped with that mutation's version. One type, so version and event
+	// are one-to-one and a parent's close with children is one frame.
 	EventTabsChanged EventType = "tabs_changed"
 	// EventSpecChanged says a spec directory's files changed on disk. One frame
 	// per coalescing window, workspace-global, payload names the directory.
@@ -209,19 +207,15 @@ const (
 	// the `steer` entry's own `state`, which arrives as entry_appended and is
 	// durable, where an event is not.
 	EventSteerQueued EventType = "steer_queued"
-	// A notice the AGENT produced, not the user: a workflow step or a subagent
-	// reporting progress into the session that launched it.
-	//
-	// It arrives on KAS's steering channel because that buffer is the only
-	// inbound path into a live turn, and it used to be forwarded as a
-	// steer_queued carrying a severity. That put it on the chip row inside the
-	// composer, whose entire vocabulary is about the USER's outbound messages:
-	// waiting for the agent, read by the agent, discard the ones it has not
-	// read. None of those is true of text the agent wrote itself, and the
-	// discard control cannot meaningfully act on it. So it is its own event,
-	// and the severity is a required field of it rather than an optional flag
-	// on somebody else's payload.
-	EventAgentNotice     EventType = "agent_notice"
+	// EventAgentNotice is a notice the AGENT produced (a workflow step or subagent reporting into
+	// the launching session), arriving on KAS's steering channel. Its own event rather than a
+	// steer_queued, because the composer's chip row speaks only of the user's outbound messages;
+	// severity is required.
+	EventAgentNotice EventType = "agent_notice"
+	// EventSystemNotice is KAS's _kiro/system/notify: a notice about the model
+	// connection (high load, a paused or retried stream, a model switched for the
+	// account), never an error and never an agent's own words.
+	EventSystemNotice    EventType = "system_notice"
 	EventTerminalCreated EventType = "terminal_created"
 	EventTerminalExited  EventType = "terminal_exited"
 	EventTerminalOutput  EventType = "terminal_output"

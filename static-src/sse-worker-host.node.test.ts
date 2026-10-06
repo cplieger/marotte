@@ -1,7 +1,6 @@
-// The worker host's two marotte-owned decisions (the attach reconnect, the profile's
-// one digest) driven through the REAL library host over Node MessageChannel ports and
-// a scripted stream. Node: a SharedWorker's scope has no DOM, and the host's behaviour
-// must hold with none.
+// The worker host's two marotte-owned decisions (the attach reconnect, the profile's one digest)
+// driven through the REAL library host over Node MessageChannel ports and a scripted stream. Node:
+// a SharedWorker's scope has no DOM, and the host's behaviour must hold with none.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -93,9 +92,9 @@ function runContexts(tab: Tab) {
   return tab.received.flatMap((m) => (m.type === "revalidate_run" ? [m.ctx] : []));
 }
 
-/** Hide every tab, then show the first: the profile's fold turns that into the stream's
- *  wake. Waits for the fold to read hidden in between, because two ports deliver in no
- *  fixed order relative to each other and a show that lands before the last hide is no wake. */
+/** Hide every tab, then show the first: the profile's fold turns that into the stream's wake.
+ *  Waits for the fold to read hidden in between, because two ports deliver in no fixed order
+ *  relative to each other and a show that lands before the last hide is no wake. */
 async function wake(owner: WorkerHost, first: Tab, ...others: Tab[]): Promise<void> {
   for (const tab of [first, ...others]) {
     send(tab, { type: "visibility", ev: "hidden" });
@@ -164,9 +163,9 @@ describe("profileRevalidate", () => {
     await until(() => scripted.connections.length === 1);
     scripted.connections[0]?.hello();
     await until(() => runsSeen(a) === 1);
-    // The tab body throws by accident only (sse-adapter.ts settles every loader), so
-    // this is the safety net: the library ends the connection, then reconnects after
-    // one backoff (up to 500 ms of full jitter at the base).
+    // The tab body throws by accident only (sse-adapter.ts settles every loader), so this is the
+    // safety net: the library ends the connection, then reconnects after one backoff (up to 500 ms
+    // of full jitter at the base).
     await until(() => scripted.connections.length === 2, 2000);
     expect(scripted.connections[0]?.aborted()).toBe(true);
     const failed = a.received.find(
@@ -174,8 +173,8 @@ describe("profileRevalidate", () => {
     );
     expect(failed).toBeDefined();
 
-    // The next hello re-runs the reconciliation (the unverified latch), and a tab that
-    // now converges leaves the connection standing.
+    // The next hello re-runs the reconciliation (the unverified latch), and a tab that now
+    // converges leaves the connection standing.
     a.answerRuns = "done";
     scripted.connections[1]?.hello({ resumed: true });
     await until(() => runsSeen(a) === 2);

@@ -17,16 +17,9 @@ type ServerID string
 // headroom is for an id minted by an older or a future encoding.
 const IDMaxLen = 32
 
-// ParseServerID validates a raw string as a server ID.
-//
-// The CHARSET is the shared one (mcp.NameAllowedRune), which is the half
-// that has to agree with every other admission door. Two rules
-// deliberately do NOT come from ValidateName: the BOUND is IDMaxLen
-// (32), not mcp.NameMaxLen (64), and the LEADING-letter rule does not
-// apply, since newID() is base32 lowercase and can open with a digit.
-//
-// TestNameDoorsAgree pins the shared half and the two stated
-// differences together.
+// ParseServerID validates a raw string as a server ID: the shared charset (mcp.NameAllowedRune),
+// but bounded at IDMaxLen (32) rather than NameMaxLen, and with no leading-letter rule since
+// newID() can open with a digit. TestNameDoorsAgree pins both.
 func ParseServerID(raw string) (ServerID, error) {
 	if raw == "" {
 		return "", errors.New("empty server id")

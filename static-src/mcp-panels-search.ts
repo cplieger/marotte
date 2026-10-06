@@ -1,6 +1,4 @@
-// ---------------------------------------------------------------------------
-// MCP registry search panel — extracted from mcp-panels.ts for isolation.
-// ---------------------------------------------------------------------------
+// MCP registry search panel.
 
 import { byId } from "./dom.js";
 import { searchRegistry, registryFailureOf } from "./actions/mcp.js";
@@ -23,28 +21,23 @@ import { configuredServers } from "./mcp-state.js";
 import type { KeyPair, Server } from "./mcp-state.js";
 import { el } from "@cplieger/reactive";
 
-// --- Types ---
-
-/** The no-rows answers this surface can give, mapped from its own inputs: a
- *  502 body, the reply's `filtered` count, the query's length. `tooShort` is
- *  the shared empty-answer vocabulary's member and renders through its
- *  `emptyNote`; the other three keep this surface's own sentences until it
- *  adopts `textsearch/copy.ts` whole. An in-flight search is not an answer and
- *  has no member. */
+/**
+ * The no-rows answers, from a 502 body, the reply's `filtered` count and the query length. `tooShort` renders through
+ * the shared `emptyNote`; the rest keep local sentences. An in-flight search is not an answer.
+ */
 type RegistryEmptyState =
   | { kind: "none" }
   | { kind: "withheld"; matched: number }
   | { kind: "failed"; retryAfterS?: number }
   | { kind: "tooShort"; min: number };
 
-/** The registry's rows are servers, and it scans nothing of its own, so the
- *  one noun serves both keys. */
+/** The rows are servers and it scans nothing of its own, so one noun serves both keys. */
 const NOUNS: Nouns = {
   match: { one: "server", many: "servers" },
   scanned: { one: "server", many: "servers" },
 };
 
-/** Callback to switch the modal to a different panel mode. */
+/** Switches the modal to another panel mode. */
 export type SwitchModeFn = (
   kind: string,
   slug: string,
@@ -52,10 +45,10 @@ export type SwitchModeFn = (
   fields: InstallField[],
 ) => void;
 
-/** One field a registry entry declares: the env var or header the server needs,
- *  with the publisher's description and its required / secret markers. The
- *  markers used to be dropped on the way into the form, which is why a server
- *  could install cleanly and then do nothing. */
+/**
+ * One field a registry entry declares (env var or header), with the publisher's description and required / secret
+ * markers.
+ */
 export interface InstallField {
   name: string;
   description?: string | undefined;
@@ -63,17 +56,13 @@ export interface InstallField {
   secret?: boolean | undefined;
 }
 
-// --- Module state ---
-
-/** Quiet window before a keystroke reaches the registry. The upstream refuses
- *  connections after a burst (measured: ~16 requests in a few seconds, then
- *  `Could not connect` for about a minute), and one request per typed PREFIX is
- *  exactly that shape — each prefix is a distinct query, so neither the server's
- *  60s cache nor the action's dedupe collapses any of it. */
+/**
+ * The upstream refuses connections after a burst (measured: ~16 requests in seconds, then a minute of `Could not
+ * connect`), and each typed prefix is a distinct query no cache collapses.
+ */
 const DEBOUNCE_MS = 400;
 
-/** Shortest query that reaches the registry. A single letter matches most of the
- *  index, so it costs a slow upstream round trip to answer nothing useful. */
+/** A single letter matches most of the index, for a slow round trip that answers nothing useful. */
 const MIN_QUERY_LEN = 2;
 
 let debouncedSearch: DebouncedDispatch<{ q: string }> | null = null;
@@ -83,9 +72,7 @@ let retryBtnUnbind: (() => void) | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let searchBtnUnbind: (() => void) | null = null;
 
-/** The newest query the user has asked for. Dispatches are not scoped, so a
- *  slow answer for an abandoned prefix can land after a newer one; without this
- *  the box shows results for a query the user has already typed past. */
+/** The newest query asked for. Dispatches are not scoped, so a slow answer for an abandoned prefix must not render. */
 let wantedQuery = "";
 
 registerCleanup(() => {
@@ -95,9 +82,7 @@ registerCleanup(() => {
   searchBtnUnbind?.();
 });
 
-/** Drops the Retry button's binding and its hold timer together: every render
- *  that replaces the box replaces the button, and a timer left behind would
- *  re-enable a node that is no longer on screen. */
+/** Every render replaces the button, so its binding and hold timer go together. */
 function clearRetry(): void {
   retryBtnUnbind?.();
   retryBtnUnbind = null;
@@ -106,8 +91,6 @@ function clearRetry(): void {
     retryTimer = null;
   }
 }
-
-// --- Public API ---
 
 /** Wire to call when the user clicks an install button in search results. */
 let switchMode: SwitchModeFn | null = null;
@@ -139,10 +122,7 @@ export function initSearchPanel(): void {
   searchUnsub?.();
   debouncedSearch = debouncedDispatch(searchRegistry, { wait: DEBOUNCE_MS });
 
-  // The panel is re-initialised every time the modal opens on this mode, so the
-  // previous binding has to go or the button collects one per open. `pendingClass`
-  // is what makes the button say a query is running, and it covers the typed path
-  // as well as the click because both dispatch this action.
+  // Re-initialised on every open, so the previous binding goes. `pendingClass` covers the typed path and the click.
   searchBtnUnbind?.();
   searchBtnUnbind = bindLoadingState("mcp.search_registry", btn, {
     pendingClass: "is-searching",
@@ -166,10 +146,10 @@ export function initSearchPanel(): void {
     }
   });
 
-  /** Schedule or fire a query, or say why nothing is asked. A query under the
-   *  floor renders the hint rather than clearing the box: an empty box after
-   *  one typed character reads exactly like an answered query with no matches.
-   *  `immediate` is the Enter / button path, which skips the quiet window. */
+  /**
+   * A query under the floor renders the hint, since an empty box reads as no matches. `immediate` is Enter / the
+   * button, skipping the quiet window.
+   */
   const ask = (immediate: boolean): void => {
     const q = input.value.trim();
     wantedQuery = q;
@@ -201,9 +181,7 @@ export function initSearchPanel(): void {
   };
 }
 
-/** The in-flight row. The registry answers in about a second when healthy and
- *  can take ten when it is not, and the box used to sit empty for the whole
- *  wait — which reads as "this does nothing" rather than "this is slow". */
+/** The registry can take ten seconds; an empty box reads as "does nothing". */
 function renderSearching(results: HTMLDivElement): void {
   clearRetry();
   results.replaceChildren(el("p", { className: "mcp-empty" }, "Searching the registry…"));
@@ -244,9 +222,7 @@ function renderSearchResults(
   }
 }
 
-/** One line under a non-empty list saying how it differs from what matched.
- *  Both facts are "the list you see is not the list that matched", so they
- *  share the line. Null when the list is the whole answer. */
+/** Both facts say "the list you see is not the list that matched". Null when it is the whole answer. */
 function resultNote(d: RegistrySearchResult): string | null {
   const parts: string[] = [];
   if (d.filtered > 0) {
@@ -258,10 +234,7 @@ function resultNote(d: RegistrySearchResult): string | null {
   return parts.length === 0 ? null : parts.join(" ");
 }
 
-/** One sentence per no-rows answer. `tooShort` is the shared sentence; the
- *  other three are this surface's own until it adopts `textsearch/copy.ts`
- *  whole, and `none` echoes the query where the shared vocabulary speaks in
- *  nouns. */
+/** `tooShort` is the shared sentence; `none` echoes the query. */
 function registryEmptyNote(state: RegistryEmptyState, q: string): string {
   switch (state.kind) {
     case "none":
@@ -286,10 +259,7 @@ function renderEmpty(results: HTMLDivElement, state: RegistryEmptyState, q: stri
   }
 }
 
-/** A failed dispatch. The 502 body's classification, when the server sent
- *  one, decides whether Retry may fire at once: a rate-limited registry that
- *  named an interval is refusing, so a click inside it is guaranteed to fail
- *  again, and the button waits it out. */
+/** A rate-limited registry that named an interval will refuse a click inside it, so Retry waits it out. */
 function renderSearchError(
   results: HTMLDivElement,
   q: string,
@@ -316,31 +286,24 @@ function renderRetry(q: string, holdS: number | undefined): HTMLButtonElement {
       retryBtn.disabled = false;
     }, holdS * 1000);
   }
-  // `disabledFn` is what the binding restores on a pending-to-idle transition;
-  // without it an abandoned prefix's dispatch settling would re-enable the
-  // button inside the hold.
+  // `disabledFn` is restored on pending-to-idle, or an abandoned dispatch settling re-enables the button inside the hold.
   retryBtnUnbind = bindLoadingState("mcp.search_registry", retryBtn, {
     disabledFn: () => retryTimer !== null,
   });
   retryBtn.addEventListener("click", () => {
-    // Re-declare the intent: a failed query is not cached server-side, so this
-    // is a real re-fetch, and the subscription only renders the wanted query.
+    // A failed query is not cached server-side, so this re-fetches; the subscription renders only the wanted query.
     wantedQuery = q;
     void searchRegistry.dispatch({ q });
   });
   return retryBtn;
 }
 
-/** One search result: a compact row that expands. Exported for its test — the
- *  deprecated badge and the requirements preview are the two things a reader
- *  relies on before installing, and both are decided here.
- *
- *  The install buttons are SIBLINGS of the `<details>` rather than children of its
- *  `<summary>`, which is what keeps installing reachable without opening the row
- *  and what keeps a button out of a `role="button"` (axe's `nested-interactive`). */
+/**
+ * One search result: a compact row that expands. Install buttons are siblings of the `<details>`, reachable unexpanded
+ * and outside a `role="button"` (axe `nested-interactive`).
+ */
 export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
-  // The registry still LISTS a deprecated entry (only deleted ones are filtered
-  // upstream), so without this badge a dead server reads exactly like a live one.
+  // The registry still lists deprecated entries, so without the badge a dead server reads as live.
   const status = entry.status ?? "";
 
   const summary = el(
@@ -373,8 +336,7 @@ export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
   }
 
   const actions = el("div", { className: "mcp-result-actions" });
-  // One snapshot for the whole row, so two install paths of one entry cannot
-  // disagree about what is already in mcp.json.
+  // One snapshot per row, so two install paths agree on what is in mcp.json.
   const configured = configuredServers();
   for (const option of installOptions(entry, configured)) {
     actions.appendChild(option.btn);
@@ -401,8 +363,7 @@ interface InstallOption {
   detail: HTMLDivElement;
 }
 
-/** Every path the publisher declared, in registry order: a package runs locally
- *  under `npx`, a remote is a hosted URL. */
+/** Every declared path, in registry order: a package runs under `npx`, a remote is a hosted URL. */
 function installOptions(entry: RegistryEntry, configured: readonly Server[]): InstallOption[] {
   const out: InstallOption[] = [];
   for (const pkg of entry.packages ?? []) {
@@ -437,13 +398,10 @@ function installOptions(entry: RegistryEntry, configured: readonly Server[]): In
   return out;
 }
 
-/** The configured server this install path would land on, or null.
- *
- *  A remote's URL is matched FIRST and exactly, because an endpoint names one
- *  server whatever the reader called the row, and the field-satisfaction claim
- *  below is only true of the server actually holding that endpoint. The name
- *  fallback is what the install button would write (`simplifyName`), matched
- *  case-insensitively because `mcp.json` is hand-editable. */
+/**
+ * A remote's URL matches first and exactly: an endpoint names one server. The name fallback is what install would write
+ * (`simplifyName`), case-insensitive since `mcp.json` is hand-editable.
+ */
 function matchConfigured(
   configured: readonly Server[],
   entry: RegistryEntry,
@@ -460,13 +418,10 @@ function matchConfigured(
   return configured.find((s) => s.name.toLowerCase() === slug) ?? null;
 }
 
-/** Whether the record holds a value under this declared field's name.
- *
- *  NAMES only: a saved secret comes back as `SECRET_MASK`, so a value compare
- *  would read every stored credential as unset. Header names are matched
- *  case-insensitively (HTTP says they are), env names are not (the shell says
- *  they are not). A declared header is never satisfied by an env var, which is
- *  why the pair is chosen by `fieldKind` rather than searched across both. */
+/**
+ * Names only: a saved secret returns as `SECRET_MASK`. Header names fold case (HTTP), env names do not; the pair is
+ * chosen by `fieldKind`.
+ */
 function fieldIsSet(server: Server, fieldKind: "env" | "header", name: string): boolean {
   const pairs: readonly KeyPair[] = (fieldKind === "env" ? server.env : server.headers) ?? [];
   const want = fieldKind === "env" ? name : name.toLowerCase();
@@ -476,11 +431,7 @@ function fieldIsSet(server: Server, fieldKind: "env" | "header", name: string): 
   });
 }
 
-/** One install path: the button, plus what installing it will ask for.
- *
- *  The preview is DISCLOSURE, not consent — it names the credentials the server
- *  needs before the user commits, which is the gap that made a clean install
- *  fail silently. It gates nothing; the form behind it saves either way. */
+/** The preview is disclosure, not consent: it gates nothing. */
 function renderInstallOption(
   entry: RegistryEntry,
   kind: string,
@@ -505,15 +456,10 @@ function renderInstallOption(
   return { btn: renderInstallBtn(entry, kind, identifier, fields), detail };
 }
 
-/** The declared env vars / headers of one install path. Null when the publisher
- *  declared none, which is the honest reading of "needs nothing configured".
- *
- *  `configured` is the server this path would land on, when one is already in
- *  `mcp.json`. It changes the LABEL and marks the satisfied rows, and it changes
- *  nothing else: a reader who already owns the server is asking "what is still
- *  missing", not "what will this ask me for", and the unconfigured wording
- *  answered the wrong one of those. The declared list is still shown whole,
- *  because a field the record does not hold is the actionable row. */
+/**
+ * Null when nothing was declared. `configured` (the server this path would land on) changes the label and marks
+ * satisfied rows only; the list stays whole.
+ */
 function renderRequirements(
   fields: InstallField[],
   fieldKind: "env" | "header",
@@ -559,9 +505,7 @@ function renderRequirements(
   );
 }
 
-/** The label for a path whose server is already configured. Counts are over the
- *  REQUIRED fields alone, because an unset optional field is not something the
- *  reader has to do; the per-row `Set` marks report the rest. */
+/** Counts the required fields only; per-row `Set` marks report the rest. */
 function configuredLabel(
   requiredFields: InstallField[],
   fieldKind: "env" | "header",
@@ -583,10 +527,7 @@ function renderInstallBtn(
   identifier: string,
   fields: InstallField[],
 ): HTMLButtonElement {
-  // The label names the TRANSPORT only, because the row is one line and an npm
-  // package or a hosted URL is longer than the rest of it. The identifier travels
-  // in the accessible name and the tooltip, so two remotes of one kind are not two
-  // buttons reading the same two words.
+  // The label names the transport only; the identifier is in the accessible name and tooltip.
   const btn = el(
     "button",
     {

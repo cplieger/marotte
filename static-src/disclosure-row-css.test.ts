@@ -1,9 +1,5 @@
-// The CSS half of the whole-header disclosure: does the row LOOK like the control
-// it now is? Behaviour is pinned elsewhere (`disclosure-row.test.ts`,
-// `tool-card.test.ts`, `fundamentals/turn-header.test.ts`); an invisible hit target
-// is the same defect in the other direction. `mountAppCSS` assembles the sheet from
-// `css/MANIFEST` in declared order, as `cmd/bundle` does, because equal-specificity
-// ties in this app are decided by that order.
+// The CSS half of the whole-header disclosure: does the row look like a control (`no dead zones` cuts both ways).
+// `mountAppCSS` assembles `css/MANIFEST` in order, since equal-specificity ties are decided by it.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
@@ -16,7 +12,6 @@ beforeAll(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
 
-  // The transcript's own ancestors, so a rule scoped to them still applies.
   for (const id of ["messages", "messages-wrap", "banner-stack"]) {
     if (document.getElementById(id) === null) {
       const el = document.createElement("div");
@@ -52,26 +47,18 @@ function css(el: Element, prop: string): string {
   return getComputedStyle(el).getPropertyValue(prop);
 }
 
-/** The content-visibility of a `<details>`' UA content box.
- *
- *  The ONLY local read measured to discriminate a skipped disclosure subtree: a
- *  skipped button still reports a full-size `getBoundingClientRect` (24x24 for
- *  these) and still computes `display: inline-flex`, so box and display
- *  assertions stay green while the subtree is unpainted and unhittable. Hit
- *  testing discriminates too but not in this file's synthetic host, where the
- *  transcript ancestors mounted above cover the probe point. */
+/**
+ * The only local read that discriminates a skipped `<details>` subtree: a skipped button still reports its rect and
+ * display.
+ */
 function contentSkipped(details: Element): boolean {
   return getComputedStyle(details, "::details-content").contentVisibility === "hidden";
 }
 
-/** Every rule that writes one of `props` for `el`, counting `:hover` rules as
- *  if hovered, in document order — so the LAST entry is what a hovering reader
- *  gets.
- *
- *  Computed style cannot answer this: a synthetic hover does not drive style
- *  recalc, and `CSS.forcePseudoState` is a devtools protocol call rather than
- *  something a test page can make. Walking the CSSOM is the honest oracle, and
- *  it reads the same cascade the browser would. */
+/**
+ * Every rule writing `props` for `el`, counting `:hover` rules as hovered, in document order. A CSSOM walk because a
+ * synthetic hover drives no recalc and `CSS.forcePseudoState` is devtools-only.
+ */
 function propertyWriters(el: Element, props: string[]): { selector: string; value: string }[] {
   const out: { selector: string; value: string }[] = [];
   for (const sheet of document.styleSheets) {
@@ -100,8 +87,6 @@ function propertyWriters(el: Element, props: string[]): { selector: string; valu
         if (value === "") {
           continue;
         }
-        // `:hover` stripped so the element matches as though the pointer were on
-        // it. Nothing else in these selectors is state-dependent.
         try {
           if (el.matches(r.selectorText.replaceAll(":hover", ""))) {
             out.push({ selector: r.selectorText, value });
@@ -140,16 +125,12 @@ describe("tool card summary affordance", () => {
     );
     const summary = card.querySelector<HTMLElement>(".tool-summary")!;
     expect(css(summary, "cursor")).toBe("pointer");
-    // A drag across either line must not select its label instead of toggling.
     expect(css(summary, "user-select")).toBe("none");
-    // Never `transition: all`; the hover fill is the only thing
-    // that animates here.
     expect(css(summary, "transition-property")).toBe("background");
   });
 
   it("a claim-only summary stays inert", async () => {
-    // `readFile` has no depth 1, so it builds no toggle and no details region.
-    // A pointer cursor there would advertise a control that opens nothing.
+    // `readFile` has no depth 1, so no toggle: a pointer cursor would advertise nothing.
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
       buildToolCard({
@@ -166,19 +147,8 @@ describe("tool card summary affordance", () => {
     expect(css(summary, "cursor")).toBe("auto");
   });
 
-  // A CLAIM-ONLY CARD HOLDS THE CHEVRON COLUMN OPEN TOO, so a mixed run of cards
-  // reads as a list rather than a ragged one. The chevron leads (chevron.ts: a
-  // disclosure chevron leads and rotates) and about a fifth of a transcript's tool
-  // calls are claim-only `read`s, so a gutter conditional on the region would step
-  // every kind glyph in and out by 32px down a single tool group.
-  //
-  // OVERTURNS its predecessor, which asserted the opposite — that a claim-only
-  // header reserves NO gutter — on the reasoning that an unconditional reservation
-  // leaves dead space. That was true of a TRAILING gutter, where the space is at the
-  // row's far end and nothing lines up against it. A leading one is a column, and a
-  // column that appears and disappears is worse than a column that is sometimes
-  // empty: a leaf with an empty twist is the file-tree reading, which is also the
-  // relationship `.tool-group-header`'s own chevron has with the rows under it.
+  // A claim-only card holds the leading chevron column open too, so a mixed group's kind glyphs stay in one column
+  // (the chevron leads, and about a fifth of tool calls are claim-only).
   it("keeps the kind-glyph column straight across a mixed group", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const claimOnly = mount(
@@ -204,7 +174,6 @@ describe("tool card summary affordance", () => {
     const iconX = (card: Element): number =>
       card.querySelector(".tool-icon")!.getBoundingClientRect().x;
     expect(iconX(claimOnly)).toBeCloseTo(iconX(withRegion), 1);
-    // And the column is the chevron's own width plus a gap, not an arbitrary indent.
     const header = withRegion.querySelector<HTMLElement>(".tool-header")!;
     const toggle = withRegion.querySelector<HTMLElement>(".tool-disclosure")!;
     const t = toggle.getBoundingClientRect();
@@ -215,13 +184,8 @@ describe("tool card summary affordance", () => {
   });
 
   it("a summary with nothing to reveal stays inert too", async () => {
-    // The claim-only case above never had a toggle. This one HAD one and gave it
-    // back, so the pointer affordance has to be withdrawn rather than merely never
-    // granted.
-    //
-    // The GUTTER stays reserved: it is keyed on having a details region, not on
-    // holding the chevron right now, because the button comes and goes within one
-    // card's life and a gutter that went with it moved the title row 32px.
+    // A card that gave its toggle back withdraws the pointer, but the gutter (keyed on having a region) stays, or the title
+    // row would jump 32px.
     const { buildToolCard } = await import("./tool-card.js");
     const bare = mount(
       buildToolCard({
@@ -238,9 +202,7 @@ describe("tool card summary affordance", () => {
     expect(bare.querySelector(".tool-disclosure")).toBeNull();
     expect(css(summary, "cursor")).toBe("auto");
 
-    // The gutter is `padding-inline-end` on the header, and its value is a calc
-    // only the region rule writes — so compare against a card that still has its
-    // chevron rather than against a hardcoded length.
+    // Compared against a card that still has its chevron: only the region rule writes the gutter's calc.
     const withToggle = buildToolCard({
       id: "css-bare-ref",
       title: "invoke_sub_agent",
@@ -256,8 +218,7 @@ describe("tool card summary affordance", () => {
   });
 
   it("hovering a toggle summary paints both title and description", async () => {
-    // The hover paints their common parent, so no dead strip can remain between
-    // the title row and the description line below it.
+    // The hover paints their common parent, leaving no dead strip.
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
       buildToolCard({
@@ -277,16 +238,8 @@ describe("tool card summary affordance", () => {
     expect(backgroundWriters(subtitle)).toEqual([]);
   });
 
-  // THE CHEVRON IS IN LINE WITH THE TITLE, not centred on the whole summary, and
-  // this is the assertion that makes the box agree with the other eight. It used
-  // to be the inverse: the chevron's containing block was `.tool-summary`, so on a
-  // two-line card the glyph sat BETWEEN the lines — measured 10.2px below the
-  // title's centre against 0 on every other transcript box, which is the reported
-  // "some arrows are vertically centered and some in line with the box title".
-  //
-  // Measured against the TITLE rather than against `.tool-header`, because the
-  // header is what moved and a header-relative assertion would pass under either
-  // rule the moment the subtitle happened to be absent.
+  // The chevron aligns with the title, not the whole summary. Measured against the title: a header-relative assertion
+  // would pass under either rule.
   it("aligns the chevron with the title on a two-line card", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
@@ -308,16 +261,11 @@ describe("tool card summary affordance", () => {
       return r.y + r.height / 2;
     };
     expect(Math.abs(centre(toggle) - centre(title))).toBeLessThanOrEqual(1);
-    // And the summary is genuinely two rows, or the case above proves nothing:
-    // on a one-line card the title's centre and the summary's coincide.
+    // The summary must really be two rows, or the case above proves nothing.
     expect(Math.abs(centre(toggle) - centre(summary))).toBeGreaterThan(4);
   });
 
-  // OUT OF FLOW, because in flow it drives the row's height. As the last flex
-  // child of the title row a 24px box exceeds the title's ~20px line box, and the
-  // header measured 40px against `.tool-group-header`'s 36 — a member row taller
-  // than the group header above it, the looks-random height defect `.tool-header`
-  // records at its own `min-height`.
+  // Out of flow: as the title row's last flex child the 24px box made the header taller than `.tool-group-header`.
   it("contributes no height to the title row", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
@@ -340,16 +288,8 @@ describe("tool card summary affordance", () => {
     );
   });
 
-  // NOTHING RUNS UNDER THE CHEVRON, AT EITHER POINTER TIER. Tier-blindness is how
-  // the defect this replaces shipped: the gutter was a literal `1.5rem` while the
-  // button's width is the hit floor's, 24px on fine and 44px on coarse, so a phone
-  // rendered the title row and the subtitle 12px under the glyph — the very overlap
-  // the gutter exists to prevent, one tier over, with the old assertions green
-  // because they only ever ran on the default tier.
-  //
-  // The measured edge is the CONTENT box, because that is where `text-overflow`
-  // renders, and reading it as a box rather than as text keeps the assertion
-  // independent of the font.
+  // Nothing runs under the chevron at either tier: a literal gutter once let a phone (44px floor) overlap the title.
+  // Measured at the content box, where `text-overflow` renders.
   for (const tier of ["fine", "coarse"] as const) {
     it(`keeps every summary row clear of the chevron on the ${tier} tier`, async () => {
       document.documentElement.setAttribute("data-pointer", tier);
@@ -358,10 +298,10 @@ describe("tool card summary affordance", () => {
         const card = mount(
           buildToolCard({
             id: `css-title-gutter-${tier}`,
-            // A disclosable card, because the chevron this measures against is
-            // detached at build for a card with nothing to reveal.
+            // Disclosable, since the chevron is detached for a card with nothing to reveal.
             output: "ok\tmarotte\t0.5s\n",
-            title: "Run Command",
+            // A model-written title, so the command rides the subtitle row being measured.
+            title: "Run the Go checks",
             kind: "execute",
             status: "completed",
             input: { command: "go test ./... && go vet ./... && golangci-lint run ./..." },
@@ -370,17 +310,14 @@ describe("tool card summary affordance", () => {
         );
         const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
         const glyphRight = toggle.getBoundingClientRect().right;
-        // EVERY row of the summary, not just the title: they are one card's rows and
-        // a reader reads down the column, so all three start at the same edge.
+        // Every summary row starts at the same edge.
         for (const sel of [".tool-header", ".tool-subtitle"]) {
           const row = card.querySelector<HTMLElement>(sel)!;
           const contentLeft =
             row.getBoundingClientRect().x + Number.parseFloat(css(row, "padding-left"));
           expect(contentLeft, sel).toBeGreaterThanOrEqual(glyphRight);
         }
-        // The button's own box is pinned, which is what makes the gutter's arithmetic
-        // true at both tiers. Left to the floor it is 44px on coarse and the gutter
-        // is 20px short.
+        // The button's box is pinned to 24px, which keeps the gutter arithmetic true on both tiers.
         expect(toggle.getBoundingClientRect().width).toBeCloseTo(24, 1);
       } finally {
         document.documentElement.removeAttribute("data-pointer");
@@ -388,16 +325,14 @@ describe("tool card summary affordance", () => {
     });
   }
 
-  // A SECOND ROW ALIGNS WITH THE TITLE, not with the chevron: the subtitle and the
-  // move row are the same card's later lines rather than children of the disclosure,
-  // so they start where the kind glyph starts.
+  // Later rows align with the title, not the chevron: they are the card's lines, not the disclosure's children.
   for (const [name, opts] of [
     [
       "subtitle",
       {
         id: "css-subtitle-align",
         output: "ok\tmarotte\t0.5s\n",
-        title: "Run Command",
+        title: "Run the Go checks",
         kind: "execute",
         input: { command: "go test ./... && go vet ./... && golangci-lint run ./..." },
       },
@@ -446,17 +381,10 @@ describe("tool card summary affordance", () => {
   });
 });
 
-/** A `<details>` whose content must render INLINE above its media rule, with one
- *  real button inside so the box it reports is a paint box rather than an empty
- *  span's zero.
- *
- *  `display` on the elements is NOT the observable here: the UA hides a closed
- *  disclosure through `::details-content`, whose box survives `display: contents`
- *  on the details, so every element can read `display: inline-flex` while the
- *  subtree is content-visibility-skipped — unpainted, zero-size, out of the a11y
- *  tree. That is what shipped: four turn actions and both file-browser New
- *  actions were unreachable at every desktop width, with the summary hidden so
- *  nothing could open them. Assert the BOX. */
+/**
+ * A `<details>` whose content renders inline above its media rule. Assert the box: a closed `<details>` hides its
+ * content via `::details-content`, so elements still compute `display: inline-flex` while unpainted.
+ */
 function inlineDisclosure(
   menuClass: string,
   contentClass: string,
@@ -488,7 +416,6 @@ describe("turn action overflow", () => {
 
     expect(details.open).toBe(false);
     expect(css(summary, "display")).toBe("none");
-    // Closed, summary-less, and NOT skipped: the grouped actions really render.
     expect(contentSkipped(details)).toBe(false);
   });
 });
@@ -508,11 +435,9 @@ describe("file browser New menu", () => {
     const summary = details.querySelector("summary")!;
     const [a, b] = [...details.querySelectorAll<HTMLElement>(".fb-new-actions > .icon-btn")];
 
-    // The trigger is phone-only. `.view-toolbar-inner .icon-btn` used to restate
-    // `display` at (0,2,0) and outrank this hide, so it rendered on desktop.
+    // The trigger is phone-only.
     expect(css(summary, "display")).toBe("none");
     expect(contentSkipped(details)).toBe(false);
-    // Side by side on one row, not stacked inside the UA's block content box.
     expect(b!.getBoundingClientRect().y).toBe(a!.getBoundingClientRect().y);
     expect(b!.getBoundingClientRect().x).toBeGreaterThan(a!.getBoundingClientRect().x);
   });
@@ -548,9 +473,7 @@ describe("turn card header affordance", () => {
   }
 
   it("the whole band is the marked surface, open and folded alike", async () => {
-    // One gesture wherever the reader clicks it, matching the tool and
-    // delegate cards: admitting only the meta row while open reads as the
-    // target shrinking when a turn is expanded.
+    // One gesture wherever the band is clicked, open or folded, matching the tool and delegate cards.
     for (const state of ["open", "folded"] as const) {
       const card = await turn(state);
       expect(css(card.querySelector(".turn-header")!, "cursor"), state).toBe("pointer");
@@ -558,17 +481,15 @@ describe("turn card header affordance", () => {
   });
 
   it("the prompt stays selectable; the meta row does not", async () => {
-    // The band is a target WITHOUT eating text selection: a drag over the
-    // request keeps its selection (disclosure-row.ts skips a click that ends
-    // one), so `user-select: none` stops at the meta row.
+    // A target without eating selection: disclosure-row.ts skips a click that ends one, so `user-select: none` stops at
+    // the meta row.
     const card = await turn("open");
     expect(css(card.querySelector(".turn-head-row")!, "user-select")).toBe("none");
     expect(css(card.querySelector(".turn-req-text")!, "user-select")).not.toBe("none");
   });
 
   it("a running turn's header claims nothing", async () => {
-    // It has no fold (the toggle is display: none), so a pointer cursor there
-    // would advertise a control that opens nothing.
+    // No fold while running, so no pointer cursor.
     const card = await turn("running");
     expect(css(card.querySelector(".turn-header")!, "cursor")).toBe("auto");
     expect(propertyWriters(card.querySelector(".turn-header")!, ["background-image"])).toEqual([]);
@@ -576,11 +497,7 @@ describe("turn card header affordance", () => {
   });
 
   it("a no-fold turn's header claims nothing either", async () => {
-    // The newest turn, and a turn whose fold would hide nothing: the fold plan
-    // stamps `data-no-fold`, the toggle disappears, and the band stops
-    // advertising a control that would animate and change nothing (user
-    // report, 2026-08-31: turn 1's toggle "plays an animation but at the end
-    // nothing changes").
+    // A `data-no-fold` turn has no toggle, so the band stops advertising one.
     const card = await turn("no-fold");
     expect(css(card.querySelector(".turn-header")!, "cursor")).toBe("auto");
     expect(propertyWriters(card.querySelector(".turn-header")!, ["background-image"])).toEqual([]);
@@ -588,9 +505,8 @@ describe("turn card header affordance", () => {
   });
 
   it("hovering the band washes it as a LAYER, keeping the tint", async () => {
-    // `background-image: var(--layer-hover)`, per the interaction-ladder
-    // contract (01-tokens.css): written into `background` the wash would
-    // REPLACE the band's tertiary tint with a 15% film over the card.
+    // `background-image: var(--layer-hover)` (the interaction-ladder contract, 01-tokens.css): in `background` it would
+    // replace the band's tint.
     for (const state of ["open", "folded"] as const) {
       const header = (await turn(state)).querySelector(".turn-header")!;
       const writers = propertyWriters(header, ["background-image"]);
@@ -600,8 +516,7 @@ describe("turn card header affordance", () => {
   });
 
   it("the meta row paints no fill of its own — the band paints once", async () => {
-    // Two translucent overlays would make that part of the band darker than
-    // the rest under a hover.
+    // Two translucent overlays would darken part of the band.
     for (const state of ["open", "folded"] as const) {
       const row = (await turn(state)).querySelector(".turn-head-row")!;
       expect(backgroundWriters(row), state).toEqual([]);
@@ -610,7 +525,7 @@ describe("turn card header affordance", () => {
   });
 
   it("the fold toggle clears the 24px hit-target floor", async () => {
-    // 24px is the desktop target minimum.
+    // 24px minimum desktop target.
     const card = await turn("open");
     const btn = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
     const r = btn.getBoundingClientRect();
@@ -618,34 +533,13 @@ describe("turn card header affordance", () => {
     expect(r.height).toBeGreaterThanOrEqual(24);
   });
 
-  it("the fold toggle matches the copy button at the row's other end", async () => {
-    // One row, two buttons, one size — and the copy button already sets the
-    // row's height, so the chevron's box costs no vertical space.
-    const card = await turn("open");
-    const fold = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
-    const copy = card.querySelector<HTMLElement>(".turn-copy-req")!;
-    copy.hidden = false;
-    expect(fold.getBoundingClientRect().height).toBe(copy.getBoundingClientRect().height);
-    expect(fold.getBoundingClientRect().width).toBe(copy.getBoundingClientRect().width);
-  });
-
   it("the glyph did not grow with its hit target", async () => {
-    // The extra hit area is not ink: the button clears the 24px floor while the
-    // glyph stays well inside it.
-    //
-    // Stated as ink-inside-target rather than as a literal `--chev-size`. It was
-    // pinned at 0.75rem, which was one of four sites overriding the token default —
-    // so the same glyph rendered at 12px on this toggle and 14px on the tool card
-    // in the same turn, and the assertion was defending the divergence. The
-    // property the test exists for is that growing the TARGET did not grow the
-    // MARK, and that survives the size being shared.
+    // Growing the target must not grow the mark: ink stays inside the target, and the glyph uses the shared token.
     const card = await turn("open");
     const btn = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
     const svg = card.querySelector<HTMLElement>(".turn-fold-toggle > .disclosure-chevron > svg")!;
     expect(svg.getBoundingClientRect().width).toBeLessThan(btn.getBoundingClientRect().width);
-    // One size across the transcript: the base rule's token, not a per-site override.
-    // Compared against a bare chevron rather than a literal, so the assertion survives
-    // a change to the token and still fails on an override.
+    // One chevron size across the transcript; compared to a bare chevron so an override fails.
     const glyph = card.querySelector<HTMLElement>(".turn-fold-toggle > .disclosure-chevron")!;
     const bare = document.createElement("span");
     bare.className = "disclosure-chevron";
@@ -657,11 +551,7 @@ describe("turn card header affordance", () => {
   });
 
   it("gives the meta row a line box of its own", async () => {
-    // THE BAND IS TWO ROWS, and this is the assertion that fails if a control or a
-    // readout leaves the flow: the header's height is its padding, the row, the gap
-    // between the two rows, the request text and the card's rule. Read the gap from
-    // the computed `row-gap` rather than from a literal, so the case is
-    // token-independent.
+    // The band is two rows: padding, row, `row-gap`, request text and rule. Read from computed `row-gap`.
     for (const tier of ["fine", "coarse"] as const) {
       document.documentElement.setAttribute("data-pointer", tier);
       try {
@@ -669,8 +559,8 @@ describe("turn card header affordance", () => {
         const header = card.querySelector<HTMLElement>(".turn-header")!;
         const row = card.querySelector<HTMLElement>(".turn-head-row")!;
         const text = card.querySelector<HTMLElement>(".turn-req-text")!;
-        // Every member is really in the row, or this measures nothing.
-        for (const sel of [".turn-fold-toggle", ".turn-n", ".turn-ts", ".turn-copy-req"]) {
+        // Every member really is in the row.
+        for (const sel of [".turn-fold-toggle", ".turn-n", ".turn-ts"]) {
           expect(row.querySelector(sel), `${tier}: ${sel}`).not.toBeNull();
         }
         expect(row.getBoundingClientRect().height, `${tier}: the row has a height`).toBeGreaterThan(
@@ -710,40 +600,10 @@ describe("turn card header affordance", () => {
     expect(css(openText, "-webkit-line-clamp")).not.toBe("4");
     expect(openText.scrollHeight, "a full prompt, however long").toBe(openText.clientHeight);
   });
-
-  // --- The copy button -------------------------------------------------------
-
-  it("computes display:none for a hidden copy button", async () => {
-    // The `hidden` PROPERTY assertion in turn-header.test.ts never caught this:
-    // `.turn-action-btn` declares `display: inline-flex` at author origin, which
-    // beats the UA sheet's `[hidden] { display: none }`, so the button rendered on
-    // an agent-initiated turn and clicking it copied "Agent-initiated turn".
-    const card = await turn("open");
-    const copy = card.querySelector<HTMLButtonElement>(".turn-copy-req")!;
-    copy.hidden = true;
-    expect(css(copy, "display")).toBe("none");
-  });
-
-  it("is visible with no hover and no focus", async () => {
-    // The control is in flow and always painted: a reader copies the prompt
-    // without first having to find out that the band reveals something.
-    const card = await turn("open");
-    const copy = card.querySelector<HTMLButtonElement>(".turn-copy-req")!;
-    copy.hidden = false;
-    // No hover is simulated and nothing inside the card holds focus.
-    expect(card.matches(":hover"), "nothing is hovered").toBe(false);
-    expect(card.contains(document.activeElement), "nothing inside has focus").toBe(false);
-    expect(css(copy, "opacity")).toBe("1");
-    expect(css(copy, "display")).not.toBe("none");
-    expect(css(copy, "pointer-events")).not.toBe("none");
-    expect(copy.getBoundingClientRect().width, "and it has a box").toBeGreaterThan(0);
-  });
 });
 
 describe("folded turn face", () => {
-  // `turn-notice` is a CARD-level sibling of the face rather than a child of it
-  // (29-turns.css), because it renders in both fold states; the fixture mounts it
-  // where production does so the no-clamp assertion measures the real box.
+  // `turn-notice` is a card-level sibling of the face (29-turns.css); mounted where production puts it.
   function face(kind: "turn-face-prose" | "turn-notice", lines: number): HTMLElement {
     const card = document.createElement("div");
     card.className = "turn";
@@ -752,7 +612,6 @@ describe("folded turn face", () => {
     faceEl.className = "turn-face";
     const content = document.createElement("div");
     if (kind === "turn-face-prose") {
-      // The real shape: buildAssistantBubble's root with the face class added.
       content.className = "message assistant turn-face-prose";
       for (let i = 0; i < lines; i++) {
         const p = document.createElement("p");
@@ -762,7 +621,6 @@ describe("folded turn face", () => {
       faceEl.appendChild(content);
       card.appendChild(faceEl);
     } else {
-      // The real shape: one text node, newlines rendered by pre-wrap.
       content.className = kind;
       content.dataset["severity"] = "broken";
       content.textContent = Array.from({ length: lines }, (_, i) => `line ${String(i)}`).join("\n");
@@ -774,10 +632,7 @@ describe("folded turn face", () => {
   }
 
   it("the answer renders in full — the fold hides work, never the reply", () => {
-    // The folded turn keeps the WHOLE final answer, unclamped; the fold's
-    // compactness comes from hiding tool cards, reasoning and delegate output. A
-    // turn with none of those offers no fold at all (data-no-fold), so an
-    // unclamped face cannot read as "collapse does not work".
+    // The folded turn keeps the whole final answer; compactness comes from hiding tool cards, reasoning and delegates.
     for (const kind of ["turn-face-prose", "turn-notice"] as const) {
       const content = face(kind, 40);
       expect(content.scrollHeight, `${kind}: nothing clipped`).toBeLessThanOrEqual(
@@ -849,18 +704,8 @@ describe("sub-page menu bars", () => {
     expect(css(label, "display")).toBe("none");
   });
 
-  // THE SUBTITLE DEFERS TO A LABELLED BAR, and this is the dependency that makes
-  // it work. `tab-bar-fit.ts` publishes `.seg-bar-named` while a bar is VISIBLE
-  // and showing its labels, i.e. while it names its own active section, and
-  // 12-chat.css suppresses the title bar's subtitle for exactly that condition —
-  // otherwise the section name prints twice, twenty pixels apart. When the bar
-  // drops its labels the class goes with them and the subtitle becomes the only
-  // text naming the section.
-  //
-  // What this replaced: `.settings-title-row`, an element whose whole job was to
-  // push the bar clear of a floating menu that no longer floats. Its own comment
-  // recorded the measurement (the Sources segment lost its last 33px at 1440x900).
-  // The bar is in flow now, so the row is deleted rather than repositioned.
+  // The subtitle defers to a labelled bar: `tab-bar-fit.ts` publishes `.seg-bar-named` while a bar shows its labels,
+  // and 12-chat.css suppresses the subtitle then, or the section name prints twice.
   it("suppresses the title bar subtitle while the menu bar names its own section", () => {
     const area = document.createElement("div");
     area.id = "chat-area";
@@ -875,19 +720,16 @@ describe("sub-page menu bars", () => {
     area.append(heading, bar);
     mount(area);
 
-    // Labelled bar: it names the section, so the subtitle stands down.
     bar.classList.add("seg-bar-named");
     expect(css(subtitle, "display")).toBe("none");
 
-    // Labels dropped: the subtitle is the only name left on screen.
     bar.classList.remove("seg-bar-named");
     expect(css(subtitle, "display")).not.toBe("none");
   });
 });
 
-// The steer note is a CARD on the tool-card box, not a left rail: a leading rail is
-// reserved for work this agent did not do itself (the run card and the
-// delegated-work card).
+// The steer note is a card on the tool-card box, not a left rail: the leading rail is reserved for work this agent did
+// not do itself (run card, delegated work).
 describe("the mid-turn steer note's box", () => {
   function note(state: "read" | "dropped", origin: "user" | "agent"): HTMLElement {
     const el = document.createElement("div");
@@ -915,8 +757,7 @@ describe("the mid-turn steer note's box", () => {
     const card = document.createElement("div");
     card.className = "tool-call";
     const reference = mount(card);
-    // Read off `.tool-call` rather than hardcoded, so the two cannot drift: the
-    // claim is that they are the SAME box, not that either is a given colour.
+    // Read off `.tool-call`: the claim is that they are the same box.
     const wantBG = css(reference, "background-color");
     const wantRadius = css(reference, "border-top-left-radius");
 
@@ -935,8 +776,7 @@ describe("the mid-turn steer note's box", () => {
     }
   });
 
-  // The rail's actual writer, so a re-added `border-inline-start: 3px` fails here
-  // rather than only being noticed on screen.
+  // Targets the rail's writer, so a re-added wide border fails.
   it("has no rule anywhere writing a leading border wider than 1px", () => {
     const sheet = loadCSS("13-messages.css");
     for (const sel of [".steer-note", '.steer-note[data-state="dropped"]']) {
@@ -944,14 +784,10 @@ describe("the mid-turn steer note's box", () => {
       expect(body, sel).not.toMatch(/border-inline-start:\s*[2-9]/);
       expect(body, sel).not.toMatch(/border-(inline-start|left)-width:\s*[2-9]/);
     }
-    // And nowhere else in the slice either: the rail could come back on any
-    // selector, so the whole sheet is the honest scope for its absence.
     expect(sheet).not.toMatch(/\.steer-note[^{]*\{[^}]*border-inline-start:\s*[2-9]/);
   });
 
-  // Both origins keep the accent-mixed border: both are genuinely input into a
-  // running turn, and the origin is carried by the LABEL and the GLYPH rather
-  // than by a hue, which WCAG 1.4.1 would forbid as the only channel anyway.
+  // The origin is carried by label and glyph, not hue (WCAG 1.4.1).
   it("gives the two origins the same border, since the label is what separates them", () => {
     const mine = note("read", "user");
     const mineBorder = css(mine, "border-top-color");
@@ -959,9 +795,7 @@ describe("the mid-turn steer note's box", () => {
     expect(css(theirs, "border-top-color")).toBe(mineBorder);
   });
 
-  // The transcript has ONE measure and the card is it. This carried
-  // `--content-max-w`, the same 122px-dead-gutter defect removed from
-  // `.message.assistant` and `.turn-req-text`.
+  // The card is the transcript's one measure; no `--content-max-w` of its own.
   it("takes the card's own width rather than capping its own measure", () => {
     host.style.inlineSize = "900px";
     const n = note("read", "user");

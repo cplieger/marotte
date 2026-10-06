@@ -1,24 +1,12 @@
-// ---------------------------------------------------------------------------
-// Minimal syntax highlighter: tokenizes source code into spans.
-// No dependencies. Language detected from file extension or fence alias.
-//
-// Three routing tiers (broader than the keyword tables suggest):
-//   1. Dedicated keyword tables: one per SUPPORTED_LANGUAGES entry carrying a
-//      non-empty keyword set, which is exactly what KEYWORDS in
-//      highlight-langs.ts is derived from. An entry with an empty set (rb, c)
-//      is recognized but falls through to tier 2.
-//   2. Generic tokenizer (GENERIC_KW) for every other recognized
-//      extension/alias — YAML, JSON, CSS, HTML, TOML and the rest still get
-//      strings, numbers, comments and a common keyword set.
-//   3. Escaped passthrough for unknown languages — plain text, safely
-//      HTML-escaped, never mis-tokenized.
-// ---------------------------------------------------------------------------
+// Minimal dependency-free highlighter. Three tiers: a dedicated keyword table (an entry with an empty set falls
+// through), the generic tokenizer (GENERIC_KW) for every other recognised language, and escaped passthrough for
+// unknown ones.
 
 import { escText } from "./strings.js";
 import { KNOWN_EXTENSIONS, extToLang } from "./file-extensions.js";
 import { SUPPORTED_LANGUAGES, FENCED_ALIASES, KEYWORDS, GENERIC_KW } from "./highlight-langs.js";
 
-// Character classification helpers using charCode for hot-path performance.
+// charCode classification for the hot path.
 function isDigitCode(c: number): boolean {
   return c >= 48 && c <= 57; // '0'-'9'
 }
@@ -60,8 +48,7 @@ interface Token {
   value: string;
 }
 
-/** Languages where a backtick opens a string (JS/TS template literals,
- *  Go raw strings). Everywhere else a backtick is punctuation. */
+/** Where a backtick opens a string (JS/TS templates, Go raw strings); elsewhere it is punctuation. */
 const BACKTICK_STRING_LANGS = new Set(["js", "ts", "go"]);
 
 function tokenize(code: string, lang: string): Token[] {
@@ -73,7 +60,6 @@ function tokenize(code: string, lang: string): Token[] {
   while (i < len) {
     const cc = code.charCodeAt(i);
 
-    // Line comments
     if (cc === 47 /* / */ && code.charCodeAt(i + 1) === 47) {
       const end = code.indexOf("\n", i);
       const slice = end === -1 ? code.substring(i) : code.substring(i, end);
@@ -81,7 +67,6 @@ function tokenize(code: string, lang: string): Token[] {
       i += slice.length;
       continue;
     }
-    // Block comments
     if (cc === 47 /* / */ && code.charCodeAt(i + 1) === 42 /* * */) {
       const end = code.indexOf("*/", i + 2);
       const slice = end === -1 ? code.substring(i) : code.substring(i, end + 2);
@@ -89,7 +74,7 @@ function tokenize(code: string, lang: string): Token[] {
       i += slice.length;
       continue;
     }
-    // Hash comments (Python, Shell, YAML, TOML)
+    // Hash comments (Python, Shell, YAML, TOML).
     if (
       cc === 35 /* # */ &&
       (lang === "py" || lang === "sh" || lang === "yaml" || lang === "toml" || lang === "docker")
@@ -101,10 +86,7 @@ function tokenize(code: string, lang: string): Token[] {
       continue;
     }
 
-    // Strings. Backtick is a string delimiter only where the language
-    // actually has backtick strings (JS/TS templates, Go raw strings);
-    // treating it as one everywhere mis-tokenized languages like Python,
-    // where a stray backtick swallowed everything up to the next one.
+    // A backtick delimits a string only where the language has backtick strings; elsewhere a stray one would swallow text.
     if (cc === 34 || cc === 39 || (cc === 96 && BACKTICK_STRING_LANGS.has(lang))) {
       // " ' `
       let j = i + 1;
@@ -131,7 +113,6 @@ function tokenize(code: string, lang: string): Token[] {
       continue;
     }
 
-    // Numbers
     if (
       isDigitCode(cc) ||
       (cc === 46 /* . */ && i + 1 < len && isDigitCode(code.charCodeAt(i + 1)))
@@ -147,9 +128,7 @@ function tokenize(code: string, lang: string): Token[] {
           j++;
           continue;
         }
-        // `+`/`-` continue a number only as an exponent sign (1e-5);
-        // consuming them unconditionally merged arithmetic like `1-2`
-        // into a single mis-highlighted number token.
+        // `+`/`-` continue a number only as an exponent sign (1e-5), so `1-2` is not one token.
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- j > i inside the loop
         if ((ch === "+" || ch === "-") && j > i && /[eE]/.test(code[j - 1]!)) {
           j++;
@@ -162,7 +141,6 @@ function tokenize(code: string, lang: string): Token[] {
       continue;
     }
 
-    // Identifiers / keywords
     if (isIdentStartCode(cc)) {
       let j = i;
       while (j < len && isIdentCharCode(code.charCodeAt(j))) {
@@ -174,14 +152,12 @@ function tokenize(code: string, lang: string): Token[] {
       continue;
     }
 
-    // Punctuation
     if (isPunctCode(cc)) {
       tokens.push({ type: "punctuation", value: code[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       i++;
       continue;
     }
 
-    // Whitespace and other
     let j = i;
     while (j < len && !isTokenBoundaryCode(code.charCodeAt(j))) {
       j++;
@@ -196,9 +172,7 @@ function tokenize(code: string, lang: string): Token[] {
   return tokens;
 }
 
-/** Highlight source code by language key, returning HTML with span-
- *  wrapped tokens. Unknown or empty lang returns plain-escaped text so
- *  callers can safely pass through. */
+/** Highlight source code by language key into span-wrapped HTML. An unknown or empty lang returns escaped text. */
 export function highlightByLang(code: string, lang: string): string {
   if (lang === "" || lang === "md") {
     return escText(code);
@@ -215,7 +189,6 @@ export function highlightByLang(code: string, lang: string): string {
     }
     return parts.join("");
   }
-  // Unknown language; pass through as plain text.
   return escText(code);
 }
 
@@ -225,17 +198,11 @@ export function highlight(code: string, filename: string): string {
   return highlightByLang(code, extToLang(ext));
 }
 
-/** Highlight source code and additionally mark character ranges with
- *  `markClass`, for a caller that has a second, independent thing to say about
- *  parts of one line — the diff pane's word-level changes.
- *
- *  A token straddling a mark boundary is SPLIT, and each piece keeps its syntax
- *  class, so the two channels compose on one element (`hl-string diff-word-add`)
- *  rather than one displacing the other. Ranges are half-open `[start, end)`
- *  character offsets into `code`, and the walk relies on them being ascending,
- *  non-overlapping and non-empty for its own progress — `wordDiff` is the only
- *  producer and satisfies all three. An empty list is exactly
- *  `highlightByLang`, which is the common case: most rows carry no mark. */
+/**
+ * Highlight source and mark character ranges with `markClass` (the diff pane's word changes). A token straddling a
+ * mark is split and each piece keeps its class. Ranges are half-open, ascending, non-overlapping and non-empty
+ * (`wordDiff` guarantees this). An empty list is exactly `highlightByLang`.
+ */
 export function highlightMarked(
   code: string,
   lang: string,
@@ -251,10 +218,9 @@ export function highlightMarked(
   let m = 0;
   for (const t of tokens) {
     const end = at + t.value.length;
-    // Walk the token, cutting it wherever the next mark starts or ends.
+    // Cut the token wherever the next mark starts or ends.
     let cut = at;
     while (cut < end) {
-      // Advance past marks that ended before this token.
       while (m < marks.length && (marks[m]?.end ?? 0) <= cut) {
         m++;
       }
@@ -273,8 +239,7 @@ export function highlightMarked(
   return parts.join("");
 }
 
-/** Whether `lang` reaches the tokenizer at all. `md` and unknown languages are
- *  escaped passthrough (tier 3), so they carry no syntax spans. */
+/** `md` and unknown languages are escaped passthrough, with no syntax spans. */
 function tokenizable(lang: string): boolean {
   if (lang === "" || lang === "md") {
     return false;
@@ -288,34 +253,26 @@ export function detectLang(filename: string): string {
   return extToLang(ext);
 }
 
-/** Normalize a fenced-code language tag (e.g. "go", "javascript", "bash")
- *  to our internal key. Languages not recognized return "" so the caller
- *  can skip highlighting. */
+/** Normalize a fenced-code language tag to the internal key, or "" when unrecognised. */
 export function normalizeLang(tag: string): string {
   const s = tag.trim().toLowerCase();
   if (s === "") {
     return "";
   }
-  // Direct hits on our internal set.
   if (SUPPORTED_LANGUAGES.has(s)) {
     return s;
   }
-  // Lookup from file-extensions registry (covers extensions like "go", "ts", etc.).
   const fromExt = extToLang(s);
   if (fromExt !== "") {
     return fromExt;
   }
-  // Fenced-code aliases (covers "javascript", "typescript", "python", etc.).
   return FENCED_ALIASES[s] ?? "";
 }
 
-/** Resolve a language from whatever a caller happens to hold: a fence tag, a
- *  bare extension, or a FILE PATH. Returns "" when nothing matches.
- *
- *  The path arm is why this exists. `normalizeLang` compares the whole string,
- *  so `"internal/git/exec.go"` matched nothing and every diff in the app
- *  rendered unhighlighted — both call sites pass a path, and both of them, plus
- *  the option's own doc comment, claimed otherwise. */
+/**
+ * Resolve a language from a fence tag, a bare extension, or a file path; "" when nothing matches. `normalizeLang`
+ * compares the whole string, so a path never matches there.
+ */
 export function resolveLangHint(tag: string): string {
   const direct = normalizeLang(tag);
   if (direct !== "") {

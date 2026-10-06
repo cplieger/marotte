@@ -7,8 +7,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// maxPromptBytes caps the text field of a prompt command.
-const maxPromptBytes = 512 * 1024
+// MaxPromptBytes caps the text field of a prompt command.
+const MaxPromptBytes = 512 * 1024
 
 // Static command errors returned to the client.
 var (
@@ -17,7 +17,8 @@ var (
 	errEmptyPrompt    = errors.New("empty prompt")
 	errPromptTooLong  = errors.New("prompt too long")
 	errDraftTooLong   = errors.New("draft too long")
-	// set_attachments' two refusals: too many entries (413), a bad entry (400).
+	// An attachment list's two refusals, on set_attachments and prompt: too
+	// many entries (413), a bad entry (400).
 	errTooManyAttachments   = errors.New("too many attachments")
 	errBadAttachmentPath    = errors.New("attachment path is empty or too long")
 	errMissingMessageID     = errors.New("missing message_id")
@@ -44,6 +45,9 @@ var (
 	// errPermissionOptionNotOffered rejects a choice absent from the request, without
 	// echoing either identifier.
 	errPermissionOptionNotOffered = errors.New("option_not_offered")
+	// errRejectionReasonInvalid refuses a deny note over the cap or one paired
+	// with turn-approval decisions, which KAS would ignore.
+	errRejectionReasonInvalid = errors.New("rejection_reason_invalid")
 	// errChatNotCreated is the 409 for a chat absent after a Mutate that
 	// reported no error — a client-supplied id naming a tombstoned chat.
 	errChatNotCreated = errors.New("chat could not be created")

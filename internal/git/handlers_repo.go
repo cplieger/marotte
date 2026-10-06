@@ -144,11 +144,9 @@ func (h *Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
 	}
 }
 
-// refreshStatus starts a scan for key unless one is in flight, returning the channel
-// that closes when the refresh in flight publishes. `only` names the repositories to
-// scan, nil the whole tree; a scoped result is MERGED. The scan runs DETACHED from the
-// request, so a client walking away mid-poll does not abort work the next poll
-// repeats, and it LOOPS to drain the intent a joining read leaves in the refresh slot.
+// refreshStatus starts a scan for key unless one is in flight and returns the channel that closes
+// when it publishes. `only` names the repositories to scan (nil = all); a scoped result is merged.
+// The scan is detached from the request.
 func (h *Handler) refreshStatus(r *http.Request, key string, doFetch bool, only map[string]struct{}) chan struct{} {
 	done, started := h.statusCache.claim(key, only)
 	if !started {
@@ -259,11 +257,9 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	out, err := gitShowCmd(r.Context(), dir, ref, file)
 	if err != nil {
 		if errors.Is(err, ErrPathNotInRef) {
-			// Absent at ref: empty content renders as an all-add diff, and the
-			// marker is what stops the base pane being captioned with the ref —
-			// which would claim the ref holds the file and holds it empty. An
-			// additive key on an untyped response, so nothing is regenerated;
-			// emitted only in this branch, so its PRESENCE is the answer.
+			// Absent at ref: empty content renders as an all-add diff, and the marker stops the
+			// base pane being captioned with the ref. Emitted only here, so its presence is the
+			// answer.
 			webhttp.WriteJSON(w, map[string]any{"content": "", "absent": true})
 			return
 		}
@@ -301,10 +297,8 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	if rErr != nil {
 		slog.Debug("git remote get-url failed during log", "repo", logsafe.Field(dir), "error", logsafe.Field(rErr.Error()))
 	}
-	// TWO values from one string, because the two sinks want different things. The
-	// commit prefix is PARSED, so it takes the redaction alone — flattening or
-	// capping it would corrupt commitURLPrefix's parse. The "remote" field is read
-	// by a human in the Sources row, so it takes the single-line bound as well.
+	// Two values from one string: the commit prefix is PARSED, so it takes redaction alone; the
+	// "remote" field is read by a human and takes the single-line bound too.
 	parsedRemote := redactCredentials(remote)
 	remote = clientLine(remote)
 	behind := 0
@@ -342,14 +336,8 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		parts := strings.SplitN(line, "\t", 2)
-		// A refname comes back FROM git, so it is upstream text on this surface
-		// even though isValidGitRef screens what marotte passes TO git: a remote
-		// publishes whatever it likes, and git's own check-ref-format forbids
-		// ASCII control characters and not Unicode format characters, so a
-		// remote-tracking name may legally carry bidi controls or zero-width
-		// joiners. This is the client's branch switcher and the value a human
-		// picks from, so it takes the same single-line treatment every other
-		// human-read git value here does.
+		// A refname comes back FROM git, so it is upstream text: git forbids ASCII controls in
+		// refnames but not Unicode format characters such as bidi controls.
 		name := clientLine(parts[0])
 		isCurrent := len(parts) > 1 && strings.TrimSpace(parts[1]) == "*"
 		branches = append(branches, branchEntry{Name: name, Current: isCurrent})
@@ -428,11 +416,9 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 	webhttp.Ok(w)
 }
 
-// removeRepoDir unlinks dir through a parent pinned inside a confined root on the
-// workspace, never by name: the kernel re-resolves every component at the unlink, so a
-// lexically-checked directory later replaced by a symlink would send the delete
-// wherever the link points. A repo the user symlinked in stays removable — the descent
-// refuses a symlink only at an INTERMEDIATE component.
+// removeRepoDir unlinks dir through a parent pinned inside a confined root on the workspace, never
+// by name, so a checked directory later replaced by a symlink cannot redirect the delete. A repo
+// the user symlinked in stays removable.
 func (h *Handler) removeRepoDir(dir string) error {
 	root, err := os.OpenRoot(h.workDir)
 	if err != nil {

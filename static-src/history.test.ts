@@ -6,30 +6,20 @@ import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { absoluteTime } from "./relative-time.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
+/**
+ * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
+ * extension is load-bearing: written `.js`, coverage attributes every evaluation to a file that does not exist. Only
+ * the module under test is busted, so `vi.mock` still intercepts its dependencies.
  */
 let bootSeq = 0;
 
 const dispatch = vi.fn();
 const skeletonTimingMock = vi.fn(() => ({ cancel: vi.fn() }));
 const cancelSessions = vi.fn();
-// Resolves with an OUTCOME: openRow branches on "gone" (the retention-off 404)
-// to refresh the list, so the mock answers the ordinary arm by default.
+// Resolves with an outcome: openRow refreshes the list on "gone" (the retention-off 404).
 const openPreviousSession = vi.fn(() => Promise.resolve("opened"));
 const openRunView = vi.fn();
-// Resolves with the tab OUTCOME: a search row's click hands the reader to the
-// chat's find only once the tab is open, so the mock answers the ordinary arm.
+// Resolves with the tab outcome: a search row hands the reader to the chat's find only once the tab is open.
 const openChatTab = vi.fn(() => Promise.resolve("opened"));
 const openChatFindAt = vi.fn();
 const searchDispatch = vi.fn(async () => ({
@@ -49,22 +39,17 @@ vi.mock("./actions/chat.js", () => ({
   loadSessions: { dispatch, cancel: cancelSessions },
   deleteChat: { dispatch: deleteChatDispatch },
 }));
-// The row's delete reaches two actions and the confirm dialog. Stubbed for the
-// same reason the search action is: unmocked they build through actions/index.js,
-// which this suite reduces to one symbol.
+// Unmocked, these build through actions/index.js, which this suite reduces to one symbol.
 vi.mock("./actions/runs.js", () => ({
   deleteRun: { dispatch: deleteRunDispatch },
 }));
 vi.mock("./confirm.js", () => ({ confirm: confirmMock }));
-// The subtitle line joins each row against the chat record this client already
-// holds, so the store is a real input to the row builder here.
+// The subtitle joins each row against the chat record the client holds, so the store is a real input here.
 const storeGet = vi.fn((_id: string): unknown => undefined);
 vi.mock("./store.js", () => ({ get: storeGet }));
 vi.mock("./roles.js", () => ({
   labelForMode: (id: string) => (id === "vibe" ? "Default" : id),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert for real-ESM linking; no case calls them.
   getActive: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
@@ -73,20 +58,15 @@ vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
 }));
 vi.mock("./chat.js", () => ({ openPreviousSession, openChatTab }));
-// The cross-chat search action: unmocked it builds through actions/index.js,
-// which this suite stubs down to one symbol. The search MODE has its own tests.
+// Unmocked it builds through actions/index.js, which this suite stubs to one symbol.
 vi.mock("./actions/chat-search.js", () => ({
   searchChats: { dispatch: searchDispatch, cancel: vi.fn() },
 }));
-// The transcript's find, which a match row hands the query and the hit to. Its
-// landing has its own tests; here the seam is what a click hands over, and the
-// real module reaches the store's whole surface where this suite stubs one read.
+// The seam is what a match row hands the transcript's find; the real module would reach the whole store surface.
 vi.mock("./find-in-chat.js", () => ({ openChatFindAt }));
 vi.mock("./run-view.js", () => ({ openRunView }));
-// The dock's queue, as the run row reads it: the run ids with an unanswered ask.
-// A SIGNAL rather than a plain set, because the real `runPendingAsks` is a tracked
-// read and the page's repaint-on-ask rides that subscription — a mock answering
-// off a plain value would leave the live case with nothing to fire.
+// A signal, since the real `runPendingAsks` is a tracked read and the page's repaint-on-ask rides it; a plain set
+// would leave the live case nothing to fire.
 const asking = signal<ReadonlySet<string>>(new Set());
 vi.mock("./decision-dock.js", () => ({
   runPendingAsks: (id: string) => ({
@@ -95,28 +75,21 @@ vi.mock("./decision-dock.js", () => ({
     label: "",
   }),
 }));
-// `hasTab` is keyed by `(kind, ref)`: ids are opaque and server-minted, so a
-// chat id is no longer a tab id and the predicate takes the subject instead.
+// Keyed by `(kind, ref)`: ids are opaque and server-minted, so a chat id is not a tab id.
 const hasTab = vi.fn((_kind: string, _ref?: string) => false);
 vi.mock("./tabs.js", () => ({ hasTab, setHistoryTab }));
 // The pane switch pushes its URL; a forced switch (the router's) must not.
 vi.mock("./router.js", () => ({ pushRoute }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
-  // A spy rather than a bare arrow: whether the ARM fires at all is the observable
-  // the settled-empty case pins, and the painter's own refusal is skeleton.test.ts's.
+  // A spy: whether the arm fires is what the settled-empty case pins.
   skeletonTiming: skeletonTimingMock,
 }));
-// The row's outcome glyph comes from tool-card.ts (the one writer of that
-// vocabulary), which reaches the editor and scroll subgraphs. Stub the four
-// leaves it needs so this suite keeps testing the real glyph without staging the
-// whole app: mocking tool-card itself would test the mock.
+// Stubs the four leaves tool-card.ts needs, so the real glyph is tested without staging the app.
 const noop = (): void => {
   /* noop */
 };
 vi.mock("./editor-openers.js", () => ({ openFileDiff: noop }));
-// `openSpec` is here for the LINK, not for a case: a module in this graph imports
-// it, and Browser Mode links for real rather than reading properties off a
-// namespace object, so one missing export fails the whole file.
+// `openSpec` is for the link: Browser Mode links for real, so one missing export fails the whole file.
 vi.mock("./navigate.js", () => ({
   openChange: noop,
   openAtLine: noop,
@@ -156,11 +129,9 @@ const runRow = {
   updated_at: 2500,
 };
 
-/** A parentless run at the given status. */
 const runAt = (status: string) => ({ ...runRow, status });
 
-/** The page's static markup, as `static/index.html` lays it out: the bar and the
- *  two panes, each holding its own list container. */
+/** As `static/index.html` lays it out: the bar and two panes, each with its list container. */
 const VIEW_HTML = `
   <div id="history-view">
     <nav id="history-tab-bar" aria-label="History categories">
@@ -183,17 +154,16 @@ const rowOf = (key: string): HTMLElement =>
 const keysIn = (pane: HTMLElement): (string | null)[] =>
   [...pane.querySelectorAll("[data-key]")].map((r) => r.getAttribute("data-key"));
 
-/** A row's accessible name, which lives on its open BUTTON. The row itself is a
- *  list item: a role on it would flatten the delete button beside it out of the
- *  accessibility tree. */
+/** The name lives on the open button; a role on the list item would flatten the delete button out of the tree. */
 const openName = (row: Element): string | null =>
   row.querySelector("button.entry-open")?.getAttribute("aria-label") ?? null;
 
 const openBtn = (row: Element): HTMLElement => row.querySelector<HTMLElement>("button.entry-open")!;
 
-/** The instance the current test is driving, so the next test can close it: the
- *  controller is a module singleton whose effect outlives the view, and a leaked
- *  one repaints whatever `#history-runs` the next test mounts. */
+/**
+ * The controller is a module singleton whose effect outlives the view, so each test closes the previous instance or
+ * it repaints the next mount.
+ */
 let current: typeof ModHistory | null = null;
 
 async function freshModule(): Promise<typeof ModHistory> {
@@ -204,8 +174,7 @@ async function freshModule(): Promise<typeof ModHistory> {
 async function render(payload: unknown): Promise<HTMLElement> {
   const view = mountView();
   dispatch.mockResolvedValue(payload);
-  // The pair `activateTabQuietly` runs. Not `tabs.ts`'s `toggleHistoryView`: that one
-  // toggles the TAB, which is a round trip that paints nothing here.
+  // The pair `activateTabQuietly` runs; `toggleHistoryView` toggles the tab and paints nothing here.
   const { loadHistoryView, refreshHistoryView } = await freshModule();
   loadHistoryView();
   refreshHistoryView();
@@ -285,8 +254,7 @@ describe("history: two panes behind one bar", () => {
     const view = mountView();
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [runRow] });
     const { forceHistoryTab, loadHistoryView } = await freshModule();
-    // Before the page is wired, as a deep link arrives: the choice has to survive
-    // into the first paint.
+    // Before the page is wired, as a deep link arrives: the choice survives into the first paint.
     forceHistoryTab("runs");
     loadHistoryView();
     expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
@@ -297,8 +265,7 @@ describe("history: two panes behind one bar", () => {
   });
 
   it("keeps the kind chips and the status word off the row", async () => {
-    // With one kind per pane the chip said nothing the pane did not, and a run's
-    // state is the mark in its leading slot.
+    // One kind per pane, so no chip; a run's state is the mark in its leading slot.
     await render({ sessions: [chatRow, failedRow], runs: [runRow] });
     const rows = [...document.querySelectorAll("[data-key]")].map((r) => r.textContent).join(" ");
     expect(rows).not.toContain("Run");
@@ -322,10 +289,7 @@ describe("history: opening a row", () => {
   });
 
   it("drops the row by refreshing when the reopen says the chat is GONE", async () => {
-    // Retention is off and a close deleted the conversation after this list was
-    // fetched: openPreviousSession answers "gone" (it has already said so to the
-    // reader), and the page re-fetches — the server-derived list is what drops
-    // the dead row, so nothing here has to reach into the rendered set.
+    // Retention off and the conversation deleted since the fetch: "gone" re-fetches, and the server's list drops the row.
     openPreviousSession.mockResolvedValueOnce("gone");
     await render({ sessions: [ownedRow], runs: [] });
     const before = dispatch.mock.calls.length;
@@ -336,8 +300,7 @@ describe("history: opening a row", () => {
   });
 
   it("leaves the list alone when the reopen merely failed", async () => {
-    // A network failure is NOT the ephemeral face: the row may still be
-    // perfectly live, so no refresh churns the list under the reader.
+    // A network failure is not the ephemeral case: the row may be live, so the list does not churn.
     openPreviousSession.mockResolvedValueOnce("failed");
     await render({ sessions: [ownedRow], runs: [] });
     const before = dispatch.mock.calls.length;
@@ -347,12 +310,8 @@ describe("history: opening a row", () => {
   });
 
   it("routes a run to the read-only run view, never to a chat", async () => {
-    // Third and last argument: the parent chat to nest the run's tab under, empty
-    // here because the fixture has no `parent_chat_id`. Whether the RUN is
-    // PARENTLESS is deliberately not passed — that is the run's own fact and the
-    // composition root resolves it from the run store, because a chat-parented run
-    // reviewed while its chat's tab is closed has an empty subject Parent without
-    // being parentless.
+    // The third argument is the parent chat for the run's tab. Parentlessness is not passed: the composition root reads
+    // it from the run store, since a chat-parented run whose chat tab is closed has an empty Parent.
     await render({ sessions: [chatRow], runs: [runRow] });
     openBtn(rowOf("r:wf_1")).click();
     expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", "");
@@ -363,9 +322,7 @@ describe("history: opening a row", () => {
     const parented = { ...runRow, parent_chat_id: "c-launcher" };
     await render({ sessions: [], runs: [parented] });
     openBtn(rowOf("r:wf_1")).click();
-    // The chat id is what makes the run's tab a sub-tab of the conversation that
-    // started it; `openRunView` resolves it to a TAB id, because a chat id is no
-    // longer one.
+    // The chat id nests the run's tab under its conversation; `openRunView` resolves it to a tab id.
     expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", "c-launcher");
   });
 
@@ -392,11 +349,8 @@ describe("history: opening a row", () => {
   });
 });
 
-// The two per-list read verdicts. The server answers 200 with an empty list
-// whether it read nothing or failed to read at all, so `sessions_state` /
-// `runs_state` are the only thing separating the two. The lists degrade
-// INDEPENDENTLY (separate verbs on the same bridge), and each pane states its own
-// verdict.
+// The server answers 200 with an empty list whether it read nothing or failed, so `sessions_state` / `runs_state`
+// separate the two, per list.
 
 describe("history: which empty state each pane shows", () => {
   beforeEach(resetAll);
@@ -460,11 +414,7 @@ describe("history: which empty state each pane shows", () => {
     expect(runs.runs).toBe("Could not read workflow runs.");
   });
 
-  // The verdict is ALL the wire carries: the server knows why a read failed and
-  // logs it (session_list.go), and none of that reaches the client, so copy
-  // blaming an account, a permission or the connection would be inventing a
-  // cause. picker.test.ts pins the same rule for the catalog notice, which is the
-  // other surface that has to stand in for a list it could not read.
+  // The verdict is all the wire carries (the server logs the cause), so copy naming a cause would invent one.
   it("names no cause in any of the four states", async () => {
     const all = [
       await emptyTexts({ sessions: [], runs: [], sessions_state: "ready", runs_state: "ready" }),
@@ -500,12 +450,8 @@ describe("history: which empty state each pane shows", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A chat already open HERE is not history. The server only knows ownership (it
-// tags such a session with `chat_id` rather than omitting it); "open here" is
-// this device's localStorage, which is why the predicate is the client's and
-// reuses the tab store's own hasTab rather than a second one.
-// ---------------------------------------------------------------------------
+// A chat open here is not history. The server knows only ownership (`chat_id`); "open here" is this device's, so the
+// predicate reuses the tab store's hasTab.
 
 describe("history: chats already open in a tab here", () => {
   beforeEach(resetAll);
@@ -514,19 +460,19 @@ describe("history: chats already open in a tab here", () => {
     hasTab.mockImplementation((_kind: string, ref?: string) => ref === "c-existing");
     await render({ sessions: [chatRow, ownedRow], runs: [] });
     expect(document.querySelector('[data-key="s:sess_owned"]')).toBeNull();
-    // Only that row goes. The rest of the list is untouched.
+    // Only that row goes.
     expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
     expect(hasTab).toHaveBeenCalledWith("chat", "c-existing");
   });
 
   it("keeps a tagged session whose chat is NOT open here", async () => {
-    // Owned but closed is exactly the case this page exists for: reopening it.
+    // Owned but closed is what this page is for: reopening it.
     await render({ sessions: [ownedRow], runs: [] });
     expect(document.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
   });
 
   it("never asks the tab store about an unowned session", async () => {
-    // No `chat_id` means no marotte chat owns it, so there is no tab it could be.
+    // No `chat_id`: no marotte chat owns it, so it can be no tab.
     await render({ sessions: [chatRow], runs: [] });
     expect(document.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
     expect(hasTab).not.toHaveBeenCalled();
@@ -539,23 +485,16 @@ describe("history: chats already open in a tab here", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A run's state is its LEADING SLOT: the workflow mark while it moves, the
-// outcome glyph once it has settled (painted through tool-card.ts's applyOutcome,
-// the one writer of that vocabulary), nothing for a status this client has no
-// verdict for. Exhaustive over `run-store.ts RunState.status`, plus the two junk
-// values a `status?: string` wire field carries.
-// ---------------------------------------------------------------------------
+// A run's state is its leading slot: the workflow mark while it moves, the outcome glyph once settled (via
+// tool-card.ts's applyOutcome), nothing for an unknown status. Exhaustive over RunState.status plus two junk values.
 
 describe("history: a run's state is its leading slot", () => {
   beforeEach(resetAll);
 
-  /** The markup a mark renders as, named off the shared set rather than inlined. */
   const markup = (svg: string): string => (iconEl(svg) as HTMLElement).outerHTML;
 
-  // `mark` is null where the row KEEPS its identity glyph (the run glyph, tinted
-  // green) and the shared silhouette otherwise, which is the ratified rule: one
-  // mark per row, and its SHAPE changes for a non-success state.
+  // `mark` null keeps the identity glyph (tinted green); otherwise the shared silhouette. One mark per row; its shape
+  // changes for a non-success state.
   const settled = [
     { status: "completed", cls: "is-ok", mark: null, word: "succeeded" },
     { status: "failed", cls: "is-fail", mark: outcomeIcon("fail"), word: "failed" },
@@ -568,18 +507,15 @@ describe("history: a run's state is its leading slot", () => {
       const row = rowOf("r:wf_1");
       const icon = row.querySelector(".entry-lead .tool-icon")!;
       expect(icon.classList.contains(s.cls)).toBe(true);
-      // ONE mark, whichever state: never a glyph plus a badge beside it.
+      // One mark, never a glyph plus a badge.
       expect(icon.querySelectorAll("svg")).toHaveLength(1);
-      // Tint alone is one channel and fails WCAG 1.4.1, so the SHAPE is not
-      // optional — and this row's identity glyph is ICON_TAB_RUN rather than a
-      // toolIcon, which is why the writer captures it instead of recomputing it.
+      // Tint alone fails WCAG 1.4.1, so the shape is required. The identity glyph is ICON_TAB_RUN, not a toolIcon, which is
+      // why the writer captures it.
       expect(icon.querySelector("svg")!.outerHTML).toBe(markup(s.mark ?? ICON_TAB_RUN));
-      // The word is in the accessible name and nowhere else, and the row's own
-      // "Open X" label survives in front of it.
+      // The word is in the accessible name only, after the row's "Open X".
       expect(openName(row)).toBe(`Open feature-pipeline, ${s.word}`);
       expect(row.textContent).not.toContain(s.word);
       expect(row.textContent).not.toContain(s.status);
-      // A settled run carries no workflow mark.
       expect(row.querySelector(".entry-mark")).toBeNull();
     });
   }
@@ -591,8 +527,7 @@ describe("history: a run's state is its leading slot", () => {
     it(`gives a ${status} run the workflow mark at ${mark}, and no verdict`, async () => {
       await render({ sessions: [], runs: [runAt(status)] });
       const row = rowOf("r:wf_1");
-      // The same `data-status` vocabulary run-bar.ts writes, so 12-tabs.css paints
-      // one look for one run wherever it is reported.
+      // The `data-status` vocabulary run-bar.ts writes, so one run looks the same everywhere.
       const dot = row.querySelector<HTMLElement>(".entry-lead > .entry-mark");
       expect(dot?.dataset["status"]).toBe(mark);
       expect(row.querySelector(".tool-icon")).toBeNull();
@@ -602,9 +537,7 @@ describe("history: a run's state is its leading slot", () => {
   }
 
   it("paints `input` on a run whose ask is queued, ahead of its status, and withholds Delete", async () => {
-    // KAS leaves an asking run `running`, so the status alone read `working` over a
-    // run parked on a person. The dock's queue is the channel, read the way the run
-    // bar and the two tab dots read it, and it outranks the status there too.
+    // KAS leaves an asking run `running`; the dock's queue outranks the status, as in the run bar and tab dots.
     asking.value = new Set(["wf_1"]);
     await render({ sessions: [], runs: [runAt("running")] });
     const row = rowOf("r:wf_1");
@@ -612,14 +545,12 @@ describe("history: a run's state is its leading slot", () => {
       "input",
     );
     expect(row.querySelector(".tool-icon")).toBeNull();
-    // A moving run keeps its trash withheld, and an asking run is moving.
+    // An asking run is moving, so its trash stays withheld.
     expect(row.querySelector("[data-history-delete]")).toBeNull();
   });
 
   it("repaints the mark when an ask arrives or is answered, with no fetch", async () => {
-    // An ask emits no `runs:changed`, so the pane has to follow the dock's queue
-    // itself: a running row goes to `input` when the ask lands and back when it is
-    // answered, on the same element, without `/api/sessions` being asked again.
+    // An ask emits no `runs:changed`, so the pane follows the dock's queue itself, on the same element.
     await render({ sessions: [], runs: [runAt("running")] });
     const row = rowOf("r:wf_1");
     const mark = (): string | undefined =>
@@ -635,9 +566,7 @@ describe("history: a run's state is its leading slot", () => {
   });
 
   it("stops following the dock once the page is torn down", async () => {
-    // The controller is a module singleton and its effect outlives the view, so a
-    // closed page must not keep re-deriving rows from its last answer on every
-    // dock change; reopening re-sets the answer through `load()`.
+    // A closed page must not keep re-deriving rows on every dock change; reopening re-sets the answer via `load()`.
     await render({ sessions: [], runs: [runAt("running")] });
     const row = rowOf("r:wf_1");
     const mark = (): string | undefined =>
@@ -650,8 +579,7 @@ describe("history: a run's state is its leading slot", () => {
   });
 
   it("guesses no verdict from a status it does not know", async () => {
-    // `status` is a plain string on the wire, so an unrecognised value is
-    // reachable. It must fall through to NO claim, not to a green check.
+    // `status` is an open string: an unknown value makes no claim, never a green check.
     await render({ sessions: [], runs: [runAt("quiesced")] });
     const row = rowOf("r:wf_1");
     // The slot stays, empty, so the title keeps its neighbours' offset.
@@ -664,9 +592,8 @@ describe("history: a run's state is its leading slot", () => {
     expect(rowOf("r:wf_1").querySelector(".entry-lead")?.childElementCount).toBe(0);
   });
 
-  // The server lists agent-parented runs whose launching chat's transcript is closed
-  // or evicted, and retry is offered for them, so this page is the only door left: a
-  // blank outcome would leave the reader no reason to open it.
+  // The server lists agent-parented runs because their chat's transcript may be gone; this page is then the only door,
+  // so the outcome is stated.
   it("states the verdict on an agent-parented run too", async () => {
     await render({
       sessions: [],
@@ -685,8 +612,7 @@ describe("history: a run's state is its leading slot", () => {
   });
 
   it("repaints a run IN PLACE when a reload finds it settled", async () => {
-    // The row is kept by key across a reload, so a run that finished since the
-    // last read has to have its mark replaced by its verdict on the same element.
+    // Kept by key across a reload, so a finished run's mark becomes its verdict on the same element.
     await render({ sessions: [], runs: [runAt("running")] });
     const row = rowOf("r:wf_1");
     expect(row.querySelector(".entry-mark")).not.toBeNull();
@@ -705,12 +631,8 @@ describe("history: a run's state is its leading slot", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A run one of marotte's own bounds stopped (D56c). Both bounds terminate through
-// the same cancel a person uses, and KAS's status vocabulary has no "cancelled",
-// so an overrun and a click both land on `aborted` — the row cannot tell them
-// apart from the status alone, which is the whole reason `end_reason` exists.
-// ---------------------------------------------------------------------------
+// A run one of marotte's bounds stopped. Bounds cancel like a person does and KAS has no "cancelled", so both land on
+// `aborted`; `end_reason` tells them apart.
 
 describe("history: an overrun reads differently from a cancel", () => {
   beforeEach(resetAll);
@@ -734,9 +656,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 
   it("says a restart interrupted the run", async () => {
-    // The fourth fact, and the reason it needs its own value: a run cut off by a
-    // restart stopped mid-step through the same cancel a person uses, so without
-    // the sentence the reader is left inferring it from a run that simply stops.
+    // A run cut off by a restart stopped mid-step through the same cancel, so the sentence says so.
     await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", end_reason: "orphaned" }],
@@ -747,9 +667,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 
   it("says nothing extra for a user cancel, which is the same status", async () => {
-    // The distinguisher is the ABSENCE of a reason. If this row grew a sentence,
-    // the field would be describing every abort rather than the two marotte
-    // caused.
+    // The distinguisher is the absence of a reason: a person's abort has no sentence.
     await render({ sessions: [], runs: [runAt("aborted")] });
     const row = rowOf("r:wf_1");
     expect(row.textContent).not.toContain("ran past");
@@ -757,9 +675,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 
   it("settles a run the terminal frame has not caught up with yet", async () => {
-    // A bound cancels at a node boundary, so KAS can still report `running` for a
-    // run marotte already stopped. The reason outranks the status, or the row
-    // reads as moving forever.
+    // A bound cancels at a node boundary, so KAS may still report `running`; the reason outranks the status.
     await render({
       sessions: [],
       runs: [{ ...runRow, status: "running", end_reason: "overran" }],
@@ -771,9 +687,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 
   it("states the reason on an agent-parented run too", async () => {
-    // This sentence reports what MAROTTE did to the run, so it was always stated
-    // whatever launched it. The glyph now is too (see "states the verdict on an
-    // agent-parented run too"), so the row carries both.
+    // The sentence reports what marotte did, so it shows whatever launched the run, beside the glyph.
     await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", parent_chat_id: "c-owner", end_reason: "overran" }],
@@ -784,9 +698,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 
   it("ignores an end reason it does not recognise", async () => {
-    // `end_reason` is a plain string on the wire. An unknown value must not print
-    // a raw enum at the reader, and must not repaint a COMPLETED run as aborted
-    // with nothing on the row to explain why: one vocabulary decides both.
+    // An unknown `end_reason` prints no raw enum and does not repaint a completed run as aborted.
     await render({
       sessions: [],
       runs: [{ ...runRow, status: "completed", end_reason: "quiesced" }],
@@ -797,10 +709,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The tab-restore path. It needs a plain loader because the toggle-style opener
-// would CLOSE the already-active tab it was fired from.
-// ---------------------------------------------------------------------------
+// A plain loader, because the toggle-style opener would close the active tab it was fired from.
 
 describe("history: the tab-restore loader", () => {
   beforeEach(resetAll);
@@ -828,10 +737,7 @@ describe("history: the tab-restore loader", () => {
   });
 
   it("registers the find and fetches NOTHING", async () => {
-    // `mount()` was one `void this.refresh()` call and `registerFind` was one level
-    // up, so there was no split to decline: the activation registers, the dispatcher's
-    // refresh fetches, and the first activation issues ONE `/api/sessions` instead of
-    // two with the second aborting the first.
+    // The activation registers and the dispatcher's refresh fetches: one `/api/sessions` per first activation.
     mountView();
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
     const { loadHistoryView } = await freshModule();
@@ -851,8 +757,7 @@ describe("history: the tab-restore loader", () => {
   });
 
   it("arms no placeholder for an EMPTY list once /api/sessions has answered", async () => {
-    // No chats and no runs is an ANSWER, and the empty-state row it paints carries no
-    // `data-key`, so nothing but the flag separates it from a list nobody has read.
+    // No chats and no runs is an answer; its empty-state row has no `data-key`, so only the flag separates it.
     mountView();
     dispatch.mockResolvedValue({ sessions: [], runs: [] });
     const { loadHistoryView, refreshHistoryView } = await freshModule();
@@ -864,7 +769,7 @@ describe("history: the tab-restore loader", () => {
         throw new Error("empty state not painted");
       }
     });
-    // The FIRST read had nothing to go on, so it arms — once, for both panes.
+    // The first read had nothing to go on, so it arms once, for both panes.
     expect(skeletonTimingMock).toHaveBeenCalledTimes(1);
 
     refreshHistoryView();
@@ -886,10 +791,7 @@ describe("history: the tab-restore loader", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Cross-chat search: a second MODE over the Chats pane, not a filter of the
-// loaded list.
-// ---------------------------------------------------------------------------
+// Cross-chat search: a second mode over the Chats pane, not a filter of the loaded list.
 
 const match = (over: Record<string, unknown> = {}) => ({
   id: "c-redis",
@@ -910,20 +812,18 @@ const match = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** The page's find, reached the way Ctrl-F and the toolbar magnifier reach it. */
+/** Reached the way Ctrl-F and the toolbar magnifier reach it. */
 async function openFind(): Promise<PageFind> {
   const { pageFind } = await import("./find-registry.js");
   const find = pageFind("history");
   if (find === undefined) {
     throw new Error("the history page registered no find");
   }
-  // A POPUP: nothing is built until it opens, so there is no field to type into
-  // before this call.
+  // A popup: there is no field until it opens.
   find.open();
   return find;
 }
 
-/** Mount the view, open the search popup, then type a query. */
 async function search(
   result: unknown,
   query = "redis",
@@ -931,9 +831,7 @@ async function search(
   mountView();
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
-  // `loadHistoryView` rather than `tabs.ts`'s `toggleHistoryView`: the latter toggles
-  // the TAB, which is a round trip that paints nothing here, while the page's own
-  // loader is what every door reaches through the tab factory's lazy import.
+  // The page's own loader, which every door reaches through the tab factory's lazy import.
   const { loadHistoryView } = await freshModule();
   loadHistoryView();
   const find = await openFind();
@@ -973,18 +871,16 @@ describe("history: cross-chat search", () => {
     expect(row.classList.contains("entry")).toBe(true);
     expect(row.querySelector(".entry-title")?.textContent).toBe("Redis migration");
     expect(row.querySelector(".entry-sub")?.textContent).toBe("we moved the cache to redis");
-    // A count is not a timestamp: it borrows the slot as text and carries no
-    // tooltip, because a hit count has no absolute form.
+    // A count borrows the time slot as text, with no tooltip: it has no absolute form.
     const count = row.querySelector(".entry-time")!;
     expect(count.textContent).toBe("3 matches");
     expect(count.tagName).toBe("SPAN");
     expect(count.hasAttribute("data-tooltip")).toBe(false);
-    // Under the CHATS pane, not a third container.
+    // Under the Chats pane, not a third container.
     expect(table.id).toBe("history-table");
   });
 
-  // A title-only match carries no best hit at all, and must not render an empty
-  // row that looks like a rendering bug.
+  // A title-only match has no hit, and must not render an empty excerpt.
   it("explains a title-only match instead of showing an empty excerpt", async () => {
     const { best: _best, ...titleOnly } = match({ hits: 0 });
     const { table } = await search({
@@ -998,8 +894,7 @@ describe("history: cross-chat search", () => {
   });
 
   it("opens the matched chat on click and hands its find the query and the best hit", async () => {
-    // The row said `3 matches`; without the handoff the reader landed in the chat
-    // with nothing marked and the query to retype, so that count was unreachable.
+    // Without the handoff the reader lands in the chat with nothing marked.
     const { table } = await search({
       matches: [match()],
       scanned: 3,
@@ -1008,11 +903,9 @@ describe("history: cross-chat search", () => {
     });
     openBtn(table.querySelector("[data-search-chat]")!).click();
     expect(openChatTab).toHaveBeenCalledWith("c-redis", "Redis migration");
-    // Search results are chats that already exist; adopting a session is the
-    // OTHER door and must not fire here.
+    // Search results are existing chats; adopting a session is the other door.
     expect(openPreviousSession).not.toHaveBeenCalled();
-    // After the tab resolved — the switch closes and clears the transcript's box,
-    // so a handoff running before it would be undone by it.
+    // After the tab resolved: the switch clears the transcript's box, undoing an earlier handoff.
     await vi.waitFor(() => {
       expect(openChatFindAt).toHaveBeenCalledTimes(1);
     });
@@ -1036,8 +929,7 @@ describe("history: cross-chat search", () => {
   });
 
   it("hands nothing to a find when the chat did not open", async () => {
-    // Deleted since the search: the tab refused, so there is no transcript for the
-    // query to land in, and opening the box would search whatever chat IS active.
+    // Deleted since the search: no transcript for the query, and opening the box would search the active chat.
     openChatTab.mockResolvedValueOnce("not-found");
     const { table } = await search({
       matches: [match()],
@@ -1053,9 +945,7 @@ describe("history: cross-chat search", () => {
     expect(openChatFindAt).not.toHaveBeenCalled();
   });
 
-  // The note is the shared search grammar over this surface's one noun: a match is
-  // a conversation and the scan reads conversations, so the sentence says
-  // "conversations" on both axes and never "files" or "messages".
+  // The shared grammar over one noun: "conversations" on both axes.
   it("states the cut and the scan's reach in the shared grammar", async () => {
     const { note } = await search({
       matches: [match()],
@@ -1063,9 +953,7 @@ describe("history: cross-chat search", () => {
       matched: 62,
       truncated: true,
     });
-    // The cut is `matched > matches.length`; `truncated` says only that older
-    // conversations were not read, and it is the tally that says so, not a
-    // sentence of this page's own.
+    // The cut is `matched > matches.length`; `truncated` means older conversations were not read.
     expect(note.textContent).toBe(
       "1 of 62 conversations shown; 500 conversations scanned, not everything was read",
     );
@@ -1081,8 +969,7 @@ describe("history: cross-chat search", () => {
     expect(note.textContent).toBe("1 conversation; 12 conversations scanned");
   });
 
-  // The honest-empty-state rule: without saying the scan was capped, "no
-  // matches" implies the text is nowhere.
+  // Without saying the scan was capped, "no matches" implies the text is nowhere.
   it("says not everything was searched on an empty answer the scan did not finish", async () => {
     const { note } = await search({ matches: [], scanned: 500, matched: 0, truncated: true });
     expect(note.textContent).toBe(
@@ -1101,13 +988,12 @@ describe("history: cross-chat search", () => {
   });
 
   it("is a role=search landmark carrying the shared field attributes", async () => {
-    // The box used to be hand-authored markup with no role at all, so it was the
-    // one search on the page not reachable by landmark navigation.
+    // A search region, reachable by landmark navigation.
     await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     const region = document.getElementById("hist-search");
     expect(region?.getAttribute("role")).toBe("search");
     expect(region?.getAttribute("aria-label")).toBe("Search conversations");
-    // The same popup the transcript's find is, by class as well as by behaviour.
+    // The same popup as the transcript's find.
     expect(region?.className).toContain("page-find");
     expect(region?.className).toContain("search-pop");
     expect(region?.className).toContain("uip-popup");
@@ -1120,27 +1006,20 @@ describe("history: cross-chat search", () => {
   });
 
   it("ships NO match-case toggle, because the endpoint would not read it", async () => {
-    // GET /api/chats/search takes only `q`. chat.searchOneChat states why —
-    // "Case-INSENSITIVE, always ... a cross-chat 'which conversation was that in'
-    // is asked from memory, and memory does not remember capitalisation" — and
-    // titleHits folds unconditionally. A toggle here would be wired to nothing,
-    // which is worse than its absence.
+    // GET /api/chats/search takes only `q` and always folds case (chat.searchOneChat), so a case toggle would be wired to
+    // nothing.
     await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     expect(document.querySelector('#hist-search [aria-label="Match case"]')).toBeNull();
-    // And the query carries nothing but the text, so there is no flag to be
-    // silently dropped on the way to a server that would ignore it.
+    // The query carries only the text.
     expect(searchDispatch).toHaveBeenLastCalledWith("redis");
   });
 
   it("carries the MAGNIFIER, because it reaches past what is on screen", async () => {
-    // The server reads every chat file on disk, so this box finds conversations
-    // the loaded list does not contain. A funnel would promise it only narrows
-    // what is here, which is what the Runs pane's box DOES promise — same
-    // component, the other glyph.
+    // The server reads every chat file, so this finds conversations the list lacks; a funnel would promise narrowing.
     await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     expect(document.querySelector("#hist-search .page-find-icon circle")).not.toBeNull();
     expect(document.querySelector("#hist-search .page-find-icon polygon")).toBeNull();
-    // And the × says which of the two it is closing.
+    // The × says which of the two it closes.
     expect(document.querySelector('#hist-search [aria-label="Close search"]')).not.toBeNull();
   });
 
@@ -1156,9 +1035,7 @@ describe("history: cross-chat search", () => {
     input.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
-    // The popup's leave lifecycle hides the panel on a transitionend (or its
-    // 400ms fallback), and focus only leaves the field once it does — a real
-    // browser does not move focus on the same tick the key was handled.
+    // The popup hides on transitionend (or its 400ms fallback), and focus leaves the field only then.
     await vi.waitFor(() => {
       expect(find.focused()).toBe(false);
     });
@@ -1172,9 +1049,7 @@ describe("history: cross-chat search", () => {
   });
 
   it("sends a search as typed, trailing space included", async () => {
-    // This box is a SEARCH, so the popup's trim rule leaves the text alone and no
-    // rule about the text lives on this page; the server splits the query on
-    // whitespace itself, so what it finds is unchanged.
+    // A search, so the popup's trim rule leaves the text alone; the server splits on whitespace itself.
     await search({ matches: [match()], scanned: 3, matched: 1, truncated: false }, "redis ");
     expect(searchDispatch).toHaveBeenLastCalledWith("redis ");
   });
@@ -1222,13 +1097,12 @@ describe("history: cross-chat search", () => {
   });
 
   it("leaves the Runs pane its list while a search is open", async () => {
-    // A search is the Chats pane's mode; the runs a load brings back still land on
-    // their own pane, and a run finishing mid-search still repaints there.
+    // Search is the Chats pane's mode; runs still land and repaint on their own pane.
     await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [runRow] });
     const { refreshHistoryView } = await freshModule();
     refreshHistoryView();
-    // The refresh re-runs the SEARCH on the chats pane...
+    // The refresh re-runs the search on the chats pane.
     await vi.waitFor(() => {
       expect(searchDispatch.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
@@ -1237,11 +1111,7 @@ describe("history: cross-chat search", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The Runs pane's box is a FILTER over the loaded list: there is no server-side
-// run search, so it can only hide rows that are here, and it says so with the
-// funnel.
-// ---------------------------------------------------------------------------
+// The Runs box is a filter over the loaded list: there is no server-side run search, so the funnel.
 
 describe("history: the runs filter", () => {
   beforeEach(resetAll);
@@ -1290,7 +1160,7 @@ describe("history: the runs filter", () => {
     const region = document.getElementById("hist-filter");
     expect(region?.getAttribute("role")).toBe("search");
     expect(region?.getAttribute("aria-label")).toBe("Filter workflow runs");
-    // The funnel, not the magnifier: it narrows what is on screen and nothing more.
+    // The funnel: it narrows what is on screen.
     expect(document.querySelector("#hist-filter .page-find-icon polygon")).not.toBeNull();
     expect(document.querySelector("#hist-filter .page-find-icon circle")).toBeNull();
     // No request: the rows are already here.
@@ -1300,14 +1170,12 @@ describe("history: the runs filter", () => {
   it("narrows the loaded runs by name and states how many survived", async () => {
     const { runs } = await filter("night");
     expect(keysIn(runs)).toEqual(["r:wf_n"]);
-    // The shared grammar over this pane's noun, the same shape the docs filter
-    // states: what matched, then what was read.
+    // The shared grammar over this pane's noun: what matched, then what was read.
     expect(document.getElementById("hist-filter-note")?.textContent).toBe("1 run; 2 runs scanned");
   });
 
   it("reads the recipe as well as the label", async () => {
-    // The subtitle carries the recipe when it differs from the label, and the
-    // filter reads what the row shows.
+    // The subtitle carries the recipe when it differs from the label, and the filter reads what the row shows.
     const { runs } = await filter("code-review");
     expect(keysIn(runs)).toEqual(["r:wf_l"]);
   });
@@ -1360,16 +1228,14 @@ describe("history: the per-row delete", () => {
     for (const key of ["s:sess_owned", "r:wf_1"]) {
       const btn = rowOf(key).querySelector(".entry-actions > [data-history-delete]");
       expect(btn, `${key} has no delete button`).not.toBeNull();
-      // Named for the row, so a screen reader announces which thing it removes.
+      // Named for the row, so a screen reader announces what it removes.
       expect(btn?.getAttribute("aria-label")).toMatch(/^Delete /);
       expect(btn?.classList.contains("entry-delete")).toBe(true);
     }
   });
 
-  // The run delete dispatches `_kiro/workflow/delete`, which CANCELS a run that is
-  // still going before it removes the directory. So on a live row the trash is a
-  // stop control, and the confirm says "removed for good" and cannot say "and
-  // cancelled". A moving run gets no button; stopping one is the run page's job.
+  // The run delete cancels a live run before removing it, so on a moving row the trash is a stop control the confirm
+  // cannot describe. Stopping is the run page's job.
   it("withholds the delete button from a run that is still moving", async () => {
     await render({
       sessions: [],
@@ -1391,9 +1257,7 @@ describe("history: the per-row delete", () => {
     }
   });
 
-  // A bound already stopped the run, so KAS still reporting `running` is a frame
-  // that has not landed rather than live work — the same precedence `runVerdict`
-  // gives the end reason. Withholding the button here would strand the row.
+  // A bound already stopped the run, so a lingering `running` is a frame not yet landed, as in `runVerdict`.
   it("keeps the delete button on a run one of marotte's bounds already stopped", async () => {
     await render({
       sessions: [],
@@ -1403,9 +1267,7 @@ describe("history: the per-row delete", () => {
   });
 
   it("keeps the delete button out of the open control, so it is not nested in one", async () => {
-    // The open control is a real button holding the row's own content, with the
-    // delete button as its SIBLING in the actions slot — so the target is the body
-    // and neither control sits inside the other. The row itself is a list item.
+    // The open control is a button holding the row's content, the delete button its sibling; neither nests.
     await render({ sessions: [ownedRow], runs: [runRow] });
     for (const key of ["s:sess_owned", "r:wf_1"]) {
       const row = rowOf(key);
@@ -1414,15 +1276,12 @@ describe("history: the per-row delete", () => {
       const open = row.querySelector<HTMLElement>("button.entry-open");
       expect(open, `${key} has no open button`).not.toBeNull();
       expect(open?.getAttribute("aria-label")).toMatch(/^Open /);
-      // Nothing else in the row may be interactive: two controls, no nesting.
+      // Two controls, no nesting.
       const controls = [...row.querySelectorAll("button, [role='button'], [tabindex]")];
       expect(controls).toHaveLength(2);
       const del = row.querySelector<HTMLElement>("[data-history-delete]")!;
       expect(open?.contains(del), `${key}'s delete button is inside the open control`).toBe(false);
-      // The control holds the row's own content, which is what makes its box the
-      // row's body. `history-row-target.test.ts` measures the geometry that follows;
-      // this is the structure it measures, asserted against the real builder so the
-      // two cannot drift.
+      // The control holds the row's content, which makes its box the body; history-row-target.test.ts measures it.
       for (const part of [".entry-title", ".entry-time"]) {
         expect(
           open?.querySelector(part),
@@ -1438,13 +1297,43 @@ describe("history: the per-row delete", () => {
     await vi.waitFor(() => {
       expect(deleteChatDispatch).toHaveBeenCalledWith("c-existing");
     });
-    // delete_chat is the ONE path that also reaps the chat's KAS session chain,
-    // which is what makes this delete reach the underlying files. The TAB is the
-    // membership coordinator's: it closes every tab for a deleted chat under the
-    // same lock that removed the record and emits the removal, so a `close_tab`
-    // from here would be a second close for a tab the server has already dropped.
+    // delete_chat also reaps the KAS session chain. The tab is the membership coordinator's: it closes tabs for a deleted
+    // chat under the same lock, so a `close_tab` here would be a second close.
     expect(closeTab).not.toHaveBeenCalled();
     expect(deleteRunDispatch).not.toHaveBeenCalled();
+  });
+
+  it("names the runs a conversation's delete also removes", async () => {
+    await render({
+      sessions: [ownedRow],
+      runs: [
+        { ...runRow, parent_chat_id: "c-existing" },
+        { ...runRow, workflow_id: "wf_2", parent_chat_id: "c-existing" },
+        { ...runRow, workflow_id: "wf_other", parent_chat_id: "c-elsewhere" },
+      ],
+    });
+    rowOf("s:sess_owned").querySelector<HTMLElement>("[data-history-delete]")!.click();
+    await vi.waitFor(() => {
+      expect(confirmMock).toHaveBeenCalled();
+    });
+    expect(confirmMock).toHaveBeenCalledWith(
+      'Delete this conversation? "Already open" and its stored history are removed for good. It also deletes the 2 workflow runs it started.',
+      "Delete",
+      "destructive",
+    );
+  });
+
+  it("says nothing about runs when the conversation launched none", async () => {
+    await render({ sessions: [ownedRow], runs: [runRow] });
+    rowOf("s:sess_owned").querySelector<HTMLElement>("[data-history-delete]")!.click();
+    await vi.waitFor(() => {
+      expect(confirmMock).toHaveBeenCalled();
+    });
+    expect(confirmMock).toHaveBeenCalledWith(
+      'Delete this conversation? "Already open" and its stored history are removed for good.',
+      "Delete",
+      "destructive",
+    );
   });
 
   it("deletes a run through the run-delete endpoint", async () => {
@@ -1454,12 +1343,12 @@ describe("history: the per-row delete", () => {
       expect(deleteRunDispatch).toHaveBeenCalledWith("wf_1");
     });
     expect(deleteChatDispatch).not.toHaveBeenCalled();
-    // A run is not a tab, so nothing closes.
+    // A run is not a tab.
     expect(closeTab).not.toHaveBeenCalled();
   });
 
   it("does not ALSO open the row it is deleting", async () => {
-    // The two controls are siblings, so a click on one never reaches the other.
+    // Siblings, so a click on one never reaches the other.
     await render({ sessions: [ownedRow], runs: [] });
     document.querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
@@ -1492,11 +1381,7 @@ describe("history: the per-row delete", () => {
   });
 
   it("leaves the row in place when the delete failed", async () => {
-    // The action returns null on a non-2xx, and the row's own subject is what
-    // survives: a failed delete must not refresh the list, because a refresh is
-    // what would take the row away for a chat the server still holds. The TAB is
-    // not this module's concern any more — the server closes tabs for a chat it
-    // actually deleted.
+    // The action returns null on a non-2xx: a failed delete must not refresh, which would drop a row the server still holds.
     deleteChatDispatch.mockResolvedValue(null as never);
     await render({ sessions: [ownedRow], runs: [] });
     const before = dispatch.mock.calls.length;
@@ -1532,18 +1417,14 @@ describe("history: the row's subtitle and time", () => {
   });
 
   it("states model, mode, turns and credits from the chat record", async () => {
-    // Every field comes from /api/chats, which the store already holds, so the
-    // richer row costs no request and no new field on /api/sessions — KAS's
-    // session row carries none of this. The count is the HEADER's, the only one
-    // written anywhere.
+    // Every field comes from /api/chats, already held, so the richer row costs no request. The count is the header's.
     storeGet.mockReturnValue(header());
     await render({ sessions: [ownedRow], runs: [] });
     expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
   });
 
   it("omits a zero credit total rather than printing 0.00", async () => {
-    // An unmetered chat would otherwise carry a cost column that says nothing on
-    // every row.
+    // An unmetered chat would carry a cost column that says nothing.
     storeGet.mockReturnValue(header({ turn_count: 1, usage: { credits: 0 } }));
     await render({ sessions: [ownedRow], runs: [] });
     expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 1 turn");
@@ -1556,9 +1437,7 @@ describe("history: the row's subtitle and time", () => {
   });
 
   it("renders an EMPTY subtitle for a chat with no description the store does not know", async () => {
-    // The alternative is placeholders, and "unknown model · 0 turns" reads as
-    // fact. The line stays so the title keeps its neighbours' offset; the tier
-    // owns the row's height either way.
+    // Placeholders would read as fact; the line stays so the title keeps its offset.
     storeGet.mockReturnValue(undefined);
     await render({ sessions: [ownedRow], runs: [] });
     expect(sub("s:sess_owned")).toBe("");
@@ -1615,8 +1494,7 @@ describe("history: the row's subtitle and time", () => {
   });
 
   it("shows the time relative at a glance and absolute on demand", async () => {
-    // D2: one vocabulary, relative under a day and a date beyond it, with the
-    // full timestamp as the tooltip.
+    // One vocabulary: relative under a day, a date beyond, the full timestamp as tooltip.
     const recent = Date.now() - 5 * 60_000;
     const old = Date.UTC(2024, 8, 12, 10, 0, 0);
     await render({

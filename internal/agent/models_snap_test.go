@@ -1,8 +1,5 @@
 package agent
 
-// Tests for models_snap.go: the Snapshotter contract used by the git
-// handler to fetch a cheap model id from live bridges.
-
 import (
 	"testing"
 
@@ -29,7 +26,7 @@ func TestHubModels_ReturnsFirstNonEmpty(t *testing.T) {
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, _ = cs.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
 
-	// Swap both chats' bridges to ones with distinct model sets.
+	// Give both chats bridges with distinct model sets.
 	empty := &modelsBridge{fakeBridge: newFakeBridge()}
 	populated := &modelsBridge{
 		fakeBridge: newFakeBridge(),

@@ -1,18 +1,5 @@
-// ---------------------------------------------------------------------------
-// The DOM find engine: match discovery, <mark> highlighting and step state for
-// one root, shared by the transcript's find and the editor's find over a diff
-// pane or rendered markdown. A leaf with no app imports and no scroll, overlay
-// or counter chrome, so the editor can reach it and a test can run it.
-//
-// A match is found in a RUN, the concatenated text between two block
-// boundaries (BLOCK_TAGS), scanned by textsearch/scan.ts: a phrase crossing an
-// inline element is one hit, painted as <mark> pieces sharing one `data-hit`,
-// and `total` counts hits, not pieces or nodes.
-//
-// The walker's principle: we find text hits, we do not filter; it must be
-// predictable. So a context line rendered in both diff columns is two hits, and
-// chrome is pruned only by its producer's own mark (CHROME_SELECTOR).
-// ---------------------------------------------------------------------------
+// The DOM find engine: match discovery, <mark> highlighting and step state for one root, shared by the transcript's and
+// the editor's find. A leaf with no app imports, scrolling or overlay.
 
 import { el } from "@cplieger/reactive";
 import { occurrences, prepare } from "./textsearch/scan.js";
@@ -24,8 +11,7 @@ const CURRENT_CLASS = "find-hit-current";
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
 
-/** The tags that end a run on entry and on exit. Text on either side of one of
- *  these renders on its own line, so a phrase never crosses it. */
+/** A run ends on entering and leaving these, so a phrase never crosses a block boundary. */
 const BLOCK_TAGS = new Set([
   "P",
   "DIV",
@@ -46,23 +32,16 @@ const BLOCK_TAGS = new Set([
   "BR",
 ]);
 
-/** UI chrome the walker skips. Two producers are EXEMPT because the server
- *  searches the text they render: the denial block (`tool_denial` is the
- *  refused resource, rendered nowhere else) and the MCP badge (the server name
- *  is parsed out of the raw `tc.Title` the server searches as `tool_title`,
- *  while `.tool-title` shows only the tool half). Pruning either would count a
- *  hit in `N in chat` that no mark can land on. */
+/**
+ * UI chrome the walker skips, except two producers whose text the server searches: the denial block (`tool_denial`)
+ * and the MCP badge.
+ */
 const CHROME_SELECTOR = "[data-vk-chrome]:not(.tool-denial):not(.tool-mcp-badge)";
 
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
-
-/** True when `elem` (and thus its descendant text) should be searched. Prunes script and style,
- *  already-wrapped hits, UI chrome (see `CHROME_SELECTOR`), structurally-hidden subtrees (hidden
- *  attr, .hidden class, aria-hidden, closed <details>), the live-streaming bubble (its markdown
- *  writer owns those nodes) and, where `checkVisibility` exists, anything CSS hides — a boxless
- *  element excepted. */
+/**
+ * Prunes script/style, wrapped hits, chrome, structurally hidden subtrees and elements `checkVisibility` calls
+ * invisible (except `display: contents`).
+ */
 function isSearchableElement(elem: Element): boolean {
   const tag = elem.tagName;
   if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {
@@ -74,7 +53,7 @@ function isSearchableElement(elem: Element): boolean {
   if (elem.classList.contains("hidden")) {
     return false;
   }
-  // .streaming is set on the live assistant bubble AND live reasoning block.
+  // `.streaming` marks the live assistant bubble and live reasoning block.
   if (elem.classList.contains("streaming")) {
     return false;
   }
@@ -98,10 +77,7 @@ function isSearchableElement(elem: Element): boolean {
   return true;
 }
 
-/** Whether `elem` has no box of its own while its children still render.
- *  `display: contents` is the one shape `checkVisibility` calls invisible that is
- *  not hidden, so the walker descends THROUGH it. Text directly under a boxless
- *  element that IS hidden therefore leaks; no shipped region puts text there. */
+/** `display: contents` is the one shape `checkVisibility` calls invisible that is not hidden, so the walker descends it. */
 function rendersWithoutBox(elem: Element): boolean {
   return getComputedStyle(elem).display === "contents";
 }
@@ -113,10 +89,7 @@ interface Piece {
   readonly hit: number;
 }
 
-/** Find the needle in one run and wrap what it covers. `hits` grows by one entry
- *  per occurrence, each holding that hit's mark pieces in document order. The
- *  offsets index the ORIGINAL text: `occurrences` reports them there, because the
- *  fold it compares under preserves length. */
+/** Find the needle in one run and wrap it, one `hits` entry per occurrence. Offsets index the original text. */
 function markRun(run: readonly Text[], needle: Needle, hits: HTMLElement[][]): void {
   const starts: number[] = [];
   let text = "";
@@ -159,9 +132,7 @@ function markRun(run: readonly Text[], needle: Needle, hits: HTMLElement[][]): v
   }
 }
 
-/** Replace `node` with its text around and between the pieces plus one `<mark>`
- *  per piece, preserving original casing. Only text nodes are touched — element
- *  nodes (and their listeners) are never disturbed. */
+/** Only text nodes are touched: element nodes and their listeners are never disturbed. */
 function splitNode(node: Text, pieces: readonly Piece[], hits: HTMLElement[][]): void {
   const text = node.nodeValue ?? "";
   const frag = document.createDocumentFragment();
@@ -185,8 +156,7 @@ function splitNode(node: Text, pieces: readonly Piece[], hits: HTMLElement[][]):
   node.parentNode?.replaceChild(frag, node);
 }
 
-/** Replace a `<mark>` with a plain text node of its content and merge adjacent
- *  text nodes so the DOM returns to its pre-highlight shape. */
+/** Merges adjacent text nodes so the DOM returns to its pre-highlight shape. */
 function unwrapMark(mark: HTMLElement): void {
   const parent = mark.parentNode;
   if (parent === null) {
@@ -196,14 +166,8 @@ function unwrapMark(mark: HTMLElement): void {
   parent.normalize();
 }
 
-// ---------------------------------------------------------------------------
-// The engine
-// ---------------------------------------------------------------------------
-
 export class FindEngine {
-  /** The element the walker scans. Public so a caller that re-roots per open
-   *  (the transcript's find, whose root is the ACTIVE view) can tell whether
-   *  its engine still points at the current root. */
+  /** The element the walker scans; public so a re-rooting caller can tell whether this engine is current. */
   readonly root: HTMLElement;
   /** One entry per hit: its `<mark>` pieces in document order. */
   private hits: HTMLElement[][] = [];
@@ -226,9 +190,7 @@ export class FindEngine {
     return this.lastQuery;
   }
 
-  /** Re-highlight `query` across the root. Clears any prior highlight first.
-   *  Resets the current match to the first (index 0), or -1 when there are
-   *  none. Returns the total hit count. */
+  /** Re-highlight `query` across the root, clearing prior marks; the current match resets to 0 (or -1). Returns the count. */
   search(query: string, caseSensitive = false): number {
     this.clear();
     this.lastQuery = query;
@@ -253,8 +215,7 @@ export class FindEngine {
         unwrapMark(mark);
       }
     }
-    // Defensive sweep in case an external DOM change stranded marks we no
-    // longer track (e.g. a reconcile pass replaced a message element).
+    // Sweep strays an external DOM change left behind (e.g. a reconcile replaced a message element).
     for (const mark of [...this.root.querySelectorAll<HTMLElement>(`mark.${HIT_CLASS}`)]) {
       unwrapMark(mark);
     }
@@ -279,9 +240,7 @@ export class FindEngine {
     this.applyCurrentClass();
   }
 
-  /** Best-effort restore of the current index (used after a live re-run so the
-   *  highlight doesn't jump back to match 1 on every streamed chunk). Clamped
-   *  to the valid range; no-op when out of range. */
+  /** Restore the current index after a live re-run, so streaming does not jump back to match 1. Clamped; out of range is a no-op. */
   setCurrent(index: number): void {
     if (index < 0 || index >= this.hits.length) {
       return;
@@ -290,10 +249,7 @@ export class FindEngine {
     this.applyCurrentClass();
   }
 
-  /** Drop the current hit while keeping every highlight: the cursor has moved to
-   *  a list this engine does not hold. The editor's conflict mode steps one
-   *  cursor through the overlay's marks and then the buffer's hits, and a hit
-   *  here still styled current would be a second "you are here". */
+  /** Drop the current hit, keeping every highlight: the cursor moved to a list this engine does not hold. */
   clearCurrent(): void {
     this.current = -1;
     this.applyCurrentClass();
@@ -312,9 +268,7 @@ export class FindEngine {
     }
   }
 
-  /** The searchable text nodes under the root, grouped into runs. A block tag
-   *  ends the run whether or not its own subtree is searched, so the boundary
-   *  depends on the markup alone. */
+  /** Runs of searchable text nodes. A block tag ends the run whether or not its subtree is searched. */
   private collectRuns(): Text[][] {
     const runs: Text[][] = [];
     let run: Text[] = [];

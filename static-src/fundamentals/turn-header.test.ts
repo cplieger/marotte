@@ -1,16 +1,7 @@
-// The turn card's header band: the trigger, and the meta row of readouts and
-// controls above it.
-//
-// The CLAMP is not here: it is CSS-only and FOLD-conditional, so there is nothing
-// in this module to drive and nothing a detached element can measure.
-// `disclosure-row-css.test.ts` owns it, against real layout.
-import { describe, it, expect, vi } from "vitest";
-import {
-  buildTurnHeader,
-  updateTurnHeader,
-  initTurnHeaderCallbacks,
-  type TurnHeaderData,
-} from "./turn-header.js";
+// The turn card's header band. The CLAMP is CSS-only and fold-conditional, so
+// `disclosure-row-css.test.ts` owns it against real layout.
+import { describe, it, expect } from "vitest";
+import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
@@ -101,10 +92,8 @@ describe("buildTurnHeader", () => {
   });
 
   it("keeps the meta row out of the request's text", () => {
-    // MEASURED trap: an inline readout as the text's first child contaminates
-    // `textContent`, which is exactly what the copy button reads, so every copied
-    // prompt would begin `#14 10:42 ` — and `linkifyPaths` rewrites text nodes in
-    // there too.
+    // An inline readout as the text's first child would contaminate the `textContent` the copy
+    // button reads (and `linkifyPaths` rewrites text nodes there).
     const h = buildTurnHeader(data({ n: 14, ts: 1_700_000_000_000, request: "  fix the test  " }));
     expect(h.querySelector(".turn-ts")?.textContent, "the time really is stamped").not.toBe("");
     expect(text(h).textContent).toBe("fix the test");
@@ -113,74 +102,18 @@ describe("buildTurnHeader", () => {
   });
 
   it("offers no show-more", () => {
-    // The clamp is CSS-only and fold-conditional, so the control and its
-    // measurement machinery are gone; this is the guard that stops them creeping
-    // back in unnoticed.
+    // The clamp is CSS-only and fold-conditional, so there is no control and no
+    // measurement machinery.
     const h = buildTurnHeader(data({ request: LONG }));
     expect(h.querySelector(".turn-req-more")).toBeNull();
     expect(text(h).hasAttribute("data-clamped")).toBe(false);
   });
 });
 
-function copyBtn(h: HTMLElement): HTMLButtonElement {
-  const b = h.querySelector<HTMLButtonElement>(".turn-copy-req");
-  if (b === null) {
-    throw new Error("no .turn-copy-req");
-  }
-  return b;
-}
-
-describe("copying the sent prompt", () => {
-  it("lives outside the request text, where the clamp cannot reach it", () => {
-    // The clamp is scoped to `.turn-req-text`; a control inside it would be
-    // hidden by a folded turn's four-line clamp.
+describe("the header band", () => {
+  it("carries no copy control; the footer's copies include the prompt", () => {
     const h = buildTurnHeader(data());
-    expect(h.querySelector(":scope > .turn-head-row > .turn-copy-req")).not.toBeNull();
-    expect(text(h).querySelector(".turn-copy-req")).toBeNull();
-  });
-
-  it("copies the whole request, not the four lines a folded turn shows", () => {
-    const copy = vi.fn();
-    initTurnHeaderCallbacks({ copy });
-    const h = buildTurnHeader(data({ request: LONG }));
-    copyBtn(h).click();
-    expect(copy).toHaveBeenCalledWith(copyBtn(h), LONG);
-  });
-
-  it("copies the trimmed request", () => {
-    const copy = vi.fn();
-    initTurnHeaderCallbacks({ copy });
-    const h = buildTurnHeader(data({ request: "  fix the composer  " }));
-    copyBtn(h).click();
-    expect(copy).toHaveBeenCalledWith(copyBtn(h), "fix the composer");
-  });
-
-  it("reads the text at CLICK time, so a repaint cannot leave it stale", () => {
-    const copy = vi.fn();
-    initTurnHeaderCallbacks({ copy });
-    const h = buildTurnHeader(data({ request: "first" }));
-    updateTurnHeader(h, data({ request: "second" }));
-    copyBtn(h).click();
-    expect(copy).toHaveBeenCalledWith(copyBtn(h), "second");
-  });
-
-  it("is hidden on a turn the user did not ask for", () => {
-    const h = buildTurnHeader(data({ request: undefined }));
-    expect(copyBtn(h).hidden).toBe(true);
-  });
-
-  it("appears and disappears with the request across updates", () => {
-    const h = buildTurnHeader(data({ request: "ask" }));
-    expect(copyBtn(h).hidden).toBe(false);
-    updateTurnHeader(h, data({ request: undefined }));
-    expect(copyBtn(h).hidden).toBe(true);
-    updateTurnHeader(h, data({ request: "ask again" }));
-    expect(copyBtn(h).hidden).toBe(false);
-  });
-
-  it("carries an accessible name", () => {
-    const h = buildTurnHeader(data());
-    expect(copyBtn(h).getAttribute("aria-label")).toBe("Copy this prompt");
+    expect(h.querySelector("button:not(.turn-fold-toggle)")).toBeNull();
   });
 });
 
@@ -212,11 +145,8 @@ describe("updateTurnHeader", () => {
   });
 });
 
-// The files the user attached, drawn as the composer's own pill so a sent request
-// is identifiable by what went with it. The server stamps them on the user
-// message because BuildPromptBlocks consumes them on the way out — an image or a
-// document attachment never appears in the request text, so there is nothing to
-// parse back out of it.
+// Attachments are stamped on the user message because BuildPromptBlocks consumes them: they never
+// appear in the request text.
 describe("the request's attachments", () => {
   const shot = { path: "out/shot.png", name: "shot.png" };
   const spec = { path: "docs/spec.md", name: "spec.md" };

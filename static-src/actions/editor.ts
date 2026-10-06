@@ -1,28 +1,18 @@
-// ---------------------------------------------------------------------------
-// Actions: editor + diff pane user-initiated mutations.
-// ---------------------------------------------------------------------------
-
 import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 import { routeForPath } from "../editor-types.js";
 
-/** `internal/git.KindNotInRepo`: no discovered repository owns the path, so
- *  there is no committed revision to show. Not a failure — a file outside
- *  every repo has no "before", and rendering it as an all-add diff is
- *  correct. */
+/** `internal/git.KindNotInRepo`: no repository owns the path, so there is no "before" and an
+ *  all-add diff is correct. */
 const GIT_ERR_NOT_IN_REPO = "not_in_repo";
 
-/** `/api/file` statuses that are answers about a changed file, not failures:
- *  404 means the working copy is gone (that IS the change); 415 means
- *  binary (no text diff exists). Both are ordinary members of a `git
- *  status` list. */
+/** `/api/file` statuses that answer about a changed file: 404 is a deleted working copy, 415 is
+ *  binary (no text diff). */
 const HTTP_NOT_FOUND = 404;
 const HTTP_BINARY = 415;
 
-/** Saves the active editor file (PUT). No auto-retry: content is captured
- *  at dispatch time, and a retry after further edits would overwrite them
- *  with the stale snapshot. The manual Retry button stays for a conscious
- *  re-save. */
+/** Saves the active editor file (PUT). No auto-retry: a retry after further edits would overwrite
+ *  them with the dispatch-time snapshot. */
 export interface SaveFileResult {
   ok?: boolean;
   error?: string;
@@ -46,14 +36,11 @@ export const saveFile = apiAction<
     // the server refuses with 409 when it has changed since.
     body: expectedHash === undefined ? { content } : { content, expected_hash: expectedHash },
   }),
-  // A 409 carries the current content; recovered as a success payload so
-  // the caller can branch on `error` and show the difference.
+  // A 409 carries the current content, recovered as a success payload so the caller shows the diff.
   decodeError: (info) =>
     info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
   error: false,
 });
-
-// There is no per-hunk resolve action: KAS decides per action, not per hunk.
 
 /** Requests AI conflict resolution. No retry (not idempotent). */
 export const suggestResolution = apiAction<
@@ -61,13 +48,11 @@ export const suggestResolution = apiAction<
   { output?: string; error?: string }
 >({
   name: "editor.suggest_resolution",
-  // No dedupe: editor-conflict.ts's per-file generation counter already
-  // handles supersession.
+  // No dedupe: editor-conflict.ts's per-file generation counter handles supersession.
   request: (body) => ({ method: "POST", path: "/api/utility/resolve-conflict", body }),
   error: false,
 });
 
-/** Fetches agent-modified line ranges for gutter highlighting. */
 export const fetchAgentLines = apiAction<
   { chatID: string; path: string },
   { changes: { start_line: number; end_line: number }[] }
@@ -83,15 +68,9 @@ export const fetchAgentLines = apiAction<
   error: false,
 });
 
-/** The base pane's caption: what the load FOUND on the left, in three cases.
- *
- *  No repository owns the path at all ("not in git"); a repository owns it but
- *  this ref holds no revision of it, which is an untracked or staged-new file
- *  ("not in <ref>"); or the ref holds it (the ref itself). The middle case is
- *  what `handleShow`'s `absent` marker is for: its content is legitimately
- *  empty, so without the marker the pane reads as "<ref> holds this file and
- *  holds it empty" — the same dishonesty the not_in_repo mapping was added to
- *  fix, one case short. */
+/** The base pane's caption: "not in git" (no repo owns the path), "not in <ref>" (untracked or
+ *  staged-new, signalled by `handleShow`'s `absent` marker because its content is legitimately
+ *  empty), or the ref itself. */
 function baseLabelFor(ref: string, gitErr: string, absentAtRef: boolean): string {
   if (gitErr === GIT_ERR_NOT_IN_REPO) {
     return "not in git";
@@ -99,17 +78,9 @@ function baseLabelFor(ref: string, gitErr: string, absentAtRef: boolean): string
   return absentAtRef ? `not in ${ref}` : ref;
 }
 
-/** Fetches git diff sources for the editor diff view.
- *
- *  The two endpoints speak different path languages: `/api/file` wants
- *  container-absolute (against the granted-roots allow-list), `/api/git/show`
- *  wants repo-relative or workspace-relative with no `repo`. `path` arrives
- *  absolute; each side gets the form it accepts.
- *
- *  `baseLabel`/`workingLabel` are claims about what each pane holds:
- *  `not_in_repo` means git owns no revision, so labelling the pane "HEAD"
- *  would claim HEAD has it and is empty; "deleted" vs "working tree" makes
- *  the same distinction on the right pane. */
+/** Fetches git diff sources for the editor diff view. `path` arrives absolute; `/api/file` gets it
+ *  container-absolute and `/api/git/show` repo- or workspace-relative. The labels are claims about
+ *  what each pane holds (see `baseLabelFor`; "deleted" vs "working tree" on the right). */
 export const loadDiff = defineAction<
   { path: string; repo: string; ref: string },
   { oldContent: string; newContent: string; error: string; baseLabel: string; workingLabel: string }
@@ -123,8 +94,7 @@ export const loadDiff = defineAction<
     // With an explicit repo the path is already repo-relative; with none,
     // the server resolves the owner from a workspace-relative path.
     const gitPath = repo !== "" ? path : relToWorkspace(path);
-    // apiGetOrError because two of the working-copy's failure statuses are
-    // answers (HTTP_NOT_FOUND / HTTP_BINARY above), not dead requests.
+    // apiGetOrError: two working-copy statuses are answers (HTTP_NOT_FOUND / HTTP_BINARY).
     const [oldD, newD] = await Promise.all([
       apiGet<{ content?: string; error?: string; detail?: string; absent?: boolean }>(
         `/api/git/show?path=${encodeURIComponent(gitPath)}&ref=${encodeURIComponent(ref)}${repoParam}`,

@@ -140,14 +140,11 @@ func TestReadBytes_MtimeCache(t *testing.T) {
 	writeSettings(t, dir, []byte(`{"v":1}`))
 	data1, _ := readBytes(t.Context(), dir)
 
-	// Second read should return cached data.
 	data2, _ := readBytes(t.Context(), dir)
 	if string(data1) != string(data2) {
 		t.Fatalf("cache miss: got %q then %q", data1, data2)
 	}
 }
-
-// helpers
 
 func resetCache(t *testing.T, dir string) {
 	t.Helper()
@@ -192,9 +189,8 @@ func TestField_GenInvalidationAfterDeleteRecreate(t *testing.T) {
 	}
 }
 
-// TestReadBytes_SizeChangeBypassesMtimeCache verifies that a same-mtime but
-// different-size config.json is treated as a cache MISS and re-read. The
-// mtime is pinned to a fixed whole second so only the size differs.
+// TestReadBytes_SizeChangeBypassesMtimeCache pins a cache MISS for a same-mtime,
+// different-size config.json.
 func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -229,14 +225,8 @@ func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
 	}
 }
 
-// TestReadBytes_EqualLengthRenamePublishIsAMiss is the os.SameFile leg's own
-// case, and the one the (mtime, size) pair could not see: a second generation
-// published by RENAME, of equal length, carrying the same mtime. Linux stamps
-// inode times from a coarse clock, so two publishes inside one tick share an
-// mtime to the nanosecond, and a backup restore or `rsync -t` reproduces it
-// deliberately. The new inode is then the only difference, and a hit here pins
-// the agent read filter and the retention window to bytes the operator replaced —
-// for as long as nothing else happens to touch the file.
+// TestReadBytes_EqualLengthRenamePublishIsAMiss pins the os.SameFile leg: an equal-length
+// generation published by rename within one coarse-clock tick (or by `rsync -t`).
 func TestReadBytes_EqualLengthRenamePublishIsAMiss(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -271,8 +261,7 @@ func TestReadBytes_EqualLengthRenamePublishIsAMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat v2: %v", err)
 	}
-	// Without this the test could pass for the wrong reason: an in-place write or
-	// a moved mtime would make the old two-leg check catch it too.
+	// Guard the premise: the inode really differs.
 	if os.SameFile(info1, info2) {
 		t.Fatalf("setup: the second publish reused the inode; this case needs a rename publish")
 	}
@@ -290,10 +279,8 @@ func TestReadBytes_EqualLengthRenamePublishIsAMiss(t *testing.T) {
 	}
 }
 
-// TestParsedMap_CacheReuse verifies parsedMap returns the cached map on a
-// second identical call rather than re-parsing. Reuse is detected by mutating
-// the first returned map and observing the mutation on the second call (a
-// re-parse would not carry it).
+// TestParsedMap_CacheReuse verifies a second call returns the cached map (a mutation of the
+// first is visible on the second).
 func TestParsedMap_CacheReuse(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()

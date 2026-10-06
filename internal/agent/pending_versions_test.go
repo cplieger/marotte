@@ -113,9 +113,8 @@ func TestSteerRecords_EveryMutationMovesTheSharedCounter(t *testing.T) {
 	mustHold(t, v, "TakeAgentRows with nothing to drop", func() { b.TakeAgentRows("c1") })
 }
 
-// TestPendingStores_ShareOneCounter pins that the three stores bump ONE subject:
-// the client learns the whole pending set from one connect frame, so a bump in any
-// store must move the version that frame carries.
+// TestPendingStores_ShareOneCounter pins one subject for all three stores: the client learns the
+// whole pending set from one connect frame.
 func TestPendingStores_ShareOneCounter(t *testing.T) {
 	v := &subject.Versions{}
 	tr := newPendingPermsTracker()

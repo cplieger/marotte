@@ -12,9 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// baseDeps is a composable Deps implementation for tests and benchmarks.
-// By default all methods are no-ops; set the hook fields to override
-// specific behaviors (e.g. onBroadcast to capture events).
+// baseDeps is a composable Deps for tests and benchmarks: no-ops by default, hook fields to
+// override (e.g. onBroadcast).
 type baseDeps struct {
 	store       ChatRecords
 	turns       *turnLogs
@@ -23,19 +22,22 @@ type baseDeps struct {
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
 	// assert the runtime-side cache write (mirrors onBroadcast).
 	onSetGovernance func(marotte.GovernanceStatePayload)
+	// onSetRegistry and onPolicyChanged observe the other two governance writes.
+	onSetRegistry   func(*marotte.GovernanceMCPRegistry)
+	onPolicyChanged func(errs []marotte.PolicyErrorItem, reloaded bool)
+	// withdrawn records each PendingPermsWithdraw call as "<chat>/<toolCallID>".
+	withdrawn []string
 	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
+	// runLabels are the labels RunLabel answers, keyed by workflow id.
+	runLabels map[string]string
 	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
 	// can stage a finished run behind a notify-wf- notice without a run registry.
 	runNotices map[marotte.ChatID][]stagedRunNotice
-	// runProgress records the workflow id of every RunMadeProgress call, in
-	// order, so a test can assert a step's frame refilled its run's idle window
-	// without a lease store behind it.
+	// runProgress records each RunMadeProgress workflow id, in order.
 	runProgress []string
-	// folds records where every fold site filed a frame's content, in order, so
-	// a test can assert a workflow step's frame reached the RUN's turn rather
-	// than the chat's.
+	// folds records where every fold site filed a frame's content, in order.
 	folds []foldRecord
 	// runCalls records every RunAppender call, in order.
 	runCalls []runCall
@@ -51,37 +53,25 @@ type baseDeps struct {
 	// sentinel ended the turn exactly once and named its cause, with no bridge
 	// behind it.
 	turnInterrupts []turnInterrupt
-	// catalogModels is the last model list SetModels was handed: the workspace
-	// catalog a config_option_update publishes, which used to be a field on the
-	// chat record.
+	// catalogModels is the last model list SetModels was handed.
 	catalogModels []marotte.SessionModel
-	// parent is returned by ParentACPSession; zero value "" preserves the
-	// historical "parent unknown" behavior for existing callers.
+	// parent is returned by ParentACPSession; "" means parent unknown.
 	parent string
-	// asked records every BridgeRespond call, so a test can assert that a frame
-	// marotte declined to process was still ANSWERED on its own id, with no
-	// bridge behind it. respondErr, when set, is what BridgeRespond reports.
+	// asked records every BridgeRespond call; respondErr, when set, is what it reports.
 	asked      []askAnswer
 	respondErr error
-	// terminals stands in for the runtime's agent-terminal registry, keyed by
-	// terminal id, so adoptTerminalOutput is exercisable without one. A key
-	// present with an empty text is a REGISTERED terminal that printed nothing,
-	// which the real registry reports as ok — the distinction the miss warning
-	// keys on.
+	// terminals stands in for the agent-terminal registry; a key with empty text is a registered
+	// terminal that printed nothing (what the miss warning keys on).
 	terminals map[string]termRendered
 	// brackets records every turn-lifecycle call, so a test can assert which
 	// bracket a frame drove without a turn registry behind it.
 	brackets []turnBracket
-	// userSteers are the steer ids this double reports as the USER's, standing
-	// in for the host's ledger of what marotte itself sent. Absent means the
-	// agent's, which is the real ledger's answer too.
+	// userSteers are the steer ids this double reports as the USER's; absent means the agent's.
 	userSteers map[string]bool
 	// steerResends are the resends the double reports per steer id.
 	steerResends map[string][]string
-	// waiting is the steers this double has been told are in KAS's buffer, per
-	// chat, standing in for the runtime's tracker. A map rather than a call log
-	// because what a test asserts is the SET a reconnect would replay, and the
-	// three arms of the cascade reach it as add / remove / remove-each.
+	// waiting is the steers this double holds as in KAS's buffer, per chat: the SET a reconnect
+	// would replay.
 	waiting map[marotte.ChatID][]marotte.SteerQueuedPayload
 	// queuedAnswer, when set, is the frame SteerWaiting answers, standing in for
 	// the record rewriting a user row's frame or refusing a chat that is going.
@@ -144,9 +134,8 @@ func (d *baseDeps) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []ma
 	return d.forget(chatID, steerIDs)
 }
 
-// forget returns the entries it HELD, like the real buffer: that subset is the
-// steers nothing read, and the only place their text survives once the cleared
-// frame (which carries ids alone) arrives.
+// forget returns the entries it HELD: the unread steers, whose text survives only here once
+// the ids-only cleared frame arrives.
 func (d *baseDeps) forget(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	gone := make(map[string]bool, len(steerIDs))
 	for _, id := range steerIDs {
@@ -190,10 +179,7 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
 	}
 }
 
-// The three GETTERS this double used to answer (ChatRecords, BufferStore,
-// LineTracker) are gone with the composites: Roles holds each interface
-// directly, so the double implements the methods instead of handing back a
-// narrower self.
+// Get reads the chat from the double's store.
 func (d *baseDeps) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	return d.store.Get(ctx, id)
 }
@@ -210,9 +196,12 @@ func (d *baseDeps) EmptyCompactions(ctx context.Context, id marotte.ChatID) (int
 	return d.store.EmptyCompactions(ctx, id)
 }
 
-// The TurnAccess half: one open turn per chat over the recording sink, so a test
-// reads what a frame SEALED rather than a buffer's state. Every fold is recorded
-// with its target, which is how a test tells a chat fold from a run fold.
+func (d *baseDeps) DepartedName(id marotte.ChatID) (string, bool) {
+	return d.store.DepartedName(id)
+}
+
+// The TurnAccess half: one open turn per chat over the recording sink; every fold records its
+// target (chat vs run).
 func (d *baseDeps) OwnTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	t := d.turns.chats[chatID]
 	return t, t != nil && !t.Closed()
@@ -409,13 +398,8 @@ func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "start"})
 }
 
-func (d *baseDeps) WireTurnEnd(
-	_ context.Context,
-	chatID marotte.ChatID,
-	stop marotte.StopReason,
-	details string,
-) {
-	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop, details: details})
+func (d *baseDeps) WireTurnEnd(_ context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop})
 }
 
 func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID marotte.ChatID) {
@@ -427,19 +411,11 @@ type turnBracket struct {
 	chat marotte.ChatID
 	kind string
 	stop marotte.StopReason
-	// details is the wire's own account of the stop, from turn_end's stopDetails.
-	// Recorded because it is the ONLY channel that can explain a `stopReason:
-	// "error"` turn, and it reached the closer as "" for as long as nobody decoded
-	// it — which is why a failed turn persisted a mark and no words.
-	details string
 }
 
-// turnLogs stands in for the host's two registries: one open turn per chat and
-// one per run path, each accumulating over a sink that keeps the sealed entries
-// by turn id. It is NOT what production does — there a fold with no open turn
-// opens a wire_turn_start turn through the store — but the property this package
-// is responsible for is the same either way: a fold gets somewhere to land, and
-// the same somewhere for the rest of the turn.
+// turnLogs stands in for the host's two registries (one open turn per chat, one per run path)
+// over a sink keeping sealed entries by turn id. Unlike production, a fold with no turn opens
+// one here directly.
 type turnLogs struct {
 	chats  map[marotte.ChatID]*turnlog.Turn
 	runs   map[string]*turnlog.Turn
@@ -517,6 +493,7 @@ func (d *baseDeps) ParentACPSession(marotte.ChatID) string { return d.parent }
 func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
+func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
 
 // stagedRunNotice is one finished run a test hands RunNotice.
 type stagedRunNotice struct {
@@ -556,10 +533,8 @@ func (d *baseDeps) InterruptTurn(chatID marotte.ChatID, reason string) {
 	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, reason})
 }
 
-// AccumulateSpend and StageConversationTurnSummary stand in for the host's
-// per-turn accounting. The double writes the chat's usage directly, which is what
-// the host does for a frame that reaches it with no turn open — the only state a
-// translate fixture can be in, since the turn record lives on the host.
+// AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn
+// accounting by writing the chat's usage directly (the host's no-open-turn path).
 func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64) {
 	if credits <= 0 {
 		return
@@ -608,12 +583,28 @@ func (d *baseDeps) BridgeRespond(
 	return d.respondErr
 }
 func (d *baseDeps) MCPRecorder() MCPRecorder { return nopMCPRecorder{} }
-func (d *baseDeps) SetGovernance(g marotte.GovernanceStatePayload) {
+func (d *baseDeps) SetGovernance(_ context.Context, g marotte.GovernanceStatePayload) {
 	if d.onSetGovernance != nil {
 		d.onSetGovernance(g)
 	}
 }
-func (d *baseDeps) PendingPermsAdd(int64, marotte.ServerEvent)                           {}
+
+func (d *baseDeps) SetMCPRegistry(_ context.Context, r *marotte.GovernanceMCPRegistry) {
+	if d.onSetRegistry != nil {
+		d.onSetRegistry(r)
+	}
+}
+
+func (d *baseDeps) PolicyChanged(_ context.Context, errs []marotte.PolicyErrorItem, reloaded bool) {
+	if d.onPolicyChanged != nil {
+		d.onPolicyChanged(errs, reloaded)
+	}
+}
+func (d *baseDeps) PendingPermsAdd(int64, marotte.ServerEvent) {}
+func (d *baseDeps) PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool {
+	d.withdrawn = append(d.withdrawn, string(chatID)+"/"+toolCallID)
+	return true
+}
 func (d *baseDeps) PendingPermsRemove(int64)                                             {}
 func (d *baseDeps) NotifyPush(context.Context, string, marotte.PushKind, marotte.ChatID) {}
 func (d *baseDeps) IsHookStatusEnabled() bool                                            { return false }
@@ -651,8 +642,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
 
-	// Prime the buffer with a first chunk so subsequent iterations hit the
-	// steady-state path (no message creation overhead).
+	// Prime the buffer so iterations hit the steady-state path.
 	tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false, FrameAttribution{})
 
 	b.ReportAllocs()
@@ -675,18 +665,14 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 
 	for b.Loop() {
 		chatID := marotte.ChatID("bench-turn")
-		// Phase 1: initial streaming chunks
 		for range 50 {
 			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false, FrameAttribution{})
 		}
-		// Phase 2: tool call
 		tr.HandleToolCall(ctx, chatID, toolCallPL, FrameAttribution{})
 		tr.HandleToolCallUpdate(ctx, chatID, toolUpdatePL, FrameAttribution{})
-		// Phase 3: more streaming
 		for range 50 {
 			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false, FrameAttribution{})
 		}
-		// Cleanup: a fresh turn for the next iteration
 		delete(deps.turns.chats, chatID)
 	}
 }

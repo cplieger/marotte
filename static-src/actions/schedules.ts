@@ -1,7 +1,4 @@
-// Workflow-schedule actions: the Schedule button beside Run on /docs/workflows.
-//
-// The server owns the recurrence math and resolves next_run_at, so these are
-// plain transport — nothing here recomputes a fire time.
+// Workflow-schedule actions. The server owns the recurrence math and next_run_at.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type { ScheduleSpec, SchedulesResponse, ScheduleView } from "../schedule-types.js";

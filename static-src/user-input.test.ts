@@ -1,17 +1,6 @@
-// ---------------------------------------------------------------------------
-// Tests for user-input.ts — the agent's structured-question CARD (kiro-cli v3
-// _kiro/userInput), as rendered in the interaction dock. Options render as
-// choice cards (title + description + Recommended badge); a plain option
-// answers with its title; an option with sub-options runs the pre-checked
-// multi-select stage and answers "Title [Sub1, Sub2]" (the TUI's format); a
-// free-form question (or the always-available typed field) answers with the
-// typed text; Skip dismisses.
-//
-// No dialog mock and no focus-trap mock: the card is a plain subtree with no
-// <dialog>, no showModal and no focus trap. Supersede and settle-once moved to
-// decision-dock.ts (see decision-dock.test.ts) — they are properties of the
-// queue, not of one card's DOM.
-// ---------------------------------------------------------------------------
+// user-input.ts's structured-question CARD (kiro-cli v3 _kiro/userInput): options, the TUI's
+// "Title [Sub1, Sub2]" sub-option answer, typed answers, Skip. A plain subtree, so no dialog mocks;
+// supersede and settle-once are decision-dock.test.ts's.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 

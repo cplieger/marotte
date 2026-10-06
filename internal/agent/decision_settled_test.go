@@ -1,9 +1,6 @@
 package agent
 
-// decision_settled is what closes a card on the surfaces that did NOT answer.
-// Two things are pinned: the winning claim announces itself with the kind and
-// the attribution intact, and a losing claim announces nothing — an event per
-// rejected attempt would retire cards for a decision that attempt never settled.
+// The winning claim announces decision_settled with kind and attribution; a losing claim announces nothing.
 
 import (
 	"encoding/json"
@@ -87,9 +84,7 @@ func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 	}
 }
 
-// TestTakePendingPerm_LosingClaimAnnouncesNothing: the second tab's attempt
-// settles nothing, so it must not tell every surface that the card is closed —
-// and an unanswered request is exactly the one that has to stay on screen.
+// TestTakePendingPerm_LosingClaimAnnouncesNothing pins that an unanswered request must stay on screen.
 func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.bus.pendingPerms.Add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
@@ -104,5 +99,36 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	}
 	if got := settledEvents(t, bufferedSince(h, head)); len(got) != 0 {
 		t.Errorf("a losing claim emitted %d events, want 0: %+v", len(got), got)
+	}
+}
+
+// A withdrawn ask retires as moot, newest round only, in its own chat.
+func TestPendingPermsWithdraw_RetiresTheChatsAskAsMoot(t *testing.T) {
+	h, _, _ := newTestHub()
+	head := h.bus.fanout.Position().Head
+	h.bus.pendingPerms.Add(3, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 3, ToolCallID: "tc"}))
+	h.bus.pendingPerms.Add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 5, ToolCallID: "tc"}))
+	h.bus.pendingPerms.Add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c2",
+		marotte.PermissionNeededPayload{RequestID: 5, ToolCallID: "tc"}))
+
+	if !h.bus.PendingPermsWithdraw("c1", "tc") {
+		t.Fatal("PendingPermsWithdraw(c1, tc) = false, want true")
+	}
+	got := settledEvents(t, bufferedSince(h, head))
+	if len(got) != 1 || got[0].RequestID != 5 || got[0].SettledBy != marotte.SettledByMoot ||
+		got[0].Kind != marotte.DecisionKindPermission {
+		t.Fatalf("decision_settled = %+v, want one {permission, request 5, moot}", got)
+	}
+	var left []int64
+	for _, e := range h.bus.pendingPerms.List("") {
+		left = append(left, e.Payload.(marotte.PermissionNeededPayload).RequestID)
+	}
+	if len(left) != 2 {
+		t.Errorf("pending after withdraw = %v, want c1's round 3 and c2's 5", left)
+	}
+	if h.bus.PendingPermsWithdraw("c1", "other") {
+		t.Error("PendingPermsWithdraw(c1, other) = true for a tool call nothing asked about")
 	}
 }

@@ -1,11 +1,5 @@
-// Resolving a workspace repo's origin into forge coordinates.
-//
-// Nothing here serves an HTTP route. It exists because the PR-status poller
-// (internal/forges) needs to know WHICH repos to ask a forge about, and the
-// answer — the repos actually checked out on this box — is git knowledge. Putting
-// the resolver in the forges package instead would have meant a second copy of
-// repo discovery beside discoverRepos, and putting it in composition would have
-// meant a wiring file that parses remote URLs.
+// Resolving workspace repos' origins into forge coordinates, for the PR-status poller in
+// internal/forges: which repos are checked out is git knowledge, so it lives beside discoverRepos.
 
 package git
 
@@ -17,13 +11,9 @@ import (
 	"strings"
 )
 
-// RepoRemote is one workspace repo's origin, resolved into the coordinates a
-// forge addresses it by.
-//
-// WebBase is what selects the forge connection, compared with a connection's web
-// base URL, and Slug is the owner/name path the forge addresses the repository
-// by. A repo with no origin, or one whose origin does not parse, is simply absent
-// from the result: there is no forge to ask about it.
+// RepoRemote is one workspace repo's origin in the coordinates a forge addresses it by: WebBase
+// selects the forge connection, Slug is the owner/name path. A repo with no parseable origin is
+// absent.
 type RepoRemote struct {
 	// Name is the workspace directory ("." for the workspace root itself), the
 	// name the git panel addresses the repository by.
@@ -83,18 +73,9 @@ func remoteWebBase(raw string) string {
 	return scheme + "://" + host
 }
 
-// ParseRemoteSlug splits a git remote URL into its host and its owner/name path.
-//
-// Both of git's spellings are accepted, because both are what a clone leaves
-// behind: the scp-like form (`git@github.com:owner/name.git`) and a URL
-// (`https://gitlab.com/group/sub/project.git`). The path is kept WHOLE rather
-// than reduced to two segments — a GitLab subgroup is part of the project's
-// address, and truncating it would produce a slug the forge cannot find.
-//
-// Returns ("", "") for anything that does not resolve, which every caller treats
-// as "no forge to ask". Host resolution is parseRemoteHost's, so the
-// control-character and remote-helper refusals are the ones the rest of the git
-// surface already applies rather than a second set.
+// ParseRemoteSlug splits a git remote URL (scp-like or URL form) into its host and its owner/name
+// path, kept WHOLE so a GitLab subgroup survives. ("", "") means no forge to ask. Host resolution
+// is parseRemoteHost's, so its refusals apply.
 func ParseRemoteSlug(raw string) (host, slug string) {
 	raw = strings.TrimSpace(raw)
 	host = parseRemoteHost(raw)
@@ -141,11 +122,8 @@ func cleanSlug(path string) string {
 	return s
 }
 
-// forbiddenInSlug reports whether r may not appear in an accepted slug: every C0
-// control plus DEL (`url.Parse` percent-DECODES the path, so `%00` survives into
-// u.Path as a real NUL and would reach a repository selector and the log stream),
-// backslash (a path separator in no forge slug vocabulary), and `?` and `#` (URL
-// delimiters that would change what the path means). SP is covered by `r <= ' '`.
+// forbiddenInSlug reports whether r may not appear in a slug: C0 controls and DEL (url.Parse
+// percent-decodes `%00` into a real NUL), backslash, and the URL delimiters `?` and `#`.
 func forbiddenInSlug(r rune) bool {
 	return r <= ' ' || r == 0x7F || r == '\\' || r == '?' || r == '#'
 }

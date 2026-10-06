@@ -6,10 +6,8 @@ import (
 	"testing"
 )
 
-// TestParse_FoldedScalarDescription is the regression. The line-oriented parser
-// this replaced returned the literal ">" as the description of every document
-// using a block scalar — all 47 agents and 14 of 28 skills in this repo — and
-// for skills that value reached the AGENT-FACING environment.md as "— >".
+// TestParse_FoldedScalarDescription pins that a block-scalar description is not returned as
+// the literal ">".
 func TestParse_FoldedScalarDescription(t *testing.T) {
 	cases := []struct {
 		name string
@@ -37,9 +35,7 @@ func TestParse_FoldedScalarDescription(t *testing.T) {
 			want: "Indented folded value.",
 		},
 		{
-			// Both ends of the digit range are indicator characters, so neither
-			// may fall through to the plain-scalar branch and leave the header
-			// itself standing in for the value the author wrote below it.
+			// Both ends of the indent-digit range are indicator characters.
 			name: "folded with a zero indent digit",
 			in:   "---\ndescription: >0\n  Zero-indent folded value.\n---\n",
 			want: "Zero-indent folded value.",
@@ -74,9 +70,8 @@ func TestParse_FoldedScalarDescription(t *testing.T) {
 	}
 }
 
-// TestParse_BlockScalarDoesNotSwallowFollowingKeys pins the boundary. A folded
-// value ends at the next unindented key; getting this wrong would eat the rest
-// of the front-matter, which is a worse failure than the bug it replaced.
+// TestParse_BlockScalarDoesNotSwallowFollowingKeys pins that a folded value ends at the next
+// unindented key.
 func TestParse_BlockScalarDoesNotSwallowFollowingKeys(t *testing.T) {
 	in := "---\ndescription: >\n  A folded value.\ninclusion: manual\nmodel: claude-opus-5\nname: thing\n---\n"
 	fm := Parse([]byte(in))
@@ -102,8 +97,7 @@ func TestParse_Fields(t *testing.T) {
 	if fm.Name != "my-agent" {
 		t.Errorf("Name = %q", fm.Name)
 	}
-	// A quoted value containing a colon must survive: the naive Cut would
-	// truncate at the FIRST colon, inside the quotes.
+	// A colon inside quotes survives (a naive Cut would truncate there).
 	if fm.Description != "A quoted description: with a colon" {
 		t.Errorf("Description = %q, want the full quoted value including its colon", fm.Description)
 	}
@@ -153,11 +147,7 @@ func TestParse_Tools(t *testing.T) {
 		t.Errorf("Description after a block sequence = %q, want %q", fm.Description, "after")
 	}
 
-	// And a key with NO sequence under it must leave the cursor where it found
-	// it. A key that looks like the head of a sequence and is not is the one
-	// case where the reader has to hand lines back unread; consuming them
-	// instead drops the rest of the block on the floor, and the document then
-	// classifies itself with defaults it never declared.
+	// A key with no sequence under it must hand the following lines back unread.
 	t.Run("an empty key consumes none of the keys after it", func(t *testing.T) {
 		fm := Parse([]byte("---\ntools:\ninclusion: manual\ndescription: kept\n---\n"))
 		if fm.Tools != nil {
@@ -172,15 +162,8 @@ func TestParse_Tools(t *testing.T) {
 	})
 }
 
-// TestParse_StripsOneLayerOfQuotes pins unquote's whole contract, the empty pair
-// included.
-//
-// The quotes are there to protect a leading `*` or a colon, so they are never
-// part of the value — and an explicitly empty value is the one case where
-// stripping them changes whether the field counts as set at all: the renderers
-// treat an empty description as "no description" and omit it, while a literal
-// pair of quote characters renders as a description whose entire content is two
-// quote marks.
+// TestParse_StripsOneLayerOfQuotes pins unquote's contract, the empty pair included (an empty
+// description renders as none; two quote marks would render as content).
 func TestParse_StripsOneLayerOfQuotes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -217,14 +200,8 @@ func TestParse_NoFrontMatter(t *testing.T) {
 	}
 }
 
-// TestParse_EmptyFencePairCarriesNoFrontMatter covers the pair of fences with
-// nothing between them.
-//
-// HasFrontMatter is what a caller checks before falling back to the document's
-// first H1 for a title, so it has to mean "this document classified itself". A
-// fence pair enclosing nothing classifies nothing, and reporting it as
-// front-matter would suppress that fallback and render the row with no
-// description at all rather than with the heading the author wrote.
+// TestParse_EmptyFencePairCarriesNoFrontMatter pins that an empty fence pair reports no
+// front-matter, so the H1 fallback still applies.
 func TestParse_EmptyFencePairCarriesNoFrontMatter(t *testing.T) {
 	for _, in := range []string{
 		"---\n\n---\n# Title\n",     // one blank line between the fences
@@ -270,10 +247,7 @@ func TestParse_UnknownInclusionFoldsToAlways(t *testing.T) {
 	}
 }
 
-// "auto" is KAS's fourth mode and it is ON-DEMAND, not always-loaded:
-// emitDocumentsChanged filters `inclusion !== "auto"` out of its notification
-// and createSteeringCommandSource collects manual AND auto as slash commands.
-// Folding it to "always" asserted the opposite of the truth about token cost.
+// TestParse_AutoIsPreservedNotFoldedToAlways pins "auto" as its own, on-demand mode.
 func TestParse_AutoIsPreservedNotFoldedToAlways(t *testing.T) {
 	fm := Parse([]byte("---\ninclusion: auto\n---\n"))
 	if fm.Inclusion != inclusionAuto {
@@ -281,9 +255,8 @@ func TestParse_AutoIsPreservedNotFoldedToAlways(t *testing.T) {
 	}
 }
 
-// HasInclusion separates a DECLARED mode from the inherited steering default,
-// which is what lets a skill (whose schema has no inclusion key) avoid being
-// badged always-loaded while still showing a mode it really did declare.
+// TestParse_HasInclusionSeparatesDeclaredFromDefault pins a declared mode apart from the
+// inherited default.
 func TestParse_HasInclusionSeparatesDeclaredFromDefault(t *testing.T) {
 	if fm := Parse([]byte("---\nname: thing\n---\n")); fm.HasInclusion {
 		t.Error("HasInclusion = true for a document that declared none")
@@ -294,8 +267,7 @@ func TestParse_HasInclusionSeparatesDeclaredFromDefault(t *testing.T) {
 	if fm := Parse([]byte("---\ninclusion: manual\n---\n")); !fm.HasInclusion {
 		t.Error("HasInclusion = false for a declared mode")
 	}
-	// A typo folds to always AND still counts as declared: the author said
-	// something, so a caller that only forwards declared modes should forward it.
+	// A typo folds to always AND counts as declared: the author said something.
 	if fm := Parse([]byte("---\ninclusion: typo\n---\n")); !fm.HasInclusion {
 		t.Error("HasInclusion = false for a declared-but-invalid mode")
 	}
@@ -342,10 +314,8 @@ func TestFirstHeading(t *testing.T) {
 	}
 }
 
-// TestParse_MalformedDegradesQuietly pins the posture: front-matter that falls
-// outside the supported subset yields empty fields, never a panic and never an
-// error. A malformed header is the author's own file; the row renders with its
-// filename and no description.
+// TestParse_MalformedDegradesQuietly pins empty fields, never a panic or an error, for
+// front-matter outside the supported subset.
 func TestParse_MalformedDegradesQuietly(t *testing.T) {
 	inputs := []string{
 		"---\n",                          // unterminated
@@ -353,8 +323,7 @@ func TestParse_MalformedDegradesQuietly(t *testing.T) {
 		"---\nno colon here\n---\n",      // no key
 		"---\n:\n---\n",                  // empty key and value
 		"---\n  indented: orphan\n---\n", // indented at top level
-		// An indented line is a continuation, never a key, so an indented line
-		// that happens to spell a real key must not classify the document.
+		// An indented line is a continuation, never a key.
 		"---\n  inclusion: manual\n---\n",
 		"---\ndescription:\n---\n",   // key with nothing after it
 		"---\ndescription: >\n---\n", // block scalar with no content
@@ -372,11 +341,8 @@ func TestParse_MalformedDegradesQuietly(t *testing.T) {
 	}
 }
 
-// FuzzParse checks the parser against arbitrary document heads. `.kiro` files
-// are workspace content, which is attacker-controlled from marotte's point of
-// view, and the parsed description is rendered into the agent-facing
-// environment.md — so the invariants are: never panic, always a valid inclusion,
-// and never leak a block-scalar indicator as a value (the bug this replaced).
+// FuzzParse checks arbitrary (workspace-controlled) heads: never panic, always a valid
+// inclusion, never a bare block-scalar indicator as a value.
 func FuzzParse(f *testing.F) {
 	f.Add("---\ndescription: >\n  folded\n---\n")
 	f.Add("---\ndescription: |\n  literal\n---\n")
@@ -396,14 +362,10 @@ func FuzzParse(f *testing.F) {
 		default:
 			t.Errorf("Inclusion = %q, outside the validated set", fm.Inclusion)
 		}
-		// A bare indicator as the value is the defect this parser exists to
-		// fix; it must never reappear for a well-formed block scalar.
 		if fm.Description == ">" || fm.Description == "|" {
 			t.Errorf("Description = %q: a block-scalar indicator leaked as the value", fm.Description)
 		}
-		// No parsed value may carry a newline: every consumer renders these on
-		// one line (a table cell, a steering bullet), so an embedded newline
-		// would break out of it.
+		// No parsed value may carry a newline: every consumer renders one line.
 		for name, v := range map[string]string{
 			"Name": fm.Name, "Description": fm.Description,
 			"Inclusion": fm.Inclusion, "FileMatch": fm.FileMatch, "Model": fm.Model,

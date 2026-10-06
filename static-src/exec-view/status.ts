@@ -69,21 +69,14 @@ export function inFlight(state: ExecState): boolean {
   return state === "running" || state === "waiting" || state === "input" || state === "unknown";
 }
 
-/** Whether a node produced nothing because it never ran: `pending` has not started
- *  and `skipped` never will.
- *
- *  The COMPLEMENT of `inFlight` is not "ran" — these two states sit between them —
- *  and a caller that treats it as one answers for a node that has no execution to
- *  describe. Exported for the same reason `inFlight` is: the set belongs to the
- *  vocabulary, and a consumer re-deriving it privately is how a copy drifts. */
+/** Whether a node produced nothing because it never ran: `pending` has not started and `skipped`
+ *  never will. Not `!inFlight`. Exported so consumers do not re-derive the set. */
 export function neverRan(state: ExecState): boolean {
   return state === "pending" || state === "skipped";
 }
 
-/** Whether a node RAN and stopped — the third bucket of the MECE partition `inFlight`
- *  and `neverRan` are the other two. `fail` and `warn` are IN (such a node can carry a
- *  capture worth reading); `skipped` is OUT, being terminal without having run. No
- *  `default`, so a tenth state fails the type check instead of reading as done. */
+/** Whether a node RAN and stopped, the third bucket beside `inFlight` and `neverRan`. `fail` and
+ *  `warn` are IN, `skipped` is OUT. No `default`, so a new state fails the type check. */
 export function settled(state: ExecState): boolean {
   switch (state) {
     case "ok":
@@ -100,10 +93,9 @@ export function settled(state: ExecState): boolean {
   }
 }
 
-/** Fold a classified wire status onto the presentation vocabulary. `skipped` stays
- *  its own state (a branch that never ran did not succeed) and both stops — `aborted`
- *  and `cancelled` — map to `warn`, not `fail`: a stop is not a fault. No `default`, so
- *  a status added to the wire enum fails this fold rather than reading as `pending`. */
+/** Fold a classified wire status onto the presentation vocabulary. `skipped` stays its own state;
+ *  `aborted` and `cancelled` map to `warn` (a stop is not a fault). No `default`, so a new wire
+ *  status fails this fold rather than reading as `pending`. */
 export function stateOf(
   status: ClassifiedRunNodeStatus | ClassifiedRunStatus | undefined,
 ): ExecState {
@@ -129,10 +121,8 @@ export function stateOf(
   }
 }
 
-/** Reclassify an in-flight node whose ask is unanswered. Guarded on the node being
- *  otherwise in flight: on the workflow wire `node_id` is a node ID rather than a
- *  path, so a repeat's iterations share it and a finished pass would light up beside
- *  the live one. */
+/** Reclassify an in-flight node whose ask is unanswered. Guarded on in-flight: the workflow wire's
+ *  `node_id` is shared by a repeat's iterations, so a finished pass would light up too. */
 export function withAsk(state: ExecState, asked: boolean): ExecState {
   return asked && (state === "running" || state === "waiting" || state === "unknown")
     ? "input"

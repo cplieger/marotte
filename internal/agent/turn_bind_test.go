@@ -1,10 +1,9 @@
 package agent
 
-// The open sources, provisional acknowledgement, and the wire's brackets.
-
 import (
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -18,10 +17,7 @@ func ownID(h *Runtime, chatID marotte.ChatID) (string, bool) {
 	return t.ID, true
 }
 
-// pendingID is the id of the chat's unacknowledged prompt turn, read the way the
-// lifecycle holds it rather than by consuming it: bindPending RETIRES what it
-// binds, so a test that called it to ask the question would answer it and change
-// it in one step.
+// pendingID reads the unacknowledged prompt turn's id from the lifecycle: bindPending retires what it binds.
 func pendingID(h *Runtime, chatID marotte.ChatID) (string, bool) {
 	lc := h.coord.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -40,8 +36,7 @@ func ownSource(h *Runtime, chatID marotte.ChatID) marotte.TurnOpenSource {
 	return lc.own.Source
 }
 
-// openText is the text still coalescing in the chat's own turn, in the agent's
-// own lane: where the next delta would land.
+// openText is the text still coalescing in the own turn's agent lane.
 func openText(h *Runtime, chatID marotte.ChatID) string {
 	log := h.liveTurn(chatID)
 	if log == nil {
@@ -51,12 +46,7 @@ func openText(h *Runtime, chatID marotte.ChatID) string {
 	return open.Text
 }
 
-// A wire turn_start binds to the pending prompt turn rather than closing it and
-// opening a turn of its own.
-//
-// Without the binding, every prompt would produce TWO turns: the prompt's own,
-// closed by its own bracket, and a wire_turn_start turn the prompt has no handle
-// on, so the prompt's outcome would land on a turn nothing was waiting for.
+// A turn_start binds the pending prompt turn; otherwise each prompt makes two turns and its outcome lands on the wrong one.
 func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -79,14 +69,13 @@ func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 	}
 }
 
-// A turn_start arriving with a turn already open and NOTHING pending means the
-// previous turn's end never came. It is closed `unknown` and a wire_turn_start turn
-// opens in its place: the agent-initiated class, and it needs no timer.
+// A turn_start with a turn open and nothing pending means the previous end was lost: it closes `unknown` and a
+// wire turn opens, with no timer.
 func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	first, _ := streamingPromptTurn(t, h, chatID, "the first turn's reply")
-	// Acknowledge it, so the next bracket has nothing pending to bind.
+	// Acknowledge it, so the next bracket finds nothing pending.
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
 	h.translateACPEvent(chatID, newTurnStartMsg())
@@ -107,12 +96,7 @@ func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 	}
 }
 
-// A frame carrying agentInitiated revises a provisional binding: the started turn
-// was the AGENT's, and the prompt turn is owed its own bracket after all.
-//
-// This is the only discriminator on the wire (the flag rides content frames and
-// never the bracket), so what the test pins is the handover: the agent's turn
-// holds the text the frame folded, and the prompt turn is pending again.
+// agentInitiated revises a provisional binding: the agent's turn holds the folded text and the prompt turn is pending again.
 func TestReviseTurnBinding_HandsTheLogToTheAgentsTurn(t *testing.T) {
 	h, _, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -140,26 +124,20 @@ func TestReviseTurnBinding_HandsTheLogToTheAgentsTurn(t *testing.T) {
 	}
 }
 
-// A prompt turn whose call fails LOCALLY is retired, so the next prompt's bracket
-// binds to the next prompt's turn.
-//
-// Without retirement the dead turn stays the binding candidate forever: the next
-// prompt's turn_start acknowledges a finished turn, that prompt's own turn never
-// receives a bracket, and it closes on the prompt response's outcome, which can
-// only ever be end_turn or cancelled, so a refusal or an error would persist as
-// `completed`.
+// A locally failed prompt turn is retired, or the next prompt's bracket binds the dead turn and its own closes
+// on end_turn or cancelled, persisting refusals as `completed`.
 func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	h, _, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	failed, _ := h.stagePromptTurn(t, chatID)
-	h.coord.AbandonInFlightTurn(t.Context(), chatID, failed, marotte.StopReasonInterrupted, "the pipe died")
+	h.coord.AbandonInFlightTurn(t.Context(), chatID, failed, marotte.StopReasonInterrupted, "the pipe died", "", 0)
 	h.coord.ReleaseTurn(chatID, failed)
 
 	if _, ok := pendingID(h, chatID); ok {
 		t.Fatal("a finalized prompt turn is still the binding candidate, so the NEXT prompt's bracket would acknowledge a dead turn")
 	}
 
-	// The next prompt gets its own bracket and the wire's own outcome.
+	// The next prompt gets its own bracket and outcome.
 	next, _ := h.stagePromptTurn(t, chatID)
 	defer h.coord.ReleaseTurn(chatID, next)
 	h.translateACPEvent(chatID, newTurnStartMsg())
@@ -175,11 +153,7 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	}
 }
 
-// A turn_end for a chat with NO open turn records nothing.
-//
-// Without the no-op, a cancel-grace expiry that closed its turn locally would meet
-// the later wire bracket, and manufacturing a turn out of it would put a phantom in
-// the log: an extra turn in the rail, with an outcome, that the user never took.
+// A turn_end with no open turn records nothing; otherwise a locally closed turn's late bracket makes a phantom.
 func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -198,11 +172,7 @@ func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 	}
 }
 
-// A REPLAYED turn_end closes no live turn.
-//
-// KAS replays a whole transcript on session/load as ordinary session/update
-// notifications, so without the per-frame replay gate a resume would close the
-// turn that resume is happening during.
+// A replayed turn_end closes no live turn, or a resume closes the turn it runs during.
 func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -218,9 +188,7 @@ func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
 	}
 }
 
-// A fold with no open turn OPENS one: a turn marotte did not prompt needs a record
-// like any other, or its content has nothing to end it, nothing to account for it,
-// and the next turn's frames to extend it.
+// A fold with no open turn opens one, or its content has no record or end.
 func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -244,18 +212,16 @@ func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	}
 }
 
-// A local shell turn REFUSES while another turn is open: a shell turn cannot begin
-// during an agent turn. The admission slot catches the turns marotte itself
-// prompted; this catches the ones it did not, which is the class with no slot to
-// hold. Running anyway would fold the command's output into the agent's live turn.
+// A local shell turn refuses while another turn is open; the admission slot only covers turns marotte prompted.
 func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
-	if id, err := h.coord.OpenTurn(t.Context(), chatID, marotte.TurnSourceLocalShell,
-		&marotte.EntryPrompt{ID: "m-shell", Text: "!ls"}, nil); err == nil {
+	if id, err := h.coord.OpenTurn(t.Context(), chatID, command.TurnOpen{
+		Source: marotte.TurnSourceLocalShell, Prompt: &marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
+	}); err == nil {
 		t.Errorf("OpenTurn(local_shell) = %q, want a refusal while an agent turn is open", id)
 	}
 
@@ -264,10 +230,8 @@ func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h.coord.ReleaseTurn(chatID, id)
 }
 
-// The full handover, both directions. After a revision the prompt turn is pending
-// again, so the agent's turn_end closes the agent's turn, the NEXT turn_start binds
-// the prompt turn, and the prompt's reply folds into the turn the prompt is
-// holding rather than opening a third.
+// After a revision the agent's turn_end closes the agent's turn, the next turn_start binds the prompt, and the
+// prompt's reply folds into it rather than a third.
 func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"

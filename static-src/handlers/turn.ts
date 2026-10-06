@@ -1,10 +1,5 @@
-// ---------------------------------------------------------------------------
-// SSE handlers for turn lifecycle, the three decision types, and errors.
-//
-// A decision is ENQUEUED, not shown: `decision-dock.ts` owns a per-chat queue,
-// so nothing here gates on `getActiveId()` — a permission raised on a
-// background chat must still reach the dock with the tab dot pointing at it.
-// ---------------------------------------------------------------------------
+// SSE handlers for turn lifecycle, the three decision types, and errors. A decision is ENQUEUED in
+// `decision-dock.ts`'s per-chat queue, so a background chat's permission still reaches the dock.
 
 import { onSSE } from "../bus.js";
 import { appendEntry, setWorkingLabel, get, getActiveId, setTurnOpen } from "../store.js";
@@ -27,19 +22,11 @@ import { severityOf, defaultFailureReason } from "../turn-severity.js";
 import type { TurnOutcome } from "../wire/types.gen.js";
 export { ERROR_ROUTES };
 
-// The per-kind switch, the replay dedup and the settle test all live in
-// `agent-finished-cue.ts` now. This handler owns one fact — the turn ended, and this
-// is what a cue for it would say — because whether that cue may be raised YET depends
-// on the runs and asks the turn left behind, which is not a turn-frame question.
+// Whether a cue may be raised YET is `agent-finished-cue.ts`'s; this owns what one would say.
 
-/** What an off-screen notification SAYS about a finished turn, and "" for a turn that must
- *  notify nothing.
- *
- *  A TOTAL switch on the SEVERITY with no default arm, so a fifth `TurnSeverity` member
- *  leaves a path with no return and fails `noImplicitReturns` rather than silently
- *  inheriting a wording. `unknown` says nothing, because an unreadable end says nothing
- *  about success. No sentence is authored here: `turn-severity.ts` owns the table, and the
- *  server's own push reads the same one (internal/agent/turn_finalize.go). */
+/** What an off-screen notification SAYS about a finished turn, "" for silence. A TOTAL switch on
+ *  the SEVERITY with no default (a new member fails `noImplicitReturns`); `unknown` says nothing.
+ *  `turn-severity.ts` owns the wording, shared with internal/agent/turn_finalize.go. */
 function notifyBodyFor(outcome: TurnOutcome | undefined, name: string): string {
   switch (severityOf(outcome)) {
     case "clean":
@@ -56,12 +43,8 @@ onSSE("working_label", (chatID, p) => {
   setWorkingLabel(chatID, p.label);
 });
 
-/** Does the store hold another turn of this chat that has no `turn_close`?
- *
- *  The settle question, asked AFTER this close is appended. A prompt's turn is in the store
- *  from its `turn_opened` at admission, so an agent-initiated turn closing while that prompt
- *  waits for its bracket must leave the chat live rather than tearing down the state the
- *  prompt's turn is about to stream into. Reads the log and nothing this client remembers. */
+/** Whether another turn of this chat has no `turn_close`, asked AFTER appending this close: a
+ *  prompt's turn is stored from admission, so an agent turn closing meanwhile leaves the chat live. */
 function anotherTurnOpen(chatID: string, closedTurn: string): boolean {
   const s = get(chatID);
   if (s === undefined) {
@@ -114,10 +97,8 @@ onSSE("turn_closed", (chatID, p) => {
   }
 });
 
-// Each of the three asks below notifies unconditionally, gated only by the
-// master notifications switch. Each blocks the turn until answered, so a
-// per-kind mute would stall every later turn with nothing on screen saying
-// why. Settings -> Permissions relaxation is what stops the asks entirely.
+// Each ask notifies unconditionally (master switch only): it blocks the turn, so a per-kind mute
+// would stall every later turn silently.
 
 onSSE("permission_needed", (chatID, p) => {
   notifyIfHidden(
@@ -133,12 +114,8 @@ onSSE("permission_needed", (chatID, p) => {
     runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
-    submit: (optionID, fileDecisions) => {
-      void respondPermission.dispatch(
-        fileDecisions !== undefined
-          ? { chatID, requestID: p.request_id, optionID, fileDecisions }
-          : { chatID, requestID: p.request_id, optionID },
-      );
+    submit: (answer) => {
+      void respondPermission.dispatch({ chatID, requestID: p.request_id, ...answer });
     },
   });
 });
@@ -179,14 +156,9 @@ onSSE("user_input_needed", (chatID, p) => {
   });
 });
 
-// Every ask above is offered to every surface at once; only the first answer
-// is accepted, so the server names the settled request and this retires the
-// card everywhere else, and the banner with it: the push about the ask carried
-// `askTarget`'s tag, so a device coming back finds no banner for an answered
-// question. The frame names the chat the ask travelled on and not the run it was
-// about, so the run attribution is read back off the dock's own record; an ask
-// this dock never held retracts the chat's banner. Not `permissions_changed`,
-// which is the Cedar policy reload and names no ask.
+// Only the first answer is accepted; this retires the card and its banner everywhere else. The run
+// attribution is read back off the dock's record (the frame names the chat); an unknown ask
+// retracts the chat's banner. Not `permissions_changed` (the Cedar reload).
 onSSE("decision_settled", (chatID, p) => {
   const runID = collapseSettledDecision(chatID, p.kind, p.request_id, p.settled_by);
   void closeNotificationsFor(askTarget(chatID, runID));
@@ -228,14 +200,8 @@ onSSE("error", (chatID, p) => {
   }
   switch (route.surface) {
     case "toast":
-      // Reported for every chat the reader is not looking at, and NOT for the one they are
-      // when the failure is turn-scoped: that turn's card carries the same reason durably,
-      // so a corner overlay is a second copy over the top of the first. `failure-notice.ts`
-      // owns the suppression.
-      //
-      // `turn_scoped` comes off the FRAME rather than the route, because whether a turn was
-      // finalized is a property of the emission — `prompt_failed` has three server emitters
-      // that open no turn at all. Absent means no, so an older frame reports.
+      // Not reported for the chat on screen when turn-scoped (its card carries the reason);
+      // `failure-notice.ts` owns that. `turn_scoped` comes off the FRAME; absent means no.
       reportFailure(chatID, msg, toastActionFor(route.action), p.turn_scoped ?? false);
       break;
     case "agent-down":

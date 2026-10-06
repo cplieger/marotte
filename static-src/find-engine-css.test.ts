@@ -1,16 +1,11 @@
-// The find walker against the SHIPPED stylesheet. find-in-chat.test.ts builds its
-// transcript DOM with no CSS at all, which is the right shape for the navigation
-// criteria and also why a walker that pruned every assistant reply shipped:
-// `display: contents` measures as a plain block there.
+// The find walker against the shipped stylesheet: find-in-chat.test.ts uses no CSS, so it passes a walker that
+// prunes every assistant reply.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { FindEngine } from "./find-engine.js";
 import type * as ModFindInChat from "./find-in-chat.js";
 
-// The find bar's own box needs the REAL overlay under the REAL stylesheet, so
-// find-in-chat.ts is imported here — with the same mock set its own suite uses,
-// for the same reasons (scroll.ts self-initialises against DOM this file does not
-// build, and the block dispatcher's graph reaches through it).
+// Imports find-in-chat.ts with its own suite's mock set (scroll.ts self-initialises against DOM not built here).
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
   onTranscriptMutate: vi.fn(() => () => undefined),
@@ -31,8 +26,7 @@ let host: HTMLElement;
 beforeAll(() => {
   styleEl = mountAppCSS();
   host = document.createElement("div");
-  // IN VIEW, at a real width. `.msg-row` carries `content-visibility: auto`, so an
-  // off-screen fixture would be pruned for a reason this file is not about.
+  // In view at a real width: `.msg-row` is `content-visibility: auto`, so an off-screen fixture would be pruned.
   host.style.cssText = "inline-size:640px;";
   document.body.prepend(host);
 });
@@ -42,11 +36,7 @@ afterAll(() => {
   host?.remove();
 });
 
-/** A turn body holding a BOXLESS wrapper, a row inside it, the prose bubble inside
- *  that. The boxless level is declared inline rather than by class: the shipped one
- *  was `.assistant-blocks { display: contents }` (`git show HEAD:static-src/css/14-tools.css`),
- *  deleted with the per-message block region, and the walker's exception for a
- *  boxless element is what survives it (`find-engine.ts` `rendersWithoutBox`). */
+/** A turn body with a boxless (`display: contents`) wrapper, declared inline rather than by class. */
 function assistantReply(text: string): HTMLElement {
   host.innerHTML =
     `<div class="turn-body">` +
@@ -56,9 +46,10 @@ function assistantReply(text: string): HTMLElement {
   return host.firstElementChild as HTMLElement;
 }
 
-/** One rendered frame: `content-visibility: auto` relevance is answered from the
- *  last lifecycle update, so a walk in the mount's own tick prunes a row that is
- *  not yet relevant. `navigateToHit` waits the same frame out with `nextRender`. */
+/**
+ * One rendered frame: `content-visibility: auto` relevance comes from the last lifecycle update (`navigateToHit` waits
+ * the same frame).
+ */
 function rendered(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -71,9 +62,7 @@ function rendered(): Promise<void> {
 
 describe("the walker under the shipped stylesheet", () => {
   it("marks prose inside a boxless region", async () => {
-    // The defect: a `display: contents` element answers checkVisibility FALSE, the
-    // walker pruned the whole subtree at it, and search could select a block and say
-    // why but never place a <mark> in a reply.
+    // `display: contents` answers checkVisibility false, so pruning there placed no mark in any reply.
     const wrap = assistantReply("the retry backoff is documented TODO here");
     await rendered();
     expect(new FindEngine(wrap).search("TODO")).toBe(1);
@@ -87,15 +76,12 @@ describe("the walker under the shipped stylesheet", () => {
     expect(mark?.parentElement?.className).toBe("message assistant");
   });
 
-  // The fixture's own premise, so a fixture that quietly gives the region a box
-  // turns the test above into one that cannot fail rather than leaving it green
-  // for the wrong reason.
+  // The fixture's premise, so a region that gains a box cannot leave the test vacuously green.
   it("is measuring a region Chromium reports as invisible", () => {
     const wrap = assistantReply("prose");
     const blocks = wrap.querySelector("[style]") as HTMLElement;
     expect({
       display: getComputedStyle(blocks).display,
-      // find-engine.ts's own option set.
       visible: blocks.checkVisibility({
         contentVisibilityAuto: true,
         visibilityProperty: true,
@@ -105,9 +91,7 @@ describe("the walker under the shipped stylesheet", () => {
   });
 
   it("still prunes a subtree that is boxless because it is HIDDEN", async () => {
-    // The other half of the contract: neither of these has client rects either, so
-    // an implementation keyed on the absence of a box rather than on the computed
-    // `display` passes the cases above and fails this one.
+    // Neither has client rects, so a box-absence test passes the cases above and fails this one.
     host.innerHTML =
       `<div class="turn-body">` +
       `<div style="display:none"><div class="message">display TODO</div></div>` +
@@ -119,9 +103,7 @@ describe("the walker under the shipped stylesheet", () => {
   });
 
   it("still prunes an off-screen row that content-visibility SKIPPED", async () => {
-    // The `auto` variant, which is the one a long transcript's cost rests on: the
-    // walker must stay out of every card below the fold, and a skipped row is
-    // boxless to `checkVisibility` exactly as the region above it is.
+    // The `auto` variant: a skipped row is boxless to `checkVisibility` like the region above.
     host.innerHTML =
       `<div class="turn-body">` +
       `<div class="msg-row"><div class="message">shown TODO</div></div>` +
@@ -133,13 +115,8 @@ describe("the walker under the shipped stylesheet", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The find bar's own geometry. The note is a SECOND LINE of the bar, mounted at
-// all times because it is an aria-live region, so what keeps the resting bar one
-// row is the note's own zero-height treatment — and that treatment reaches it
-// only through the spec's `noteClass`, since the shell defaults the class to
-// `search-note`, which no stylesheet defines.
-// ---------------------------------------------------------------------------
+// The note is the bar's second line, mounted always as an aria-live region; its zero-height treatment keeps the bar
+// one row.
 
 let bootSeq = 0;
 
@@ -175,29 +152,21 @@ describe("the transcript find bar under the shipped stylesheet", () => {
     const region = document.getElementById("chat-find") as HTMLElement;
     const row = region.querySelector<HTMLElement>(".chat-find-row") as HTMLElement;
     const note = document.getElementById("chat-find-note") as HTMLElement;
-    // Read before the removal below: a detached element's computed style answers
-    // empty strings for everything.
+    // Read before the removal: a detached element's computed style answers "".
     const noteStyle = getComputedStyle(note);
     const noteOpacity = noteStyle.opacity;
     const noteOverflow = noteStyle.overflowY;
     const noteHeight = note.getBoundingClientRect().height;
     const barHeight = region.getBoundingClientRect().height;
     const rowHeight = row.getBoundingClientRect().height;
-    // The direct statement of "costs no height", measured rather than derived
-    // from the box's padding and border: the bar is the same height it would be
-    // if the note were not in the layout at all.
+    // Measured: the bar is the height it would be without the note.
     note.remove();
     const withoutNote = region.getBoundingClientRect().height;
     expect({
       noteHeight,
       barUnchanged: barHeight === withoutNote,
-      // One ROW: nothing else in the column has a box, so the controls row is
-      // taller than nothing and shorter than the bar's own padded box.
       rowFitsOnce: rowHeight > 0 && rowHeight < barHeight,
-      // MOUNTED but silent, which is what a live region wants — and both
-      // declarations belong to `.chat-find-note`, so a note left on the shell's
-      // `search-note` default (a class no stylesheet defines) is a visible,
-      // unclipped region that grows the bar the moment text arrives.
+      // Mounted but silent, as a live region wants; both declarations belong to `.chat-find-note`.
       noteOpacity,
       noteOverflow,
     }).toEqual({

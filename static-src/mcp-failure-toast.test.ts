@@ -1,10 +1,5 @@
-// D77: a toast when a broken MCP server is actually used.
-//
-// Two properties, and both are the item's own implementation notes rather than
-// nice-to-haves. Dedupe keys on the state TRANSITION, because each bridge emits
-// its own `_kiro/mcp/status` on connect and a reconnect storm would otherwise be
-// a toast storm. And the notice carries kiro-cli's own captured text, because
-// that is what distinguishes a missing command from a handshake timeout.
+// A toast when a broken MCP server is used. Dedupe keys on the state transition (every bridge emits its own status on
+// connect), and the notice carries kiro-cli's captured text, which tells a missing command from a timeout.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const toastCalls: { message: string; level: string }[] = [];
@@ -16,8 +11,7 @@ vi.mock("./toast.js", () => ({
       /* dismiss */
     };
   },
-  // The graph reaches these by name even though this file never calls them, and ESM is
-  // linked for real here, so a missing export fails the whole file at link time.
+  // ESM is linked for real here, so every name the graph reaches must exist.
   success: vi.fn(),
   error: vi.fn(),
   info: vi.fn(),
@@ -25,12 +19,7 @@ vi.mock("./toast.js", () => ({
   _resetForTest: vi.fn(),
 }));
 
-// mcp-ui.ts reaches the DOM registry and the action framework at module scope
-// through its imports; the two helpers under test are pure, so the heavy
-// siblings are stubbed rather than staged.
-// Every name `mcp-ui.js`'s graph reaches has to exist here, including ones this
-// file never calls: Browser Mode links ESM for real rather than reading a
-// namespace object, so a missing export fails the whole file at link time.
+// mcp-ui.ts's heavy siblings are stubbed; every name its graph reaches must exist, since Browser Mode links ESM for real.
 vi.mock("./dom.js", () => ({
   $: {},
   byId: () => document.createElement("div"),
@@ -49,9 +38,7 @@ describe("mcpFailureText", () => {
   });
 
   it("names the server when the reason is empty", () => {
-    // adaptStatus defaults an absent error to "", so this is a real arrival
-    // rather than a defensive branch. A notice saying only "an integration
-    // failed" sends the reader looking for which one.
+    // adaptStatus defaults an absent error to "", so this is a real arrival; the notice must name the server.
     const text = mcpFailureText("linear", "");
     expect(text).toContain("linear");
     expect(text.endsWith("failed to start.")).toBe(true);
@@ -71,9 +58,7 @@ describe("announceMCPFailure", () => {
   });
 
   it("fires once per transition into failed, not once per frame", () => {
-    // The reconnect storm, replayed: three bridges each emit their own status
-    // frame for the same wedged server. The first crosses idle -> failed; the
-    // rest arrive with the state already failed.
+    // The reconnect storm: three bridges report the same wedged server; only the first crosses idle -> failed.
     announceMCPFailure("github", "spawn ENOENT", "idle");
     announceMCPFailure("github", "spawn ENOENT", "failed");
     announceMCPFailure("github", "spawn ENOENT", "failed");
@@ -84,15 +69,14 @@ describe("announceMCPFailure", () => {
 
   it("re-arms after the server leaves failed", () => {
     announceMCPFailure("github", "spawn ENOENT", "idle");
-    // A reconnect succeeded, so the next genuine failure must be audible again.
+    // A reconnect succeeded, so the next failure must be audible again.
     announceMCPFailure("github", "handshake timeout", "connected");
     expect(toastCalls).toHaveLength(2);
     expect(toastCalls[1]?.message).toContain("handshake timeout");
   });
 
   it("does not suppress a second server's first failure", () => {
-    // Dedupe is per server per transition: one wedged server must not silence
-    // another one breaking.
+    // Per server per transition: one wedged server must not silence another.
     announceMCPFailure("github", "spawn ENOENT", "idle");
     announceMCPFailure("linear", "handshake timeout", "idle");
     expect(toastCalls).toHaveLength(2);

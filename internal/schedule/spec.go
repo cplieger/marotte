@@ -1,15 +1,8 @@
 // Package schedule computes when a recurring workflow run is next due.
 //
-// The shape is a deliberate subset of RFC 5545's recurrence rule (the
-// iCalendar vocabulary every calendar tool speaks) rather than a cron
-// expression: it maps one-to-one onto the four choices the UI offers, needs no
-// parser and no dependency, and leaves room for "the 2nd Tuesday" later — which
-// cron cannot express at all.
-//
-// Everything here is LOCAL time, by decision. A schedule says "02:00" and the
-// user means 02:00 where the container lives; there is no per-schedule timezone
-// field and no UTC conversion. The UI shows the resolved next run so the
-// meaning is never ambiguous.
+// The shape is a subset of RFC 5545's recurrence rule rather than a cron expression: it
+// maps one-to-one onto the UI's choices and needs no parser. Everything is LOCAL time, by
+// decision: there is no per-schedule timezone.
 package schedule
 
 import (
@@ -35,16 +28,9 @@ const (
 // months that have no 29th/30th/31st.
 const LastDay = -1
 
-// The bounds on FreqMinutely's Interval. Sub-hour steps only: an hour or more is
-// FreqHourly's job, and 60 here would be a second spelling of "hourly, every 1".
-//
-// The FLOOR (5) is derived, not chosen: below it, the runner's 1-minute ticker
-// makes every sweep due, one live-run-per-recipe overlap refusal writes
-// "failed" into the row forever for a run that outlives its interval, MissGrace
-// (3 min) cannot distinguish a still-fireable slot from the next one, and the
-// host's run-deadline floor (minRunBudget) pages the operator for any run over
-// 61 seconds. minRunBudget moves with this constant.
-//
+// The bounds on FreqMinutely's Interval (an hour or more is FreqHourly's). The floor is
+// derived from the runner: below it the 1-minute ticker makes every sweep due and MissGrace
+// cannot tell a fireable slot from the next. minRunBudget moves with this constant.
 // Mirrored in static-src/schedule-types.ts (INTERVAL_BOUNDS); change both together.
 const (
 	minMinuteInterval = 5
@@ -54,9 +40,7 @@ const (
 // minutesPerDay bounds the minute walk in timesOn.
 const minutesPerDay = 24 * 60
 
-// maxScanDays bounds the forward search. A monthly schedule needs at most one
-// month plus a leap-year margin; this is generous and keeps the loop finite
-// even for a spec that can never match.
+// maxScanDays bounds the forward search, generously, so even a never-matching spec ends.
 const maxScanDays = 400
 
 // ErrNoOccurrence means the spec matches no day within the scan window. A
@@ -69,29 +53,17 @@ type Spec struct {
 	Freq Freq `json:"freq"`
 	// Weekdays are the days FreqWeekly fires on, as time.Weekday (0=Sunday).
 	Weekdays []int `json:"weekdays,omitempty"`
-	// Interval is the recurrence step, in the unit its Freq names: hours for
-	// FreqHourly (1-24), minutes for FreqMinutely (minMinuteInterval to
-	// maxMinuteInterval). ONE field for both because a minute-level frequency is
-	// the same rule one unit down, not a second scheme.
-	//
-	// Anchored to local midnight rather than to when the schedule was saved, so
-	// the fire times are stable across restarts and predictable on a clock. A
-	// step that does not divide its day therefore has a short final gap: every 5
-	// hours is 00,05,10,15,20 and then midnight, and every 50 minutes is
-	// 00:00,00:50,01:40 and so on, then midnight.
+	// Interval is the step in its Freq's unit: hours for FreqHourly (1-24), minutes for
+	// FreqMinutely (minMinuteInterval..maxMinuteInterval). Anchored to local midnight, so a step
+	// that does not divide the day has a short final gap (every 5 hours: 00,05,10,15,20, midnight).
 	Interval int `json:"interval,omitempty"`
 	// MonthDay is the day FreqMonthly fires on: 1-31, or LastDay. A value past
 	// the end of a short month is CLAMPED to that month's last day rather than
 	// skipping the month, so "day 31" still fires in February.
 	MonthDay int `json:"month_day,omitempty"`
-	// Hour and Minute are the local time of day. Hour is ignored by FreqHourly,
-	// which uses Minute as the offset past each stepped hour, and by
-	// FreqMinutely, which takes Minute % Interval as the step's PHASE.
-	//
-	// That modulo is what makes the chosen minute mean something rather than
-	// nothing: any Minute is a whole number of steps plus that remainder, so the
-	// minute the user picked is always itself a fire time. "At :07, every 15"
-	// fires at 07, 22, 37, 52 instead of being a rule that never fires at :07.
+	// Hour and Minute are the local time of day. FreqHourly ignores Hour and uses Minute as
+	// the offset past each stepped hour; FreqMinutely uses Minute % Interval as the PHASE, so the
+	// chosen minute is always a fire time.
 	Hour   int `json:"hour"`
 	Minute int `json:"minute"`
 }
@@ -104,9 +76,7 @@ func (s Spec) Validate() error {
 	}
 	switch s.Freq {
 	case FreqMinutely:
-		// The one gate the runner trusts: Put validates every write, so a floor
-		// enforced here is a floor the scheduler cannot be talked out of. The
-		// form mirrors it, but a client is not where this can live.
+		// The one gate the runner trusts: Put validates every write. The form mirrors it.
 		if s.Interval < minMinuteInterval || s.Interval > maxMinuteInterval {
 			return fmt.Errorf("minute interval %d out of range %d-%d",
 				s.Interval, minMinuteInterval, maxMinuteInterval)
@@ -154,15 +124,9 @@ func (s Spec) validateHour() error {
 	return nil
 }
 
-// NextRun returns the first occurrence strictly after `after`, in after's own
-// location.
-//
-// It works by scanning forward one day at a time and asking two questions per
-// day — does this day match, and which times does it produce — so every piece
-// of calendar arithmetic (month lengths, leap years, DST) is delegated to
-// time.Date rather than reimplemented. A day-granular scan is far easier to
-// verify than closed-form date math, and 400 iterations of integer comparison
-// costs nothing at the once-a-minute rate the runner calls it.
+// NextRun returns the first occurrence strictly after `after`, in after's location. It
+// scans forward a day at a time, so all calendar arithmetic (month lengths, leap years,
+// DST) is delegated to time.Date.
 func NextRun(s Spec, after time.Time) (time.Time, error) {
 	if err := s.Validate(); err != nil {
 		return time.Time{}, err
@@ -218,28 +182,16 @@ func daysInMonth(t time.Time) int {
 	return time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, t.Location()).Day()
 }
 
-// timesOn returns the fire times on a day the spec matches, in order.
-//
-// The switch is EXHAUSTIVE rather than a negative test on FreqHourly: routing
-// an unhandled frequency into a one-slot-per-day fallback would silently
-// degrade it to daily instead of failing loudly.
-//
-// Every fire time is built with time.Date, delegating DST to the stdlib. On a
-// spring-forward day the missing local hour normalizes backward, so those
-// slots collapse onto earlier ones and NextRun's strictly-after scan skips
-// them; on a fall-back day the repeated hour resolves to one instant per slot.
-// The list is therefore not monotonic on a spring-forward day, which is safe
-// because the out-of-order block is entirely in the past by the time NextRun
-// reaches it.
+// timesOn returns the fire times on a day the spec matches, in order. The switch is
+// EXHAUSTIVE: a fallback would silently degrade an unhandled frequency to daily. DST is
+// delegated to time.Date; on spring-forward the list is not monotonic, which is safe
+// because the out-of-order slots are already past when NextRun reaches them.
 func (s Spec) timesOn(day time.Time) []time.Time {
 	at := func(h, m int) time.Time {
 		return time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, day.Location())
 	}
 	switch s.Freq {
 	case FreqMinutely:
-		// The capacity is stated because this list is an order of magnitude
-		// bigger than the hourly one (288 entries at the floor, against 24 at
-		// worst there), and NextRun builds it once per matched day per call.
 		out := make([]time.Time, 0, minutesPerDay/s.Interval+1)
 		for md := s.Minute % s.Interval; md < minutesPerDay; md += s.Interval {
 			out = append(out, at(md/60, md%60))
@@ -254,9 +206,8 @@ func (s Spec) timesOn(day time.Time) []time.Time {
 	case FreqDaily, FreqWeekly, FreqMonthly:
 		return []time.Time{at(s.Hour, s.Minute)}
 	default:
-		// Unreachable through the store, since Put validates. Empty rather than a
-		// daily fallback on purpose: NextRun then reports ErrNoOccurrence and the
-		// runner says so once per tick, which is a signal instead of silence.
+		// Unreachable through the store (Put validates). Empty, not a daily fallback: NextRun then
+		// reports ErrNoOccurrence and the runner says so.
 		return nil
 	}
 }

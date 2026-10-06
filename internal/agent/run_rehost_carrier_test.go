@@ -48,8 +48,7 @@ func TestRehost_ConcurrentVerbsOnAnUnhostedRunLoadItOnce(t *testing.T) {
 		errs := make(chan error, 2)
 		go func() { errs <- h.runs.Pause(t.Context(), "wf_1") }()
 		go func() { errs <- h.runs.Pause(t.Context(), "wf_1") }()
-		// Returns only once both verbs are parked, one inside the load and the other
-		// on the run's host lock.
+		// Both verbs are parked: one in the load, one on the host lock.
 		synctest.Wait()
 		if got := carrier.startCount(); got != 0 {
 			t.Fatalf("Setup: %d loads finished before the gate opened", got)
@@ -274,8 +273,7 @@ func TestRunLocks_AnEndedContextNeverAcquires(t *testing.T) {
 		}
 	})
 	t.Run("a waiter cancelled before its predecessor releases", func(t *testing.T) {
-		// The waiter's select sees the cancellation and the release together, so a lock
-		// that let either win would acquire on some iteration.
+		// The waiter sees cancellation and release together, so a lock letting either win would acquire sometime.
 		for range 64 {
 			synctest.Test(t, func(t *testing.T) {
 				var locks runLocks
@@ -369,8 +367,7 @@ func TestRehost_AFailedStarterLeavesTheCarrierToAVerbStillUsingIt(t *testing.T) 
 	}
 }
 
-// pauseRefusedOnRelease refuses `_kiro/workflow/pause` once release closes, so the
-// starting verb fails at a moment the test chooses.
+// pauseRefusedOnRelease refuses `_kiro/workflow/pause` once release closes.
 type pauseRefusedOnRelease struct {
 	*fakeBridge
 	release chan struct{}

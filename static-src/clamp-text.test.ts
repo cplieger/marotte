@@ -1,11 +1,4 @@
-// The shared clamp: measure, decide, observe. Extracted from the turn header,
-// so these tests pin the machinery once and the three consumers pin their own
-// wiring.
-//
-// Real layout throughout, because "does this overflow N lines" has no honest
-// answer without it: a detached element measures 0 on both sides and the module
-// falls back to a character guess, which is exactly the case the observer
-// exists to correct.
+// Real layout throughout: a detached element measures 0, which only exercises the character guess.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { attachClamp, releaseClamp, releaseClampsIn, clampObservationCount } from "./clamp-text.js";
 import clampSource from "./clamp-text.ts?raw";
@@ -14,9 +7,7 @@ import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import { makeSession } from "./__test-helpers__/model.js";
 
-// The transcript's own fixture, for the `disposeChatView` case below. Built at
-// module scope and BEFORE `messages.js` is imported, because `scroll.ts`
-// self-initialises at import and reads the scroller out of the DOM registry.
+// Built before `messages.js` is imported: `scroll.ts` reads the scroller from the DOM registry at import.
 for (const id of [
   "messages-wrap-outer",
   "chat-view",
@@ -38,7 +29,6 @@ scrollerEl.appendChild(transcriptEl);
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView, disposeChatView } = await import("./messages.js");
 
-/** One sealed entry of `turnID`, at `seq`. */
 function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
     id: `${turnID}-e${String(seq)}`,
@@ -51,9 +41,6 @@ function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unkno
   } as Entry;
 }
 
-/** A prompt-opened turn whose body carries one steer note: the `turn_open` the appender
- *  stamped, the `steer` entry the correction landed at, a reply, and the close. A steer
- *  JOINS the turn its prompt opened, so it renders as body content at its own `seq`. */
 function turnWithSteer(id: string, n: number, request: string, correction: string): Entry[] {
   return [
     sealed(id, 0, "turn_open", { prompt: { id: `${id}-p`, text: request }, source: "prompt", n }),
@@ -63,7 +50,6 @@ function turnWithSteer(id: string, n: number, request: string, correction: strin
   ];
 }
 
-/** Paint `turnRows` as `chat`'s resident window and activate it. */
 function paintTurns(chat: string, turnRows: Entry[][]): void {
   const turns = new Map<string, TurnState>();
   const order: string[] = [];
@@ -122,7 +108,6 @@ interface Pair {
   readonly more: HTMLButtonElement;
 }
 
-/** Build a clamped text plus its opener, mounted at a stated width. */
 function mount(body: string, width: number, lines = 3): Pair {
   host.style.inlineSize = `${String(width)}px`;
   const text = document.createElement("div");
@@ -135,9 +120,7 @@ function mount(body: string, width: number, lines = 3): Pair {
   return { text, more };
 }
 
-/** Wait for the opener to reach `hidden`. Only for a verdict that must CHANGE:
- *  a poll whose condition already holds returns before the observer has run,
- *  which is how a test of an unchanged verdict passes vacuously. */
+/** Only for a verdict that must CHANGE: a condition that already holds returns before the observer runs. */
 async function settles(p: Pair, hidden: boolean, why: string): Promise<void> {
   const deadline = Date.now() + 2000;
   while (p.more.hidden !== hidden && Date.now() < deadline) {
@@ -146,13 +129,7 @@ async function settles(p: Pair, hidden: boolean, why: string): Promise<void> {
   expect(p.more.hidden, why).toBe(hidden);
 }
 
-/** Give the observer its chance, for a verdict that must NOT change. A resize
- *  callback is delivered after the frame's layout and a rAF callback runs before
- *  it, so two frames span one full delivery — and the module DEFERS the verdict it
- *  reaches there one further frame, so three span a delivery plus its write. The
- *  third is load-bearing rather than slack: the deferred write is registered during
- *  the delivery, so it is queued BEHIND this helper's own second frame, and a
- *  microtask checkpoint runs between two animation-frame callbacks. */
+/** Three frames: two span one resize delivery, and the module defers its verdict one frame more. */
 async function observerRuns(): Promise<void> {
   await new Promise<void>((resolve) => {
     requestAnimationFrame(() => {
@@ -166,7 +143,6 @@ async function observerRuns(): Promise<void> {
 }
 
 const ONE_LINE = "target main";
-// Twelve monospace lines at 400px, whatever the exact metrics.
 const LONG = "the quick brown fox jumps over the lazy dog ".repeat(12);
 
 describe("deciding whether the opener is needed", () => {
@@ -184,8 +160,6 @@ describe("deciding whether the opener is needed", () => {
   });
 
   it("re-decides at every width, so narrowing cannot hide text with no way to open it", async () => {
-    // Three lines of a wide box become four of a narrow one, and a measure-once
-    // clamp cut the difference away silently.
     const body = "widen the existing front-matter struct with the missing field instead";
     const p = mount(body, 900);
     await settles(p, true, "fits wide");
@@ -198,8 +172,6 @@ describe("deciding whether the opener is needed", () => {
   });
 
   it("corrects the no-layout guess once the element is laid out", async () => {
-    // A detached element measures 0 on both sides, so the first verdict is the
-    // 220-character guess — wrong for a long text that still fits.
     const body = "x".repeat(240);
     const text = document.createElement("div");
     text.className = "ct-text";
@@ -234,8 +206,6 @@ describe("opening and closing", () => {
   });
 
   it("leaves an expansion alone when the box resizes under it", async () => {
-    // Expanding changes the text's own box, so the observer fires on the
-    // reader's own gesture and must not undo it.
     const p = mount(LONG, 400);
     await settles(p, false, "offered");
     p.more.click();
@@ -266,7 +236,6 @@ describe("opening and closing", () => {
 
     more.click();
     expect(store.open, "written through to the caller").toBe(true);
-    // A repaint re-syncs against the caller's flag rather than re-collapsing.
     handle.sync();
     expect(text.hasAttribute("data-clamped")).toBe(false);
     expect(more.hidden).toBe(false);
@@ -303,8 +272,7 @@ describe("the handle", () => {
   it("is idempotent: a repeat attach wires no second listener", async () => {
     const p = mount(LONG, 400);
     await settles(p, false, "offered");
-    // A second attach returning a fresh state would re-register the click, so
-    // one click would toggle twice and land back where it started.
+    // A second attach must return the same state, or one click toggles twice.
     attachClamp(p.text, p.more, { lines: 3 });
     p.more.click();
     expect(p.text.hasAttribute("data-clamped")).toBe(false);
@@ -318,9 +286,7 @@ describe("releasing", () => {
 
     p.text.remove();
     p.more.remove();
-    // The final zero-size change carries `isConnected === false`, which is the
-    // release. A still-observed element would be re-decided here, and a detached
-    // one measures 0, so the character guess would answer for it.
+    // The final zero-size change carries `isConnected === false`, which is the release.
     await observerRuns();
     p.more.hidden = true;
     host.style.inlineSize = "120px";
@@ -329,11 +295,6 @@ describe("releasing", () => {
   });
 
   it("takes the observation count back to zero when the host subtree is released", async () => {
-    // The reason the explicit release exists: the callback-inferred one needs a
-    // final zero-size entry, which WebKit may never deliver and which
-    // `content-visibility: hidden` on a parked view DEFERS on every engine — so
-    // for an element discarded while its view is parked nothing arrives at all,
-    // and an evicted view is never un-parked.
     const before = clampObservationCount();
     host.style.inlineSize = "400px";
     const texts: HTMLElement[] = [];
@@ -350,10 +311,8 @@ describe("releasing", () => {
     await observerRuns();
     expect(clampObservationCount() - before, "five more watched").toBe(5);
 
-    // The subtree is DISCARDED, which is the precondition the export states.
     releaseClampsIn(host);
     expect(clampObservationCount() - before, "and none after the sweep").toBe(0);
-    // Nothing re-decides a released element, so a width change moves no opener.
     for (const text of texts) {
       text.remove();
     }
@@ -382,16 +341,8 @@ describe("releasing", () => {
   });
 
   it("releases a mounted chat view's clamps when the view is disposed", async () => {
-    // The owner that matters: `disposeChatView` is the single per-view dispose
-    // chat close, chat delete, LRU eviction and `teardownAll` all run, so one
-    // sweep there covers every clamp of a whole chat.
-    //
-    // Driven through STEER NOTES rather than turn headers. The header's clamp is
-    // CSS-only and fold-conditional now, so a chat of user turns produces zero
-    // clamps and the count below would be 0 both before and after the sweep — a
-    // case that cannot fail. `fundamentals/steer-note.ts` clamps at 4 lines inside
-    // the turn BODY, which is the live transcript consumer the sweep exists for;
-    // the SUBJECT is unchanged, only the producer.
+    // `disposeChatView` is the one dispose every close path runs. Driven through steer notes: the turn header's
+    // clamp is CSS-only, so it would count 0 before and after the sweep.
     const before = clampObservationCount();
     mountChatView();
     const chat = "c-clamp-dispose";
@@ -407,7 +358,6 @@ describe("releasing", () => {
       );
     }
     paintTurns(chat, turnRows);
-    // One clamp per steer note, or the assertion below cannot fail.
     expect(clampObservationCount() - before, "one per steer note").toBe(4);
 
     disposeChatView(chat);
@@ -415,10 +365,7 @@ describe("releasing", () => {
   });
 
   it("keeps the callback-inferred sweep as well as the explicit release", () => {
-    // A source guard, because the failure mode is a SIMPLIFICATION: whichever half
-    // is deleted, the suite above still passes for the elements it does release,
-    // and the leak is invisible. The `isConnected` branch is belt and braces for an
-    // element discarded with no release; the export is the mechanism.
+    // Source guard: deleting either release half leaves the suite above green and the leak invisible.
     expect([
       clampSource.includes("export function releaseClamp("),
       clampSource.includes("export function releaseClampsIn("),
@@ -429,32 +376,9 @@ describe("releasing", () => {
 
 describe("inside the transcript's own observer set", () => {
   it("re-decides on a width change with no observation left undelivered", async () => {
-    // The reported Safari failure, and the WIDTH change is the shape that produces it
-    // rather than the first paint: the note is repainted while ATTACHED in the same
-    // pass that mounts it, so `clamp.sync()` corrects the detached guess outside any
-    // delivery. A later width change has no such second chance — the box the observer
-    // measured is the box that just moved.
-    //
-    // `more.hidden` is `display: none`, so the verdict changes the enclosing `.turn`
-    // card's height, and `scroll.ts` observes every card of the active view at a
-    // SHALLOWER depth than the text. Both are gathered into ONE broadcast, so a verdict
-    // written inside that delivery re-activates an observation at the broadcast's own
-    // shallowest depth and the engine has to defer it. Measured in Chromium 152 on this
-    // fixture: 1 loop error per width change with the write inside the delivery, 0 with
-    // it deferred a frame.
-    //
-    // Driven through a STEER NOTE. The turn header's clamp is CSS-only and
-    // fold-conditional now, so it attaches no observation and could not flip a
-    // verdict at all; a steer note is the live transcript consumer, and its own
-    // opener changes the same card's height at the same relative depth.
-    //
-    // The real clamp rule, from the shipped stylesheet rather than a copy: with no
-    // `-webkit-line-clamp` in force nothing ever overflows, so the verdict cannot flip
-    // and the case would pass against the defect.
-    //
-    // Errors are collected locally as well as by `ro-loop-gate.ts`, so a failure names
-    // this case rather than arriving from an `afterEach` that cannot say which test
-    // produced it.
+    // The reported Safari loop error: a width change re-decides the verdict inside a resize delivery, where the card
+    // is observed at a shallower depth. Chromium 152: 1 loop error per width change written in the delivery, 0 deferred.
+    // Uses a steer note (the header clamp is CSS-only) and the shipped clamp rule, without which nothing overflows.
     const loops: string[] = [];
     const onError = (e: ErrorEvent): void => {
       if (e.message.includes("ResizeObserver loop")) {
@@ -468,8 +392,6 @@ describe("inside the transcript's own observer set", () => {
     const chat = "c-clamp-ro-loop";
     try {
       mountChatView();
-      // Over four lines at 320px and inside four at 1000px, so the verdict flips in
-      // both directions.
       const body = "the quick brown fox jumps over the lazy dog while ".repeat(5);
       paintTurns(chat, [turnWithSteer("u1", 1, "a request", body)]);
 

@@ -1,9 +1,6 @@
-// The Active-policy table's own surfaces in permissions-ui.ts: the per-row hints,
-// the capability pickers, and the "Test a decision (why?)" box. The profile
-// picker's tests live beside them in permissions-profile.test.ts.
-//
-// Only the I/O edges are mocked (apiGet, the action dispatches, confirm). The real
-// DOM, the real render and the real read-back logic run.
+// The Active-policy table's own surfaces in permissions-ui.ts: the per-row hints, the capability
+// pickers, and the "Test a decision (why?)" box. The profile picker's tests live beside them in
+// permissions-profile.test.ts.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { PolicyView, PolicyRule, PolicyExplainResult } from "./types.js";
 
@@ -28,8 +25,7 @@ vi.mock("./bus.js", () => ({
     mocks.sseHandlers.set(type, fn);
     return () => mocks.sseHandlers.delete(type);
   },
-  // Present-but-inert so real-ESM linking succeeds: this graph reaches names no
-  // case here calls.
+  // Present-but-inert so real-ESM linking succeeds: this graph reaches names no case here calls.
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./actions/index.js", () => ({
@@ -94,8 +90,8 @@ async function reload(v: PolicyView): Promise<void> {
   await flush();
 }
 
-/** The rendered row for one capability. Read out of the DOM, because what a reader
- *  gets is the rendered row rather than the builder's return. */
+/** The rendered row for one capability. Read out of the DOM, because what a reader gets is the
+ *  rendered row rather than the builder's return. */
 function rowFor(capability: string): HTMLElement {
   const rows = [...byId("native-policy-list").querySelectorAll<HTMLElement>(".native-rule")];
   const found = rows.find((r) => r.querySelector(".native-rule-cap")?.textContent === capability);
@@ -146,10 +142,8 @@ beforeEach(() => {
   mocks.confirm.mockResolvedValue(true);
 });
 
-// A native `title` is the browser's own tooltip: it misses the styled treatment
-// every other hover in the app uses, and it publishes no accessible description, so
-// it reaches mouse users only. The one fact these three hints carry — which file to
-// edit, and what the control does — is not mouse-only information.
+// A native `title` is the browser's own tooltip: it misses the styled treatment every other hover
+// in the app uses, and it publishes no accessible description, so it reaches mouse users only.
 describe("a rule row's hints", () => {
   it("carries the provenance path on the app's tooltip, not a native title", async () => {
     await mount(view([userRule("shell")]));
@@ -159,8 +153,8 @@ describe("a rule row's hints", () => {
     expect(src?.hasAttribute("title")).toBe(false);
   });
 
-  // `shortSource` elides the path on screen, so without a label the whole of it
-  // reaches nobody who is not hovering.
+  // `shortSource` elides the path on screen, so without a label the whole of it reaches nobody who
+  // is not hovering.
   it("names the provenance path for a reader who cannot hover", async () => {
     await mount(view([userRule("shell")]));
     const src = rowFor("shell").querySelector<HTMLElement>(".native-rule-src");
@@ -190,10 +184,9 @@ describe("a rule row's hints", () => {
   });
 });
 
-// The server's capability list is a UNION of marotte's suggested set and every
-// capability the returned rules already use, so it exists in order to GROW: a cold
-// no-bridge view names only what the two writable files hold, and the live view is
-// wider. Populating once kept the narrow list until a reload.
+// The server's capability list is a UNION of marotte's suggested set and every capability the
+// returned rules already use, so it exists in order to GROW: a cold no-bridge view names only what
+// the two writable files hold, and the live view is wider.
 describe("the capability pickers", () => {
   it("follows a capability set that grew", async () => {
     await mount(view([], ["fs_read", "shell"]));
@@ -205,8 +198,6 @@ describe("the capability pickers", () => {
     expect(capabilityOptions("native-explain-capability")).toEqual(["fs_read", "shell", "mcp"]);
   });
 
-  // Keeping the selection is what the old populate-once was protecting: a
-  // `permissions_changed` frame arrives while the reader is filling the add form.
   it("keeps a selection the reader had made", async () => {
     await mount(view([], ["fs_read", "shell"]));
     const sel = byId<HTMLSelectElement>("native-rule-capability");
@@ -217,10 +208,9 @@ describe("the capability pickers", () => {
     expect(sel.value).toBe("shell");
   });
 
-  // A frame that changes nothing about the set must not rebuild it: an open
-  // `<select>` closes and the keyboard loses its place for no information at all.
-  // Object identity is the assertion, because a rebuilt option is indistinguishable
-  // from a kept one by value.
+  // A frame that changes nothing about the set must not rebuild it: an open `<select>` closes and
+  // the keyboard loses its place for no information at all. Object identity is the assertion,
+  // because a rebuilt option is indistinguishable from a kept one by value.
   it("rebuilds nothing when the set did not move", async () => {
     await mount(view([], ["fs_read", "shell"]));
     const before = [...byId<HTMLSelectElement>("native-rule-capability").options];
@@ -234,9 +224,9 @@ describe("the capability pickers", () => {
     }
   });
 
-  // An empty answer says the view could not name a capability, not that there are
-  // none, so replacing a populated picker with nothing would take the form's only
-  // input away on a transient view.
+  // An empty answer says the view could not name a capability, not that there are none, so
+  // replacing a populated picker with nothing would take the form's only input away on a transient
+  // view.
   it("keeps what it has when the view names no capability", async () => {
     await mount(view([], ["fs_read", "shell"]));
 
@@ -246,9 +236,9 @@ describe("the capability pickers", () => {
   });
 });
 
-// The control is labelled "Test a decision (why?)". Effect plus scope answers which
-// LAYER decided, and the kiro layer holds dozens of match globs, so the reader was
-// left to find the deciding rule by eye. Both fields are decoded server-side already.
+// The control is labelled "Test a decision (why?)". Effect plus scope answers which LAYER decided,
+// and the kiro layer holds dozens of match globs, so the reader was left to find the deciding rule
+// by eye. Both fields are decoded server-side already.
 describe("Test a decision", () => {
   it("names the rule that decided, with its globs", async () => {
     await mount(view([]));
@@ -274,8 +264,8 @@ describe("Test a decision", () => {
     expect(out).toContain("scope: kiro");
   });
 
-  // The distinction `guardAllowRule` refuses an allow against: an ask a rule STATES,
-  // as opposed to the implicit ask that means nothing matched.
+  // The distinction `guardAllowRule` refuses an allow against: an ask a rule STATES, as opposed to
+  // the implicit ask that means nothing matched.
   it("distinguishes an explicit ask from an implicit one", async () => {
     await mount(view([]));
     mocks.explainDispatch.mockResolvedValue({

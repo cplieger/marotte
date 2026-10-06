@@ -1,25 +1,4 @@
 // WHERE THE RAIL PUTS THINGS, measured against the shipped stylesheet.
-//
-// `turn-rail.ts` publishes a position as a 0..1 fraction of the track and one CSS
-// rule per element turns it into a `top`. The arithmetic is pure and tested in
-// `rail-select.node.test.ts`; what only a real box can answer is whether the rule
-// reproduces it — a percentage inside `calc()`, a registered custom property and a
-// half-box centring term are all things a DOM emulator reports as 0.
-//
-// FIVE CLAIMS, and each of the last four has a control that makes it falsifiable:
-//
-//  - `--rail-at` lands a marker where `slotPosition` says, both ends inside.
-//  - a set shorter than the track is spread from the TOP at the relaxed pitch, and
-//    only one that cannot fit at it reaches the foot of the travel.
-//  - the track's reserved foot clears the docked control's TARGET by `--sp-2`, at both
-//    pointer tiers, and that foot is derived from `--hit-floor` rather than `--btn-h`.
-//  - the shown set fills the track's capacity at ONE gap of at least `pitchPx`, at
-//    both tiers, the pitch read off the tier.
-//  - a marker paints `--rail-mark` and answers a `--hit-floor` pointer, which is a hit
-//    test rather than a style read, because an expander has no box to measure.
-//
-// This file sets the fractions itself, which is what keeps it measuring the rule rather
-// than the renderer; which turn each fraction belongs to is `turn-rail.test.ts`'s.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -35,17 +14,13 @@ import {
 } from "./rail-select.js";
 import type { TurnSummary } from "./rail-merge.js";
 
-/** Wide enough that the rail is shown and the resume control docks in its column:
- *  both turn on `@container chat-area (width >= 57.5rem)`. */
+/** Wide enough that the rail is shown and the resume control docks in its column: both turn on
+ *  `@container chat-area (width >= 57.5rem)`. */
 const CHAT_PX = 1120;
 /** Sub-pixel slack. Every number here is a used value the engine rounds. */
 const EPS = 0.5;
 
-/** Two used values agree to the pixel.
- *
- *  `toBeCloseTo`'s second argument is a DIGIT COUNT rather than a tolerance, so a
- *  0.5 there asks for agreement to within 0.158 and reads as the opposite of what
- *  it says. */
+/** Two used values agree to the pixel. */
 function near(actual: number, expected: number, what: string): void {
   expect(
     Math.abs(actual - expected),
@@ -69,14 +44,14 @@ interface Rail {
   outer: HTMLElement;
   rail: HTMLElement;
   resume: HTMLElement;
-  /** The track's own height, which is what every fraction is a fraction of. Read
-   *  per call, because `.turn-rail:empty` hides the rail and a height captured
-   *  before its first marker is 0. */
+  /** The track's own height, which is what every fraction is a fraction of. Read per call,
+   *  because `.turn-rail:empty` hides the rail and a height captured before its first marker is
+   *  0. */
   track: () => number;
   markerPx: number;
   pitchPx: number;
-  /** The PAINTED row box, `--rail-mark`, which both the marker and the docked control
-   *  take; `markerPx` above is the target they grow to. */
+  /** The PAINTED row box, `--rail-mark`, which both the marker and the docked control take;
+   *  `markerPx` above is the target they grow to. */
   mark: number;
   /** The three tokens the reserved foot is made of, in px. */
   sp2: number;
@@ -86,9 +61,9 @@ interface Rail {
 
 let area: HTMLElement | undefined;
 
-/** A token in PX. An unregistered custom property's computed value is its own token
- *  stream, so `getPropertyValue("--sp-2")` answers `0.5rem` and a `parseFloat`
- *  answers 0.5; assigning it to a real length property is what absolutizes it. */
+/** A token in PX. An unregistered custom property's computed value is its own token stream, so
+ *  `getPropertyValue("--sp-2")` answers `0.5rem` and a `parseFloat` answers 0.5; assigning it to
+ *  a real length property is what absolutizes it. */
 function lengthOf(host: HTMLElement, token: string): number {
   const probe = document.createElement("div");
   probe.style.cssText = `position:absolute;visibility:hidden;block-size:var(${token})`;
@@ -98,10 +73,10 @@ function lengthOf(host: HTMLElement, token: string): number {
   return px;
 }
 
-/** The real nesting, because three separate rules depend on it: the container query
- *  needs `#chat-area` to BE the container, the rail's height comes from
- *  `#messages-wrap-outer`'s box through the view's flex chain, and the reserved foot
- *  is only meaningful against a resume control docked in the same column. */
+/** The real nesting, because three separate rules depend on it: the container query needs
+ *  `#chat-area` to BE the container, the rail's height comes from `#messages-wrap-outer`'s box
+ *  through the view's flex chain, and the reserved foot is only meaningful against a resume
+ *  control docked in the same column. */
 function buildRail(tier: "fine" | "coarse"): Rail {
   if (tier === "coarse") {
     document.documentElement.dataset["pointer"] = "coarse";
@@ -155,8 +130,8 @@ afterEach(() => {
   delete document.documentElement.dataset["pointer"];
 });
 
-/** One marker, positioned the way `render()` positions it: its slot's fraction of
- *  the span the shown set's size resolves to, never a bare 0..1 ramp. */
+/** One marker, positioned the way `render()` positions it: its slot's fraction of the span the
+ *  shown set's size resolves to, never a bare 0..1 ramp. */
 function marker(r: Rail, slot: number, slots: number, label = slot + 1): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "rail-marker";
@@ -167,10 +142,10 @@ function marker(r: Rail, slot: number, slots: number, label = slot + 1): HTMLEle
   return btn;
 }
 
-/** The track's height, measured through a temporary marker when the rail is still
- *  empty: `.turn-rail:empty` hides the element, so a height read before its first
- *  marker is 0 — and a span resolved against 0 is the stretched one, which is the
- *  layout these cases exist to tell apart. */
+/** The track's height, measured through a temporary marker when the rail is still empty:
+ *  `.turn-rail:empty` hides the element, so a height read before its first marker is 0 — and a
+ *  span resolved against 0 is the stretched one, which is the layout these cases exist to tell
+ *  apart. */
 function trackOf(r: Rail): number {
   if (r.rail.childElementCount > 0) {
     return r.track();
@@ -188,10 +163,9 @@ function spanFor(r: Rail, slots: number): number {
   return railSpan(slots, trackOf(r), r.markerPx);
 }
 
-/** A slot count too large to fit at the relaxed pitch, so the set takes the whole
- *  travel. DERIVED from the real track, because the crossover moves with the tier and
- *  with the reserved foot, and a hard-coded count would sit on the wrong side of it
- *  after a retune of either. */
+/** A slot count too large to fit at the relaxed pitch, so the set takes the whole travel.
+ *  DERIVED from the real track, because the crossover moves with the tier and with the reserved
+ *  foot, and a hard-coded count would sit on the wrong side of it after a retune of either. */
 function filledSlots(r: Rail): number {
   return Math.ceil(trackOf(r) / relaxedPitch(r.markerPx)) + 2;
 }
@@ -206,12 +180,7 @@ function turn(n: number): TurnSummary {
 }
 
 describe("the two pixel numbers come off the pointer tier", () => {
-  // MEASURED AGAINST A REAL TRACK, and that is the whole point of the cases being
-  // here. `--hit-floor` is 1.5rem / 2.75rem in the stylesheet, so a reader that takes
-  // the custom property's own computed value gets the token stream back and a
-  // `parseFloat` answers 1.5 — a 5.5px pitch, no downsampling at any track height and
-  // markers inside each other. A stubbed `getComputedStyle` answering "24px" cannot
-  // see that; only a real cascade can.
+  // MEASURED AGAINST A REAL TRACK, and that is the whole point of the cases being here.
   for (const [tier, floor] of [
     ["fine", 24],
     ["coarse", 44],
@@ -223,9 +192,9 @@ describe("the two pixel numbers come off the pointer tier", () => {
   }
 
   it("falls back to the fine tier's own floor for a track the token does not reach", () => {
-    // `initial` on a custom property is the guaranteed-invalid value, so every
-    // `var(--hit-floor)` under it is invalid at computed-value time — the pre-layout
-    // state, where the fallback is the fine floor rather than a third number.
+    // `initial` on a custom property is the guaranteed-invalid value, so every `var(--hit-floor)`
+    // under it is invalid at computed-value time — the pre-layout state, where the fallback is the
+    // fine floor rather than a third number.
     const r = buildRail("coarse");
     r.outer.style.setProperty("--hit-floor", "initial");
 
@@ -247,12 +216,12 @@ describe("a marker's position is its slot in the shown set", () => {
   });
 
   it("keeps both ends fully inside the track once the set takes the whole travel", () => {
-    // The travel span is the track minus one marker box, which is what stops the
-    // last marker hanging half out of the column.
+    // The travel span is the track minus one marker box, which is what stops the last marker
+    // hanging half out of the column.
     const r = buildRail("fine");
     const slots = filledSlots(r);
-    // The premise: this many markers cannot fit at the relaxed pitch, so the last
-    // one really is meant to reach the foot of the track.
+    // The premise: this many markers cannot fit at the relaxed pitch, so the last one really is
+    // meant to reach the foot of the track.
     expect(spanFor(r, slots)).toBe(1);
     const first = marker(r, 0, slots);
     const last = marker(r, slots - 1, slots);
@@ -262,72 +231,63 @@ describe("a marker's position is its slot in the shown set", () => {
   });
 
   it("spreads a young session from the top at the relaxed pitch instead", () => {
-    // THE REGRESSION, over real layout: the second of two turns used to render at the
-    // foot of the track, one marker box above the resume control, with the whole axis
-    // empty between the two markers.
     const r = buildRail("fine");
     const first = marker(r, 0, 2);
     const second = marker(r, 1, 2);
 
     near(topIn(r, first), 0, "first marker's top");
     near(topIn(r, second), relaxedPitch(r.markerPx), "second marker's top");
-    // Stated as a relation rather than a number so the case survives a taller track:
-    // what it denies is the marker reaching the end of the travel.
+    // Stated as a relation rather than a number so the case survives a taller track: what it denies
+    // is the marker reaching the end of the travel.
     expect(topIn(r, second)).toBeLessThan(r.track() / 2);
   });
 });
 
 describe("the track's reserved foot clears the resume control", () => {
-  // RED against a foot of `--sp-3 + --hit-floor` alone: the track's bottom edge
-  // would land flush on the control's top edge and the `--sp-2` clearance below
-  // would read 0. Reserved UNCONDITIONALLY, so a marker does not move when the
-  // control appears.
+  // RED against a foot of `--sp-3 + --hit-floor` alone: the track's bottom edge would land flush on
+  // the control's top edge and the `--sp-2` clearance below would read 0. Reserved UNCONDITIONALLY,
+  // so a marker does not move when the control appears.
   for (const tier of ["fine", "coarse"] as const) {
     it(`leaves --sp-2 between the track and the control on a ${tier} pointer`, () => {
       const r = buildRail(tier);
-      // One marker, because `.turn-rail:empty` hides the rail and a hidden track
-      // has no bottom edge to measure the clearance from.
+      // One marker, because `.turn-rail:empty` hides the rail and a hidden track has no bottom edge
+      // to measure the clearance from.
       marker(r, 0, 1);
 
       const railBottom = r.rail.getBoundingClientRect().bottom;
-      // TARGET to target, not paint to paint. The track's own bottom IS the last
-      // marker's target bottom, because the travel is the target's box; the control
-      // paints `--rail-mark` with its target centred on that, so its target's top edge
-      // is the overhang above the painted box.
+      // TARGET to target, not paint to paint. The track's own bottom IS the last marker's target
+      // bottom, because the travel is the target's box; the control paints `--rail-mark` with its
+      // target centred on that, so its target's top edge is the overhang above the painted box.
       const overhang = (r.markerPx - r.mark) / 2;
       near(r.resume.getBoundingClientRect().top - overhang - railBottom, r.sp2, "clearance");
     });
 
     it(`sizes that foot from --hit-floor rather than --btn-h on a ${tier} pointer`, () => {
-      // The premise the reservation is derived from: `#scroll-bottom`'s own box in
-      // the rail's column is the tier's hit floor, so a `--btn-h`-based foot
-      // over-reserves by 12px on a fine pointer.
+      // The premise the reservation is derived from: `#scroll-bottom`'s own box in the rail's
+      // column is the tier's hit floor, so a `--btn-h`-based foot over-reserves by 12px on a fine
+      // pointer.
       const r = buildRail(tier);
       marker(r, 0, 1);
 
-      // The control paints the column's row box and grows its target to the floor, so
-      // the reservation clears the target: `--sp-3` plus the paint plus one overhang.
+      // The control paints the column's row box and grows its target to the floor, so the
+      // reservation clears the target: `--sp-3` plus the paint plus one overhang.
       near(r.resume.getBoundingClientRect().height, r.mark, "control height");
       near(
         r.outer.getBoundingClientRect().bottom - r.rail.getBoundingClientRect().bottom,
         r.sp3 + (r.markerPx + r.mark) / 2 + r.sp2,
         "reserved foot",
       );
-      // Stated as a relation rather than a number, so the case survives a retune of
-      // either token and still fails if the two are conflated.
+      // Stated as a relation rather than a number, so the case survives a retune of either token
+      // and still fails if the two are conflated.
       expect(tier === "fine" ? r.btnH !== r.markerPx : r.btnH === r.markerPx).toBe(true);
     });
   }
 });
 
 describe("the shown set fills the track at one gap, never overlapping at the tier's floor", () => {
-  // THE COARSE CASE IS THE CONTROL, and the separation is measured against the TARGET
-  // resolved from the token rather than against `railMetrics`' answer: comparing a
-  // selection made at one pitch against that same pitch is a tautology, and it stays
-  // green against a hard-coded 28 (measured). The target is what may not overlap, and
-  // on a coarse pointer it is 44px while the box the marker PAINTS is 24 — so reading
-  // the rendered box here would compare the separation against a floor 20px too small
-  // and pass for a pitch that packs targets 16px inside each other.
+  // THE COARSE CASE IS THE CONTROL, and the separation is measured against the TARGET resolved from
+  // the token rather than against `railMetrics`' answer: comparing a selection made at one pitch
+  // against that same pitch is a tautology, and it stays green against a hard-coded 28 (measured).
   for (const tier of ["fine", "coarse"] as const) {
     it(`on a ${tier} pointer, at the density the track allows`, () => {
       const r = buildRail(tier);
@@ -344,8 +304,8 @@ describe("the shown set fills the track at one gap, never overlapping at the tie
       const first = (tops[1] ?? 0) - (tops[0] ?? 0);
       for (let i = 1; i < tops.length; i++) {
         const gap = (tops[i] ?? 0) - (tops[i - 1] ?? 0);
-        // STRICTLY greater: two conforming targets need a clear between them, not
-        // merely edges that touch.
+        // STRICTLY greater: two conforming targets need a clear between them, not merely edges that
+        // touch.
         expect(gap).toBeGreaterThan(target);
         // EQUIDISTANT: one pitch for every consecutive pair, in rendered pixels.
         near(gap, first, `gap ${String(i)}`);
@@ -356,8 +316,8 @@ describe("the shown set fills the track at one gap, never overlapping at the tie
 
 describe("a marker paints a control rung and grows its target to the tier's floor", () => {
   // The target is measured by HIT TEST, never a style read: an expander is invisible and
-  // contributes nothing to `getBoundingClientRect`, so a style-read assertion here passes
-  // whether it exists or not.
+  // contributes nothing to `getBoundingClientRect`, so a style-read assertion here passes whether
+  // it exists or not.
   /** One marker mid-track, where its expander cannot run off either end. */
   function midMarker(r: Rail): HTMLElement {
     return marker(r, 4, 9);
@@ -371,8 +331,8 @@ describe("a marker paints a control rung and grows its target to the tier's floo
       const r = buildRail(tier);
       const box = midMarker(r).getBoundingClientRect();
 
-      // Resolved from the token rather than from the literal, so a retune moves the
-      // assertion with the stylesheet; the literal above is the reader's anchor.
+      // Resolved from the token rather than from the literal, so a retune moves the assertion with
+      // the stylesheet; the literal above is the reader's anchor.
       near(box.height, lengthOf(r.rail, "--rail-mark"), "painted box");
       near(box.height, paint, "painted box against the recorded value");
       // The digit's own box, so a marker is a square at one digit and widens at five.
@@ -397,16 +357,16 @@ describe("a marker paints a control rung and grows its target to the tier's floo
       ] as const) {
         expect(document.elementFromPoint(x, y), `${tier} ${where}`).toBe(m);
       }
-      // And NOT past it, or the target is wider than the tier asks for and two of
-      // them could touch at the pitch `selectMarkers` separates by.
+      // And NOT past it, or the target is wider than the tier asks for and two of them could touch
+      // at the pitch `selectMarkers` separates by.
       expect(document.elementFromPoint(cx, cy - floor / 2 - 1)).not.toBe(m);
     });
   }
 
   it("reaches past the painted box on a coarse pointer, which is the whole point", () => {
-    // THE CONTROL for the pair above, which on a fine pointer passes with the expander
-    // deleted because paint and target are the same 24px there. The band 12px to 22px
-    // from the centre is outside the paint and inside the target.
+    // THE CONTROL for the pair above, which on a fine pointer passes with the expander deleted
+    // because paint and target are the same 24px there. The band 12px to 22px from the centre is
+    // outside the paint and inside the target.
     const r = buildRail("coarse");
     const m = midMarker(r);
     const box = m.getBoundingClientRect();

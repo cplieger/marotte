@@ -12,16 +12,12 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// accountUsageTTL bounds how often the footer fetch hits KAS. Account
-// usage changes slowly and the upstream GetUsageLimits call may be
-// rate-limited, so we serve a cached snapshot for this window and only
-// refetch (lazily, on footer open) once it expires.
+// accountUsageTTL bounds how often the footer fetch hits KAS (GetUsageLimits may be
+// rate-limited).
 const accountUsageTTL = 60 * time.Second
 
-// acctUsageCache is the server-side short-TTL cache + last-known snapshot
-// for GET /api/account/usage. The last-known snapshot is served stale when
-// a refresh fails (no live bridge, rate limit) so the footer degrades
-// gracefully instead of blanking.
+// acctUsageCache is the short-TTL cache plus last-known snapshot for GET /api/account/usage;
+// the snapshot is served stale when a refresh fails.
 type acctUsageCache struct {
 	data    *marotte.AccountUsage
 	atNanos int64 // wall-clock UnixNano of the last successful fetch
@@ -32,9 +28,7 @@ type acctUsageCache struct {
 // footer. Cached for accountUsageTTL; on a fetch failure it serves the
 // last-known snapshot (marked stale) if any, else 503.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
-	// Gated here, not on the ServeMux pattern: a method-pattern mismatch falls
-	// through to the SPA mount and answers 200 with index.html. See
-	// server.go's ListenAndServe.
+	// Gated here, not on the pattern (see ListenAndServe).
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}

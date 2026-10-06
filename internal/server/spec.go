@@ -21,18 +21,14 @@ import (
 // headerIfNoneMatch is the request header carrying the ETag a client holds.
 const headerIfNoneMatch = "If-None-Match"
 
-// specApprovalReader is the approval record as this endpoint uses it: one lookup
-// per spec, returning the stored approvals with Stale unset. Declared here
-// because this is the consumer; the store lives in internal/specapproval.
+// specApprovalReader is the approval record as this endpoint uses it: stored approvals with
+// Stale unset.
 type specApprovalReader interface {
 	For(dir string) map[string]marotte.SpecApproval
 }
 
-// handleSpec answers GET /api/specs/{dir} with one spec. dir is the
-// workspace-relative spec directory as ONE percent-encoded segment, which
-// ServeMux hands over already unescaped; it is never unescaped again here,
-// or the %252F spelling would resolve too and restore the two-spelling shape
-// {dir} was chosen to remove.
+// handleSpec answers GET /api/specs/{dir}. dir is ONE percent-encoded segment ServeMux has
+// already unescaped; it is never unescaped again, or %252F would resolve too.
 func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
@@ -52,10 +48,8 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 		httpreply.InternalError(w, nil)
 		return
 	}
-	// Stale is DERIVED here, per read, against the hashes this load just
-	// produced — never stored, so a document the agent rewrote after sign-off
-	// reports itself as changed instead of continuing to look approved. A nil
-	// reader (no config dir, so no store) simply carries no approvals.
+	// Stale is DERIVED per read against this load's hashes, never stored, so a doc rewritten
+	// after sign-off reports itself changed. A nil reader carries no approvals.
 	if s.specApprovals != nil {
 		sp.Approvals = specapproval.Derive(s.specApprovals.For(sp.Dir), sp.Docs)
 	}
@@ -69,31 +63,10 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, sp)
 }
 
-// specETag is the quoted hex sha256 over each doc's NAME and hash, in order,
-// then over the approvals.
-//
-// The name is in the digest because the hash alone is not sufficient: a document
-// over maxBytes carries an EMPTY hash (spec.Load lists it with TooLarge and no
-// content), so over hashes alone a rename, and the addition or removal of an
-// over-size document, both leave the digest unmoved while changing the segment
-// list this endpoint serves. NUL is the separator because a doc's File is a base
-// name, which cannot contain one.
-//
-// The one change still invisible here is an over-size document's content moving
-// while it stays over-size, which the page renders nothing for.
-//
-// The APPROVALS join the digest because they are part of this endpoint's answer
-// now, and a 304 over the docs alone would serve a stale badge. All three fields
-// go in: the phase and the approved hash say WHICH version was signed off, and
-// the derived Stale is what the doc hashes above cannot supply — a document
-// moving under an approval changes only the DOC's hash, which is already in the
-// digest, but a document DISAPPEARING removes its own contribution while
-// flipping Stale, so without it the two changes could cancel. At and User are in
-// the digest because the badge renders them: re-approving a version already
-// approved moves nothing else, so over hash and Stale alone a 304 would serve
-// the previous timestamp. Iterated over
-// specapproval.Phases() rather than over the map, because a map's order is
-// random and a digest that moves per read would defeat the ETag entirely.
+// specETag is the quoted hex sha256 over each doc's NAME and hash, then the approvals. The
+// name is needed because an over-size doc's hash is empty. Approvals contribute phase, hash,
+// derived Stale (a doc disappearing would otherwise cancel), At and User (the badge renders
+// them), iterated over specapproval.Phases() for a stable order. NUL separates fields.
 func specETag(docs []marotte.SpecDoc, approvals map[string]marotte.SpecApproval) string {
 	h := sha256.New()
 	for _, d := range docs {

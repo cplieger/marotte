@@ -1,13 +1,8 @@
 package command
 
-// Composer drafts: the unsent text of one chat, kept so switching chat tabs
-// stops bleeding a half-written message into the next conversation.
-//
-// Server-side rather than localStorage so the draft follows the user across
-// devices. The client autosaves on a 600ms debounce, so this handler does as
-// little as possible: no bridge call, one write that does not move the
-// chat's retention clock (see ChatStore.SetDraft), one broadcast only when
-// something changed.
+// Composer drafts are server-side so they follow the user across devices. The client autosaves on a
+// 600ms debounce, so the handler is minimal: no bridge call, a write that does not move the
+// retention clock (ChatStore.SetDraft), and one broadcast only when something changed.
 
 import (
 	"context"

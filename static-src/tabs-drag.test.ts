@@ -1,24 +1,8 @@
-// The strip's reorder drag: what may START one, every path that has to END one, and
-// the preview in between, where the dragged row itself is the slot.
-//
-// The reported defect is a keyboard dismissal starting a drag nobody asked for and
-// leaving it stuck, so the two halves are tested apart. A LAYOUT SHIFT under a
-// stationary pointer must be unreadable as travel, whichever event delivers it —
-// the Pointer Events spec requires only BOUNDARY events for a layout change under a
-// stationary uncaptured pointer, so the cases dispatch the move explicitly and
-// assert the property rather than the trigger. And a live drag must be endable from
-// every path, because the reported symptom is that further clicks made it worse.
-//
-// `visualViewport` is replaced by a fake carrying the two fields `viewport-frame.ts`
-// reads and really recording its listeners (`shell-viewport.test.ts`'s shape). Every
-// gesture states `buttons`, which the real ones carry and the constructor defaults
-// to 0: a held button is one of the gates, and touch reports 1 while the contact is
-// present (Pointer Events, the `buttons` table).
-//
-// The harness stands in for the projection: `reorder` records the committed order
-// and answers it as applied, `reproject` re-seats the rows in it the way `renderDOM`
-// does (only a row that is out of place moves), so every end of a drag ends in a
-// re-projection, and `tap` records the activation a lifted tap asks for.
+// The strip's reorder drag: what may START one, every path that ENDS one, and the preview. A LAYOUT
+// SHIFT under a still pointer must not read as travel (the move is dispatched explicitly: Pointer
+// Events requires only boundary events for it). `visualViewport` is a fake recording listeners;
+// every gesture states `buttons`. The harness's `reorder`/`reproject`/`tap` stand in for the
+// projection.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
@@ -87,11 +71,8 @@ function fakeViewport(height: number, offsetTop = 0): FakeViewport {
   };
 }
 
-/** Back the three pointer-capture methods with a Set so the capture-gated paths run
- *  under a synthetic gesture: `setPointerCapture` throws `NotFoundError` for a
- *  pointerId that is not a real active pointer, so the HARNESS adapts and the
- *  control never grows a try/catch for a test. `effort-slider.test.ts` and
- *  `shell.test.ts` are the precedents. */
+/** Back the pointer-capture methods with a Set: `setPointerCapture` throws `NotFoundError` for a
+ *  synthetic pointer, so the harness adapts, not the control. */
 function stubPointerCapture(el: HTMLElement): void {
   const captured = new Set<number>();
   el.setPointerCapture = (id: number): void => {
@@ -257,10 +238,7 @@ describe("what may start a drag", () => {
     expect(isDragHandled()).toBe(false);
   });
 
-  // THE REPORTED SEQUENCE. An input is focused, so the keyboard is up and the visual
-  // viewport sits OFFSET inside the layout viewport; the mouse presses a row; the
-  // blur dismisses the keyboard, the offset closes, and the row's box moves under a
-  // pointer that never left the glass.
+  // The keyboard's blur closes the visual viewport offset, moving the row under a still mouse.
   it("starts no drag when a keyboard dismissal moves the layout under a still mouse", () => {
     const input = document.createElement("input");
     input.id = "kbd-input";
@@ -1227,10 +1205,8 @@ describe("ending a live drag", () => {
     expect(reorder).not.toHaveBeenCalled();
   });
 
-  // `setPointerCapture` throws `NotFoundError` for a pointer that is no longer
-  // active, so it is asked for LAST: a throw has to leave a drag the window
-  // listeners can still end rather than a half-built one. The stub ends the drag
-  // from inside that call, which is only possible if the paths are already wired.
+  // `setPointerCapture` can throw for an inactive pointer, so it is asked LAST; the stub ends the drag
+  // inside that call, possible only if recovery is already wired.
   it("wires every recovery path before it asks for pointer capture", () => {
     const row = rows["b"] as HTMLElement;
     let endableAtCaptureTime = false;

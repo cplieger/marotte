@@ -1,15 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { info, success, error, showToast, _resetForTest } from "./toast.js";
+import { info, success, error, notice, showToast, _resetForTest } from "./toast.js";
 
-// toast.ts delegates to @cplieger/ui-primitives' default toaster; these tests
-// exercise the marotte wrapper (info/success/error/showToast) against the
-// library's DOM contract (.uip-toast + .uip-toast--<level>, the announce()
-// live region for a11y) and behavior (auto-dismiss, queue, pause, retry).
-//
-// The library singleton lives for the module's lifetime, so we reset its state
-// via _resetForTest() between tests rather than resetModules() (which would
-// leave the module-level Escape listener stranded).
+// The marotte wrapper against ui-primitives' toast DOM contract (.uip-toast--<level>, announce())
+// and behaviour. State is reset with _resetForTest(), not resetModules(), which would strand the
+// module-level Escape listener.
 beforeEach(() => {
   _resetForTest();
   vi.useFakeTimers();
@@ -64,10 +59,7 @@ describe("toast — basic rendering", () => {
     expect(document.querySelector('[aria-live="assertive"]')).not.toBeNull();
   });
 
-  // Every level now carries the countdown bar, because every level now has a
-  // finite duration — errors included (they auto-dismiss at 12s rather than
-  // stacking forever). A RETRYABLE error is the one sticky case, and a sticky
-  // toast has no countdown to draw.
+  // Every level has a finite duration and so a countdown bar; a RETRYABLE error is the sticky case.
   it("all levels include a progress bar; a retryable error does not", () => {
     for (const show of [info, success, error]) {
       _resetForTest();
@@ -98,8 +90,8 @@ describe("toast — auto-dismiss", () => {
     expect(toasts().length).toBe(0);
   });
 
-  // Errors used to be sticky forever, which meant two or three of them stacked
-  // and stayed for the rest of the session. 12s is past a comfortable read.
+  // A sticky error stacks with the next ones for the rest of the session. 12s is past a
+  // comfortable read.
   it("auto-dismisses a plain error after 12s", () => {
     error("fail");
     flushRaf();
@@ -254,10 +246,8 @@ describe("toast — queue + max-visible", () => {
   });
 });
 
-// A sticky toast never expires, and the stack promotes from its queue only when
-// something is dismissed or times out — so an unbounded sticky set is a stack
-// that stops delivering. One fault is reported per chat, so the copies arrive on
-// their own. See MAX_STICKY.
+// The stack promotes only on a dismiss or expiry, so an unbounded sticky set stops delivering. See
+// MAX_STICKY.
 describe("toast — the sticky set is bounded", () => {
   const retry = { label: "Sign in", onClick: vi.fn() };
 
@@ -285,10 +275,8 @@ describe("toast — the sticky set is bounded", () => {
     expect(texts().some((x) => x.includes("remedy three"))).toBe(true);
   });
 
-  // THE CASE THE CAP EXISTS FOR. Three sticky notices would hold every slot
-  // indefinitely, so this error would sit in the queue unseen for the rest of the
-  // page's life — including the next background chat's, which is the failure the
-  // toast surface is supposed to have removed.
+  // THE CASE THE CAP EXISTS FOR: three sticky notices would hold every slot and queue this error
+  // unseen for the page's life.
   it("lets an ordinary error reach the screen after a third remedy", () => {
     error("remedy one", retry);
     error("remedy two", retry);
@@ -381,5 +369,94 @@ describe("toast — retry button", () => {
     btn.click();
     expect(consoleErr).toHaveBeenCalled();
     consoleErr.mockRestore();
+  });
+});
+
+describe("toast — a server notice carries its own level", () => {
+  it("tints an info notice blue rather than leaving it the neutral base", () => {
+    notice("Switched model", "info");
+    const t = document.querySelector(".uip-toast");
+    expect(t?.classList.contains("uip-toast--notice-info")).toBe(true);
+    info("Plain fact");
+    expect(toasts()[1]?.classList.contains("uip-toast--notice-info")).toBe(false);
+  });
+
+  it("tints a warning amber and keeps it up as long as an error", () => {
+    notice("Rate limited", "warning");
+    const t = document.querySelector(".uip-toast");
+    expect(t?.classList.contains("uip-toast--notice-warning")).toBe(true);
+    flushRaf();
+    vi.advanceTimersByTime(11_000);
+    expect(toasts().length).toBe(1);
+    vi.advanceTimersByTime(1_500);
+    expect(toasts().length).toBe(0);
+  });
+
+  it("gives an error notice the error face", () => {
+    notice("Engine failed", "error");
+    expect(document.querySelector(".uip-toast")?.classList.contains("uip-toast--error")).toBe(true);
+  });
+
+  // The library mounts a queued toast only when a slot frees, so the class cannot be
+  // set at show time.
+  it("tags a notice that mounts later from the queue", async () => {
+    const dismissFirst = info("one");
+    info("two");
+    info("three");
+    notice("Queued warning", "warning");
+    expect(toasts().length).toBe(3);
+    dismissFirst();
+    vi.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    const queued = [...toasts()].find((t) => t.textContent.includes("Queued warning"));
+    expect(queued?.classList.contains("uip-toast--notice-warning")).toBe(true);
+  });
+
+  it("tints the notice and not a plain toast that shares its words", () => {
+    info("Same words");
+    notice("Same words", "warning");
+    const [plain, warned] = [...toasts()];
+    expect(plain?.classList.contains("uip-toast--notice-warning")).toBe(false);
+    expect(warned?.classList.contains("uip-toast--notice-warning")).toBe(true);
+  });
+
+  it("gives a notice dismissed before it mounted no claim on the next toast", async () => {
+    const dismissFirst = info("one");
+    info("two");
+    info("three");
+    const dropQueued = notice("Same words", "warning");
+    info("Same words");
+    dropQueued();
+    dismissFirst();
+    vi.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    const promoted = [...toasts()].find((t) => t.textContent.includes("Same words"));
+    expect(promoted).toBeDefined();
+    expect(promoted?.classList.contains("uip-toast--notice-warning")).toBe(false);
+  });
+
+  it("gives a notice the full queue dropped no claim on the next toast", async () => {
+    const dismissFirst = info("one");
+    info("two");
+    info("three");
+    notice("Dropped warning", "warning");
+    for (let i = 0; i < 20; i++) {
+      info(`queued ${String(i)}`);
+    }
+    dismissFirst();
+    vi.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    const promoted = [...toasts()].find((t) => t.textContent.includes("queued 0"));
+    expect(promoted).toBeDefined();
+    expect(promoted?.classList.contains("uip-toast--notice-warning")).toBe(false);
+  });
+
+  it("renders the action on the notice", () => {
+    const onClick = vi.fn();
+    notice("Elsewhere: retrying", "info", { label: "Open", onClick });
+    const btn = document.querySelector(".uip-toast-retry") as HTMLButtonElement;
+    expect(btn.textContent).toBe("Open");
+    btn.click();
+    expect(onClick).toHaveBeenCalledOnce();
   });
 });

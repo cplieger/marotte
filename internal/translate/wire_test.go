@@ -5,12 +5,9 @@ import (
 	"testing"
 )
 
-// TestACPKiroBlock_SourceIsNestedUnderMetaKiro pins the ONE trap the steer
-// discriminator has: KAS's replay builder writes
-// `{kiro:{…, messageId, timestamp, ...t.source==="steer"?{source:"steer"}:{}}}`,
-// so `source` is a member of `_meta.kiro` and NOT of the update object. Re-nesting
-// it decodes to "" for every frame, which is indistinguishable from a wire that
-// never sent one — so both directions are asserted.
+// TestACPKiroBlock_SourceIsNestedUnderMetaKiro pins that `source` is a member of
+// `_meta.kiro`, not of the update object (KAS's replay builder), in both directions:
+// re-nesting it reads "" for every frame.
 func TestACPKiroBlock_SourceIsNestedUnderMetaKiro(t *testing.T) {
 	t.Run("_meta.kiro.source lands on the field", func(t *testing.T) {
 		var u struct {
@@ -43,10 +40,8 @@ func TestACPKiroBlock_SourceIsNestedUnderMetaKiro(t *testing.T) {
 	})
 }
 
-// TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro pins the same nesting for the
-// prompt tag, in both directions: the resend rule reads it as the positive test that an
-// arriving row is a prompt, so a tag decoded from the update object would read empty for
-// every frame and the rule would never fire.
+// TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro pins the same nesting for the prompt
+// tag, which the resend rule reads as its positive test.
 func TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro(t *testing.T) {
 	t.Run("_meta.kiro.userMessageTag lands on the field", func(t *testing.T) {
 		var u struct {

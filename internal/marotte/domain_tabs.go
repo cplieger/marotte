@@ -1,46 +1,16 @@
 package marotte
 
-// TabKind is what a tab SHOWS. Together with a subject's Ref it NAMES the thing
-// that is open, which is what lets the id be opaque: nothing parses a string
-// prefix to learn that a tab is an editor, so there is no isEditorTabID and no
-// startsWith("__") typing.
-//
-// The set is EXHAUSTIVE and validated at the door — see Valid, and see
-// tabs.Store.Open, which refuses a kind it does not know. A subject carrying an
-// unknown kind is one no client can render: the strip builds its view spec from
-// a total per-kind factory, so a tenth value would reach a switch with no case
-// for it on every connected device at once, and it would already be persisted by
-// then.
-//
-// It lives here rather than in internal/tabs because TabSubject references it and
-// TabSubject is a wire type: a tabs.Kind would make the wire package import tabs
-// while tabs imports the wire package, which is a cycle. That is the whole reason
-// for the placement, and it is why the type carries the Tab prefix its sibling
-// kinds (ToolKind, PushKind, EntryKind) carry too.
+// TabKind is what a tab SHOWS; with a subject's Ref it NAMES the open thing, so the id stays
+// opaque. The set is EXHAUSTIVE and validated at the door (Valid, tabs.Store.Open): the client's
+// per-kind factory is total, so an unknown kind would reach a switch with no case on every device.
+// Here rather than in internal/tabs because TabSubject is a wire type.
 type TabKind string
 
-// The eleven tab kinds. Each string is the wire value AND the client's TabKind
-// union member, so a rename here is a cross-language change.
-//
-// There is deliberately no "plan". The client's TabKind.plan was dead — nothing
-// produced one and its only reference was a toolbar check that could never be
-// true — and it was deleted on 2026-08-25, so declaring it here would put a value
-// back on the wire that nothing opens. roles.ts's "plan" is a MODE id, a
-// different vocabulary that happens to share a word.
-//
-// "subagent" is a DELEGATE EXECUTION read on its own page, and its Ref is the
-// only composite one on this wire: `<chatID>/<agentSubtaskID>`. It has to be,
-// because nothing indexes a subtask id to a chat — there is no subagent endpoint
-// and no cross-chat subtask index — so a ref naming the subtask alone could not
-// be resolved on a cold load. A chat id cannot contain a slash (ids.ValidChatID),
-// so the split is unambiguous; the client owns the codec (tab-materialize.ts).
-//
-// "spec" is one spec directory read as a page; its Ref is the workspace-relative
-// directory (".kiro/specs/<name>" or "<repo>/.kiro/specs/<name>"), because the
-// docs scanner covers every "<repo>/.kiro" root and a bare name is ambiguous
-// across them.
-//
-// "web" is one sandboxed HTML preview; its Ref is the page's absolute path.
+// The eleven tab kinds; each string is the wire value AND the client's TabKind union member, so a
+// rename is a cross-language change. There is no "plan" kind (roles.ts's "plan" is a mode id).
+// "subagent"'s Ref is the only composite one, `<chatID>/<agentSubtaskID>`, since nothing indexes a
+// subtask to a chat; a chat id holds no slash, so the split is unambiguous. "spec"'s Ref is the
+// workspace-relative spec directory; "web"'s is the page's absolute path.
 const (
 	TabKindChat     TabKind = "chat"
 	TabKindEditor   TabKind = "editor"
@@ -94,24 +64,10 @@ func (k TabKind) Valid() bool {
 // Valid first.
 func (k TabKind) Singleton() bool { return tabKinds[k] }
 
-// TabSubject is the SHARED fact about one open tab: what it shows, where it
-// sits, and whether closing it tears the thing down. It is what gets persisted
-// and the only tab shape that crosses the wire.
-//
-// What is NOT here is the point of the split. The client's TabViewSpec — the
-// view selector, the typed route, onShow, onClose, the local activity dot — is
-// produced from a subject by a total per-kind factory, so nothing about
-// activation or teardown moves server-side, and a subject carries no behaviour.
-// The editor's loaded content, dirty state and line selection stay in
-// fileStates; a singleton's lazy import stays in its factory. A factory needs
-// nothing from a subject beyond (Kind, Ref).
-//
-// There is NO Order field: the position in tabs.Store's slice IS the order, so
-// there is one representation of it rather than a slice and an integer that can
-// disagree.
-//
-// Field order is govet fieldalignment's (the pointer-bearing strings lead, the
-// bools trail), not reading order.
+// TabSubject is the SHARED fact about one open tab: what it shows, where it sits, and whether
+// closing it tears the thing down; the only tab shape persisted and on the wire. The client derives
+// its view spec from (Kind, Ref) with a total factory, so no behaviour lives here. No Order field:
+// the slice position is the order. Field order is fieldalignment's.
 type TabSubject struct {
 	// ID is opaque and server-minted (tabs.Store mints it at open). Opaque
 	// because nothing should be able to branch on it: Kind and Ref name the
@@ -147,16 +103,9 @@ type TabSubject struct {
 	Owns bool `json:"owns"`
 }
 
-// OpenTab is the argument to tabs.Store.Open: everything a subject needs that
-// the store cannot mint or derive.
-//
-// An argument struct rather than four positional parameters because Ref and
-// Parent are adjacent same-typed strings — the transposition no compiler and no
-// test can detect — and a struct puts the field name beside every value at the
-// call site.
-//
-// It carries no op_id and no idempotency key: those are the command envelope's,
-// and the store has no opinion about either.
+// OpenTab is the argument to tabs.Store.Open: everything a subject needs that the store cannot
+// mint. A struct because Ref and Parent are adjacent same-typed strings. No op_id: that is the
+// command envelope's.
 type OpenTab struct {
 	// Kind is required and must be one of the eleven (see TabKind.Valid).
 	Kind TabKind `json:"kind"`
@@ -173,17 +122,9 @@ type OpenTab struct {
 	Owns bool `json:"owns,omitempty"`
 }
 
-// TabList is the answer to GET /api/tabs: the open set in order, plus the
-// version it reflects.
-//
-// The two fields travel together because they are ONE fact, captured in one
-// critical section by tabs.Store.List. A caller that read them separately could
-// pair a stale set with a fresh version and then discard the very event the set
-// was missing — which is the defect that killed an earlier revision's SSE-head
-// watermark, where the snapshot and the event hub sat behind different locks.
-//
-// Tabs is never omitted, even when empty: an empty arrangement is a real state
-// (someone closed the last tab) and a missing field would read as "no answer".
+// TabList is the answer to GET /api/tabs: the open set in order plus the version it reflects,
+// captured together by tabs.Store.List so a stale set cannot pair with a fresh version. Tabs is
+// never omitted: an empty arrangement is a real state.
 type TabList struct {
 	// Subject is the `tabs` digest stamp with the hub epoch: the same Version
 	// as below, spelled the way the client's version map reads it.

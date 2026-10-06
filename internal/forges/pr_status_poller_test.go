@@ -1,11 +1,10 @@
 package forges
 
-// D101: push when a pull request you opened flips green or red.
+// Push when a pull request you opened flips green or red.
 //
-// The two gates are the decision's own cost claim ("costs zero with nothing
-// pending"), so they are asserted as ABSENCE OF WORK rather than as absence of a
-// notification: with the gate closed the source is never consulted at all, and with
-// no open PR the per-PR pass never runs.
+// The two gates promise zero cost with nothing pending, so they are asserted as
+// ABSENCE OF WORK rather than as absence of a notification: with the gate closed
+// the source is never consulted at all, and with no open PR the per-PR pass never runs.
 
 import (
 	"context"
@@ -68,7 +67,7 @@ type fakeNotifier struct {
 	sent []sentPush
 }
 
-func (f *fakeNotifier) Send(_ context.Context, _, body string, kind marotte.PushKind, subject marotte.PushSubject) {
+func (f *fakeNotifier) Send(_ context.Context, _, body string, kind marotte.PushKind, subject marotte.PushSubject, _ string) {
 	f.sent = append(f.sent, sentPush{body: body, kind: kind, subject: subject})
 }
 
@@ -473,25 +472,9 @@ func (s *slowSource) Read(context.Context, bool, func(PRConnection, Scope) forge
 	return []ConnectionRead{authoredRead(testConn, ScopePage{}, []WatchedPR{pr(1, checkPending)})}
 }
 
-// TestPoller_SchedulesFromCompletion is the anti-hot-loop rule. A ticker retains one
-// tick while the receiver is busy, so an overlong sweep returned and immediately
-// consumed it — running forge subprocesses back to back with no quiet period at all.
-// Scheduling from completion makes the interval a floor on the GAP.
-//
-// The assertion is on the observed gap between one listing finishing and the next
-// starting, measured by the fixture rather than against the production budget. A
-// ticker leaves that gap at effectively zero, so this fails closed on the old shape.
-//
-// It runs in a synctest BUBBLE, which turns the whole assertion from a tolerance
-// into an equality. Everything in the loop blocks durably — the sweep is a
-// time.Sleep, the wait is a timer receive, teardown is a context cancel and a
-// channel close — so the bubble's clock advances only between them and the gap
-// each iteration leaves is EXACTLY p.tick. Before the bubble this test slept
-// 6*(delay+interval) of real time (measured: 0.72 s, 39% of the package's
-// -race runtime) and could only assert `gap >= interval/2`, because a real
-// timer's imprecision made the whole interval unassertable; the half-interval
-// floor was wide enough that a sweep scheduled 51% early still passed. Now an
-// early schedule of one nanosecond fails.
+// TestPoller_SchedulesFromCompletion is the anti-hot-loop rule: a ticker retains one tick while a
+// sweep runs, so an overlong sweep started another at once; the next sweep is timed from
+// completion.
 func TestPoller_SchedulesFromCompletion(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const interval = 40 * time.Millisecond

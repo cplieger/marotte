@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-// setKiroSettings lays down a kiro-cli-style settings file under a
-// throwaway HOME so IsHookStatusEnabled can be exercised deterministically.
-// Returns the parent HOME dir so callers can extend it if they need to.
+// setKiroSettings writes a kiro-cli settings file under a throwaway HOME, returned for extension.
 func setKiroSettings(t *testing.T, body string) string {
 	t.Helper()
 	home := t.TempDir()
@@ -17,16 +15,13 @@ func setKiroSettings(t *testing.T, body string) string {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if body != "" {
-		// cli.json: the file `kiro-cli settings` actually persists to
-		// (kiroSettingsPath reads it; settings.json doesn't exist on
-		// current installs).
+		// cli.json, where `kiro-cli settings` persists (kiroSettingsPath).
 		if err := os.WriteFile(filepath.Join(dir, "cli.json"), []byte(body), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
 	t.Setenv("HOME", home)
-	// On some CI shells USERPROFILE can shadow HOME; overriding both
-	// keeps os.UserHomeDir deterministic across runners.
+	// Some CI shells let USERPROFILE shadow HOME.
 	t.Setenv("USERPROFILE", home)
 	return home
 }
@@ -52,16 +47,10 @@ func TestIsHookStatusEnabled_cases(t *testing.T) {
 		{"key_not_bool", `{"hooks.showStatus":"yes"}`, true},
 		{"key_false", `{"hooks.showStatus":false}`, false},
 		{"key_true", `{"hooks.showStatus":true}`, true},
-		// json.Unmarshal of a JSON `null` onto *bool is a no-op per
-		// encoding/json docs, so the zero value (false) is returned.
-		// This is a kiro-cli-unreachable path (the setting CLI never
-		// writes null) so either behaviour is defensible; pinning
-		// the observed one here just freezes the current contract.
+		// encoding/json leaves *bool untouched for `null`, so false; kiro-cli never writes null.
 		{"key_null", `{"hooks.showStatus":null}`, false},
 		{"other_keys_only", `{"telemetry.enabled":true}`, true},
-		// Regression for the pre-fix bug: the old code read the
-		// underscore form from marotte's configDir, which meant
-		// flipping the toggle did nothing. Assert the new key wins.
+		// The underscore key in marotte's own config must not decide this.
 		{"snake_case_key_ignored", `{"hooks_show_status":false}`, true},
 	}
 	for _, tc := range cases {

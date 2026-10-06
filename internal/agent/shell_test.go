@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// Scrollback tests now exercise byteRing directly (the old shellSession
-// wrapper is gone; byteRing lives in byte_ring.go and is used by
-// agent_terminal.go).
-
 func TestByteRing_Empty(t *testing.T) {
 	r := newByteRing(64)
 	got := r.Bytes()
@@ -37,10 +33,9 @@ func TestByteRing_Wrap(t *testing.T) {
 
 func TestByteRing_MultiWrap(t *testing.T) {
 	r := newByteRing(4)
-	// Write more than 2x the buffer size.
+	// More than twice the buffer.
 	r.Write([]byte("ABCDEFGHIJ"))
 	got := r.Bytes()
-	// Only the last 4 bytes survive.
 	if string(got) != "GHIJ" {
 		t.Errorf("got %q, want %q", got, "GHIJ")
 	}
@@ -48,7 +43,6 @@ func TestByteRing_MultiWrap(t *testing.T) {
 
 func TestKillShell_NoShellIsOK(t *testing.T) {
 	h, _, _ := newTestHub()
-	// Should not panic.
 	h.shellMgr.kill(t.Context())
 }
 
@@ -61,7 +55,6 @@ func FuzzByteRing(f *testing.F) {
 		const bufSize = 64
 		r := newByteRing(bufSize)
 
-		// Write in random-sized chunks.
 		chunkSize := 7
 		var totalWritten []byte
 		for i := 0; i < len(data); i += chunkSize {
@@ -71,12 +64,11 @@ func FuzzByteRing(f *testing.F) {
 		}
 
 		got := r.Bytes()
-		// Invariant: Bytes() returns the last min(total_written, bufSize) bytes.
+		// Bytes() returns the last min(total_written, bufSize) bytes.
 		wantLen := min(len(totalWritten), bufSize)
 		if len(got) != wantLen {
 			t.Fatalf("Bytes() len=%d, want %d", len(got), wantLen)
 		}
-		// Content must be the tail of totalWritten.
 		tail := totalWritten[len(totalWritten)-wantLen:]
 		if string(got) != string(tail) {
 			t.Fatalf("Bytes() content mismatch:\n got: %q\nwant: %q", got, tail)

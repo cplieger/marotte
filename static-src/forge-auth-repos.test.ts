@@ -16,8 +16,7 @@ const mocks = vi.hoisted(() => ({
   deleteDispatch: vi.fn(),
 }));
 
-// Override only the two dispatches these rows call; the rest of the module
-// stays real so ESM linking resolves every name the graph imports.
+// Only the two dispatches these rows call; the rest stays real so ESM linking resolves every imported name.
 vi.mock("./actions/forge.js", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("./actions/forge.js")>();
@@ -83,7 +82,6 @@ function deps(): RepoDeps {
   };
 }
 
-/** A clone dispatch answering `outcome`. */
 function cloneAnswer(outcome: unknown): { outcome: Promise<unknown> } {
   return { outcome: Promise.resolve(outcome) };
 }
@@ -98,7 +96,6 @@ function cloneButton(cloned: boolean, d: RepoDeps): HTMLButtonElement {
   return btn;
 }
 
-/** What KIRO's row says about its last press, as a repaint would build it. */
 function note(repo: Repo = KIRO): string {
   return renderRepoIdentity(repo).querySelector(".forge-account-error")?.textContent ?? "";
 }
@@ -111,8 +108,7 @@ describe("repo row clone feedback", () => {
     vi.mocked(toastError).mockReset();
   });
 
-  // /api/git/clone answers 200 with {"error": …}; the reason is the row's to say,
-  // beside the control that was pressed.
+  // /api/git/clone answers 200 with {"error": …}; the reason is the row's, beside the pressed control.
   it("says the server's reason in the row when the clone fails, and toasts nothing", async () => {
     const reason = "fatal: destination path '.kiro' already exists and is not an empty directory.";
     mocks.cloneDispatch.mockReturnValue(
@@ -158,8 +154,7 @@ describe("repo row clone feedback", () => {
 });
 
 describe("a repository row's clone state", () => {
-  // ARIA forbids a name on a generic element, so a label on a bare span is dropped
-  // and every row would read the same to a screen reader.
+  // ARIA forbids a name on a generic element, so a label on a bare span is dropped.
   it.each([
     [true, "Cloned"],
     [false, "Remote, not cloned"],
@@ -198,8 +193,6 @@ describe("batch clone outcome", () => {
     };
   }
 
-  // A bare count ("1 of 63 failed") left the user diffing 63 directories to
-  // find the one missing repo; the sentence must NAME what failed.
   it("names the one repo that failed", async () => {
     mocks.cloneDispatch.mockImplementation(({ url }: { url: string }) =>
       cloneAnswer({

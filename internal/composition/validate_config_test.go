@@ -9,19 +9,8 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// TestCheckDirWritable covers the probe's verdicts and the property the
-// hand-rolled create-close-remove probe it replaced could not offer.
-//
-// The old probe discarded its close and remove errors, so its only testable
-// contract was "writable dir passes, missing dir fails". Two cases below are new
-// defences on the adopted primitive: a successful probe leaves the directory as
-// it found it (the old probe's leftover, on the remove-refused path, was named
-// nothing this app sweeps), and a file passed where a directory belongs is
-// rejected before any probe runs. The teardown-failure branch (a directory that
-// accepts a write and refuses the unlink, now a WARN rather than a silent pass)
-// needs a filesystem that denies unlink to a UID that may write, which a unit
-// test cannot arrange portably; the leak it can produce is covered instead by
-// TestSweepStaleTemps_reclaims_a_leaked_writability_probe.
+// TestCheckDirWritable covers the probe's verdicts, including a teardown failure after a flushed
+// write, which warns rather than fails.
 func TestCheckDirWritable(t *testing.T) {
 	t.Run("writable dir returns nil", func(t *testing.T) {
 		dir := t.TempDir()
@@ -66,13 +55,8 @@ func TestCheckDirWritable(t *testing.T) {
 	})
 }
 
-// TestCheckDirWritable_ProbeNameIsSweepable pins the app-to-library agreement the
-// adoption bought: whatever name the writability probe creates, this repo's own
-// stale-temp sweep recognises it. The probe that used to run here invented
-// ".marotte-probe-*", which sweepStaleTemps walks straight past, so a directory
-// that refused the unlink left a file nothing would ever reclaim. Asserting
-// through the exported generator and predicate keeps the agreement checked rather
-// than documented.
+// TestCheckDirWritable_ProbeNameIsSweepable asserts that whatever name the writability probe creates,
+// sweepStaleTemps recognises it.
 func TestCheckDirWritable_ProbeNameIsSweepable(t *testing.T) {
 	name := atomicfile.TempName()
 	if !atomicfile.IsPackageTemp(name) {
@@ -83,13 +67,8 @@ func TestCheckDirWritable_ProbeNameIsSweepable(t *testing.T) {
 	}
 }
 
-// TestValidateConfig_MissingCLIIsNotFatal pins the degraded-start posture
-// (invariant 6): a kiro-cli the server cannot reach must not abort boot, and
-// validation must not probe for one at all. On a first boot the install is still
-// running when this executes, so any check here would fail on every healthy cold
-// start. The failure surfaces through /api/health instead, which carries the
-// install manager's own reason -- never through a fatal validation error that
-// would erase the UI and the diagnostics page together.
+// TestValidateConfig_MissingCLIIsNotFatal asserts that validation must not probe for kiro-cli, which may still
+// be installing.
 func TestValidateConfig_MissingCLIIsNotFatal(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &Config{ConfigDir: dir, WorkDir: dir}
@@ -98,16 +77,8 @@ func TestValidateConfig_MissingCLIIsNotFatal(t *testing.T) {
 	}
 }
 
-// TestValidateConfig_PropagatesAnUnusableConfigDir pins that the config-dir
-// verdict actually reaches the caller.
-//
-// The two checks are collected into one joined error so the operator sees both
-// problems at once, and errors.Join drops nils — which means a verdict that is
-// gathered but never joined disappears without a trace. That is the one outcome
-// this function must never produce: chat files, settings, mcp.json and checkpoints
-// all live in this directory, so a boot that proceeds past an unusable one gets a
-// cryptic 500 out of a handler minutes later instead of the startup message
-// naming the variable to fix.
+// TestValidateConfig_PropagatesAnUnusableConfigDir asserts that the config-dir verdict reaches the caller,
+// joined with the other check so both are seen.
 func TestValidateConfig_PropagatesAnUnusableConfigDir(t *testing.T) {
 	work := t.TempDir()
 

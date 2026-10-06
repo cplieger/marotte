@@ -1,11 +1,5 @@
-// ---------------------------------------------------------------------------
-// Git Pull Requests tab: per-repo collapsible sections rendered into
-// #git-prs-mount, each listing its open PRs with their quick actions.
-//
-// The rows are the server's inventory (git-prs-state.ts holds it): one GET,
-// then one forge_inventory frame per connection per cycle. git-prs-watch.ts
-// tells the server while the list is on screen.
-// ---------------------------------------------------------------------------
+// Per-repo collapsible sections in #git-prs-mount, each listing its open PRs and their actions. Rows are the server's
+// inventory (git-prs-state.ts): one GET, then one forge_inventory frame per connection per cycle.
 
 import { join } from "@cplieger/keyenc";
 
@@ -96,26 +90,20 @@ import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { iconEl } from "./icon-el.js";
 
-// --- Types ---
-
 import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 
-// --- State ---
-
 let filterText = "";
-/** Each section's disclosure, so a later paint can re-decide its open state:
- *  reconcile keeps the section ELEMENT across paints, so the mount's decision was
- *  the only one ever made and a filter typed afterwards could select a row inside
- *  a region the reader had collapsed. */
+/** Each section's disclosure, so every paint re-decides its open state: reconcile keeps the section element. */
 const disclosures = new WeakMap<HTMLElement, DisclosureController>();
-/** The reader's own toggles, by `groupKey`: the resting arrangement a repaint
- *  respects and a filter outranks (`wantOpen`). Only a USER toggle is recorded, or
- *  the opens this module performs would be read back as the reader's wish. */
+/**
+ * The reader's own toggles by `groupKey`, which a repaint respects and a filter outranks. Only user toggles are
+ * recorded, or this module's own opens would read back as the reader's wish.
+ */
 const readerToggled = new Map<string, boolean>();
-/** The pull request a notification asked to be focused, as `prIdentity` spells it.
- *  A ONE-SHOT slot consumed on success, modelled on run-view.ts's `focusRequest`:
- *  a notification click is a single event with no later render that legitimately
- *  re-asserts it, so RECORDING it would re-scroll the reader on every later paint. */
+/**
+ * A one-shot slot (as `prIdentity` spells it), consumed on success: recording it would re-scroll the reader on every
+ * later paint.
+ */
 let pendingFocus = "";
 /** Whether this request has already spent its one healing refresh. */
 let focusRefreshed = false;
@@ -128,11 +116,8 @@ function groupKey(g: RepoGroup): string {
   return join(g.forge_id, g.repo_id);
 }
 
-/** The Contributions elsewhere group's key in `readerToggled`, which no
- *  two-part `groupKey` can spell. */
+/** The Contributions elsewhere key, which no two-part `groupKey` can spell. */
 const ELSEWHERE_KEY = join("elsewhere");
-
-// --- Public API ---
 
 let prsInited = false;
 
@@ -152,16 +137,13 @@ export const prsFind: SearchPopup = createSearchPopup<null>({
   },
 });
 
-/** The filter's unit is the pull request on both axes: a match IS a row, and the
- *  scan reads every row in memory. */
+/** The unit is the pull request on both axes: a match is a row, and the scan reads every row in memory. */
 const NOUNS: Nouns = {
   match: { one: "pull request", many: "pull requests" },
   scanned: { one: "pull request", many: "pull requests" },
 };
 
-/** The note under the box: `total` rows in memory, `shown` surviving the filter.
- *  Silent with no filter, because a count restating the list is noise and this
- *  surface has no cut of its own to report. */
+/** Silent with no filter: a count restating the list is noise. */
 function noteFor(total: number, shown: number): string {
   if (filterText === "") {
     return "";
@@ -172,8 +154,7 @@ function noteFor(total: number, shown: number): string {
   return emptyNote(classify({ matched: 0, shown: 0, scanned: total, truncated: false }), NOUNS);
 }
 
-// The labels a row renders AND the filter reaches, spelled once so the two
-// cannot drift.
+// Spelled once, so the rendered labels and the filter's cannot drift.
 const DRAFT_LABEL = "draft";
 const AUTO_MERGE_LABEL = "auto-merge";
 const MERGE_LABEL = "Merge";
@@ -183,7 +164,6 @@ const REOPEN_LABEL = "Reopen";
 const CLOSE_LABEL = "Close";
 const UNDO_LABEL = "Undo";
 
-/** What the Undo bar of a pull request waiting out its close says. */
 function closingText(pr: PR): string {
   return `PR #${String(pr.number)} closes in a few seconds.`;
 }
@@ -192,8 +172,7 @@ function numberLabel(pr: PR): string {
   return `#${String(pr.number)}`;
 }
 
-/** The authorship read-out under the title, as one string: the row renders the
- *  parts joined, so the joined form is what a reader sees and types back. */
+/** One string, as the row renders the parts joined, so what a reader sees is what they type back. */
 function subText(pr: PR): string {
   const parts: string[] = [];
   if (pr.author !== undefined && pr.author !== "") {
@@ -208,9 +187,7 @@ function subText(pr: PR): string {
   return parts.join(" · ");
 }
 
-/** The strings a row's title and sub lines show: `number`, the title, the
- *  draft and auto-merge tags, the check chip and the authorship line, plus the
- *  state the forge reports. `appendSummary` renders the same pieces. */
+/** `appendSummary` renders the same pieces. */
 function summaryText(pr: PR, number: string): string[] {
   return [
     number,
@@ -224,11 +201,10 @@ function summaryText(pr: PR, number: string): string[] {
   ];
 }
 
-/** Every string a PR row shows a reader, in ONE list: its summary, the notes
- *  saying why a control is disabled, its last press's outcome and the action
- *  labels it offers. The census in git-prs-tab-filter.test.ts types every rendered
- *  string back into the box, so a string on the row is never one the filter
- *  cannot reach. */
+/**
+ * Every string a PR row shows, in one list, so the filter reaches anything on the row (census in
+ * git-prs-tab-filter.test.ts).
+ */
 function rowText(g: RepoGroup, pr: PR): string[] {
   if (closing.has(rowId(g, pr))) {
     return [closingText(pr), UNDO_LABEL];
@@ -247,13 +223,11 @@ function rowText(g: RepoGroup, pr: PR): string[] {
   ];
 }
 
-/** A contribution's number, with the repository it names, since the group
- *  spans repositories. */
+/** The group spans repositories, so the label names the repository. */
 function elsewhereLabel(pr: PR): string {
   return `${pr.repo}${numberLabel(pr)}`;
 }
 
-/** The contributions the current filter admits. */
 function filteredElsewhere(rows: readonly ElsewherePR[]): ElsewherePR[] {
   if (filterText === "") {
     return [...rows];
@@ -267,13 +241,11 @@ function prMatches(g: RepoGroup, pr: PR): boolean {
   return rowText(g, pr).join("\n").toLowerCase().includes(filterText);
 }
 
-/** A repo NAME match admits every PR in it: naming a repo is a request to see
- *  that repo, the rule the Changes tab already follows. */
+/** A repo name match admits every PR in it, as on the Changes tab. */
 function groupMatches(g: RepoGroup): boolean {
   return filterText !== "" && g.full_name.toLowerCase().includes(filterText);
 }
 
-/** The rows of `g` the current filter admits. */
 function filteredPRs(g: RepoGroup): PR[] {
   if (filterText === "" || groupMatches(g)) {
     return g.prs;
@@ -281,24 +253,22 @@ function filteredPRs(g: RepoGroup): PR[] {
   return g.prs.filter((pr) => prMatches(g, pr));
 }
 
-/** Whether a section shows its body. A filter outranks everything: every section
- *  it admits holds a row it selected, and a selected row inside a collapsed region
- *  is one the reader cannot see and nothing on screen says exists. Otherwise the
- *  reader's own toggle stands, and a repo nobody has touched opens. */
+/**
+ * A filter outranks everything, or a selected row sits invisible in a collapsed region. Otherwise the reader's toggle
+ * stands, and an untouched repo opens.
+ */
 function wantOpen(g: RepoGroup): boolean {
   if (filterText !== "") {
     return true;
   }
-  // A standing focus request force-opens ITS group and writes no `readerToggled`
-  // entry, so the reader's own collapse survives the visit.
+  // The focus request force-opens its group without a `readerToggled` entry, so the reader's collapse survives.
   if (holdsPendingFocus(g)) {
     return true;
   }
   return readerToggled.get(groupKey(g)) ?? true;
 }
 
-/** Whether the Contributions elsewhere group shows its body: closed until the
- *  reader opens it, and open under the rules `wantOpen` states. */
+/** Closed until the reader opens it; otherwise as `wantOpen`. */
 function wantElsewhereOpen(rows: readonly ElsewherePR[]): boolean {
   if (filterText !== "") {
     return true;
@@ -312,12 +282,10 @@ function wantElsewhereOpen(rows: readonly ElsewherePR[]): boolean {
   return readerToggled.get(ELSEWHERE_KEY) ?? false;
 }
 
-/** Does the arriving identity name a row of `g`?
- *
- *  An exact comparison: the server mints the subject from the same canonical
- *  `repo_id` the row carries, so the two spellings cannot differ. The identity is
- *  COMPARED and never parsed: a forge id is itself `<kind>:<host>`, so the key is
- *  not self-delimiting. */
+/**
+ * Compared exactly and never parsed: the server mints the subject from the same `repo_id`, and a forge id
+ * (`<kind>:<host>`) is not self-delimiting.
+ */
 function holdsPendingFocus(g: RepoGroup): boolean {
   if (pendingFocus === "") {
     return false;
@@ -329,16 +297,12 @@ function holdsPendingFocus(g: RepoGroup): boolean {
 export function requestPRFocus(identity: string): void {
   pendingFocus = identity;
   focusRefreshed = false;
-  // A PAINT, not just a frame: the per-request force-open reaches the disclosure only
-  // through `paintGroupBody`, and a row inside a closed section has no box to scroll
-  // to. Safe before the tab is materialized too — `paintInner` early-returns with no
-  // mount, so the request stands and the activation's own paint consumes it.
+  // A paint, not a frame: the force-open reaches the disclosure only through `paintGroupBody`. Safe before the tab
+  // exists: `paintInner` returns early and the activation's paint consumes the request.
   paint();
 }
 
-/** Spend a standing request against the painted DOM. Idempotent: the slot is cleared
- *  BEFORE the scroll, so a request both repainted directly and picked up by a later
- *  paint cannot double-scroll. */
+/** The slot clears before the scroll, so a request repainted directly and by a later paint cannot double-scroll. */
 function attemptFocus(): void {
   if (pendingFocus === "") {
     return;
@@ -347,13 +311,11 @@ function attemptFocus(): void {
   if (root === null) {
     return;
   }
-  // One lookup, against the row attribute `renderPRRow` writes, compared exactly as
-  // `holdsPendingFocus` compares.
+  // Compared exactly, as `holdsPendingFocus` does.
   const row = root.querySelector<HTMLElement>(`[data-pr="${CSS.escape(pendingFocus)}"]`);
   if (row === null) {
-    // A list stale by one merge heals once; a wrong identity costs one fetch and then
-    // lands the reader on the PRs tab with no selection, never an error and never a
-    // wrong row. The slot stands, so the refresh's own paint retries.
+    // One healing refresh: a stale list heals, a wrong identity costs one fetch and leaves no selection. The slot stands
+    // so the refresh's paint retries.
     if (focusRefreshed) {
       pendingFocus = "";
       return;
@@ -386,9 +348,7 @@ export function initPRsTab(): void {
     });
   }
 
-  // The PRs list depends on which forges are connected, and the inventory drops
-  // a connection that went. A reconnect can change what a connection may do, so
-  // its capabilities and refusals are read again.
+  // The list depends on connected forges, and a reconnect can change a connection's capabilities and refusals.
   onSSE("forges_changed", () => {
     rerunCaps.clear();
     rerunRefused.clear();
@@ -408,9 +368,8 @@ export function initPRsTab(): void {
       });
     }
   });
-  // A close waiting out its window is one the reader asked for. Leaving the
-  // list in the app sends it now; a hidden page keeps its window, and the page
-  // going away sends it by the request that outlives the unload.
+  // A close waiting out its window is one the reader asked for: leaving the list sends it now, a hidden page keeps its
+  // window, and an unload sends it by the request that outlives the page.
   observePRView((watching) => {
     postWatch(watching);
     if (!watching && document.visibilityState === "visible") {
@@ -434,17 +393,17 @@ function postWatch(watching: boolean): void {
   );
 }
 
-/** How long a refresh press waits for its cycle: a cycle normally ends well
- *  inside the poller's own 60 s interval (PRPollInterval), plus a 30 s margin. */
+/** A cycle normally ends inside the poller's 60 s interval, plus a 30 s margin. */
 const REFRESH_BOUND_MS = 90_000;
 
 /** The press the refresh button waits on: the cycle the refresh route named for
  *  it, and how it ends. */
 let press: { cycle: string; finish: (sentence: string | null) => void } | null = null;
 
-/** Ask the poller for a cycle and resolve once every connected connection holds
- *  an entry from it or a later one. A refusal, a connection the cycle could not
- *  read, or the bound running out rejects, with its sentence in `status`. */
+/**
+ * Resolves once every connected connection holds an entry from that cycle or later. A refusal, an unread
+ * connection, or the bound running out rejects with its sentence in `status`.
+ */
 function pressRefresh(status: HTMLElement): Promise<void> {
   status.textContent = "";
   return new Promise<void>((resolve, reject) => {
@@ -489,8 +448,7 @@ function pressRefresh(status: HTMLElement): Promise<void> {
   });
 }
 
-/** End the waiting press once the held entries reach its cycle. Completion is
- *  read off each entry's cycle id, never off a frame's arrival. */
+/** Completion is read off each entry's cycle id, never off a frame's arrival. */
 function settlePress(): void {
   if (press === null) {
     return;
@@ -515,9 +473,10 @@ interface RefreshOptions {
 /** The newest `refreshPRs` call, which a superseded one waits out. */
 let newestRefresh: Promise<void> = Promise.resolve();
 
-/** Read the inventory and repaint. Safe to call multiple times; only the latest
- *  result wins, and a call a newer one superseded settles when that one has, so a
- *  caller awaiting it can read what was painted. */
+/**
+ * Read the inventory and repaint. Only the latest result wins; a superseded call settles when the newer one has, so a
+ * caller awaiting it can read what was painted.
+ */
 export function refreshPRs(externalSignal?: AbortSignal, opts: RefreshOptions = {}): Promise<void> {
   const run = readAndPaintPRs(externalSignal, opts);
   newestRefresh = run;
@@ -532,8 +491,7 @@ async function readAndPaintPRs(
   refreshController?.abort();
   refreshController = new AbortController();
   const signal = AbortSignal.any([refreshController.signal, AbortSignal.timeout(20_000)]);
-  // Honour external signal (e.g. from action framework).
-  // Capture local ref to avoid stale closure over module-level refreshController.
+  // A local ref, so the closure does not see a later refreshController.
   const myController = refreshController;
   if (externalSignal) {
     externalSignal.addEventListener(
@@ -545,8 +503,7 @@ async function readAndPaintPRs(
     );
   }
 
-  // The 150ms show delay keeps a warm read from flashing placeholders, and the
-  // signal suppresses the skeleton outright for a superseded refresh.
+  // The 150ms show delay keeps a warm read from flashing placeholders; the signal suppresses it for a superseded refresh.
   const root = document.getElementById("git-prs-mount");
   const skeleton = inventoryHeld() ? null : skeletonTiming(() => showPRSkeleton(root), { signal });
 
@@ -573,9 +530,7 @@ async function readAndPaintPRs(
       await newerSettled();
       return;
     }
-    // The action's toast is transient and every empty state below describes a
-    // SUCCESSFUL read, so a failure has to say so in the pane or the reader is
-    // left with a blank one.
+    // The toast is transient and every empty state below means success, so a failure must say so in the pane.
     if (root !== null) {
       paintLoadError(root, err);
     }
@@ -585,18 +540,16 @@ async function readAndPaintPRs(
   }
 }
 
-/** Settles with the newest refresh; its failure is that call's to report. */
+/** Its failure is that call's to report. */
 async function newerSettled(): Promise<void> {
   await newestRefresh.catch(() => undefined);
 }
 
-/** The connection rows and the inventory, or null when the read was aborted.
- *  Throws when either could not be read. */
+/** Null when the read was aborted; throws when either could not be read. */
 async function readInventory(
   signal: AbortSignal,
 ): Promise<{ forges: ConfiguredForge[]; list: InventoryList } | null> {
-  // The forge list comes from the shared store rather than a fetch of this
-  // module's own; it supplies each connection's kind and host.
+  // From the shared store, which supplies each connection's kind and host.
   const [forgesRes, list] = await Promise.all([
     ensureForges(),
     apiGetTyped("/api/forges/inventory", decodeInventoryList, signal),
@@ -613,20 +566,15 @@ async function readInventory(
   return { forges: forgesRes.forges, list };
 }
 
-/** A connected forge the inventory has not answered for yet is one the poller has
- *  not read; ask it to. */
+/** A connected forge the inventory has not answered for is one the poller has not read; ask it to. */
 function askForMissingEntries(): void {
   if (connectedForges().some((f) => heldEntry(f.id) === undefined)) {
     void requestPRCycle.dispatch();
   }
 }
 
-// --- Loading + failure states ---
-
-/** Placeholder sections while the first inventory read is in flight. */
 function showPRSkeleton(root: HTMLElement | null): () => void {
-  // The painter is shared with the Changes tab (skeleton.ts): both tabs stand in
-  // for the same `.git-repo-section` shape, so its geometry has one definition.
+  // Shared with the Changes tab (skeleton.ts): both stand in for `.git-repo-section`, so its geometry has one definition.
   return paintPlaceholder(root, () =>
     gitRepoSkeleton({
       label: "Loading pull requests\u2026",
@@ -657,7 +605,6 @@ interface ConnectionState {
   lapsed: boolean;
 }
 
-/** The connections painted as a state, in id order. */
 function connectionStates(): ConnectionState[] {
   const out: ConnectionState[] = lapsedForges().map((forge) => ({
     forge,
@@ -678,13 +625,11 @@ function connectionStates(): ConnectionState[] {
   return out.sort((a, b) => a.forge.id.localeCompare(b.forge.id));
 }
 
-/** Whether a connection's state is that its first entry has not arrived. */
 function loading(s: ConnectionState): boolean {
   return !s.lapsed && (s.entry === undefined || s.entry.state === "loading");
 }
 
-/** What a listed entry's lists have not read: a scope whose walk goes on, a scope
- *  cut short, and a list that failed beside the ones that were read. */
+/** A scope whose walk goes on, a scope cut short, and a list that failed beside the read ones. */
 function entryNotes(forge: ConfiguredForge, e: InventoryEntry): string[] {
   if (e.state !== "ready" && e.state !== "partial") {
     return [];
@@ -747,8 +692,7 @@ function renderConnectionState(s: ConnectionState): HTMLElement {
 
 const RECONNECT_WORDS = "this account needs a new sign-in. Reconnect it in Sources.";
 
-/** A failed entry's error in words, from its code and kind: the inventory carries
- *  no upstream message. */
+/** From its code and kind: the inventory carries no upstream message. */
 function inventoryErrorText(e: InventoryEntry): string {
   const err = e.error;
   if (e.credential === "reconnect_required" || err?.code === "reconnect_required") {
@@ -788,14 +732,10 @@ function waitWords(e: InventoryEntry): string {
   return `It can be read again in ${String(left)} second${left === 1 ? "" : "s"}.`;
 }
 
-// --- Render ---
-
 function paint(): void {
   preserveGitScroll(paintInner);
-  // Registered AFTER preserveGitScroll returns, because its own scroll restore is a
-  // requestAnimationFrame (git-scroll.ts, its last statement): second in that frame's
-  // list is what lets the scroll into view win. Guarded, so a settled tab schedules
-  // nothing.
+  // Registered after preserveGitScroll returns, so it runs after that function's own rAF scroll restore and the scroll
+  // into view wins. Guarded, so a settled tab schedules nothing.
   if (pendingFocus !== "") {
     requestAnimationFrame(attemptFocus);
   }
@@ -813,7 +753,7 @@ function paintInner(): void {
   const states = connectionStates();
   setBusy(root, states.some(loading));
 
-  // A toggle for a repo the inventory no longer lists describes nothing.
+  // A toggle for a repo no longer listed describes nothing.
   const active = new Set(groups.map(groupKey));
   if (elsewhere.length > 0) {
     active.add(ELSEWHERE_KEY);
@@ -834,9 +774,7 @@ function paintInner(): void {
     return;
   }
 
-  // Which groups survive the filter, and how many rows do. ONE predicate, read
-  // here for the note and the section list and again in paintGroupBody for the
-  // rows: a repo NAME match admits every PR in it.
+  // One predicate, read here for the note and the section list and in paintGroupBody for the rows.
   const visible: RepoGroup[] = [];
   let total = 0;
   let shown = 0;
@@ -855,10 +793,9 @@ function paintInner(): void {
   askCapabilities(groups);
   pruneRowState(groups);
 
-  // A connection still loading or failed is not "caught up", so its state is the
-  // pane's content even with no rows to show.
+  // A connection still loading or failed is not "caught up", so its state is the pane's content.
   if (visible.length === 0 && states.length === 0 && shownElsewhere.length === 0) {
-    // No hint under a filter: the note above the pane already says what it found.
+    // No hint under a filter: the note above already says what it found.
     root.innerHTML =
       filterText === ""
         ? renderEmptyState({
@@ -870,7 +807,6 @@ function paintInner(): void {
     return;
   }
 
-  // Drop any prior non-keyed empty-state placeholder before reconciling.
   for (const child of [...root.children]) {
     if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
       child.remove();
@@ -885,14 +821,8 @@ function paintInner(): void {
   }
   reconcile(root, items, {
     key: paneKey,
-    // The mount builds the section CHROME only and fills the body through the
-    // same paint the update path uses, so EVERY PR row in the DOM comes from a
-    // keyed reconcile and carries its key. A mount that appended rows itself
-    // left them unkeyed, and reconcile builds its existing-children map from
-    // keyed children alone: the next paint could neither match nor remove
-    // them, so it appended a second full copy of the list after the first and
-    // the stale copy kept its own fetch's merge_blocked: the same list twice,
-    // the first with Merge disabled.
+    // The mount builds the chrome only and fills the body through the update path, so every row comes from a keyed
+    // reconcile. An unkeyed row cannot be matched or removed, and the next paint would append a second copy.
     mount: (it) => {
       if ("connection" in it) {
         const box = renderConnectionState(it.connection);
@@ -956,9 +886,10 @@ function connectionSig(s: ConnectionState): string[] {
   ];
 }
 
-/** Refresh a kept group section's count, body content and open state. Header
- *  identity is preserved across paints; the open state is decided again, because
- *  the mount's decision is the only one a kept element would otherwise ever get. */
+/**
+ * Header identity is kept across paints; the open state is decided again, or a kept element only ever gets the
+ * mount's decision.
+ */
 function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   const meta = section.querySelector(".git-repo-section-meta");
   if (meta !== null) {
@@ -978,16 +909,13 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   if (body === null) {
     return;
   }
-  // Content lives on the disclosure region's inner wrapper (the region itself
-  // is owned by createDisclosure — never replaceChildren() it, that would drop
-  // the wrapper and break the collapse). Mutate the inner wrapper instead.
+  // createDisclosure owns the region; replaceChildren() on it would drop the wrapper and break the collapse.
   const inner = body.querySelector<HTMLElement>(":scope > .git-repo-section-body-inner");
   if (inner === null) {
     return;
   }
 
-  // A group holds at least one row and the pane lists it only when the filter
-  // admits one, so the list is never empty.
+  // The pane lists a group only when the filter admits a row, so the list is never empty.
   const filtered = filteredPRs(g);
   let list = inner.querySelector<HTMLElement>(":scope > .git-pr-list");
   if (list === null) {
@@ -1001,14 +929,8 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
       sigChanged(row, rowSig(g, pr));
       return row;
     },
-    // A surviving row is repainted, or it keeps its first paint's state
-    // forever: merge_blocked is per-fetch (`checks_running` and `unknown`
-    // while the forge computes mergeability), so a PR whose checks went
-    // green would hold a disabled Merge button until its section remounted.
-    // The <li>'s own `data-pr` is derived from fields a repaint cannot move, so
-    // replacing its children is the whole row — the same shape as the Changes
-    // tab's section update.
-    // Guarded, because it is polled and the row holds four buttons and two anchors.
+    // A surviving row is repainted: merge_blocked is per fetch, so a kept row would hold a disabled Merge after its
+    // checks went green. `data-pr` comes from fields a repaint cannot move. Guarded, since it is polled.
     update: (row: HTMLElement, pr: PR) => {
       if (!sigChanged(row, rowSig(g, pr))) {
         return;
@@ -1018,8 +940,6 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
     },
   });
 }
-
-// --- Empty-state markup helpers ---
 
 function renderEmptyState(opts: { icon: string; title: string; hint?: string }): string {
   const hint =
@@ -1036,10 +956,7 @@ function renderEmptyState(opts: { icon: string; title: string; hint?: string }):
 function renderGroup(g: RepoGroup): HTMLElement {
   const section = el("section", { className: "git-repo-section", "data-repo": g.full_name });
 
-  // Header is a flex container that hosts: chevron + forge icon +
-  // name + count (left side, the disclosure trigger), and a right-aligned
-  // [+ New PR] button. The button's stopPropagation keeps the
-  // toggle from firing when the user clicks New PR.
+  // The New PR button's stopPropagation keeps the toggle from firing.
   const header = el("div", { className: "git-repo-section-header git-repo-section-header-row" });
 
   const toggle = el("button", {
@@ -1072,14 +989,8 @@ function renderGroup(g: RepoGroup): HTMLElement {
 
   section.appendChild(header);
 
-  // Body — the collapsing disclosure region (same pattern as the Changes tab).
-  // The dedicated toggle button is the trigger; the + New PR button is a
-  // sibling that already stopPropagation()s, so it stays unaffected. Content
-  // lives on the inner wrapper so its padding collapses with the height.
-  //
-  // The wrapper is left EMPTY here: paintGroupBody fills it, on the mount and
-  // on every later paint. An open disclosure settles to height:auto, so
-  // content added after this call grows the region normally.
+  // Left empty here: paintGroupBody fills it on mount and every paint. An open disclosure settles to height:auto, so
+  // later content grows the region.
   const body = el("div", { className: "git-repo-section-body" });
   const inner = el("div", { className: "git-repo-section-body-inner" });
   body.appendChild(inner);
@@ -1099,9 +1010,7 @@ function renderGroup(g: RepoGroup): HTMLElement {
   return section;
 }
 
-/** The Contributions elsewhere group's chrome: a section closed by default,
- *  filled by `paintElsewhereBody`. It offers no + New PR, since none of its
- *  repositories is the account's. */
+/** Closed by default and filled by `paintElsewhereBody`; no New PR, since none of its repositories is the account's. */
 function renderElsewhere(): HTMLElement {
   const section = el("section", { className: "git-repo-section", "data-group": "elsewhere" });
   const header = el("div", { className: "git-repo-section-header git-repo-section-header-row" });
@@ -1172,9 +1081,7 @@ function paintElsewhereBody(section: HTMLElement, view: ElsewhereView): void {
   });
 }
 
-/** A contribution's row: the summary a repository section's row shows, its
- *  number naming the repository, and no action, since the account may hold no
- *  right there; its link is the way to act. */
+/** No action, since the account may hold no right there; its link is the way to act. */
 function renderElsewhereRow(r: ElsewherePR): HTMLElement {
   const li = el("li", {
     className: "git-pr-row git-pr-row-readonly",
@@ -1184,20 +1091,13 @@ function renderElsewhereRow(r: ElsewherePR): HTMLElement {
   return li;
 }
 
-/** Append a row's title line (`number` and the title, one link to the forge
- *  when the row has a URL) and its sub line (the tags, the check chip and the
- *  authorship). `summaryText` lists the same strings for the filter. */
+/** `summaryText` lists the same strings for the filter. */
 function appendSummary(li: HTMLElement, pr: PR, number: string): void {
-  // ONE identity element for the whole title line: the number and the title
-  // resolved to the same href, so two anchors meant two tab stops, two hover
-  // underlines and two tooltips for one destination. The number rides INSIDE
-  // the link as a span, which keeps its mono/accent treatment without being a
-  // second control.
+  // One identity element for the title line: the number and title share an href, so two anchors would be two tab stops
+  // for one destination. The number rides inside as a span.
   const hasURL = pr.url !== undefined && pr.url !== "";
   const num = el("span", { className: "git-pr-row-number" }, number);
-  // The text needs its own span because the ellipsis clip cannot sit on the link:
-  // it would cut away the expander carrying the link's hit region
-  // (22-git-multirepo.css states the trade).
+  // The ellipsis clip cannot sit on the link: it would cut away the expander carrying the hit region.
   const text = el("span", { className: "git-pr-row-text" }, pr.title);
   const title = hasURL
     ? el("a", { className: "git-pr-row-title", target: "_blank", rel: "noreferrer" }, num, text)
@@ -1208,21 +1108,14 @@ function appendSummary(li: HTMLElement, pr: PR, number: string): void {
   title.setAttribute("data-tooltip", pr.title);
   li.appendChild(title);
 
-  // Sub line: the status chips lead it, the authorship read-out follows.
-  // The chips used to ride the TITLE line, where the title's flex:1 pushed
-  // them to the far edge of the text column and a long title ellipsised into
-  // them — so the row's most-read element was the one that lost width. Under
-  // the title they sit beside the other per-PR facts, and the title gets the
-  // whole line.
+  // Chips lead the sub line so a long title does not ellipsise into them on the title line.
   const sub = el("div", { className: "git-pr-row-sub" });
 
   if (pr.draft === true) {
     sub.appendChild(el("span", { className: "git-pr-row-tag" }, DRAFT_LABEL));
   }
 
-  // Check status rides the row because it arrives in the list call that
-  // already ran, not a per-row fetch. A forge that reports no CI state gets
-  // no chip rather than a fabricated one.
+  // Check status comes in the list call already made. A forge with no CI state gets no chip.
   const chip = checkChip(pr);
   if (chip !== null) {
     const chipEl = el("span", { className: `git-pr-row-tag ${chip.className}` }, chip.text);
@@ -1252,20 +1145,17 @@ function appendSummary(li: HTMLElement, pr: PR, number: string): void {
   li.appendChild(sub);
 }
 
-// --- Row state: capabilities, refusals, presses ---
-
-/** Each connection's `rerun_checks` capability, null when its read failed;
- *  absent until it answers. Kept until the connections change. */
+/** Null when its read failed; absent until it answers. Kept until the connections change. */
 const rerunCaps = new Map<string, Affordance | null>();
 const capsAsked = new Set<string>();
-/** The reason a coded re-run refusal left on a repository (`join(forge_id,
- *  repo_id)`), for the life of the list: until the connections change. */
+/** By `join(forge_id, repo_id)`, for the life of the list. */
 const rerunRefused = new Map<string, string>();
-/** The row actions whose request is in flight, by row identity and label, so a
- *  repaint while one runs renders its button busy. */
+/** In-flight row actions by row identity and label, so a repaint while one runs renders its button busy. */
 const pressing = new Map<string, Set<string>>();
-/** The last press's sentence per row. An error stands until the row's next
- *  press; a success until its connection's next entry, the forge's own word. */
+/**
+ * The last press's sentence per row. An error stands until the row's next press; a success until its connection's
+ * next entry, the forge's own word.
+ */
 const outcomes = new Map<string, { text: string; error: boolean; cycle: string }>();
 const NOTHING_PRESSED: ReadonlySet<string> = new Set();
 let noteSeq = 0;
@@ -1281,8 +1171,7 @@ function addressOf(g: RepoGroup): string {
   return repointed.get(groupKey(g))?.repo_id ?? g.repo_id;
 }
 
-/** Read the capabilities of each connection a failing row's Re-run waits on,
- *  once until the connections change. */
+/** Once until the connections change. */
 function askCapabilities(groups: readonly RepoGroup[]): void {
   for (const g of groups) {
     const id = g.forge_id;
@@ -1296,17 +1185,14 @@ function askCapabilities(groups: readonly RepoGroup[]): void {
     capsAsked.add(id);
     void readCapabilities.dispatch({ forge_id: id }).then((caps) => {
       capsAsked.delete(id);
-      // The route carries every capability forgeapi names for the scope, so an
-      // absent key is an answer that did not arrive.
+      // The route carries every capability forgeapi names, so an absent key is an answer that did not arrive.
       rerunCaps.set(id, caps?.connection["rerun_checks"] ?? null);
       paint();
     });
   }
 }
 
-/** Forget the outcome of a row the list no longer holds, and a move or a
- *  re-point of a repository it no longer lists: a repository created later at the
- *  old path is another one. */
+/** A repository created later at the old path is another one. */
 function pruneRowState(groups: readonly RepoGroup[]): void {
   const listed = new Set(groups.flatMap((g) => g.prs.map((pr) => rowId(g, pr))));
   for (const id of outcomes.keys()) {
@@ -1328,7 +1214,6 @@ function rowId(g: RepoGroup, pr: PR): string {
   return prIdentity(g.forge_id, g.repo_id, pr.number);
 }
 
-/** What a row's controls show, beyond the pull request itself. */
 interface RowView {
   merge: MergeVerdict;
   rerun: RerunControl;
@@ -1395,21 +1280,19 @@ function rerunNote(c: RerunControl): string {
   return c.offer && c.reason !== "" ? `Cannot re-run checks: ${c.reason}` : "";
 }
 
-/** How one press ended: whether it succeeded, and the sentence the row shows. */
 interface PressOutcome {
   ok: boolean;
   text: string;
 }
 
-/** A dispatch's failure as the row says it; a cancelled dispatch says nothing. */
+/** A cancelled dispatch says nothing. */
 function refused(o: ActionOutcome<unknown>, lead: string): PressOutcome {
   return o.status === "error"
     ? { ok: false, text: `${lead}. ${o.error.message}` }
     : { ok: true, text: "" };
 }
 
-/** A row press's failure, offering the re-point when the refusal names where the
- *  row's repository (`key`, a groupKey) moved. `label` is the press refused. */
+/** Offers the re-point when the refusal names where the repository (`key`, a groupKey) moved. */
 function refusedOn(
   key: string,
   row: string,
@@ -1431,7 +1314,6 @@ function refusedOn(
   return { ok: false, text: `${lead}. This repository moved to ${m.to.display_path}.` };
 }
 
-/** The offer to act on the repository a refusal said the row's moved to. */
 function useButton(g: RepoGroup, id: string, to: RepoSuccessor): HTMLButtonElement {
   const use = rowButton(`Use ${to.display_path}`, NOTHING_PRESSED);
   use.setAttribute("data-tooltip", `Act on ${to.display_path}, where this repository moved`);
@@ -1441,8 +1323,7 @@ function useButton(g: RepoGroup, id: string, to: RepoSuccessor): HTMLButtonEleme
   return use;
 }
 
-/** Point every route of `g`'s rows at the repository its refusal named, and ask
- *  for a cycle, which lists them under it. */
+/** Asks for a cycle, which lists the rows under the successor. */
 function repoint(g: RepoGroup, id: string, focused: boolean): void {
   const key = groupKey(g);
   const m = moved.get(key);
@@ -1463,8 +1344,7 @@ function repoint(g: RepoGroup, id: string, focused: boolean): void {
   }
 }
 
-/** Run one row action behind its button: busy and disabled in the press's frame
- *  and through any repaint while it runs, its sentence in the row once it ends. */
+/** Busy and disabled in the press's frame and through any repaint while it runs; its sentence in the row once it ends. */
 async function pressRow(
   g: RepoGroup,
   id: string,
@@ -1521,8 +1401,7 @@ async function pressRow(
   }
 }
 
-/** Write the row's status line in place, leaving the button's outcome glyph
- *  standing; the next paint then repaints the row from its state. */
+/** Leaves the button's outcome glyph standing; the next paint repaints the row from its state. */
 function setRowStatus(btn: HTMLElement, text: string, failed = false): void {
   const row = btn.closest(".git-pr-row");
   const status = row?.querySelector(".git-pr-row-status");
@@ -1534,7 +1413,6 @@ function setRowStatus(btn: HTMLElement, text: string, failed = false): void {
   forgetSig(row);
 }
 
-/** A row action's button, busy when a request it started is still running. */
 function rowButton(
   label: string,
   busy: ReadonlySet<string>,
@@ -1552,8 +1430,7 @@ function rowButton(
   return btn;
 }
 
-/** A sentence under the row saying why `control` is disabled, which the control
- *  is described by. */
+/** The control is described by this sentence. */
 function appendNote(
   li: HTMLElement,
   control: HTMLElement,
@@ -1571,19 +1448,16 @@ function appendNote(
   li.appendChild(note);
 }
 
-/** How often an accepted or queued merge's state is read back, and for how
- *  long: one poll interval, past which the poller's own cycle, which runs at that
- *  interval while the list is shown, carries the row. */
+/** One poll interval, past which the poller's own cycle carries the row. */
 const MERGE_FOLLOW_INTERVAL_MS = 3000;
 const MERGE_FOLLOW_BOUND_MS = 60_000;
 
-/** The sentence a row shows while its merge is followed, by rowId. */
 const merging = new Map<string, string>();
 
-/** Follow a merge the forge accepted without finishing: the row says it is
- *  merging and leaves once the forge reads it merged, or stays with a sentence
- *  past the bound while the list is asked for a cycle. A row the list stops
- *  holding ends the follow-up, since the list has said what the read would. */
+/**
+ * The row says merging and leaves once the forge reads it merged, or stays with a sentence past the bound. A row the
+ * list stops holding ends the follow-up.
+ */
 async function followMerge(
   g: RepoGroup,
   pr: PR,
@@ -1593,8 +1467,7 @@ async function followMerge(
   const id = rowId(g, pr);
   merging.set(id, state === "enqueued" ? "Waiting in the merge queue…" : "Merging…");
   paint();
-  // The bound covers the reads as well as the waits: it ends the wait and aborts
-  // a read still in flight.
+  // The bound ends the waits and aborts a read still in flight.
   const deadline = new AbortController();
   const bound = setTimeout(() => {
     deadline.abort();
@@ -1652,19 +1525,15 @@ function stillListed(g: RepoGroup, pr: PR): boolean {
   );
 }
 
-/** How long a Close waits before the close is sent, so its Undo takes it back
- *  without touching the forge. */
+/** Its Undo takes it back without touching the forge. */
 const CLOSE_UNDO_MS = 8000;
 
-/** The closes waiting out their undo window, by rowId, with the groupKey and the
- *  listed repo_id of the row's repository. */
 const closing = new Map<
   string,
   { args: PRArgs; key: string; listedID: string; timer: ReturnType<typeof setTimeout> }
 >();
 
-/** Hold a close behind its undo window: the row turns into its Undo bar now and
- *  the close is sent when the window lapses. */
+/** The row turns into its Undo bar now; the close is sent when the window lapses. */
 function startClose(id: string, g: RepoGroup, args: PRArgs, focused: boolean): void {
   outcomes.delete(id);
   closing.set(id, {
@@ -1694,8 +1563,7 @@ function undoClose(id: string, focused: boolean): void {
   }
 }
 
-/** Send a held close: the row leaves the list as it goes, and comes back with
- *  the forge's reason when the close is refused. */
+/** The row comes back with the forge's reason when the close is refused. */
 function sendClose(id: string): void {
   const held = closing.get(id);
   if (held === undefined) {
@@ -1727,14 +1595,12 @@ function sendClose(id: string): void {
   });
 }
 
-/** Send every held close now. */
 function flushCloses(): void {
   for (const id of [...closing.keys()]) {
     sendClose(id);
   }
 }
 
-/** Send every held close as the page goes away. */
 function sendClosesOnUnload(): void {
   for (const [id, held] of closing) {
     clearTimeout(held.timer);
@@ -1753,7 +1619,6 @@ function focusRowButton(id: string, label: string): void {
     ?.focus();
 }
 
-/** A row whose close waits out its window: what will happen, and its Undo. */
 function renderClosingRow(pr: PR, id: string): HTMLElement {
   const li = el("li", { className: "git-pr-row git-pr-row-closing", "data-pr": id });
   noteSeq += 1;
@@ -1771,9 +1636,8 @@ function renderClosingRow(pr: PR, id: string): HTMLElement {
 }
 
 function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
-  // `data-pr` is the tab's ONE DOM row identity and the only thing a focus request
-  // can find a row by. Built with push-subject.ts's own `prIdentity`, the same
-  // function the Go twin is pinned against, so the tab compares and never parses.
+  // `data-pr` is the tab's one DOM row identity, the only thing a focus request finds a row by. Built with
+  // push-subject.ts's `prIdentity`, which the Go twin is pinned against, so the tab compares and never parses.
   const id = rowId(g, pr);
   if (closing.has(id)) {
     return renderClosingRow(pr, id);
@@ -1782,7 +1646,6 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   appendSummary(li, pr, numberLabel(pr));
   const v = rowView(g, pr);
 
-  // Actions
   const actions = el("div", { className: "git-pr-row-actions" });
 
   const prRef = {
@@ -1793,13 +1656,8 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     pr_number: pr.number,
   };
 
-  // NO ACCENT ON A PER-ROW ACTION. `btn-primary` marks the one thing to do on a
-  // surface, and a per-row count scales with the number of open PRs — twenty rows
-  // gave twenty accented Merge buttons, which says nothing about which to press
-  // and makes the section's own `+ New PR` no longer the loudest control on the
-  // page. The three accents that stay are all SECTION level, where the count does
-  // not scale: `+ New PR` above, Push (git-changes-tab.ts) and Commit
-  // (git-changes-commit.ts).
+  // No accent on a per-row action: `btn-primary` marks the one thing to do on a surface, and a per-row count scales
+  // with the open PRs. Accents stay section-level (`+ New PR`, Push, Commit).
   const merge = rowButton(MERGE_LABEL, v.busy);
   const mergeText = mergeNote(v.merge);
   if (mergeText === "") {
@@ -1821,9 +1679,8 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
         return;
       }
       await pressRow(g, id, merge, MERGE_LABEL, async () => {
-        // head_sha pins the merge to the commit this row was rendered
-        // from: if something pushed since, the forge refuses instead of
-        // landing an unreviewed commit.
+        // head_sha pins the merge to the rendered commit: if something pushed since, the forge refuses instead of landing an
+        // unreviewed commit.
         const o = await mergePR.dispatch({
           ...prRef,
           forge_kind: g.forge_kind,
@@ -1833,8 +1690,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
         if (o.status !== "success") {
           return refusedOn(groupKey(g), id, o, "Could not merge", MERGE_LABEL);
         }
-        // Only a merged outcome removes the row at once: an accepted or queued
-        // merge leaves the pull request open until the forge finishes it.
+        // Only a merged outcome removes the row at once: an accepted or queued merge leaves the PR open.
         if (o.value.outcome.state === "merged") {
           const removed = removePRFromGroups(g.forge_id, g.repo_id, pr.number);
           if (removed !== undefined) {
@@ -1848,8 +1704,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   });
   actions.appendChild(merge);
 
-  // Checks unsettled: offer to hand the merge to the forge rather than a
-  // disabled button and a wait.
+  // Checks unsettled: offer to hand the merge to the forge rather than a disabled button.
   if (canArmAutoMerge(pr)) {
     const arm = rowButton(ARM_LABEL, v.busy);
     arm.setAttribute("data-tooltip", "Let the forge merge this once its checks pass");
@@ -1881,8 +1736,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     actions.appendChild(arm);
   }
 
-  // A failed check here is most often flaky, so a retry beats a context
-  // switch.
+  // A failed check here is most often flaky, so a retry beats a context switch.
   if (v.rerun.offer) {
     const rerun = rowButton(RERUN_LABEL, v.busy);
     if (v.rerun.reason === "") {
@@ -1902,9 +1756,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           return;
         }
         await pressRow(g, id, rerun, RERUN_LABEL, async () => {
-          // The same pin the merge sends, for the same reason: this row's
-          // check chip is the folded state of pr.head_sha, so the re-run has
-          // to name that commit or it can start CI for another one.
+          // The same pin as the merge: the chip is pr.head_sha's folded state, so the re-run must name that commit.
           const o = await rerunChecks.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" }).outcome;
           if (o.status === "success") {
             return { ok: true, text: "Re-run started." };
@@ -1924,9 +1776,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     actions.appendChild(rerun);
   }
 
-  // Reopen is the mirror of Close, and it renders on the state that earns
-  // it. The tab lists open PRs today, so this is the branch that lights up
-  // the moment a closed list exists rather than a view added to justify it.
+  // Reopen mirrors Close and renders on the state that earns it.
   if (pr.state !== "open") {
     const reopen = rowButton(REOPEN_LABEL, v.busy);
     reopen.setAttribute("data-tooltip", "Reopen this pull request");
@@ -1973,11 +1823,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   return li;
 }
 
-// --- Create-PR flow ---
-
-/** Open the New PR dialog for the workspace clone checked out in `repoName`.
- *  Used by the contextual "Open PR" hint on the Changes tab; the source branch is
- *  pre-filled from the call site so the user doesn't have to retype. */
+/**
+ * Open the New PR dialog for the workspace clone checked out in `repoName`, with the source branch prefilled (the
+ * Changes tab's "Open PR" hint).
+ */
 export async function openNewPRForRepo(repoName: string, sourceBranch: string): Promise<void> {
   if (!inventoryHeld()) {
     try {
@@ -1986,12 +1835,10 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
       /* ignore: the lookup below decides */
     }
   }
-  // An ssh clone joins no connection, so a listed repository of the same name is
-  // the remaining way to find it.
+  // An ssh clone joins no connection, so a listed repository of the same name is the remaining way to find it.
   const group = cloneGroup(repoName) ?? getPRGroups().find((g) => g.name === repoName);
   if (group === undefined) {
-    // Repo not in any forge group (probably not on a connected
-    // forge). Render a small inline error in the mount.
+    // Not in any forge group: an inline error in the mount.
     const root = document.getElementById("git-prs-mount");
     if (root !== null) {
       root.replaceChildren(
@@ -2036,30 +1883,21 @@ function cloneGroup(dir: string): RepoGroup | undefined {
   };
 }
 
-// PR-create dialog controller, adopted from @cplieger/ui-primitives/dialog:
-// bundles open + drag-safe backdrop dismissal + the fade-out close lifecycle
-// (the shared .uip-dialog skin, which marotte maps to --dur-exit/--ease-exit)
-// that this native <dialog> otherwise hand-wires. Created once and reused
-// across opens so the backdrop/Escape listeners aren't stacked. Unlike the
-// permission/elicitation prompts (kept non-backdrop-dismissable — an
-// accidental dismiss there means an accidental deny), this is a re-openable
-// form, so backdrop + Escape dismissal are enabled.
+// Created once and reused so backdrop and Escape listeners do not stack. Unlike the permission prompts, this is a
+// re-openable form, so backdrop and Escape dismissal are on.
 let prDialogCtl: DialogController | null = null;
 function prDialogController(dlg: HTMLDialogElement): DialogController {
   prDialogCtl ??= createDialog(dlg, { closeOnBackdrop: true, closeOnEscape: true });
   return prDialogCtl;
 }
 
-/** The dialog's buttons as the page first wrote them. Each open builds its own
- *  from these, which drops the last open's listeners and whatever state its
- *  outcome left on them. */
+/** Each open builds fresh buttons from these, dropping the last open's listeners and outcome state. */
 let prDialogButtons: {
   submit: HTMLButtonElement;
   generate: HTMLButtonElement;
   close: HTMLButtonElement[];
 } | null = null;
 
-/** Replace `old` with a fresh copy of `pristine`. */
 function freshButton(old: HTMLButtonElement, pristine: HTMLButtonElement): HTMLButtonElement {
   const btn = pristine.cloneNode(true) as HTMLButtonElement;
   old.replaceWith(btn);
@@ -2109,10 +1947,10 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     }
   };
 
-  // Stage 1: edit. Pre-fill base/head, generate title+body via AI.
+  // Pre-fill base and head; the AI drafts the body.
   baseInput.value = "main";
   headInput.value = sourceBranch;
-  // Fixed only when the door named the branch (the Changes tab's post-push hint).
+  // Fixed only when the caller named the branch (the Changes tab's post-push hint).
   headInput.readOnly = sourceBranch !== "";
   titleInput.value = "";
   bodyInput.value = "";
@@ -2137,14 +1975,12 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     { once: true },
   );
 
-  /** Draft the description into an empty body. Resolves early, saying nothing,
-   *  once a newer draft or the dialog's close owns the button. */
+  /** Resolves early, saying nothing, once a newer draft or the dialog's close owns the button. */
   const generate = async (ctrl: AbortController): Promise<void> => {
     setStatus("Generating description…", "");
     const res = await apiPost<{ output?: string; error?: string }>(
       `/api/git/pr-description`,
-      // The workspace directory the description is drafted from: the clone's own
-      // when the inventory joins one, which need not share the forge's name.
+      // The clone's own directory when the inventory joins one; it need not share the forge's name.
       {
         repo: cloneDirOf(g.forge_id, g.repo_id) ?? g.name,
         branch: baseInput.value.trim() || "main",
@@ -2162,8 +1998,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
       setStatus(res.error, "err");
       throw new Error(res.error);
     }
-    // Server returns a single {output} description blob (Summary/Changes/
-    // Testing); it fills the body. Title stays user-controlled.
+    // The server's single {output} description fills the body; the title stays the user's.
     if (res.output !== undefined && res.output !== "" && bodyInput.value === "") {
       bodyInput.value = res.output;
     }
@@ -2178,8 +2013,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   };
   newGenerate.addEventListener("click", draft);
 
-  /** The dialog's outcome once the forge opened the pull request: it names and
-   *  links it, and offers nothing that could open it again. */
+  /** It names and links the PR, and offers nothing that could open it again. */
   const opened = (pr: PR): void => {
     setStatus(`Opened pull request #${String(pr.number)}.`, "ok");
     const url = pr.url ?? "";
@@ -2203,7 +2037,6 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     }
   };
 
-  // Stage 2: review + submit.
   newSubmit.addEventListener("click", () => {
     void withAsyncFeedback(
       newSubmit,
@@ -2226,8 +2059,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
           throw new Error(why);
         }
         opened(o.value);
-        // The list reads it at its next cycle; ask for one so it is there when
-        // the reader looks.
+        // The list reads it at its next cycle; ask for one so it is there when the reader looks.
         void requestPRCycle.dispatch();
       },
       { keepLabel: true },
@@ -2235,13 +2067,6 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   });
 
   dialogCtl.open();
-  // Kick off the AI generation immediately so it overlaps with the
-  // user picking up the form. Errors are non-fatal — they just leave
-  // the title/body blank for the user to fill manually.
+  // Started at once to overlap with the user reading the form; a failure leaves the fields blank.
   draft();
 }
-
-// The merge-block reason, the check chip and the per-forge capability
-// rules live in git-pr-status.ts: they are pure, so they are testable
-// there without a document. `action.mergeable` is a tri-state, and only its
-// `yes` stands in for a block cause the forge did not name.

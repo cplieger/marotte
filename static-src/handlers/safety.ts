@@ -1,27 +1,12 @@
-// ---------------------------------------------------------------------------
-// Infrastructure-Safety status handler (v3/KAS _kiro/safety/*).
-//
-// DEFENSIVE / forward-looking, like handlers/open-external-url.ts. KAS's
-// Infrastructure-Safety gate evaluates infrastructure-as-code tool calls
-// (Terraform / CloudFormation / CDK / Docker / k8s / …) against remotely
-// "formalized" safety properties and streams its state as safety_status /
-// safety_properties SSE. But KAS only installs the gate — and so only emits
-// these — when marotte's infrastructureSafety capability AND an AWS governance
-// flag (infraSafetyMonitor|infraSafetyEnforce) are both on; that flag is off by
-// default on individual/Builder-ID accounts, so on a normal account this handler
-// never fires. It exists so the state surfaces IF an enterprise account has the
-// gate enabled.
-//
-// Surface: one transient toast per non-idle status. `idle` is the all-clear, so it
-// raises nothing — there is no notice to retire, because a toast expires on its
-// own. This is Kiro's infra guardrail, called out as distinct from marotte's own
-// Supervised write-gate. There is no authoring UI: safety properties are
-// formalized out-of-band (a remote endpoint), never created by the client.
-// ---------------------------------------------------------------------------
+// KAS's Infrastructure-Safety gate (`_kiro/safety/*`) evaluates infrastructure-as-code tool calls
+// against remotely formalized properties and streams safety_status / safety_properties. Installed
+// when marotte declares infrastructureSafety and the setting or experiment is on. One transient
+// toast per non-idle status; no authoring UI (properties are formalized out-of-band).
 
 import { onSSE } from "../bus.js";
-import { showToast, type ToastLevel } from "../toast.js";
-import type { SafetyStatusPayload } from "../wire/types.gen.js";
+import { notice } from "../toast.js";
+import { named, noticeSubject } from "../notice-subject.js";
+import type { NoticeLevel, SafetyStatusPayload } from "../wire/types.gen.js";
 
 const MAX_PROPS_SHOWN = 3;
 
@@ -30,10 +15,10 @@ const MAX_PROPS_SHOWN = 3;
 // carries no blocked_properties list.
 const activeProps = new Map<string, string[]>();
 
-/** Map a gate status to a toast level. Two-way because `ToastLevel` has no
- *  warning: `blocked` and `error` mean a write was or would be stopped, or the
- *  check itself broke; everything else is progress with nothing stopped. */
-function levelFor(status: string): ToastLevel {
+/** Map a gate status to a toast level: `blocked` and `error` mean a write was or
+ *  would be stopped, or the check itself broke; everything else is progress with
+ *  nothing stopped. */
+function levelFor(status: string): NoticeLevel {
   return status === "blocked" || status === "error" ? "error" : "info";
 }
 
@@ -89,5 +74,10 @@ onSSE("safety_status", (chatID, p) => {
   if (p.status === "idle") {
     return;
   }
-  showToast(withConstraints(headlineFor(p), p, chatID), levelFor(p.status));
+  const subject = noticeSubject(chatID);
+  notice(
+    named(subject, withConstraints(headlineFor(p), p, chatID)),
+    levelFor(p.status),
+    subject.open,
+  );
 });

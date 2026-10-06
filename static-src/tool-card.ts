@@ -11,7 +11,7 @@
 
 import type { ToolStatus, TextSpan } from "./types.js";
 import type { BuildToolCardOpts } from "./tool-card-opts.js";
-import { escText, windowOutput, windowSpans, humanName } from "./strings.js";
+import { escText, windowOutput, windowSpans } from "./strings.js";
 import { renderOutput } from "./output-render.js";
 import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -35,13 +35,17 @@ import {
   renderInfoFor,
   disclosedClaim,
   formatMCPToolName,
+  commandTitle,
+  toolTitleText,
   toolDepth1,
   hasDepth1,
   isToolActive,
   isToolDone,
   type ToolRenderInfo,
 } from "./tool-schema.js";
-import type { ToolDenial } from "./types.js";
+import type { ToolDenial, ToolInteraction, ToolOffload } from "./types.js";
+import { buildPath } from "./route-path.js";
+import { interactionFact } from "./interaction.js";
 import { el } from "@cplieger/reactive";
 
 /** Build a tool-call element. Does not append it to the DOM. */
@@ -49,10 +53,11 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const info = renderInfoFor(opts.title, opts.kind, opts.input, {
     disclosed: opts.disclosed,
     denial: opts.denial,
+    sourcePath: opts.sourcePath,
   });
   const depth1 = toolDepth1(info.kind);
   const withToggle = hasDepth1(info.kind);
-  const rawTitle = opts.title.startsWith("Running: ") ? opts.title.slice(9) : opts.title;
+  const shellTitle = commandTitle(opts.title, opts.kind, opts.input);
   // A disclose_context call names its DOCUMENT, not the tool that fetched it:
   // the activation is the moment a skill's body enters the prompt, and "which
   // skill" is the only fact a reader wants from the row.
@@ -61,7 +66,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
       ? disclosedClaim(info.disclosed)
       : info.mcp !== null
         ? formatMCPToolName(info.mcp.tool)
-        : humanName(rawTitle);
+        : (shellTitle ?? toolTitleText(opts.title));
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;
@@ -108,11 +113,13 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   node.appendChild(summary);
   applyOutcome(node, opts.status, displayTitle, info);
 
-  // A claim-only kind gets no details region and no toggle. On `output` the
-  // subtitle is the only place the command reaches a collapsed delegate's tail,
-  // because the <pre> carrying the same string is chrome. The row sits in the
-  // summary with the title, so the box is one disclosure and one hover target.
-  if (depth1 === "search" || depth1 === "fetch" || depth1 === "generic" || depth1 === "output") {
+  // A claim-only kind gets no details region and no toggle. The row sits in the
+  // summary with the title, so the box is one disclosure and one hover target;
+  // a card titled by its command carries none, since it would repeat the title.
+  if (
+    shellTitle === null &&
+    (depth1 === "search" || depth1 === "fetch" || depth1 === "generic" || depth1 === "output")
+  ) {
     const subtitle = extractSubtitle(opts.input);
     if (subtitle !== "") {
       summary.appendChild(el("div", { className: "tool-subtitle" }, subtitle));
@@ -168,7 +175,13 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     }
   }
 
-  wireFileLink(node, info.filePath, depth1 === "diff");
+  if (info.kind === "hook") {
+    wireFileRow(summary, info);
+  } else {
+    wireFileLink(node, info.filePath, depth1 === "diff");
+  }
+  syncOffloadLink(node, opts.offload);
+  syncInteractionFact(node, opts.interaction);
 
   // An edit's diff IS its depth 1, which is why it is inserted here rather than
   // deferred with the details body. It used to be inserted for every kind, which
@@ -180,6 +193,64 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
 
   refreshToolDisclosure(node);
   return node;
+}
+
+/** Give a card whose output KAS offloaded a link to the full file: after its
+ *  output region, or on the claim row of a claim-only card (an offloaded
+ *  `listDirectory` is a `read`). Idempotent, and one-way like the field: an
+ *  absent offload leaves an existing link standing. */
+export function syncOffloadLink(card: HTMLElement, offload: ToolOffload | undefined): void {
+  if (offload === undefined || card.querySelector(".tool-offload-link") !== null) {
+    return;
+  }
+  const host = card.querySelector(".tool-details") ?? card.querySelector(".tool-summary");
+  if (host === null) {
+    return;
+  }
+  const link = el(
+    "a",
+    {
+      className: "tool-offload-link",
+      href: buildPath({ kind: "file", path: offload.path }),
+      [CHROME_ATTR]: "",
+    },
+    `Open full output (${offload.total_chars.toLocaleString()} chars)`,
+  );
+  link.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    // A modified click (new tab or window) is a deliberate escape from routing.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    openAtLine(offload.path);
+  });
+  host.appendChild(link);
+}
+
+/** Put the answer's fact line on the card's claim row, so it reads without opening
+ *  the card. Rewrites in place; an absent interaction leaves the line standing,
+ *  like the field. */
+export function syncInteractionFact(
+  card: HTMLElement,
+  interaction: ToolInteraction | undefined,
+): void {
+  if (interaction === undefined) {
+    return;
+  }
+  const text = interactionFact(interaction);
+  const summary = card.querySelector(".tool-summary");
+  if (summary === null) {
+    return;
+  }
+  let line = summary.querySelector<HTMLElement>(":scope > .tool-fact");
+  if (line === null) {
+    line = el("div", { className: "tool-fact" });
+    summary.appendChild(line);
+  }
+  if (line.textContent !== text) {
+    line.textContent = text;
+  }
 }
 
 /** The diff a card draws in its RESTING state, or null when it has none: the
@@ -271,7 +342,18 @@ function buildHeader(
     header.appendChild(badge);
   }
 
-  if (info.filePath !== "") {
+  if (info.filePath !== "" && info.kind === "hook") {
+    // A hook card's whole claim row is the control (`wireFileRow`), so the chip is
+    // its label: a button here would nest inside a `role="button"` row.
+    header.appendChild(
+      el(
+        "span",
+        { className: "tool-file-link", "data-tooltip-anchor": "" },
+        el("span", { className: "tool-file-icon" }, iconEl(fileIcon(info.fileBasename, false))),
+        el("span", { className: "tool-file-name" }, info.fileBasename),
+      ),
+    );
+  } else if (info.filePath !== "") {
     // The filename IS the link to the change. There used to be a second
     // "View diff" button beside the stats; depth 2 is a click on the SUBJECT,
     // and a generic button next to it was a second affordance for one intent.
@@ -770,6 +852,32 @@ function wireFileLink(el: HTMLElement, filePath: string, isChange: boolean): voi
       openChange(filePath);
     } else {
       openAtLine(filePath);
+    }
+  });
+}
+
+/** Make a claim-only card's whole claim row the control that opens its file, by
+ *  pointer and by keyboard. A row with no path stays inert. */
+function wireFileRow(row: HTMLElement, info: ToolRenderInfo): void {
+  const path = info.filePath;
+  if (path === "") {
+    return;
+  }
+  row.classList.add("opens-file");
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  row.setAttribute("aria-label", `Open the hook file ${info.fileBasename}`);
+  // The chip shows the basename, so the full path rides the tooltip, anchored
+  // at the chip's ink rather than the row's centre.
+  row.dataset["tooltip"] = path;
+  row.addEventListener("click", (e: Event) => {
+    e.stopPropagation();
+    openAtLine(path);
+  });
+  row.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openAtLine(path);
     }
   });
 }

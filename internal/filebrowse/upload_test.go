@@ -18,14 +18,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// uploadsHandler grants one mount CLAIMING marotte.DefaultUploadDir ITSELF,
-// backed by a throwaway directory, so the default upload target resolves
-// without the test machine needing a real one. Returns the backing directory so
-// a test can assert where the bytes actually landed.
-//
-// The uploads directory rather than its PARENT: composition grants it as a mount
-// of its own, and filepath.Dir("/uploads") is "/", which mount.dir is documented
-// never to be and which would leave mount.name empty.
+// uploadsHandler grants one mount claiming marotte.DefaultUploadDir itself, backed by a throwaway
+// directory.
 func uploadsHandler(t *testing.T) (*Handler, string) {
 	t.Helper()
 	backingDir := t.TempDir()
@@ -90,25 +84,13 @@ func uploadBody(t *testing.T, rec *httptest.ResponseRecorder) (errMsg string, up
 	return body.Error, body.Uploaded
 }
 
-// --- the default target directory (D3a) ---
-
-// An upload with no "dir" lands in the uploads directory, and that directory IS
-// the granted mount rather than a path inside one — so the bytes land at the
-// mount root itself.
-//
-// On-demand creation moved to boot with that change: handleUpload's MkdirAll runs
-// inside the matched mount's own os.Root, where the default target's relative path
-// is "." and the call is a no-op, and openMounts SKIPS a root it cannot open. So
-// nothing on this path can create the directory any more, and composition's
-// ensureUploadDir plus the image's build-time mkdir are what do.
+// TestHandleUpload_DefaultDirIsTheUploadsMount: an upload with no "dir" lands at the uploads
+// mount's root.
 func TestHandleUpload_DefaultDirIsTheUploadsMount(t *testing.T) {
 	h, backing := uploadsHandler(t)
 
 	rec := serveUpload(t, h, uploadOrdered(t, "", []string{"note.txt"}, [][]byte{[]byte("hi")}))
 	if rec.Code != http.StatusOK {
-		// A 403 here most likely means the claimed mount could not be
-		// resolved on this machine (a symlinked path), not that the default
-		// changed. Say so rather than leaving a bare status mismatch.
 		t.Fatalf("status = %d, want 200; body %q (a 403 points at path resolution for %q, not at the default)",
 			rec.Code, rec.Body.String(), marotte.DefaultUploadDir)
 	}
@@ -138,18 +120,8 @@ func TestHandleUpload_ExplicitDirStillWins(t *testing.T) {
 	}
 }
 
-// A target of "." is refused, and must stay refused.
-//
-// This is a regression guard on a live bug the retarget fixed: the chat view
-// uploaded with dir="." for both drop and paste, the server cleaned that to
-// "/", and "/" is inside no granted mount (filepath.Rel from any grant to "/"
-// escapes), so every chat-view drop and every pasted screenshot answered 403.
-// No test covered the "." shape, which is how it shipped.
-//
-// The fix is that no caller sends "." any more. Do NOT "fix" it by teaching
-// resolvePath to read "." as the workspace: the mount list is an allow-list of
-// several roots, so a relative path would become ambiguous about which one it
-// means.
+// TestHandleUpload_DotDirIsRefused guards a fixed bug: dir="." from drop and paste resolved to the
+// workspace root.
 func TestHandleUpload_DotDirIsRefused(t *testing.T) {
 	for _, dir := range []string{".", "/", "./", "/."} {
 		t.Run(dir, func(t *testing.T) {
@@ -163,14 +135,11 @@ func TestHandleUpload_DotDirIsRefused(t *testing.T) {
 	}
 }
 
-// --- the partial batch (D98) ---
-
 // A batch that fails partway is NOT rolled back, and the response says so: the
 // names that landed ride the error body so the client can report "3 of 5
 // uploaded, then X failed" and still attach the three.
 func TestHandleUpload_PartialBatchReportsWhatLanded(t *testing.T) {
 	h, dir, prefix := testDir(t)
-	// "first.txt" is written, then ".." trips the invalid-filename guard.
 	rec := serveUpload(t, h, uploadOrdered(t, prefix,
 		[]string{"first.txt", "..", "never.txt"},
 		[][]byte{[]byte("one"), []byte("two"), []byte("three")}))
@@ -185,13 +154,9 @@ func TestHandleUpload_PartialBatchReportsWhatLanded(t *testing.T) {
 	if len(uploaded) != 1 || uploaded[0] != "first.txt" {
 		t.Errorf("uploaded = %v, want [first.txt]", uploaded)
 	}
-	// The file that landed stays on disk. Rollback would delete it, and it
-	// cannot be done correctly anyway: an upload may overwrite, so undoing one
-	// needs a backup of every destination.
 	if _, err := os.Stat(filepath.Join(dir, "first.txt")); err != nil {
 		t.Errorf("first.txt should remain on disk: %v", err)
 	}
-	// Nothing after the failure is attempted.
 	if _, err := os.Stat(filepath.Join(dir, "never.txt")); !os.IsNotExist(err) {
 		t.Errorf("never.txt should not exist, stat err = %v", err)
 	}
@@ -273,7 +238,6 @@ func TestRespondUploadError_Statuses(t *testing.T) {
 			if !strings.Contains(body.Error, tc.wantError) {
 				t.Errorf("error = %q, want it to contain %q", body.Error, tc.wantError)
 			}
-			// Every branch keeps the names that DID land, the 507 included.
 			if !slices.Equal(body.Uploaded, []string{"landed.txt"}) {
 				t.Errorf("uploaded = %v, want [landed.txt] (a partial batch is not rolled back)", body.Uploaded)
 			}
@@ -288,7 +252,7 @@ func TestHandleUpload_NoSpaceRefusesTheWholeBatchBeforeWriting(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
-	stubAvailableBytes(t, 4, nil) // below the 16-byte batch built here
+	stubAvailableBytes(t, 4, nil)
 
 	req := multipartUpload(t, prefix, map[string][]byte{
 		"a.txt": []byte("aaaaaaaa"),

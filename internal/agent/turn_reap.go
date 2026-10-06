@@ -7,11 +7,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// KiroCrew uses the same silence budget for upstream issue #3583.
+// Matches KiroCrew's silence budget for upstream issue #3583.
 const compactionFailedTurnBudget = 60 * time.Second
 
-// CompactionFailed bounds a turn that may never receive its response after a
-// failed compaction. Backend activity and live tools restart the silence budget.
+// CompactionFailed bounds a turn that may never get its response after a failed compaction. Backend activity and
+// live tools restart the silence budget.
 func (bc *BridgeCoordinator) CompactionFailed(chatID marotte.ChatID, detail string) {
 	lc := bc.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -20,12 +20,8 @@ func (bc *BridgeCoordinator) CompactionFailed(chatID marotte.ChatID, detail stri
 		slog.Debug("compaction reap: no turn open", "chat_id", chatID)
 		return
 	}
-	// The chain's origin, set here rather than in armCompactionReapLocked so it
-	// survives every re-arm: it is what a live tool is judged against, and a
-	// per-arm cutoff would retire a tool that has been running since the failure
-	// the moment the first budget elapsed. Set once, so a second failure report
-	// restarts the 60s window without narrowing that judgement — the tighter
-	// direction is the one that interrupts a turn that is genuinely working.
+	// The chain's origin, set once so it survives every re-arm: live tools are judged against it, and a per-arm cutoff
+	// would retire a tool running since the failure.
 	if lc.own.reapChainAt.IsZero() {
 		lc.own.reapChainAt = time.Now()
 	}
@@ -37,10 +33,8 @@ func (bc *BridgeCoordinator) armCompactionReapLocked(lc *chatLifecycle, turn *Tu
 	turn.reapArmID++
 	turn.reapArmedSeq = lc.observedSeq
 	turn.reapArmedGen = lc.fwdGen
-	// The callback carries value copies only. Capturing the timer for an
-	// identity check races the armer's own assignment (the callback can run
-	// before AfterFunc returns); the arm id is the identity, compared under
-	// lc.mu like every other reap field.
+	// Value copies only: capturing the timer races the armer's assignment (the callback can run before AfterFunc
+	// returns). The arm id is the identity, compared under lc.mu.
 	armID := turn.reapArmID
 	turnID := turn.ID
 	seq := turn.reapArmedSeq
@@ -59,8 +53,7 @@ func (bc *BridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID 
 		return
 	}
 	turn := lc.own
-	// reapTimer nil means a closer already stopped this reap; a different arm
-	// id means a newer arm owns the pending timer and this fire is stale.
+	// nil: a closer already stopped this reap; another arm id: a newer arm owns the timer.
 	if turn.reapTimer == nil || turn.reapArmID != armID {
 		lc.mu.Unlock()
 		return

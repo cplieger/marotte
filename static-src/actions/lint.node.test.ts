@@ -1,32 +1,8 @@
-// Lint test: catches regressions to the action framework policy.
-//
-// Policy: user-initiated mutations must go through the actions
-// framework (defineAction / apiAction / transportAction). Background
-// reads, cleanup, and infrastructure stay silent.
-//
-// What this test asserts:
-//   - No new write-shaped calls outside the explicit allowlist:
-//       * `void apiPost(`, `void apiDelete(` (fire-and-forget mutations)
-//       * `await apiPost(`, `await apiDelete(`, `await apiPutOrError(`
-//         (callers bypassing the framework's lifecycle wrapper)
-//       * `void transport.send(`, `await transport.send(`
-//       * `void transportSend(`, `await transportSend(` (aliased imports)
-//   - GET reads (`apiGet` / `apiGetTyped`) are NOT lint-checked because
-//     they're inherently safe (read-only). Background polls and inline
-//     reads use them freely.
-//   - The allowlist consists of:
-//       * actions/*.ts (the framework + per-area action files)
-//       * api-client.ts and transport.ts (the underlying transports)
-//       * test files (*.test.ts)
-//       * specific files with documented background-poll / cleanup
-//         exceptions (BACKGROUND_ALLOWLIST below)
-//
-// If you're adding a new user-initiated mutation, declare an action
-// in actions/<area>.ts and dispatch it. See actions/index.ts.
-// If you're adding a legitimate background poll or cleanup that
-// must remain silent, add the file to the BACKGROUND_ALLOWLIST
-// below with a one-line comment explaining why.
-// ---------------------------------------------------------------------------
+// Policy lint: user-initiated mutations go through the actions framework (defineAction /
+// apiAction / transportAction); background reads, cleanup and infrastructure stay silent. A
+// write-shaped call (`void|await apiPost/apiDelete`, `await apiPutOrError`, `void|await
+// transport.send`/`transportSend`) outside actions/, api-client.ts, transport.ts, tests and
+// BACKGROUND_ALLOWLIST fails. A new mutation is an action in actions/<area>.ts.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -34,35 +10,21 @@ import { join, relative } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
 
-/** Files where a write-shaped call (`void/await apiPost/apiDelete`,
- *  `await apiPutOrError`, `void/await transport.send`) is permitted
- *  because they're documented background paths or cleanup.
- *
- *  NOTE: Matching is by basename only (the last path segment). This
- *  means entries must be unique filenames across the source tree. If
- *  two files share a basename and only one should be allowlisted,
- *  switch to relative-path matching for that entry. */
+/** Files where a write-shaped call is permitted as a background path or cleanup, each with a
+ *  one-line reason. Matched by basename, so entries must be unique filenames. */
 const BACKGROUND_ALLOWLIST = new Set<string>([
-  // Background fan-out for revalidation; partial failure is expected.
   "forge-auth.ts", // await apiPost in revalidateInBackground (probe per forge)
 
-  // OAuth poll loop — runs inside a polling timer that surfaces its own
-  // status/error UI; not user-initiated mutations through actions.
+  // OAuth poll loop with its own status/error UI.
   "forge-auth-oauth.ts",
 
-  // Modal dialogs surface errors inline rather than via toast.
+  // Modal dialogs surface errors inline.
   "modals.ts",
 
-  // Inline dialog mutation: error surfaces in the dialog status line,
-  // not via toast. Intentionally excluded from the action framework.
-  "git-prs-tab.ts", // await apiPost for AI PR-description generation (inline dialog; PR creation is now the git.create_pr action)
+  "git-prs-tab.ts", // AI PR-description generation: the error surfaces in the dialog status line.
 ]);
 
-/** Regex for forbidden patterns. Each match is a regression candidate.
- *  Matches both `void apiX(` (fire-and-forget mutation) and bare
- *  `await apiX(` outside of action files (caller bypassing the
- *  framework). The lint runs against non-test, non-action source
- *  files. */
+/** Forbidden patterns: `void apiX(` (fire-and-forget) and `await apiX(` (bypassing the framework). */
 const PATTERNS: { name: string; re: RegExp }[] = [
   { name: "void apiPost", re: /\bvoid\s+apiPost\s*[<(]/g },
   { name: "void apiDelete", re: /\bvoid\s+apiDelete\s*[<(]/g },
@@ -80,7 +42,6 @@ function listTSFiles(dir: string, out: string[] = []): string[] {
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) {
-      // Skip vendored / build dirs.
       if (name === "node_modules" || name === ".vitest-cache" || name === "actions") {
         continue;
       }
@@ -101,7 +62,6 @@ describe("action framework — regression guard", () => {
       if (BACKGROUND_ALLOWLIST.has(base)) {
         continue;
       }
-      // Skip api-client/transport — they're the underlying primitives.
       if (base === "api-client.ts" || base === "transport.ts") {
         continue;
       }

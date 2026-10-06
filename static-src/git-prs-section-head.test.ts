@@ -1,10 +1,5 @@
-// ---------------------------------------------------------------------------
-// A repository section's header on the PRs tab keeps its whole pull-request count
-// when the repository's name is longer than a phone's column leaves room for.
-//
-// A geometry property, so the section is built by the production path (`refreshPRs`
-// over a routed inventory) and measured under the app's own stylesheet.
-// ---------------------------------------------------------------------------
+// A section header keeps its whole PR count when the repo name is longer than a phone column. A geometry property,
+// so the section is built by `refreshPRs` and measured under the app's stylesheet.
 
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
@@ -88,7 +83,7 @@ const forge = {
   connected: true,
   reconnect_required: false,
 };
-/** An opaque id: the rows carry it and nothing here reads its shape. */
+/** An opaque id: nothing here reads its shape. */
 const REPO_ID = "v1.sandbox";
 
 function pr(n: number) {
@@ -146,7 +141,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** One repository's section with one open pull request, rendered by the tab. */
 async function section(): Promise<HTMLElement> {
   ensureForges.mockImplementation(() => Promise.resolve({ forges: [forge], kinds: ["github"] }));
   const list = {

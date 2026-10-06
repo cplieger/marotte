@@ -1,4 +1,3 @@
-// Tests for forge.ts: startDeviceFlow, signOut, cloneRepo, deleteLocal, connectPAT.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
@@ -13,9 +12,7 @@ vi.mock("../api-client.js", () => ({
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection reaches
-  // `apiGetTyped` for `GET /api/tabs` and other modules in this graph import
-  // `apiGet`. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
 }));
@@ -143,9 +140,8 @@ describe("forge.clone_repo", () => {
     expect(JSON.parse(opts.body as string)).toEqual({ url: "https://github.com/user/repo.git" });
   });
 
-  // No Idempotency-Key any more: the action does not retry (an interrupted
-  // clone can leave a partial destination, so a retry reports a false
-  // "already exists"), and the key had no other consumer.
+  // No retry, hence no key: an interrupted clone can leave a partial destination, so a retry would
+  // report a false "already exists".
   it("sends no Idempotency-Key header", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const { cloneRepo } = await import("./forge.js");
@@ -174,9 +170,8 @@ describe("forge.clone_repo", () => {
     vi.useRealTimers();
   });
 
-  // The clone response is an NDJSON stream: progress lines feed onProgress
-  // (and re-arm the client's stall detector), the final line is the same
-  // output/error envelope the old single-body response carried.
+  // NDJSON: progress lines feed onProgress (re-arming the stall detector); the final line is the
+  // output/error envelope.
   it("forwards streamed progress and returns the final envelope", async () => {
     const enc = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
@@ -213,8 +208,7 @@ describe("forge.clone_repo", () => {
     expect(r?.error).toContain("stalled");
   });
 
-  // A stream that ends with no final envelope means the server died
-  // mid-clone; that is a failure, not an empty success.
+  // No final envelope means the server died mid-clone: a failure, not an empty success.
   it("fails when the stream ends without a verdict", async () => {
     const enc = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({

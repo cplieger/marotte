@@ -22,12 +22,8 @@ var (
 	wildcardSegment = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 )
 
-// registeredAPIPatterns scans internal/ for every route pattern registered with a
-// string literal and returns the ones on the API surface.
-//
-// Read off the SOURCE rather than listed here, so a route added in any package is
-// covered without this test being touched — the shadow risk the /api/ fallback
-// carries is exactly the one a hand-maintained list stops catching.
+// registeredAPIPatterns scans internal/ for every route pattern registered with a string
+// literal and returns the API ones. Read off the SOURCE so a new route is covered unasked.
 func registeredAPIPatterns(t *testing.T) []string {
 	t.Helper()
 	seen := map[string]bool{}
@@ -53,13 +49,11 @@ func registeredAPIPatterns(t *testing.T) []string {
 	if err != nil {
 		t.Fatalf("scan internal/ for route registrations: %v", err)
 	}
-	// kiroRescanPath is registered through its constant, so the literal scan cannot
-	// see it — and it is the route requestpath.go names as a non-following caller's.
+	// kiroRescanPath is registered through its constant, which the literal scan cannot see.
 	if !seen[kiroRescanPath] {
 		out = append(out, kiroRescanPath)
 	}
-	// A floor, because a regexp that silently stopped matching would make every
-	// assertion below vacuous.
+	// A floor: a regexp that stopped matching would make every assertion vacuous.
 	if len(out) < 60 {
 		t.Fatalf("scan found %d API routes, want at least 60 — the pattern no longer matches", len(out))
 	}
@@ -83,13 +77,8 @@ func requestFor(pattern string) (method, path string) {
 	return method, path
 }
 
-// TestAPIFallback_ShadowsNoRegisteredRoute is the guard on the risky half of the
-// /api/ fallback: it is a subtree pattern over marotte's whole API surface, so a
-// route it out-ranked would be answered 404 instead of served.
-//
-// Every real route sits at least two segments deep, so each matches a strict subset
-// of /api/ and wins under ServeMux's precedence rule — this asserts that per route
-// against the live source rather than trusting the argument.
+// TestAPIFallback_ShadowsNoRegisteredRoute pins, per route against the live source, that
+// the /api/ subtree fallback out-ranks no registered route.
 func TestAPIFallback_ShadowsNoRegisteredRoute(t *testing.T) {
 	patterns := registeredAPIPatterns(t)
 
@@ -111,11 +100,8 @@ func TestAPIFallback_ShadowsNoRegisteredRoute(t *testing.T) {
 	}
 }
 
-// TestAPIFallback_AnswersAnUnmatchedAPIPath pins what the fallback exists for: the
-// "/" SPA mount matches every path and every method, so an /api/ path no route
-// claims — a typo, a retired endpoint, or a method a route refuses under a
-// method-scoped pattern — was answered 200 with index.html. A machine sender reads
-// that as success.
+// TestAPIFallback_AnswersAnUnmatchedAPIPath pins that an unclaimed /api/ path is not
+// answered 200 with index.html by the "/" SPA mount, which a machine sender reads as success.
 func TestAPIFallback_AnswersAnUnmatchedAPIPath(t *testing.T) {
 	const spaStatus = 299 // a status no marotte handler produces
 
@@ -146,8 +132,7 @@ func TestAPIFallback_AnswersAnUnmatchedAPIPath(t *testing.T) {
 				t.Fatalf("%s %s = %d, want 404 (the SPA mount used to answer %d with index.html)",
 					tc.method, tc.path, rec.Code, spaStatus)
 			}
-			// A 3xx is the other silent success for a caller that does not follow
-			// redirects, which is why /api is registered beside /api/.
+			// A 3xx is the other silent success for a non-following caller, hence /api beside /api/.
 			if got := rec.Header().Get("Location"); got != "" {
 				t.Errorf("Location = %q, want unset", got)
 			}
@@ -157,8 +142,7 @@ func TestAPIFallback_AnswersAnUnmatchedAPIPath(t *testing.T) {
 		})
 	}
 
-	// The control: without it a fallback registered over the whole subtree would
-	// pass every case above while serving nothing.
+	// The control: a fallback over the whole subtree would pass every case above.
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:9847/api/knowledge", http.NoBody))
 	if rec.Code != http.StatusOK {

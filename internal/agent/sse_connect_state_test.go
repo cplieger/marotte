@@ -1,13 +1,8 @@
 package agent
 
-// What the connect hook states. The handshake's busy set is the NEGATIVE half no
-// live frame carries (a chat whose turn died with the previous process is never
-// contradicted otherwise), so BusyStated bounds its blast radius: a list the server
-// could not state completely must retract nothing at all. On a v3 connect the
-// pending set and the waiting-status set arrive as ONE aggregate frame each, whole
-// and stamped, so a row resolved elsewhere while the client was away is cleared
-// and the version reaches the client's map; a legacy connect keeps the per-item
-// replay its decoders know and the numeric floor/head its gap arithmetic reads.
+// What the connect hook states. The busy set is the negative half no live frame carries, so a list the server
+// cannot state completely retracts nothing (BusyStated). v3 gets one whole stamped frame per set; legacy
+// keeps the per-item replay and numeric floor/head.
 
 import (
 	"encoding/json"
@@ -20,9 +15,7 @@ import (
 	"github.com/cplieger/sse/ssetest"
 )
 
-// connectFrames runs one cold connect and returns the id-less application frames the
-// hook wrote, decoded to their envelope, in wire order. legacy selects the connect
-// shape: a legacy request sends no SSE-Wire header.
+// connectFrames runs one cold connect and returns its id-less frames in wire order; legacy omits SSE-Wire.
 func connectFrames(t *testing.T, rt *Runtime, legacy bool) []marotte.ServerEvent {
 	t.Helper()
 	rec := coldConnectAs(t, rt, legacy)
@@ -120,8 +113,7 @@ func TestConnect_StatesTheBusySet(t *testing.T) {
 	}
 }
 
-// A workflow STEP's turn belongs to its run's record, so the chat hosting it is
-// not busy. This is the stuck-purple population the retraction exists to reach.
+// A workflow step's turn is its run's, so the hosting chat is not busy.
 func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	rt.bridge.mgr.orInsert("c-step")
@@ -145,9 +137,7 @@ func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	}
 }
 
-// The admission window: the user row is persisted and broadcast and `thinking` is latched
-// before any Turn exists, so a reconnect inside it must NOT retract. Reachable without a
-// cold spawn — another device prompts, this one reconnects from background.
+// In the admission window no Turn exists yet, so a reconnect must not retract.
 func TestConnect_TheBusySetIncludesAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	if !rt.coord.TryReserveTurn("c-admitted", marotte.TurnSourcePrompt) {
@@ -182,7 +172,7 @@ func TestConnect_TheBusySetIsWithheldOverTheCap(t *testing.T) {
 	}
 }
 
-// C1: the inventory rides this frame, so the square's first paint costs no round trip.
+// The inventory rides this frame, so the first paint costs no round trip.
 func TestConnect_CarriesEveryHeldLeaseAndStatesTheInventory(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	store := rt.runs.leaseStore()
@@ -210,8 +200,7 @@ func TestConnect_CarriesEveryHeldLeaseAndStatesTheInventory(t *testing.T) {
 	}
 }
 
-// liveRunRows is ONE projection with two doors, so the handshake and the endpoint cannot
-// disagree about what a live run IS.
+// liveRunRows serves both doors, so the handshake and endpoint agree.
 func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	store := rt.runs.leaseStore()
@@ -245,11 +234,7 @@ func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
 	}
 }
 
-// --- The two connect shapes ---
-
-// TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame pins the aggregate: every
-// chat's pending items in one pending_snapshot, the stamp on the envelope at the
-// registry's `pending` version, and no per-item frame beside it.
+// TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame pins one pending_snapshot at the `pending` version and no per-item frames.
 func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
@@ -270,7 +255,7 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 	if err := reencode(snap.Payload, &payload); err != nil {
 		t.Fatalf("decode pending_snapshot: %v", err)
 	}
-	// 2 permissions + 1 run ask (seedPendingDecisions) + 1 steer.
+	// 2 permissions, 1 run ask and 1 steer.
 	if len(payload.Items) != fixturePendingPerms+fixturePendingRunAsks+1 {
 		t.Errorf("pending_snapshot carries %d items, want %d", len(payload.Items), fixturePendingPerms+fixturePendingRunAsks+1)
 	}
@@ -296,9 +281,7 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 	}
 }
 
-// TestConnect_V3EmptySetsAreOneFrameEach pins the case that matters: a per-item
-// replay of an empty set writes nothing, so a row resolved elsewhere during the gap
-// would stay on screen. An empty snapshot frame clears it and carries the stamp.
+// TestConnect_V3EmptySetsAreOneFrameEach pins that an empty snapshot frame is what clears a row resolved during the gap.
 func TestConnect_V3EmptySetsAreOneFrameEach(t *testing.T) {
 	rt := newBudgetRuntime(t)
 
@@ -332,9 +315,7 @@ func TestConnect_V3EmptySetsAreOneFrameEach(t *testing.T) {
 	}
 }
 
-// TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats pins the second
-// aggregate and its busy filter: a chat whose turn is running must still suppress
-// a stale waiting_on_user.
+// TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats pins that a running chat suppresses a stale waiting_on_user.
 func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	rt.bus.chatStatus.MergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "pick one"})
@@ -366,9 +347,7 @@ func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T
 	}
 }
 
-// TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds pins the overlap for the
-// v2 bundle: no aggregate frames, one frame per pending item and waiting row, and
-// `connected` carrying floor/head as JSON numbers.
+// TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds pins the v2 shape: no aggregate frames, per-item frames, numeric floor/head.
 func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
@@ -405,15 +384,14 @@ func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 	if head := rt.bus.fanout.Position().Head; *p.Head != head {
 		t.Errorf("legacy connected head = %d, want the ring head %d", *p.Head, head)
 	}
-	// The v2 client reads numbers, so the wire must carry numbers, not strings.
+	// The v2 client reads numbers.
 	body := coldConnectAs(t, rt, true).Body.String()
 	if !strings.Contains(body, `"floor":0`) || !strings.Contains(body, `"head":`+string(rune('0'+int(*p.Head)))) {
 		t.Errorf("legacy connected does not carry numeric floor/head: %s", body)
 	}
 }
 
-// TestConnect_V3ConnectedCarriesNoFloorOrHead: a v3 client takes those facts from
-// the library's hello, so the application frame omits them.
+// TestConnect_V3ConnectedCarriesNoFloorOrHead pins that a v3 client gets them from the library's hello.
 func TestConnect_V3ConnectedCarriesNoFloorOrHead(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	rt.bus.emit(marotte.ServerEvent{Type: marotte.EventChatUpdated, ChatID: "c1"})
@@ -422,8 +400,7 @@ func TestConnect_V3ConnectedCarriesNoFloorOrHead(t *testing.T) {
 	if p.Floor != nil || p.Head != nil {
 		t.Errorf("v3 connected carries floor=%v head=%v, want neither", p.Floor, p.Head)
 	}
-	// The hello carries its own floor/head; the assertion is about the application
-	// frame, so it reads that frame's bytes alone.
+	// The hello has its own floor/head; read the application frame alone.
 	frames, err := ssetest.ReadFrames(strings.NewReader(coldConnectAs(t, rt, false).Body.String()), 0)
 	if err != nil {
 		t.Fatalf("parse frames: %v", err)
@@ -435,8 +412,7 @@ func TestConnect_V3ConnectedCarriesNoFloorOrHead(t *testing.T) {
 	}
 }
 
-// TestHandleSSE_CountsConnectsByWireGeneration pins the observability counter the
-// legacy overlap is retired on.
+// TestHandleSSE_CountsConnectsByWireGeneration pins the counter the legacy overlap is retired on.
 func TestHandleSSE_CountsConnectsByWireGeneration(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	coldConnectAs(t, rt, true)

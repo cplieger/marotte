@@ -1,7 +1,4 @@
-// Fuzz test for smd.ts parser_write — streaming markdown parser accepting
-// arbitrary string input. Feeds random chunks (including split mid-codepoint,
-// empty strings, and null bytes) and asserts the parser never throws, never
-// produces negative `len`, and always leaves `tokens[0] === DOCUMENT`.
+// Fuzz test for smd.ts parser_write — streaming markdown parser accepting arbitrary string input.
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";

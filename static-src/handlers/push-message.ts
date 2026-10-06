@@ -1,19 +1,12 @@
-// Service-worker push messages, in three kinds wanting different treatment.
-//
-//   "arrived"  a push landed while this page was focused, so the worker showed no
-//              OS notification (the sanctioned exception to "every push must show
-//              one" — Chrome's userVisibleOnly would substitute a generic
-//              background notice). Right surface: an ephemeral toast.
-//   "clicked"  the user tapped one. The subject becomes a route through
-//              push-subject.ts, the same one the worker spends, and
-//              notification-open.ts hands it to the route applier.
-//   "subscription_changed"  the browser rotated the push subscription, so the
-//              presence tag derived from its endpoint moved; the page re-derives.
-// ---------------------------------------------------------------------------
+// Service-worker push messages:
+//   "arrived"  landed on a focused page, so the worker showed no OS notification: a toast.
+//   "clicked"  the subject becomes a route through push-subject.ts (the worker's own).
+//   "subscription_changed"  the endpoint rotated, so the derived presence tag moved.
 
 import { openPushTarget } from "../notification-open.js";
 import { parsePushTarget } from "../push-subject.js";
 import * as toast from "../toast.js";
+import { named, noticeSubject } from "../notice-subject.js";
 
 interface PushPageMessage {
   type: "push";
@@ -23,6 +16,8 @@ interface PushPageMessage {
    *  CI flip. Carries a kind prefix so the route below is keyed on what the subject
    *  IS rather than on a URL the server would have had to assemble. */
   subject?: string;
+  /** The chat's name when the push was sent; the page may no longer hold its row. */
+  chatName?: string;
   title: string;
   body: string;
 }
@@ -35,7 +30,8 @@ function isPushMessage(d: unknown): d is PushPageMessage {
   return (
     m.type === "push" &&
     (m.reason === "clicked" || m.reason === "arrived" || m.reason === "subscription_changed") &&
-    typeof m.chatId === "string"
+    typeof m.chatId === "string" &&
+    (m.chatName === undefined || typeof m.chatName === "string")
   );
 }
 
@@ -71,14 +67,12 @@ export function initPushMessages(onSubscriptionChanged: () => void): void {
       routePushMessage(msg);
       return;
     }
-    // A run completion is already on screen: handlers/run.ts toastCompletion renders
-    // it on a focused page and renders it better, carrying the verdict as the toast
-    // LEVEL where a push body is one info toast. A second toast is one fact twice.
-    // The class does not exist for agent_finished, whose foreground channel is
-    // notifyIfHidden and so is already silent on a focused page.
+    // handlers/run.ts toastCompletion already shows a run completion on a focused page, with the
+    // verdict as the toast level; a second toast is one fact twice.
     if (parsePushTarget({ chatId: msg.chatId, subject: msg.subject ?? "" }).kind === "run") {
       return;
     }
-    toast.info(notice(msg));
+    const subject = noticeSubject(msg.chatId, msg.chatName ?? "");
+    toast.notice(named(subject, notice(msg)), "info", subject.open);
   });
 }

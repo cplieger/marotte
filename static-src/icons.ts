@@ -1,57 +1,43 @@
-// ---------------------------------------------------------------------------
-// Icon registry: Seti UI file type icons (MIT, jesseweed/seti-ui) plus the app's own
-// action, tool, outcome and tab glyphs. Everything draws in `currentColor`.
-// ---------------------------------------------------------------------------
+// Icon registry: Seti UI file type icons (MIT, jesseweed/seti-ui) plus the app's action, tool, outcome and tab
+// glyphs. Everything draws in `currentColor`.
 
 import type { ToolKind } from "./types.js";
 import { extToIconKey } from "./file-extensions.js";
 
-// --- Action icons (shared across modules) ---
-
 type IconTier = "inline" | "ui" | "lg" | "hero";
 
-/** Build a stroked glyph on the 24-unit grid. `tier` names a SIZE TIER, never a pixel
- *  count: `03-base.css` owns the size and the stroke, so none is emitted here. */
+/**
+ * Build a stroked glyph on the 24-unit grid. `tier` names a size tier, never a pixel count: `03-base.css` owns the
+ * size and the stroke.
+ */
 function svg(tier: IconTier, d: string, extra = ""): string {
   return `<svg class="ic-${tier}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
 }
 
-// ---------------------------------------------------------------------------
-// SHARED DRAWINGS. One concept, one drawing: a path used by several constants is
-// named once here so nothing can let the copies drift. A tier variant is a
-// different SIZE of one mark, so the tier is chosen at the call.
-// ---------------------------------------------------------------------------
+// Shared drawings: a path used by several constants is named once, so one concept has one drawing; a tier variant
+// is a size of the same mark, chosen at the call.
 const PATH_PENCIL = '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>';
 const PATH_X = '<path d="M18 6L6 18M6 6l12 12"/>';
 const PATH_PLUS = '<path d="M12 5v14M5 12h14"/>';
 const PATH_TRASH =
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>';
-/** Optically centred, which its bounding box is not: the dart's painted mass sits
- *  1.93 x 2.03 viewBox units upper-right of the box centre. The `favicon.svg` wrapper
- *  pattern, capped by the viewBox — its ink spans 21 of 24 units, so the full
- *  correction clips and this is the largest shift that does not. A CSS `translate`
- *  cannot carry it: `icon-crisp.ts` owns that property on every `.ic-*`. */
+/**
+ * Optically centred, which its bounding box is not: the dart's mass sits 1.93 x 2.03 units upper-right of centre, and
+ * this is the largest shift the viewBox allows. Not a CSS `translate`: `icon-crisp.ts` owns that on every `.ic-*`.
+ */
 const PATH_SEND =
   '<g transform="translate(-1.25 1.25)"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></g>';
-/** The pin's outline and its filled twin share this path: `fill` is the only
- *  difference, which is what makes the state read as the same mark, filled. */
+/** Outline and filled twin share this path; `fill` is the only difference, so the state reads as the same mark. */
 const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>';
-/** The open book, shared by `ICON_TAB_DOCS` (the configuration browser and the sidebar
- *  button that opens it) and `ICON_TOOL_READ` (the read-family tool card). The design
- *  record — why every corner is an arc, why the flaps rise 1.5, and what the shape may
- *  not become — is at `ICON_TAB_DOCS`, and the two SHARE this constant rather than
- *  carrying a copy each so nothing has to hold two spellings equal. */
+/**
+ * Shared by `ICON_TAB_DOCS` and `ICON_TOOL_READ` so nothing holds two spellings equal; the design notes are at
+ * `ICON_TAB_DOCS`.
+ */
 const PATH_BOOK_OPEN =
   '<path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/>';
 
-// A TIER PAIR IS SUFFIXED `_UI`, NEVER A PIXEL COUNT. These four pairs were spelled
-// `_14`, `_16` and — for the X — with a second CONCEPT NAME, so one mark had two names
-// that said nothing about which was which and a module importing the `ui` tier of the
-// close mark did not read as reaching for the close mark at all. The numbers were
-// false as well as inconsistent: both suffixes named the `ui` tier, and `--icon-ui` is
-// 1rem on a fine pointer and 1.25rem on a coarse one (01-tokens.css), so neither 14
-// nor 16 is ever what renders. `svg()` above already states the rule the names broke —
-// its argument is a SIZE TIER, never a pixel count.
+// A tier pair is suffixed `_UI`, never a pixel count: `--icon-ui` varies by pointer (01-tokens.css), so a number would
+// be false.
 export const ICON_EDIT = svg("inline", PATH_PENCIL);
 export const ICON_EDIT_UI = svg("ui", PATH_PENCIL);
 export const ICON_CLOSE = svg("inline", PATH_X);
@@ -59,12 +45,9 @@ export const ICON_CLOSE_UI = svg("ui", PATH_X);
 export const ICON_TRASH = svg("inline", PATH_TRASH);
 export const ICON_TRASH_UI = svg("ui", PATH_TRASH);
 export const ICON_PLUS_UI = svg("ui", PATH_PLUS);
-// Pin icons for the per-tool auto_update toggle. Filled = pinned
-// (auto_update off), outline = tracking upstream (auto_update on).
+// Per-tool auto_update toggle: filled = pinned (auto_update off), outline = tracking upstream.
 export const ICON_PIN = svg("inline", PATH_PIN);
-// Stroke 2 like its outline twin `ICON_PIN`, so the pin does not change WEIGHT
-// when it changes state. `fill` is the only difference between the two, which is
-// what the state is meant to say.
+// Stroke 2 like `ICON_PIN`, so the pin keeps its weight across states.
 export const ICON_PIN_FILLED = `<svg class="ic-inline" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${PATH_PIN}</svg>`;
 export const ICON_COPY = svg(
   "ui",
@@ -72,21 +55,15 @@ export const ICON_COPY = svg(
 );
 export const ICON_COPY_MD =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
-// Angle brackets (Lucide "code"): show the reply's markdown SOURCE instead of
-// its rendering, for when a message renders wrong and the question is whether
-// the model or the parser is at fault.
-export const ICON_SOURCE = svg("ui", '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
 export const ICON_LINK =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
-// Open-in-new-tab / external-link icon (Lucide). Used by the
-// repo-picker and forge-auth panels to mark links that leave the app.
+// External-link icon (Lucide), marking links that leave the app.
 export const ICON_EXTERNAL =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 // Download / clone-into-workspace icon (Lucide).
 export const ICON_DOWNLOAD =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-// Repo (book-style) icon — same shape as the empty-state glyph, used
-// in the per-account collapsible repo summary.
+// Repo (book-style) icon, as the empty-state glyph.
 export const ICON_REPO =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
 export const ICON_EXPORT =
@@ -97,68 +74,40 @@ export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
 export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
 export const ICON_SEND = svg("ui", PATH_SEND);
-// The AI-generate glyph (Lucide "sparkles"), for every button that asks a model
-// to fill a field: the commit box's message button and the branch popover's
-// name suggestion. It replaced a literal ✨ in both, because the branch
-// popover's row puts it directly beside a stroke-drawn send arrow and an emoji
-// renders from a colour font at its own weight and baseline.
+// The AI-generate glyph (Lucide "sparkles") for buttons that ask a model to fill a field. Not an emoji: a colour
+// font beside a stroked arrow renders at its own weight and baseline.
 export const ICON_SPARKLE = svg(
   "ui",
   '<path d="m12 3-1.9 5.8a2 2 0 01-1.3 1.3L3 12l5.8 1.9a2 2 0 011.3 1.3L12 21l1.9-5.8a2 2 0 011.3-1.3L21 12l-5.8-1.9a2 2 0 01-1.3-1.3z"/>' +
     '<path d="M5 3v4M3 5h4M19 17v4M17 19h4"/>',
 );
-// Busy-state spinner rendered INTO a button. A quarter-circle arc with round caps,
-// ROTATED by 15-input.css — the one spinner that still is, because the rings paint
-// their arc instead (`--vk-spin-arc`, 00-header.css). A marching `stroke-dashoffset`
-// was measured as the alternative and lost: `vector-effect: non-scaling-stroke` makes
-// Chromium compute the dash in a space `stroke-dasharray` disagrees with, so the arc
-// collapsed to a dot twice a revolution.
+// Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
+// in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
 export const ICON_SPINNER =
   '<svg class="icon-spinner ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
-/* A SYMMETRIC hourglass: two cap bars plus two chambers, mirrored about x=12 AND
- * y=12. Every coordinate is ABSOLUTE so `icon-hourglass.test.ts` reads both axes
- * straight off the string; a relative form would hide a drift behind its deltas.
- * Sized for the steer dock's 13.6px, where one unit is 0.57 CSS px: the caps overhang
- * each chamber by 1.5 units, which is what reads as an hourglass rather than an X
- * once the taper is under 3 px wide. */
+/*
+ * Symmetric about x=12 and y=12, all absolute coordinates so `icon-hourglass.test.ts` reads both axes. The caps
+ * overhang each chamber by 1.5 units, which reads as an hourglass rather than an X at 13.6px.
+ */
 export const ICON_HOURGLASS = svg(
   "ui",
   '<path d="M5.5 2.5H18.5M5.5 21.5H18.5"/>' +
     '<path d="M7 2.5V4.9L12 12L17 4.9V2.5"/>' +
     '<path d="M7 21.5V19.1L12 12L17 19.1V21.5"/>',
 );
-// The one-button activity control's Cancel face: a stop square. Filled — the
-// outline family reads as a checkbox at 16px, and stop-is-filled is the
-// transport convention every player uses.
+// A stop square, filled: the outline reads as a checkbox at 16px, and stop-is-filled is the transport convention.
 export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
 );
-// The turn footer's Rewind: transport, because the control's own name is a transport
-// verb, so it stays alongside `ICON_CANCEL` and `ICON_PLAY` rather than starting a
-// second vocabulary.
-//
-// LINE ART, and the same silhouette it had filled. It used to be two solid
-// triangles, on the argument that each is ~6px wide at --icon-ui where a 1px outline
-// around one is a sliver. That argument is about a CLOSED shape: an open chevron has
-// no interior to become a sliver, so it takes the double-arrow-left silhouette to
-// strokes at no cost, and this stops being the one action glyph in the footer's row
-// that is a solid mass while the five beside it are outlines. `ICON_CANCEL` stays
-// filled on its own reasoning — a stop square IS its interior, and the outline
-// family reads as a checkbox at 16px.
-//
-// Left-pointing and DOUBLED, which is what keeps it clear of `.disclosure-chevron`:
-// that one is single and points right when closed, down when open.
+// Transport, beside `ICON_CANCEL` and `ICON_PLAY`. Line art: an open chevron has no interior to become a sliver.
+// Left-pointing and doubled, clear of `.disclosure-chevron`.
 export const ICON_REWIND = svg("ui", '<path d="M11 18l-6-6 6-6M19 18l-6-6 6-6"/>');
 
-/* THE MODEL GLYPH — one `d`, two sizes: 20px in the empty-chat picker's heading and
- * 12px in the composer's model pill.
- *
- * The head is the whole silhouette; an antenna took the top 6 of 22 units and left the
- * face, which at 12px is all there is, paying for a 1px tick. Three facts a redraw must
- * keep: the eyes are FILLED dots, because a ring's wall and hole cannot both survive
- * 1.5 CSS px; their inner edges at x=10 and x=14 make the gap 2.00 CSS px on pixel
- * boundaries at 12px; and the mouth's dip is 2 units, because 1 unit is 0.5 px. */
+/*
+ * One `d`, two sizes (picker heading, model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS
+ * px), inner eye edges at x=10 and x=14 (a 2 CSS px gap on pixel boundaries at 12px), and a 2-unit mouth dip.
+ */
 const MODEL_ROBOT_D =
   '<rect x="2" y="2" width="20" height="20" rx="5"/>' +
   '<circle cx="7.5" cy="9" r="2.5" fill="currentColor" stroke="none"/>' +
@@ -167,9 +116,7 @@ const MODEL_ROBOT_D =
 export const ICON_MODEL = svg("inline", MODEL_ROBOT_D);
 export const ICON_MODEL_UI = svg("ui", MODEL_ROBOT_D);
 
-// The turn footer's info-panel trigger. A stem and a dot rather than a single
-// path: the dot is drawn as a zero-length segment, which `stroke-linecap: round`
-// on the wrapper paints as a circle, so the glyph needs no `fill` of its own.
+// The dot is a zero-length segment that `stroke-linecap: round` paints as a circle, so no `fill` is needed.
 export const ICON_INFO = svg(
   "ui",
   '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
@@ -178,36 +125,29 @@ export const ICON_ALERT = svg(
   "ui",
   '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 );
-// Lucide `arrow-up`, a DIRECTION primitive rather than a git one: the dock's
-// send-now control reads it as "carry this message up into a new turn". It was
-// `ICON_GIT_UP_ARROW` with zero production callers, so drawing a second identical
-// glyph for that control would have put one drawing under two names. Its sibling
-// keeps its git name: `ICON_GIT_DOWN_ARROW` has one caller and a git-scoped meaning.
+// Lucide `arrow-up`, a direction primitive: the dock's send-now control.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
 export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
-/** Lucide `rotate-cw` with its head's horizontal leg moved from y=8 to y=9, so both
- *  legs sit on the 3-unit grid; the last curve ends on the head's 45° line so the
- *  shaft meets the corner without a kink. */
+/**
+ * Lucide `rotate-cw` with the head's leg moved to y=9, on the 3-unit grid; the last curve ends on the head's 45°
+ * line so the shaft meets it without a kink.
+ */
 export const ICON_REFRESH = svg(
   "ui",
   '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.74 1.74 6.24 3.24L21 9"/><path d="M21 3v6h-6"/>',
 );
 
-// The funnel: this app's mark for a filter that NARROWS A LIST, and only that.
-// The file browser's changed-by-this-chat toggle is deliberately not a consumer —
-// it sets opacity on the rows the chat did not write and removes nothing, so the
-// funnel would claim an operation it does not perform.
+// The funnel marks a filter that narrows a list, and only that; the file browser's changed-by-this-chat toggle only
+// dims rows, so it does not use it.
 export const ICON_FILTER =
   '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
   "</svg>";
 
-/** The find affordance's two glyphs, drawn at the caller's size.
- *
- *  A MAGNIFIER for a box that reaches PAST what is on screen, a FUNNEL for one that
- *  only NARROWS rows already loaded. The distinction is the reader's: a funnel
- *  promises the answer is limited to what is here. ONE producer, so the toolbar button
- *  and the box it opens cannot disagree about which a page is. */
+/**
+ * The find affordance's glyph: a magnifier for a box that reaches past what is on screen, a funnel for one that only
+ * narrows loaded rows. One producer, so the toolbar button and its box agree.
+ */
 export function findGlyph(kind: "search" | "filter"): string {
   return svg(
     "ui",
@@ -223,10 +163,7 @@ export const ICON_REPO_EMPTY =
   '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
   "</svg>";
 
-// The pull-request glyph (Lucide "git-pull-request"), byte-identical to the one
-// the Pull requests TAB carries in static/index.html. It used to be a different
-// three-circle drawing, so the empty state rendered a second mark for the same
-// concept directly under the tab whose icon named it.
+// Lucide "git-pull-request", byte-identical to the Pull requests tab's glyph in static/index.html: one concept, one mark.
 export const ICON_PR_EMPTY =
   '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<circle cx="18" cy="18" r="3"/>' +
@@ -234,23 +171,18 @@ export const ICON_PR_EMPTY =
   '<path d="M13 6h3a2 2 0 012 2v7"/>' +
   '<line x1="6" y1="9" x2="6" y2="21"/>' +
   "</svg>";
-// Globe with meridian + equator stripes — used by the repo-picker for
-// "remote, not cloned" entries.
+// Globe for "remote, not cloned" repo-picker entries.
 export const ICON_GLOBE =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 export const ICON_WARN =
   '<svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
-// Balance-scale icon (Lucide "scale"). Marks the licensed-code attribution
-// chip/footnote (v3 _kiro/code_references) — the universal "license" glyph.
+// Balance-scale (Lucide "scale"): the licensed-code attribution chip and footnote.
 export const ICON_SCALE = svg(
   "inline",
   '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
 );
 
-// Save-indicator icons. `currentColor` and a semantic CLASS, never a baked hue:
-// these two were the only library icons whose host could not tint them, while
-// `outcomeIcon` argues the opposite discipline for the same three colours one
-// screen away. The class is what 17-settings.css colours.
+// `currentColor` and a semantic class, never a baked hue, so the host can tint them; 17-settings.css colours the class.
 export const ICON_SAVE_OK = svg(
   "ui",
   '<polyline points="20 6 9 17 4 12"/>',
@@ -261,13 +193,11 @@ export const ICON_SAVE_FAIL = svg(
   '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   ' class="icon-save-fail"',
 );
-// --- Tool-call icons ---
 
-/** The read family — files, and through `readSubject` also processes, folders and
- *  diagnostics — draws the SAME open book as the configuration browser, deliberately:
- *  a second open book would be indistinguishable at 16px from this one, and a tool
- *  card and a delegate card can share one screen. The cost is one silhouette across
- *  two registers (sidebar chrome, transcript content), the cheaper trade. */
+/**
+ * The read family draws the configuration browser's open book on purpose: one silhouette across sidebar chrome and
+ * transcript content, which keeps it clear of every transcript glyph.
+ */
 const ICON_TOOL_READ = svg("ui", PATH_BOOK_OPEN);
 const ICON_TOOL_EDIT = svg("ui", PATH_PENCIL);
 const ICON_TOOL_DELETE = svg("ui", PATH_TRASH);
@@ -297,16 +227,12 @@ const ICON_TOOL_FOLDER = svg(
   "ui",
   '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
-/** The bare prompt. Exported because the chat toolbar's shell toggle draws it
- *  too, and `menu-icons.test.ts` pins that pairing. */
+/** The bare prompt. Exported because the chat toolbar's shell toggle draws it too (pinned in `menu-icons.test.ts`). */
 export const ICON_TOOL_TERMINAL = svg(
   "ui",
   '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
 );
-// MCP (Model Context Protocol): a plug icon — "external integration the
-// agent can call." Two prongs pointing up from a rounded body, with a
-// downward cord. Reads as "something you connect" at 14px without needing
-// colour or detail.
+// A plug: "something you connect", legible at 14px without colour.
 const ICON_TOOL_MCP = svg(
   "ui",
   '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>',
@@ -331,9 +257,7 @@ const ICON_BY_KIND: Record<ToolKind, string> = {
   other: ICON_TOOL_FALLBACK,
 };
 
-// Specific tool titles whose icon should override the kind-based default.
-// Titles are matched case-sensitive and include the kiro-cli tool name as
-// emitted (no "Running: " prefix — that's stripped at call site).
+// Title overrides for the kind default. Case-sensitive kiro-cli tool names, "Running: " stripped at the call site.
 const ICON_BY_TITLE: Record<string, string> = {
   listDirectory: ICON_TOOL_FOLDER,
   fileSearch: ICON_TOOL_FOLDER,
@@ -353,60 +277,45 @@ export function toolIcon(kind: ToolKind, title: string): string {
   return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 
-// --- Outcome glyphs ---
-// ONE set for every outcome surface. A non-success state REPLACES the row's identity
-// glyph, so shape carries it and hue is never the only channel (WCAG 1.4.1). Fills go
-// on the PATH: `svg()` hard-codes `fill="none"` and a duplicate attribute loses.
+// One set for every outcome surface. A non-success state replaces the row's identity glyph, so shape carries it and
+// hue is never the only channel (WCAG 1.4.1). Fills go on the path: `svg()` hard-codes `fill="none"`.
 
-/** The shared circle: centre (12,12), r=6, which paints at `--dot-size`. Two
- *  semicircles, because a chord equal to the diameter makes the large-arc flag
- *  immaterial. */
+/** Centre (12,12), r=6, which paints at `--dot-size`; two semicircles make the large-arc flag immaterial. */
 const OUTCOME_DISC = "M12 6a6 6 0 1 0 0 12a6 6 0 1 0 0-12z";
 
 const ICON_OUTCOME_OK = svg("ui", `<path d="${OUTCOME_DISC}" fill="currentColor" stroke="none"/>`);
 
-/** A DIAMOND, so a failure reads the same here as in the tab strip, and it is the
- *  same construction as that rule rather than a lookalike: a 6px square with a
- *  1.5px corner rotated 45 degrees, which is 9 and 2.25 units at this scale. The
- *  greyscale argument behind the shape is `12-tabs.css`'s, at
- *  `[data-status="failed"]`. The apex-up triangle it replaces was a second
- *  failure silhouette for one reader to learn. */
+/**
+ * A diamond, the same construction as the tab strip's failure (`12-tabs.css` `[data-status="failed"]`): a 6px square
+ * with a 1.5px corner rotated 45 degrees, 9 and 2.25 units here.
+ */
 const ICON_OUTCOME_FAIL = svg(
   "ui",
   '<rect x="7.5" y="7.5" width="9" height="9" rx="2.25" transform="rotate(45 12 12)" fill="currentColor" stroke="none"/>',
 );
 
-/** Horizontal bar x 8.1..15.9, y 10.75..13.25. The disc's half-chord at y=13.25
- *  is 5.87, so the bar ends 1.97 units short of the rim and the outline stays
- *  unbroken — which is what separates a stop from a plain disc. */
+/** The bar ends 1.97 units short of the rim, so the outline stays unbroken and a stop differs from a plain disc. */
 const ICON_OUTCOME_WARN = svg(
   "ui",
   `<path d="${OUTCOME_DISC}M8.1 10.75h7.8v2.5h-7.8z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
-/** The SAME bar VERTICAL, for a tool that ran and refused. Bar angle is the whole
- *  family: horizontal is stopped, vertical is declined, 45 degrees is blocked by
- *  policy — one length, one inset from the rim, three angles, so a reader learns
- *  one shape and reads the difference off its rotation. It is its own silhouette
- *  rather than a re-tint of the stop above, because hue would then be the only
- *  channel separating two states that mean different things (WCAG 1.4.1). */
+/**
+ * The same bar vertical, for a tool that refused. One bar, three angles: horizontal stopped, vertical declined,
+ * 45 degrees denied by policy. Its own silhouette, since hue alone would fail WCAG 1.4.1.
+ */
 const ICON_OUTCOME_DECLINED = svg(
   "ui",
   `<path d="${OUTCOME_DISC}M10.75 8.1h2.5v7.8h-2.5z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
-/** The SAME bar at 45 degrees, so the ANGLE is the whole difference between a
- *  policy refusal and a stop; its four corners sit 4.1 from the centre, inside the
- *  rim like the one above. The pair used to differ in LENGTH as well (16 against
- *  13), which made the angle the weaker of two channels. */
+/** The same bar at 45 degrees, corners 4.1 from the centre, so the angle is the whole difference from a stop. */
 const ICON_OUTCOME_DENIED = svg(
   "ui",
   `<path d="${OUTCOME_DISC}M13.874 8.358L15.642 10.126L10.126 15.642L8.358 13.874z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
-/** The states the glyph set covers. `ok` is here for the surfaces with no
- *  identity glyph of their own to tint (a group header, an exec-tree row); a
- *  tool card keeps its own glyph for `ok` and never asks. */
+/** `ok` is for surfaces with no identity glyph to tint; a tool card keeps its own glyph for `ok`. */
 type OutcomeGlyph = "ok" | "fail" | "warn" | "declined" | "denied";
 
 const ICON_BY_OUTCOME: Readonly<Record<OutcomeGlyph, string>> = {
@@ -417,20 +326,12 @@ const ICON_BY_OUTCOME: Readonly<Record<OutcomeGlyph, string>> = {
   denied: ICON_OUTCOME_DENIED,
 };
 
-/** The one resolver for an outcome mark. Draws in `currentColor`, so the
- *  existing `--c-green` / `--c-red` / `--c-yellow` tints reach it through
- *  whatever slot hosts it and no new colour token is involved. */
+/** The one resolver for an outcome mark. Draws in `currentColor`, so the existing tints reach it through its slot. */
 export function outcomeIcon(state: OutcomeGlyph): string {
   return ICON_BY_OUTCOME[state];
 }
 
-// --- Tab icons ---
-
-// Speech bubble (Lucide "message-square"). It was a WRENCH, byte-identical to
-// `ICON_SUBAGENT_TASK` below — so the default conversational mode and the
-// general-task subagent drew one mark, against `iconForMode`'s own promise that
-// each bundled mode gets a distinct glyph. The wrench belongs to the subagent,
-// whose comment says so; a conversation gets the bubble.
+// Speech bubble (Lucide "message-square"), distinct from `ICON_SUBAGENT_TASK`: each bundled mode gets its own glyph.
 export const ICON_TAB_CHAT = svg(
   "ui",
   '<path d="M22 17a2 2 0 01-2 2H6.828a2 2 0 00-1.414.586l-2.202 2.202A.71.71 0 012 21.286V5a2 2 0 012-2h16a2 2 0 012 2z"/>',
@@ -439,8 +340,7 @@ export const ICON_TAB_PLAN = svg(
   "ui",
   '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 8h8M8 13h5"/>',
 );
-// Spec role tab icon (Lucide "list-checks") — the spec agent drives the
-// structured requirements/design/tasks workflow, so a checklist reads right.
+// Spec mode (Lucide "list-checks"): the requirements/design/tasks workflow.
 export const ICON_TAB_SPEC = svg(
   "ui",
   '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
@@ -465,166 +365,108 @@ export const ICON_VIEWPORT_DESKTOP = svg(
   "ui",
   '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
 );
-// Generic custom-agent tab icon (hexagon module + core dot). The one
-// common glyph shared by every workspace custom agent (and bundled
-// non-workflow agents like semantic_reviewer) in the mode picker.
+// The shared custom-agent glyph (hexagon and core dot) for workspace and bundled non-workflow agents.
 export const ICON_TAB_AGENT = svg(
   "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/>',
 );
-// --- Subagent header icons (SubagentBlock in the chat transcript) ---
-// One distinct glyph per bundled kiro-cli subagent; unknown/custom subagents fall back
-// to ICON_TAB_AGENT (the shared hexagon). Mapping: roles.ts iconForSubagent.
-//
-// Introspect (Lucide "graduation-cap") answers questions about Kiro from its docs. Not
-// a book (one mark with `ICON_TOOL_READ` at 16px) and not a ring with a `?` (the
-// silhouette of `ICON_INFO`, `ICON_TOOL_FETCH` and `ICON_TAB_HISTORY`): the cap's
-// outline is unlike anything else in the set, and it is Lucide verbatim.
+// Subagent header icons, one per bundled kiro-cli subagent; unknown ones fall back to ICON_TAB_AGENT (roles.ts
+// iconForSubagent). Introspect is Lucide "graduation-cap": a book would collide with `ICON_TOOL_READ` in the
+// transcript, and a circled `?` with `ICON_INFO`.
 export const ICON_SUBAGENT_INTROSPECT = svg(
   "ui",
   '<path d="M21.42 10.922a1 1 0 00-.019-1.838L12.83 5.18a2 2 0 00-1.66 0L2.6 9.08a1 1 0 000 1.832l8.57 3.908a2 2 0 001.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0012 0v-3.5"/>',
 );
-// Context gatherer (Lucide "search") — explores the codebase read-only.
+// Context gatherer (Lucide "search"): explores the codebase read-only.
 export const ICON_SUBAGENT_GATHERER = svg(
   "ui",
   '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
 );
-// General task execution (Lucide "hammer") — does delegated work. It was the
-// WRENCH, which `ICON_TOOL_FALLBACK` above also draws, and the two are adjacent
-// by construction: an unrecognised tool card renders inside this subagent's own
-// block. The wrench stays with the fallback, whose whole meaning is "some tool";
-// a named subagent should not wear another set's generic mark. Hammer keeps the
-// does-work metaphor so the concept still reads, with a silhouette that
-// separates from the wrench's open jaw at 14px.
+// Task execution (Lucide "hammer"), not the wrench: `ICON_TOOL_FALLBACK` draws that, and an unknown tool card
+// renders inside this subagent's block.
 export const ICON_SUBAGENT_TASK = svg(
   "ui",
   '<path d="m15 12-9.373 9.373a1 1 0 01-3.001-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0119 8.172v-.344a2 2 0 00-.586-1.414l-1.657-1.657A6 6 0 0012.516 3H9l1.243 1.243A6 6 0 0112 8.485V10l2 2h1.172a2 2 0 011.414.586L18.5 14.5"/>',
 );
-// Custom agent creator (hexagon module + plus) — builds new agents; keeps
-// the agent-hexagon design language with a create affordance.
+// Custom agent creator: the agent hexagon with a plus.
 export const ICON_SUBAGENT_CREATOR = svg(
   "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><path d="M12 9v6M9 12h6"/>',
 );
-// Model-refusal callout icon (Lucide "octagon-alert").
+// Model-refusal callout (Lucide "octagon-alert").
 export const ICON_REFUSAL = svg(
   "ui",
   '<path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 011.414.586l4.688 4.688A2 2 0 0122 8.688v6.624a2 2 0 01-.586 1.414l-4.688 4.688a2 2 0 01-1.414.586H8.688a2 2 0 01-1.414-.586l-4.688-4.688A2 2 0 012 15.312V8.688a2 2 0 01.586-1.414l4.688-4.688A2 2 0 018.688 2z"/>',
 );
-// Quick Spec mode icon (Lucide "file-check") — a single doc with a check,
-// distinct from Spec's multi-item checklist: the fast one-pass spec flow.
+// Quick Spec (Lucide "file-check"): one doc with a check, distinct from Spec's checklist.
 export const ICON_TAB_QUICK_SPEC = svg(
   "ui",
   '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/>',
 );
-// Bug Fix mode icon (Lucide "bug").
+// Bug Fix mode (Lucide "bug").
 export const ICON_TAB_BUG = svg(
   "ui",
   '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 116 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 014-4h4a4 4 0 014 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
 );
-// Autonomous mode icon (Lucide "bot") — the self-driving agent loop.
+// Autonomous mode (Lucide "bot").
 export const ICON_TAB_AUTONOMOUS = svg(
   "ui",
   '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
 );
-/** The settings gear: Lucide `settings` verbatim, six lobes around an r=3 core.
- *
- *  THE VALLEY DEPTH IS THE BUDGET, NOT THE TOOTH COUNT, and getting that wrong is
- *  what made this the one glyph in the toolbar a reader called thicker than its
- *  neighbours. Every `.ic-*` glyph strokes at exactly 1 CSS px — `03-base.css` sets
- *  `stroke-width` from the tier token and pairs it with
- *  `vector-effect: non-scaling-stroke`, so no transform and no per-icon override can
- *  change it, and the reported "thicker border" is not one. What differs is INK
- *  DENSITY. The drawing this replaces also had six lobes, and its own comment costed
- *  the TANGENTIAL gap (2.76 CSS px between adjacent tooth strokes, which is fine)
- *  while never costing the RADIAL one: measured by sampling its outline's distance
- *  from the centre, it ran from radius 6.55 to 9.00 after its `scale(0.818)`, so each
- *  valley was 2.46 units = 1.64 CSS px deep with a 1 px stroke bounding it on both
- *  sides — 0.64 px of background left in the gap, under one device pixel, so the
- *  valleys aliased shut and the tooth ring painted as a continuous band. Lucide's own
- *  drawing runs 6.98 to 9.98, a 3.00-unit valley = 2.00 CSS px, leaving a FULL pixel.
- *  Verified in a real 16px raster beside the other four toolbar glyphs before
- *  choosing it.
- *
- *  THE `scale(0.818)` WRAPPER IS GONE, and its premise went with the drawing rather
- *  than being overruled: it existed to correct EXTENT, because the old teeth were
- *  authored out to radius 11 and rendered 22.3x23.0 units of ink against a toolbar
- *  median of 19 (fill 0.959, the maximum over all 133 visible `ic-ui` icons, against a
- *  0.792 median). Lucide's reaches radius 9.98 on its own, 19.5x21.0 of ink, so there
- *  is nothing left for a wrapper to correct and a scale would only give back the
- *  valley depth this change bought. The crisp-grid claim that wrapper also carried
- *  (extremes landing on 3 and 21) does not transfer either and was never load-bearing
- *  here: that grid aligns straight STROKE RUNS, and a gear outline is all arcs, whose
- *  extreme is one tangent point. */
+/**
+ * Lucide `settings` verbatim: six lobes around an r=3 core. The valley depth is the budget: 3 units (2 CSS px) leaves
+ * a full background pixel between 1px strokes, where a shallower valley aliases shut and reads as a thicker gear. No
+ * scale wrapper: it would give that depth back.
+ */
 export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>`;
-// The git-branch glyph (Lucide "git-branch"), under two names for its two jobs: the
-// git TAB's icon and the leading glyph of the branch popover's create field. One path,
-// so they cannot drift. Centred on (12,12) like Lucide's own, because an ink box of
-// 3..21 x 2..20 sits 0.67 CSS px above every other glyph in the toolbar.
+// Lucide "git-branch" under two names (the git tab, the branch popover field). Centred on (12,12), since a 3..21 x
+// 2..20 ink box sits 0.67 CSS px high in the toolbar.
 export const ICON_GIT_BRANCH = svg(
   "ui",
   '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
 );
 export const ICON_TAB_GIT = ICON_GIT_BRANCH;
-/** The commit glyph (Lucide "git-commit-horizontal"), for the editor toolbar's
- *  diff-vs-HEAD control: a centred node with the history running through it.
- *
- *  Distinct from ICON_GIT_BRANCH above — that one is two OFF-centre circles and a
- *  curve, this one is a single centred circle between two straight runs — and from
- *  all four glyphs already in that toolbar (the diff brackets, the pencil, the
- *  floppy, the X), so the unique-within-its-bar rule holds. Centred on (12,12) like
- *  Lucide's own, for the reason stated above. */
+/**
+ * Lucide "git-commit-horizontal" for the editor toolbar's diff-vs-HEAD control, unique within that bar. Centred on
+ * (12,12) for the reason above.
+ */
 export const ICON_GIT_COMMIT = svg(
   "ui",
   '<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>',
 );
 export const ICON_TAB_EDITOR = svg("ui", PATH_PENCIL);
-/* HALF-UNIT coordinates on purpose: one unit is 0.667 CSS px at `--icon-ui`, so a
- * coordinate on a multiple of 3 puts the 1 CSS px stroke exactly astride two pixel
- * columns. 3.5 / 8.5 / 20.5 sit a third of a pixel off a boundary at 16px and at
- * the coarse-pointer 18px; rounding them to integers undoes that. */
-/** The folder. Its FLAP is proportioned against Lucide's own folder, which the rest
- *  of this set is drawn from: the tab rises 3 units above the body over an 18-unit
- *  height, 17%. It used to rise 5 units over 17, 29% — 67% taller than the reference
- *  — which reads as a lid rather than a tab and was reported as "the top flap is too
- *  large". Redrawn rather than scaled, because the flap is the only wrong part.
- *
- *  Every coordinate is a multiple of 3, this row's crisp pixel grid (the reasoning
- *  is on the shell button in static/index.html). The previous half-unit coordinates
- *  landed on thirds of a CSS pixel, which is the one phase no box offset can align.
- *  That also took the ink from 18.5 to 19 units, the toolbar's median extent.
- *  Duplicated as static markup on `#files-btn`; menu-icons.test.ts pins the pair. */
+/*
+ * Half-unit coordinates on purpose: at `--icon-ui` one unit is 0.667 CSS px, so a multiple of 3 puts the stroke
+ * astride two pixel columns; rounding to integers undoes it.
+ */
+/**
+ * The folder, its flap proportioned to Lucide's (a 3-unit rise over 18). Coordinates are multiples of 3, this row's
+ * crisp grid. Duplicated as static markup on `#files-btn` (pinned by menu-icons.test.ts).
+ */
 export const ICON_TAB_FILES = svg(
   "ui",
   '<path d="M6 3h3l3 3h6a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/>',
 );
 export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
-/** The Kiro configuration browser: an open book, ONE closed outline plus ONE spine
- *  line (two covers sharing x=12 double-paint the spine), pinned by
- *  `menu-icons.test.ts`. Corners are arcs and each page edge one cubic; the bottom
- *  pair is the top pair TRANSLATED, never mirrored (a mirror reads as a spool). The
- *  rise is 1.5: under that, at the `ui` tier, it renders as a closed rectangle. The
- *  straight strokes sit on the 3-unit grid (x=3/12/21) with 18x18 ink on 3..21. It
- *  stays OPEN because `ICON_REPO` is the closed book, and `ICON_TOOL_READ` shares this
- *  drawing through `PATH_BOOK_OPEN`. */
+/**
+ * The configuration browser's open book: one closed outline plus one spine line (two covers sharing a spine paint
+ * it double). Rounded corners and curved page edges. The bottom flaps are the top ones translated, never mirrored.
+ * The rise is 1.5; much lower renders as a closed book, which is `ICON_REPO`'s meaning. Straight strokes stay on the
+ * 3-unit grid; pinned to the sidebar button by `menu-icons.test.ts`.
+ */
 export const ICON_TAB_DOCS = svg("ui", PATH_BOOK_OPEN);
-/** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
- *  plan. Distinct from the chat and subagent glyphs so a run tab is never
- *  mistaken for a conversation. */
+/** Workflow run: three nodes top to bottom, distinct from the chat and subagent glyphs. */
 export const ICON_TAB_RUN = svg(
   "ui",
   '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
 );
-/** The nesting marker a SUB-TAB carries instead of its kind glyph (Lucide
- *  "corner-down-right"). A real element rather than a `content: "↳ "`, which is what
- *  lets the activity dot sit beside it. Written out rather than built with `svg()`
- *  because it needs stroke-width 3 and that helper hard-codes 2; at 14px the shared
- *  weight rendered as a hairline the eye read as an artifact. */
+/**
+ * A sub-tab's nesting marker (Lucide "corner-down-right"), a real element so the activity dot sits beside it.
+ * Written out for stroke-width 3: the shared weight reads as a hairline at 14px.
+ */
 export const ICON_TAB_SUBTAB =
   '<svg class="ic-ui ic-subtab" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v7a4 4 0 004 4h12"/><path d="m15 10 5 5-5 5"/></svg>';
-// --- Exec-tree kind glyphs (`exec-view/tree.ts` `kindGlyph`) ---
-/** Parallel: Lucide `split` rotated 180°, so the branches fan DOWN, the tree's own
- *  direction. No boxes, which is what keeps it clear of `ICON_TAB_RUN`. */
+/** Lucide `split` rotated 180° so branches fan down, the tree's direction; no boxes, clear of `ICON_TAB_RUN`. */
 export const ICON_EXEC_PARALLEL = svg(
   "ui",
   '<path d="M8 21H3v-5"/><path d="M16 21h5v-5"/><path d="M12 2v8.3a4 4 0 0 0 1.172 2.872L21 21"/><path d="m9 15-6 6"/>',
@@ -637,17 +479,16 @@ export const ICON_EXEC_WATCH = svg(
   '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
     '<circle cx="12" cy="12" r="3"/>',
 );
-/** Group: Lucide `layers-2`, a bundle of members. Two layers rather than `layers`'
- *  three, which is one feature too many at 16px. */
+/** Lucide `layers-2`: two layers, since three is one feature too many at 16px. */
 export const ICON_EXEC_GROUP = svg(
   "ui",
   '<path d="M13 13.74a2 2 0 0 1-2 0L2.5 8.87a1 1 0 0 1 0-1.74L11 2.26a2 2 0 0 1 2 0l8.5 4.87a1 1 0 0 1 0 1.74z"/>' +
     '<path d="m20 14.285 1.5.845a1 1 0 0 1 0 1.74L13 21.74a2 2 0 0 1-2 0l-8.5-4.87a1 1 0 0 1 0-1.74l1.5-.845"/>',
 );
-/** Forge brand marks (Simple Icons, CC0), ONE set for the whole app: two sets left the
- *  GitHub mark a different shape on the Sources tab and the PRs tab.
- *  `fill="currentColor"` so a mark renders in the host's ink; the `.forge-kind-<kind>`
- *  rules in 17-settings.css still win, a CSS declaration beating an attribute. */
+/**
+ * One brand-mark set (Simple Icons, CC0) for the whole app. `fill="currentColor"`; the `.forge-kind-<kind>` rules
+ * in 17-settings.css still win.
+ */
 export const FORGE_ICONS: Record<string, string> = {
   github:
     '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>',
@@ -693,7 +534,6 @@ export const FILE_ICONS: Record<string, string> = {
   less: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M7.5 15.1c1.5 0 1.7-.8 1.7-1.5 0-.6-.1-1.1-.1-1.7S9 10.7 9 10.2c0-2.1 1.3-3 3.4-3h.8v1.9h-.4c-1 0-1.3.6-1.3 1.6 0 .4.1.8.1 1.3 0 .4.1.9.1 1.5 0 1.7-.7 2.3-1.9 2.6 1.2.3 1.9.9 1.9 2.6 0 .6-.1 1.1-.1 1.5 0 .4-.1.9-.1 1.2 0 1 .3 1.6 1.3 1.6h.4v1.9h-.8c-2 0-3.3-.8-3.3-3 0-.6 0-1.1.1-1.7.1-.6.1-1.2.1-1.7 0-.6-.2-1.5-1.7-1.5l-.1-1.9zm17 1.7c-1.5 0-1.7.9-1.7 1.5s.1 1.1.1 1.7c.1.6.1 1.2.1 1.7 0 2.2-1.4 3-3.4 3h-.8V23h.4c1 0 1.3-.6 1.3-1.6 0-.4 0-.8-.1-1.2 0-.5-.1-1-.1-1.5 0-1.7.7-2.3 1.9-2.6-1.2-.3-1.9-.9-1.9-2.6 0-.6.1-1.1.1-1.5.1-.5.1-.9.1-1.3 0-1-.4-1.5-1.3-1.6h-.4V7.2h.8c2.1 0 3.4.9 3.4 3 0 .6-.1 1.1-.1 1.7-.1.6-.1 1.2-.1 1.7 0 .7.2 1.5 1.7 1.5v1.7z"/></svg>',
 };
 
-/** Map exact filename to icon key. */
 const NAME_ICON: Record<string, string> = {
   Dockerfile: "docker",
   Makefile: "config",

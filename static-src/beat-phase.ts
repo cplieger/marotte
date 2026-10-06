@@ -1,5 +1,7 @@
-/** Aligns every dot beat to one origin, so N dots that start at N different moments
- *  still breathe together. Mechanism: `03-base.css` "THE DOT BEAT". */
+/**
+ * Aligns every dot beat to one origin, so dots that start at different moments still
+ * breathe together (see `03-base.css` "THE DOT BEAT").
+ */
 
 /** Every keyframe set that beats on `--dot-beat-dur`: the dots' opacity beat and the
  *  square marks' closing hole and its seal (03-base.css). */
@@ -17,29 +19,18 @@ function periodMs(): number {
   return s.endsWith("ms") ? n : n * 1000;
 }
 
-/** The beat `startTime` this element was last stamped FOR, keyed weakly so a dot
- *  leaving the DOM takes its entry with it.
- *
- *  NOT a has-been-stamped flag, and that distinction is the whole of it: re-inserting
- *  an attached node destroys and recreates its animation, so a dot stamped once can
- *  need stamping again, and a permanent flag left it off the shared grid forever with
- *  nothing able to put it back. `tabs-drag.ts` reaches that on every completed drag.
- *
- *  `startTime` is what tells a real restart from our own write echoing back. Measured
- *  in Chromium 151: writing the delay on a running beat fires NO `animationstart` and
- *  leaves `startTime` untouched (101 on both sides) while `currentTime` advances, and a
- *  re-seat fires exactly one event and mints a new `startTime` (101 to 851) with
- *  `currentTime` back at 100. So the flag this replaced was guarding an event that does
- *  not arrive. It is keyed on the animation instance rather than on that measurement
- *  because being wrong the other way is a permanent visual loop: an engine that DID
- *  re-fire on the write still cannot make this re-stamp, because the echo carries the
- *  `startTime` already recorded. */
+/**
+ * The beat `startTime` this element was last stamped FOR, keyed weakly. Not a flag:
+ * re-inserting a node recreates its animation (`tabs-drag.ts`, every drop), so a dot can
+ * need stamping again. `startTime` tells a real restart from our own write's echo, and
+ * keying on the instance makes a re-firing engine harmless.
+ */
 const stampedFor = new WeakMap<Element, number>();
 
-/** This element's beat, BY NAME: `getAnimations({subtree:true})` also returns the
- *  pseudo-element's animation, which is where the beat lives, and any other animation
- *  the element happens to carry. `undefined` while the animation is PENDING, which only
- *  a new one can be, so that case stamps. */
+/**
+ * This element's beat, BY NAME: `getAnimations({subtree:true})` also returns other
+ * animations. `undefined` while PENDING, which only a new one can be, so that stamps.
+ */
 function beatStartTime(el: Element): number | undefined {
   for (const a of el.getAnimations({ subtree: true })) {
     if (!NAMES.has((a as CSSAnimation).animationName)) {
@@ -65,9 +56,8 @@ function stamp(el: Element): void {
     }
     stampedFor.set(el, start);
   }
-  // Negative, so an animation created now behaves as though it began at the last
-  // boundary of a grid anchored at the performance origin — the same grid for every
-  // dot, whenever it starts, and the same grid again after a restart.
+  // Negative, so a new animation behaves as though it began at the last boundary of one
+  // grid anchored at the performance origin.
   el.style.setProperty("--beat-phase", `${String(-(performance.now() % period))}ms`);
 }
 
@@ -79,10 +69,9 @@ export function initBeatPhase(): void {
     return;
   }
   attached = new AbortController();
-  // Delegated, in the capture phase, so ONE listener serves every dot and the eight
-  // places that write dot state need to know nothing about phase. The event fires for
-  // a pseudo-element's animation too, targeting the originating element, which is
-  // where the delay has to be set — a pseudo cannot be styled from script.
+  // Delegated, capture phase: one listener serves every dot. The event targets the
+  // originating element even for a pseudo-element's animation, and a pseudo cannot be
+  // styled from script.
   document.addEventListener(
     "animationstart",
     (e: AnimationEvent) => {
@@ -95,10 +84,7 @@ export function initBeatPhase(): void {
   );
 }
 
-/** Test seam. Detaches rather than only clearing the flag: a reset that left the
- *  listener up would add a second one on the next init, and two stamps racing one
- *  element is the shape this module's per-instance record exists to make harmless — a
- *  seam should not depend on that guard to stay correct. */
+/** Test seam. Detaches the listener too, so the next init cannot add a second one. */
 export function resetBeatPhaseForTest(): void {
   attached?.abort();
   attached = undefined;

@@ -1,6 +1,5 @@
-// Every control on the New PR dialog that starts a request is busy at once, stays
-// busy through a repaint while it runs, and shows its outcome in place. Only
-// the network is held.
+// A control that starts a request is busy at once, stays busy through a repaint while it runs, and shows its
+// outcome in place. Only the network is held.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -27,8 +26,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   confirm: H.confirm,
 }));
-// The forge list is the shared store's, which reads it through an action; routed
-// through the mocked client so each describe answers it with the rest.
+// The forge store reads the list through an action; routed through the mocked client so each describe answers it.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
@@ -49,8 +47,7 @@ vi.mock("./git-scroll.js", async (importOriginal) => ({
     fn();
   },
 }));
-// Spread: the originals spread above import this module's other exports (the real
-// confirm's `ask` imports `openDialog` and `closeDialog`).
+// The real confirm's `ask` imports `openDialog` and `closeDialog`, so the originals stay.
 vi.mock("@cplieger/ui-primitives/dialog", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createDialog: () => ({ open: H.dialogOpen, close: H.dialogClose }),
@@ -78,8 +75,7 @@ describe("the New PR dialog", () => {
   const REPO_ID = "v1.616c6963652f6f6e65";
 
   let host: HTMLElement;
-  // The page's own stylesheet: `.btn-small` declares a display that outranks the
-  // UA's `[hidden]` rule, which decides whether a control the dialog hides is gone.
+  // `.btn-small` declares a display that outranks the UA's `[hidden]` rule, so the page's sheet decides what is gone.
   let css: HTMLStyleElement;
 
   beforeEach(() => {
@@ -132,7 +128,6 @@ describe("the New PR dialog", () => {
     css.remove();
   });
 
-  /** The row the forge answers once it opened the pull request. */
   const OPENED = {
     repo_id: REPO_ID,
     repo: "alice/one",
@@ -164,7 +159,6 @@ describe("the New PR dialog", () => {
     document.getElementById("pr-generate-btn") as HTMLButtonElement;
   const status = (): HTMLElement => document.getElementById("pr-dialog-status")!;
 
-  /** Open the dialog for the clone in `one`, its description drafted. */
   async function open(): Promise<void> {
     await openNewPRForRepo("one", "feat/x");
     // The dialog controller is a mock, so the dialog is shown here.

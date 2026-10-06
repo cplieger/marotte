@@ -17,32 +17,15 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// Native Cedar policy endpoints (v3 / KAS).
-//
-//	GET  /api/permissions          → the native policy VIEW (source of truth
-//	                                  for what is ENFORCED), via a bridge.
-//	POST /api/permissions/explain  → pure "why" simulation (no consent prompt).
-//	POST /api/permissions/rules    → add / remove a rule in the user or
-//	                                  workspace permissions.yaml (KAS hot-reloads).
-//
-// The rule WRITER is a FILE write (internal/policyfile), not an RPC: KAS
-// watches the file and reloads live. It is deliberately CONSERVATIVE — a new
-// rule with no explicit effect defaults to `ask` (never `allow`), only the
-// user + workspace scopes are writable, and removing a `deny` rule (which
-// widens access) requires an explicit confirm. The existing legacy
-// permission-mode radios, shell-tier command rules, supervised staging, and
-// the native permission dialog are all untouched; this ADDS the native view +
-// file editor.
+// Native Cedar policy endpoints: GET /api/permissions (the enforced view), POST
+// /api/permissions/explain (a simulation, no consent prompt), POST /api/permissions/rules (a
+// permissions.yaml write KAS hot-reloads). The writer is conservative: a new rule defaults to
+// `ask`, only user and workspace scopes are writable, and widening needs an explicit confirm.
 
-// handlePolicyView serves GET /api/permissions: the native policy rule set
-// grouped client-side by scope. Backed by _kiro/permissions/list on the
-// utility bridge; on bridge failure it degrades to reading the editable
-// user/workspace files directly so the panel + editor still work offline
-// (Available=false signals the baseline scopes are missing).
+// handlePolicyView serves GET /api/permissions via _kiro/permissions/list on the utility
+// bridge, degrading to the editable files (Available=false) when no bridge answers.
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
-	// Gated here, not on the ServeMux pattern: a method-pattern mismatch falls
-	// through to the SPA mount and answers 200 with index.html. See
-	// server.go's ListenAndServe.
+	// Gated here, not on the pattern (see ListenAndServe).
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -71,27 +54,10 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, view)
 }
 
-// dedupePolicyRules drops rules that are identical in EVERY field, preserving
-// the order the first copy arrived in.
-//
-// KAS's `_kiro/permissions/list` reports one rule several times. Measured live
-// on kiro-cli 2.19.0: a workspace file holding exactly one rule
-// (`capability: all, effect: allow, match: ['*']`) came back as TEN byte-
-// identical entries carrying the same scope and the same source path, while
-// every other rule in the same reply appeared once. marotte forwarded them
-// verbatim, so Settings -> Permissions rendered the user's single rule ten
-// times, each with its own remove button.
-//
-// The key is the whole VALUE rather than a signature over capability + effect +
-// globs, because scope and source are what legitimately separate two rows: the
-// same rule written into both the user and the workspace file is two rules, and
-// a reader needs to see both to know which file to edit. Two rows agreeing on
-// all six fields cannot be told apart by anyone — including the remove button,
-// which would delete "one of them" with nothing to say which.
-//
-// Done here rather than in the agent's PolicyList because this handler is the
-// one place BOTH the live and the file-fallback projections pass through, and
-// the fallback can produce a genuine cross-scope pair that must survive.
+// dedupePolicyRules drops rules identical in EVERY field, keeping first-arrival order:
+// _kiro/permissions/list reports one rule several times. The key is the whole value, because
+// scope and source legitimately separate two rows (one rule in two files is two files to edit).
+// Done here because both the live and the file-fallback projections pass through.
 func dedupePolicyRules(rules []marotte.PolicyRule) []marotte.PolicyRule {
 	if len(rules) == 0 {
 		// Preserve the empty-not-null contract the wire field carries.
@@ -113,14 +79,8 @@ func dedupePolicyRules(rules []marotte.PolicyRule) []marotte.PolicyRule {
 	return out
 }
 
-// policyRuleKey is a total, collision-free key over a rule's six fields.
-//
-// Length-prefixing every element is what makes it collision-free: joining the
-// glob lists with a separator would let `match: ["a", "b"]` and
-// `match: ["a<sep>b"]` produce one key, and a glob is arbitrary user text that
-// can contain any separator a reader might pick. The order of a rule's globs is
-// significant here — two rules differing only in glob order are left as two
-// rows, because reordering is not marotte's call to make on the user's file.
+// policyRuleKey is a total, collision-free key over a rule's six fields: every element is
+// length-prefixed, because a glob can contain any separator. Glob order is significant.
 func policyRuleKey(r *marotte.PolicyRule) string {
 	var b strings.Builder
 	for _, s := range []string{r.Capability, r.Effect, r.Scope, r.Source} {
@@ -135,31 +95,9 @@ func policyRuleKey(r *marotte.PolicyRule) string {
 	return b.String()
 }
 
-// pickerCapabilities is what the capability dropdowns offer: marotte's suggested
-// set UNION every capability the returned rules already use.
-//
-// The union is what keeps the picker from going stale. The suggested set is a
-// hand-copied snapshot of a list KAS does not expose, so it cannot learn about a
-// capability the agent server gains — but the rules KAS reports here CAN, and
-// they include every scope's baseline (kiro, administration, agent, session), not
-// just the two marotte writes. So the day one rule anywhere uses a new
-// capability, it becomes selectable, with no marotte release.
-//
-// Deliberately not a filter on what may be WRITTEN: a capability absent from
-// both the snapshot and the current rules is still writable (see SanitizeRule),
-// it just is not suggested.
-//
-// Sorted as ONE list, not suggestions-then-extras: the dropdown is alphabetical,
-// and a reader looking for "hooks" should not have to know whether marotte
-// shipped knowing about it. slices.Sorted(maps.Keys(…)) (Go 1.23) is that in one
-// expression; the set is the only intermediate, which is what removes the
-// separate duplicate test and the `added` flag that existed solely to skip
-// re-sorting fifteen strings.
-//
-// The result is non-empty for any input because the snapshot seeds it, so the
-// `capabilities` wire field never degrades from [] to null.
-// TestPickerCapabilities_NoRulesIsTheSuggestedSet asserts that rather than
-// leaving it to the reader.
+// pickerCapabilities is what the capability dropdowns offer: marotte's suggested set UNION
+// every capability the returned rules use, so a capability KAS gains becomes selectable with
+// no release. Not a write filter. Sorted as one list; never empty, so the wire field is not null.
 func pickerCapabilities(rules []marotte.PolicyRule) []string {
 	suggested := policyfile.Capabilities()
 	seen := make(map[string]struct{}, len(suggested)+len(rules))
@@ -206,9 +144,8 @@ func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
 	return out
 }
 
-// handlePolicyExplain serves POST /api/permissions/explain: a pure
-// simulation of the policy decision for a capability/resource. Safe — KAS
-// evaluateSingleResource raises no consent prompt (verified live).
+// handlePolicyExplain serves POST /api/permissions/explain: a pure simulation (KAS's
+// evaluateSingleResource raises no consent prompt).
 func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -225,9 +162,7 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "capability or tool_id required")
 		return
 	}
-	// KAS requires a resource for the shell capability (there is no
-	// command-independent shell decision). Refuse it here with a clear
-	// reason instead of forwarding a request that can only fail.
+	// KAS requires a resource for the shell capability, so refuse here with a clear reason.
 	if req.Capability == capShell && strings.TrimSpace(req.Resource) == "" {
 		httpreply.BadRequest(w, "the shell capability needs a resource, the command, to evaluate")
 		return
@@ -241,16 +176,10 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, res)
 }
 
-// policyRuleBody is the POST /api/permissions/rules request. op is
-// "add" | "remove" | "update". For add, an empty effect defaults to "ask"
-// (conservative). For remove and update, the rule fields identify the
-// EXISTING rule (effect required); removing a "deny", like any update
-// that widens access, requires confirm=true. update changes the rule's
-// effect to new_effect in place. guard_resource (optional, add+allow
-// only) is a concrete resource the caller wants the rule to take effect
-// for — e.g. the command behind a permission dialog's "Always allow":
-// when an explicit ask rule already covers it, the allow would be
-// silently shadowed (ask > allow), so the write is refused instead.
+// policyRuleBody is the POST /api/permissions/rules request; op is "add", "remove" or
+// "update". An add's empty effect defaults to "ask". For remove and update the rule fields
+// identify the EXISTING rule; a widening change needs confirm=true. guard_resource (add+allow
+// only) refuses an allow an explicit ask rule would silently shadow.
 type policyRuleBody struct {
 	Op            string   `json:"op"`
 	Scope         string   `json:"scope"`
@@ -312,8 +241,7 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
-	// Conservative default: a new rule with no explicit effect is `ask`,
-	// never `allow`. Widening to allow requires the user to choose it.
+	// Conservative default: a new rule with no explicit effect is `ask`, never `allow`.
 	effect := cmp.Or(body.Effect, policyfile.EffectAsk)
 	rule, err := policyfile.SanitizeRule(&policyfile.Rule{
 		Capability: body.Capability, Effect: effect,
@@ -323,12 +251,8 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	// marotte does not own the capability vocabulary (see policyfile.SanitizeRule),
-	// so an unrecognised name is written through for KAS to judge. KAS then SKIPS
-	// that one rule as non-fatal and says so on _kiro/policy/changed, which reaches
-	// the user in the permissions panel — but nothing on this side records having
-	// written it, so a rule that silently does nothing has no server-side trace to
-	// correlate against. One line closes that; the write still goes through.
+	// marotte does not own the capability vocabulary, so an unrecognised name is written through
+	// for KAS to judge; log it, since KAS skips such a rule with no server-side trace.
 	if !slices.Contains(policyfile.Capabilities(), rule.Capability) {
 		slog.Warn("writing a policy rule naming a capability marotte does not recognise; "+
 			"kiro-cli decides whether it loads",
@@ -361,14 +285,9 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	webhttp.Ok(w)
 }
 
-// guardAllowRule pre-flights an allow-rule write against the LIVE policy
-// via explain (a pure simulation): when an explicit ask rule already
-// covers the guard resource, KAS would shadow the new allow (ask > allow),
-// so the write is refused with a clear reason instead of persisting a
-// rule that changes nothing. Fails CLOSED — if the decision cannot be
-// verified, the rule is not written (the caller's fallback is allow-once).
-// Returns true when the write may proceed; otherwise the response has
-// been written.
+// guardAllowRule pre-flights an allow-rule write against the LIVE policy via explain:
+// refused when an explicit ask rule would shadow it. Fails CLOSED. Returns true when the
+// write may proceed; otherwise the response has been written.
 func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *policyfile.Rule, resource string) bool {
 	if s.policy == nil {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
@@ -397,8 +316,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		httpreply.BadRequest(w, "effect required to remove a rule")
 		return
 	}
-	// Removing a deny rule widens access — a destructive change. Require an
-	// explicit confirm so it can't happen by accident.
+	// Removing a deny widens access: require an explicit confirm.
 	if body.Effect == policyfile.EffectDeny && !body.Confirm {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("removing a deny rule widens access. Resend with confirm=true"))
@@ -430,12 +348,8 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	webhttp.Ok(w)
 }
 
-// policyRuleUpdate changes an existing rule's effect in place (op=update):
-// the body's rule fields identify the current rule, new_effect is the
-// target. One atomic file write — never a client-side remove+add that
-// could half-apply. A widening change (deny→ask, deny→allow, ask→allow)
-// grants the agent more than it had, so it requires confirm=true, same as
-// removing a deny.
+// policyRuleUpdate changes an existing rule's effect in place (op=update) in one atomic file
+// write. A widening change requires confirm=true.
 func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
 	if !policyfile.ValidEffect(body.Effect) {
 		httpreply.BadRequest(w, "effect required to identify the rule")

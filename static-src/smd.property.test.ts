@@ -1,11 +1,4 @@
-// Property-based test for smd.ts: parser state invariants hold after arbitrary
-// chunked input. Generates random markdown-like strings (including edge cases:
-// unclosed fences, nested blockquotes, interleaved emphasis), splits them into
-// random chunk boundaries, feeds them through parser_write in sequence, calls
-// parser_end, and asserts structural invariants.
-//
-// Key invariant: tokens[0] === DOCUMENT always, len never goes negative,
-// and parser_end never throws regardless of input.
+// Property-based test for smd.ts: parser state invariants hold after arbitrary chunked input.
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
@@ -116,9 +109,8 @@ const markdownLike = fc.oneof(
   fc.constant("see https://example.com here"),
   // Line breaks
   fc.constant("<br>\n"),
-  // Character references, valid and malformed. Both matter: a reference is HELD
-  // from its `&` until a `;` decodes it or a character rules it out, so a
-  // malformed one is what could wedge the hold.
+  // Character references, valid and malformed. Both matter: a reference is HELD from its `&` until
+  // a `;` decodes it or a character rules it out, so a malformed one is what could wedge the hold.
   fc
     .tuple(
       fc.constantFrom("&", "&#", "&#x", "&#X", "&amp", "&nosuch", "&#x11"),
@@ -135,8 +127,8 @@ const markdownLike = fc.oneof(
     "[a](javascript&#58;alert(1))",
     "&CounterClockwiseContourIntegral;",
   ),
-  // Angle-bracket runs: an autolink, an email autolink, and the shapes that must
-  // stay escaped text. The hold runs to the closing `>` or to whitespace.
+  // Angle-bracket runs: an autolink, an email autolink, and the shapes that must stay escaped text.
+  // The hold runs to the closing `>` or to whitespace.
   fc
     .tuple(
       fc.constantFrom("<", "<http", "<https://", "<mailto:", "<a@", "<div", "<br", "<!--", "<Vec"),
@@ -310,29 +302,11 @@ describe("smd parser property: structural invariants", () => {
         markdownDocument,
         fc.array(fc.nat({ max: 2000 }), { minLength: 1, maxLength: 10 }),
         (doc, splitPoints) => {
-          // The smd parser is a streaming parser with eager-commit
-          // semantics: when a chunk ends inside a block-level syntactic
-          // unit (mid-word, mid-line, after a line-terminator + partial
-          // block marker like "\n#", "\n>", "\n-", "\n|", or mid-cell
-          // of a table row), the parser commits the buffered prefix to
-          // the innermost-open scope as text rather than waiting for a
-          // disambiguating character. A subsequent chunk then produces
-          // a structurally-different tree than a single-pass parse of
-          // the same bytes would.
-          //
-          // This is a by-design trade-off (no lookahead buffer keeps
-          // memory constant and text-emission zero-delay in the common
-          // case). The property "chunked == single-pass trees" therefore
-          // holds ONLY when chunk boundaries fall at paragraph breaks
-          // (double-newline \n\n), where every block is already
-          // closed. Filter splits: require each boundary to be
-          // immediately preceded by "\n\n" in the document.
-          //
-          // Also guard against the TOKEN_ARRAY_CAP saturation: the
-          // overflow guard in add_token silently drops pushes at
-          // len >= TOKEN_ARRAY_CAP-1, which breaks callback balance
-          // when hit. Probe both single-pass and chunked parses; skip
-          // if either approaches the cap with a safety margin.
+          // The smd parser is a streaming parser with eager-commit semantics: when a chunk ends
+          // inside a block-level syntactic unit (mid-word, mid-line, after a line-terminator +
+          // partial block marker like "\n#", "\n>", "\n-", "\n|", or mid-cell of a table row), the
+          // parser commits the buffered prefix to the innermost-open scope as text rather than
+          // waiting for a disambiguating character.
           const chunks = splitAtPositions(doc, splitPoints);
           let cursor = 0;
           for (let i = 1; i < chunks.length; i++) {
@@ -375,11 +349,9 @@ describe("smd parser property: structural invariants", () => {
           }
           parser_end(p2);
 
-          // Normalize into a token-tree representation: for each token
-          // opened, record its type, the concatenated text emitted while
-          // it was the innermost open token, and the set_attr calls.
-          // This abstracts away chunk-boundary-dependent text flushing
-          // while verifying the structural DOM output is identical.
+          // Normalize into a token-tree representation: for each token opened, record its type, the
+          // concatenated text emitted while it was the innermost open token, and the set_attr
+          // calls.
           interface TokenNode {
             type: number;
             text: string;

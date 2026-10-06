@@ -1,11 +1,5 @@
-// `forceReflow` pins a browser behaviour no other test covered: four call sites
-// remove a class or attribute and re-add it in one task to restart an animation,
-// and that only works because a layout read between the two writes separates
-// them. Red-checked — with the flush removed, both cases below report ONE
-// animationstart and the second assertion fails.
-//
-// Real Chromium only. No DOM emulator models style-change coalescing, so this
-// would pass vacuously anywhere else.
+// `forceReflow` pins a browser behaviour four call sites rely on: removing and re-adding a class in one task restarts
+// an animation only with a layout read between. Real Chromium.
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { forceReflow } from "./dom.js";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -31,7 +25,6 @@ afterEach(() => {
 
 function mountProbe(): { el: HTMLElement; starts: () => number } {
   const el = document.createElement("div");
-  // A real box, so getBoundingClientRect has something to measure.
   el.style.inlineSize = "40px";
   el.style.blockSize = "20px";
   document.body.append(el);
@@ -43,7 +36,6 @@ function mountProbe(): { el: HTMLElement; starts: () => number } {
   return { el, starts: () => starts };
 }
 
-// One frame is enough for animationstart, which fires on the first sample.
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {

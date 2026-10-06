@@ -1,30 +1,11 @@
-// A unified diff row's green/red background has to span the column's whole
-// SCROLL RANGE, not its scrollport.
-//
-// Measured against real layout rather than read out of the CSS, because the
-// defect is a box the source cannot show: `.diff-row` is a block-level flex
-// container, so its used width is its containing block's — the scrollport — while
-// `white-space: pre` text overflows past it, and the tint therefore stopped
-// wherever the reader happened to have scrolled to. Measured on the shipped
-// stylesheet at a 430px viewport before the fix: rows painted 342px against a
-// 1149px range, so 70% of every changed line was untinted at the far end of the
-// scroll. Nothing in the declarations looks wrong; only the boxes disagree.
-//
-// Both directions are asserted, and the second is what makes the first honest: a
-// bare `max-content` track fixes the long case and leaves a diff that FITS with
-// rows narrower than the column it sits in, which is the same defect with the
-// sign flipped.
-//
-// Assertions are RELATIONSHIPS (row width against the column's scroll range, the
-// right edges against each other), never pixel counts, because a max-content row
-// is as wide as the font makes it.
+// A unified row's tint must span the column's scroll range: `.diff-row` is a block flex container sized to the
+// scrollport while `pre` text overflows it. Measured on real layout.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { renderDiffPane } from "./diff-pane.js";
 import type { DiffLine } from "./diff.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-/** Comfortably narrower than the long rows below, so there is a range to scroll. */
 const HOST_WIDTH = 360;
 
 let sheet: HTMLStyleElement;
@@ -38,8 +19,7 @@ afterAll(() => {
   sheet.remove();
 });
 
-// Browser Mode isolates per FILE, not per test, and nothing in this config clears
-// the page: without this every later case measures the previous case's pane too.
+// Browser Mode isolates per file, not per test, so the page is cleared here.
 afterEach(() => {
   host?.remove();
   host = undefined;
@@ -59,8 +39,7 @@ function del(no: number, text: string): DiffLine {
   return { kind: "del", oldNo: no, newNo: 0, text };
 }
 
-/** The real builder, in the shape `insertDiffPreview` asks for, inside a box of a
- *  definite width — which is what the transcript gives it. */
+/** The real builder, inside a definite width as the transcript gives it. */
 function mount(lines: DiffLine[]): HTMLDivElement {
   const box = document.createElement("div");
   box.style.cssText = `width: ${String(HOST_WIDTH)}px`;
@@ -78,8 +57,6 @@ function rowsOf(col: HTMLElement): HTMLElement[] {
   return [...col.querySelectorAll<HTMLElement>(".diff-row")];
 }
 
-/** The distinct rendered widths of a column's rows. One entry means every row
- *  agrees, which is the property a shared background depends on. */
 function distinctWidths(col: HTMLElement): number[] {
   return [...new Set(rowsOf(col).map((r) => Math.round(r.getBoundingClientRect().width)))];
 }
@@ -91,8 +68,7 @@ describe("the unified diff column's rows span its scroll range", () => {
     expect(col.scrollWidth, "the long rows give the column a range to scroll").toBeGreaterThan(
       col.clientWidth,
     );
-    // ONE width, and it is the whole range: a per-row `max-content` would leave the
-    // short rows behind (measured 619px against an 811px offset).
+    // One width, the whole range: per-row `max-content` would leave short rows behind.
     expect(distinctWidths(col)).toEqual([col.scrollWidth]);
   });
 
@@ -103,7 +79,7 @@ describe("the unified diff column's rows span its scroll range", () => {
     expect(col.scrollLeft, "the column really scrolled").toBeGreaterThan(0);
     const right = col.getBoundingClientRect().right;
     for (const row of rowsOf(col)) {
-      // Sub-pixel: the row's box and the scrollport's are both fractional.
+      // Sub-pixel: both boxes are fractional.
       expect(Math.abs(row.getBoundingClientRect().right - right)).toBeLessThan(1.5);
     }
   });

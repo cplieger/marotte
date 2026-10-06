@@ -10,12 +10,9 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// handleSpecPhaseCheckpoint marks the spec directory a `_kiro/spec/phaseCheckpoint`
-// notification names dirty. KAS emits one for every accepted in-process write of a
-// spec document in a spec-mode session, so it is the second spec_changed producer
-// beside the bridge's own fs handlers. artifactPath is the tool's raw input path,
-// absolute or cwd-relative, and is confined to the workspace before spec.DirOf
-// sees it; a path outside, or an undecodable payload, is dropped at Debug.
+// handleSpecPhaseCheckpoint marks the spec directory a `_kiro/spec/phaseCheckpoint` names dirty: KAS emits one
+// per accepted in-process spec write, the second spec_changed producer. artifactPath is the raw tool path,
+// confined to the workspace before spec.DirOf; outside or undecodable is dropped at Debug.
 func (rt *Runtime) handleSpecPhaseCheckpoint(_ context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		ArtifactPath string `json:"artifactPath"`

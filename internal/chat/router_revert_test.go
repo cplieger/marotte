@@ -8,12 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A cursor naming a REVERTED turn is refused by the door the server already has:
-// `Window` returns the error it returns for an absent id and the chat page renders it
-// as 400 (router_handlers.go's own arm, whose comment names the rewind as its reason).
-// Never 200 — a newest page answering a `?before=` read reaches applyPage's PREPENDING
-// older branch and leaves turn_order newest-then-oldest — and never 500, which is the
-// turn-range route's mapping for a different failure.
+// A cursor naming a reverted turn gets the absent-id 400. A 200 would prepend a newest page in applyPage's older
+// branch; 500 is the turn-range route's mapping for a different failure.
 func TestRevert_PageRefusesARevertedCursorWith400(t *testing.T) {
 	s := pageStore(t, false, nil)
 	const id marotte.ChatID = "c-abcdef01"
@@ -37,8 +33,7 @@ func TestRevert_PageRefusesARevertedCursorWith400(t *testing.T) {
 			rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 
-	// The same door still serves the surviving page, so the refusal is about the
-	// cursor rather than about the chat.
+	// The same door still serves the surviving page: the refusal is about the cursor.
 	if page := getPage(t, s, id, ""); len(page.Entries) == 0 {
 		t.Errorf("the newest page is empty after a revert, want the surviving turn's entries")
 	}

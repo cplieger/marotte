@@ -12,19 +12,9 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind is the claim that
-// syncPushPreferences is correct on its OWN terms rather than because of what its
-// caller happens to pass.
-//
-// The function seeds every kind to its registry default and then overrides, so an
-// argument that is the whole merged settings document behaves correctly and a
-// genuinely sparse one used to re-enable every kind it did not mention. The
-// asymmetry is what makes it worth a test: re-enabling a notification the user
-// switched OFF is a preference silently reverting itself, while the other
-// direction merely delays a toggle the next reload would apply anyway.
-//
-// Both directions are asserted for both configurable kinds, so a fix that
-// happened to pin one value (or one key) cannot pass.
+// TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind pins that a sparse patch does
+// not re-enable a kind it omits (a switched-off preference reverting itself), both directions
+// for every configurable kind.
 func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) {
 	const (
 		finished = settings.KeyNotifyAgentFinished
@@ -77,10 +67,7 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 			patch:        `{}`,
 			wantFinished: true,
 			wantPR:       false,
-			// readStoredSettings reports the corrupt file as an error, which
-			// the WRITE arms refuse on. This runs after the write succeeded, so
-			// there is no stored value left to honour and the registry default is
-			// the only answer available; the failure is logged, not swallowed.
+			// Runs after the write succeeded, so the registry default is the only answer; it is logged.
 			why: "an unreadable config.json leaves every kind at its own registry default, which is per-kind and OFF for pr_status",
 		},
 		"a malformed patch value falls back to the registry default": {
@@ -88,10 +75,7 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 			patch:        `{"notify_agent_finished":"nonsense"}`,
 			wantFinished: true,
 			wantPR:       false,
-			// The key IS present, so this is not the sparse case. The write path
-			// persists the patch verbatim, so the junk value is now on disk too and
-			// the next ReloadPreferences resolves it to the same default — pinning
-			// the default here is what keeps the two paths agreeing.
+			// The key is present and persisted verbatim, so the next reload resolves it the same way.
 			why: "a present-but-unreadable value is not an absent one; it resolves the way a reload would",
 		},
 	}
@@ -127,9 +111,8 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 	}
 }
 
-// A THIRD keyed kind needs no code in syncPushPreferences: that function derives its
-// kind set from push.Kinds(), so a registry row is the whole wiring. This is the case
-// that would fail if the resolution ever went back to naming its kinds by hand.
+// TestSyncPushPreferences_CarriesTheRunOutcomeKind pins that a registry row is the whole
+// wiring for a keyed kind.
 func TestSyncPushPreferences_CarriesTheRunOutcomeKind(t *testing.T) {
 	for name, tc := range map[string]struct {
 		patch string
@@ -161,11 +144,8 @@ func TestSyncPushPreferences_CarriesTheRunOutcomeKind(t *testing.T) {
 	}
 }
 
-// TestSyncPushPreferences_MergedPatchNeedsNoDiskRead pins the fast path: when the
-// caller passes the whole merged document, every configurable key is present and
-// the persisted file is never consulted. Asserted by writing a config.json that
-// DISAGREES with the patch — if the resolution read it for a key the patch
-// already answered, the disk value would win and the assertions would flip.
+// TestSyncPushPreferences_MergedPatchNeedsNoDiskRead pins the fast path with a config.json
+// that DISAGREES with the patch.
 func TestSyncPushPreferences_MergedPatchNeedsNoDiskRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, settings.Filename)
@@ -185,17 +165,10 @@ func TestSyncPushPreferences_MergedPatchNeedsNoDiskRead(t *testing.T) {
 	}
 }
 
-// The size cap bounds what a settings write merges, and its own boundary value is
-// inside the bound: a file exactly at the cap is still merged, so the keys the
-// request does not name survive. Treating it as oversize would refuse a write that
-// is perfectly serviceable.
-//
-// One past the cap is an ERROR rather than an empty map, which is the other half
-// of the same claim: an oversize file is present and unread, so answering "nothing
-// was stored" would let the write replace it with just the request's keys.
+// TestExistingSettingsForMerge_SizeCapIsInclusive pins that a file exactly at the cap merges
+// and one past it is an ERROR, not an empty map.
 func TestExistingSettingsForMerge_SizeCapIsInclusive(t *testing.T) {
-	// Trailing whitespace is legal JSON, so the padding leaves the document
-	// parseable at any size.
+	// Trailing whitespace keeps the padded document parseable.
 	seed := func(t *testing.T, size int) string {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "config.json")
@@ -244,17 +217,8 @@ func TestExistingSettingsForMerge_SizeCapIsInclusive(t *testing.T) {
 	}
 }
 
-// TestSyncPushPreferences_MasterSwitch is the master switch's SERVER-side enforcement,
-// and the polarity is the whole design. `notifications_enabled` defaults OFF (it means
-// "the reader has not opted in") while each keyed kind carries its own declared default
-// (settings.Default*, two ON and one OFF) answering "if the master is on, which kinds",
-// so only an EXPLICIT false may zero the set — reading an ABSENT master as a decision
-// would silence every kind for every workspace that has never touched Settings,
-// whatever each kind's own default says.
-//
-// The zeroing includes `permission`, which is the one kind with no settings key: that
-// is what "everything off together" means, and the browser already has no
-// permission-notice path with the master switch off.
+// TestSyncPushPreferences_MasterSwitch pins the master switch's server-side enforcement:
+// only an EXPLICIT false zeroes the set, permission included.
 func TestSyncPushPreferences_MasterSwitch(t *testing.T) {
 	tests := map[string]struct {
 		persisted      string // config.json contents; "" writes no file at all
@@ -338,8 +302,7 @@ func TestSyncPushPreferences_MasterSwitch(t *testing.T) {
 				t.Errorf("prefs[%s] = %v, want %v (%s)",
 					settings.KeyNotifyAgentFinished, got, tc.wantFinished, tc.why)
 			}
-			// The permission floor is unsilenceable by its OWN key and silenceable by
-			// the master, which is the one place those two rules meet.
+			// Unsilenceable by its own key, silenceable by the master.
 			if got := mp.prefs[marotte.PushKindPermission]; got != tc.wantPermission {
 				t.Errorf("prefs[Permission] = %v, want %v (%s)", got, tc.wantPermission, tc.why)
 			}
@@ -347,9 +310,8 @@ func TestSyncPushPreferences_MasterSwitch(t *testing.T) {
 	}
 }
 
-// The zeroing reaches EVERY registered kind rather than the two the cases above name,
-// because syncPushPreferences derives its kind set from push.Kinds(). A future kind is
-// therefore covered by the registry row alone, which is what this asserts.
+// TestSyncPushPreferences_MasterSwitchZeroesEveryRegisteredKind pins the zeroing over every
+// push.Kinds() entry.
 func TestSyncPushPreferences_MasterSwitchZeroesEveryRegisteredKind(t *testing.T) {
 	mp := &testPush{}
 	s := &Server{push: mp, configDir: t.TempDir()}

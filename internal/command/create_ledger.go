@@ -1,17 +1,8 @@
 package command
 
-// The op ledger: what a repeated create resolves to.
-//
-// Server-minting a chat id removes the idempotency a client-minted id gave
-// for free: a retry now mints a second chat unless something remembers the
-// first.
-//
-// The Idempotency-Key header covers most of this already, but its cache TTL
-// is 5 minutes with lazy eviction, so a lookup past the TTL falls through
-// and the handler runs for real. This ledger covers that fall-through:
-// op_id -> chat id, bounded, TTL'd, in memory. Deliberately not a field on
-// the chat record — chat.Store has no by-field index, so a lookup would
-// scan every chat file for a retry window rather than a chat lifetime.
+// The op ledger maps a create's op_id to the chat it minted, so a retry past the Idempotency-Key
+// cache's 5-minute lazy TTL resolves to the first chat instead of minting a second. In memory
+// rather than a chat-record field: chat.Store has no by-field index.
 
 import (
 	"sync"
@@ -79,13 +70,8 @@ func (l *createLedger) resolve(op string, mint func() marotte.ChatID) (id marott
 	return id, false
 }
 
-// peek reports the chat op already resolved to, without minting one and
-// without extending its TTL. An op that has never been seen, has expired, or
-// is empty reports false.
-//
-// Exists for a caller that must decide something before it is allowed to
-// mint: a create whose capacity reservation must run before the mint needs
-// to know whether this op already owns a tab.
+// peek reports the chat op already resolved to, without minting one or extending its TTL; false for
+// an unseen, expired or empty op. For a create whose capacity reservation must run before the mint.
 func (l *createLedger) peek(op string) (marotte.ChatID, bool) {
 	if op == "" {
 		return "", false

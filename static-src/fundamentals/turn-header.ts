@@ -1,28 +1,11 @@
-// ---------------------------------------------------------------------------
-// Fundamental: TurnHeader — the turn card's tinted top band.
-//
-// The turn's TRIGGER, not always a user message: either the user prompted
-// (the request text) or the system did (a typed trigger line) — everything
-// else (number, outcome, timestamp, permalink) is identical across both.
-//
-// Two rows: a meta row carrying the fold toggle, the turn number, the outcome
-// dot, the timestamp, the search-hit count and Copy, then the request itself
-// under it.
-//
-// An OPEN turn's request is not clamped: full text, however long. A FOLDED
-// turn's clamps to four lines, in CSS, for the reason a clamp is here at all —
-// folded rows are the session's navigation surface, and one pasted stack trace
-// would render hundreds of lines as a "collapsed" turn and push every
-// neighbouring row off screen. The clamp is on the TEXT only, so the
-// attachment chips stay outside it: they are how a reader identifies the
-// request.
-// ---------------------------------------------------------------------------
+// TurnHeader: the turn card's top band for the turn's TRIGGER (a user prompt or a typed system
+// line). A meta row (fold toggle, number, outcome dot, timestamp, hit count) over the request. A
+// FOLDED turn's request text clamps to four lines in CSS, since folded rows are the session's
+// navigation; attachment chips stay outside the clamp.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { linkifyPaths } from "../linkify.js";
-import { iconEl } from "../icon-el.js";
-import { ICON_COPY } from "../icons.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
 // The dot's words, shared with the timeline rail's marker — see turn-severity.ts.
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
@@ -40,19 +23,6 @@ export interface TurnHeaderData {
   /** Files the user attached to this request. Drawn as the composer's own pill,
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
-}
-
-/** Copy handler, injected — the assistant side's Copy already routes through
- *  the actions framework, and this reaches it from a pure `fundamentals/`
- *  view that must not import `actions/`. */
-let _copy: (btn: HTMLButtonElement, text: string) => void = () => {
-  /* not wired */
-};
-
-export function initTurnHeaderCallbacks(cbs: {
-  copy: (btn: HTMLButtonElement, text: string) => void;
-}): void {
-  _copy = cbs.copy;
 }
 
 export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
@@ -80,9 +50,6 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   row.appendChild(el("time", { className: "turn-ts" }));
   // Filled while a search is active.
   row.appendChild(el("span", { className: "turn-hit-count" }));
-  // Rewind lives in the footer instead. Reads text from the DOM at click
-  // time, not closure-captured, so a repaint mid-flight can't copy stale text.
-  row.appendChild(buildCopyButton(header));
   header.appendChild(row);
 
   const req = el("div", { className: "turn-req" });
@@ -93,26 +60,6 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
 
   updateTurnHeader(header, d);
   return header;
-}
-
-function buildCopyButton(header: HTMLElement): HTMLButtonElement {
-  const btn = el(
-    "button",
-    {
-      className: "turn-action-btn turn-copy-req",
-      type: "button",
-      "aria-label": "Copy this prompt",
-      "data-tooltip": "Copy this prompt",
-    },
-    iconEl(ICON_COPY),
-  ) as HTMLButtonElement;
-  // `hidden` property, not a class: `display: none` is still in the a11y tree.
-  btn.hidden = true;
-  btn.addEventListener("click", () => {
-    const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
-    _copy(btn, text?.textContent ?? "");
-  });
-  return btn;
 }
 
 /** Recompute the header from turn data. Idempotent. */
@@ -143,11 +90,6 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     });
   }
 
-  const copy = header.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-copy-req");
-  if (copy !== null) {
-    copy.hidden = d.request === undefined;
-  }
-
   // Ahead of the early return below, so a repaint cannot leave a pill row
   // describing a request that is no longer here.
   syncAttachments(header, d.attachments);
@@ -172,10 +114,8 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   }
 }
 
-/** Draw the request's attachment pills, rebuilding only when the list changed
- *  (a blind `replaceChildren` on every repaint would destroy a pill the user
- *  is tabbed onto). Compared against the DOM directly via each pill's
- *  `title`. */
+/** Draw the attachment pills, rebuilding only when the list changed (compared via each pill's
+ *  `title`), so a focused pill survives a repaint. */
 function syncAttachments(header: HTMLElement, atts: readonly AttachmentRef[]): void {
   const row = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-attachments");
   if (row === null) {

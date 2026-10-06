@@ -40,15 +40,12 @@ describe("formatMetering", () => {
   });
 });
 
-// --- The model pill's label ---
-//
-// The pill names the model, and beside it whatever reasoning tier it is handed.
-// status.ts is the single writer of both spans plus the button's aria-label; which
-// tier to hand it is effort.ts's answer (see effort.test.ts) and this module
-// renders the string and decides nothing about it.
+// The pill names the model, and beside it whatever reasoning tier it is handed. status.ts is the
+// single writer of both spans plus the button's aria-label; which tier to hand it is effort.ts's
+// answer (see effort.test.ts) and this module renders the string and decides nothing about it.
 
-/** Every element updateContextBar writes, so the registry's throwing getters
- *  resolve. The two under test are `ctx-model-pill` and `ctx-effort-pill`. */
+/** Every element updateContextBar writes, so the registry's throwing getters resolve. The two
+ *  under test are `ctx-model-pill` and `ctx-effort-pill`. */
 function mountContextBar(): void {
   document.body.replaceChildren();
   const btn = document.createElement("button");
@@ -60,6 +57,7 @@ function mountContextBar(): void {
   }
   document.body.appendChild(btn);
   for (const id of [
+    "context-indicator",
     "context-ring-fill",
     "context-ring-wedge",
     "context-label",
@@ -83,7 +81,7 @@ async function paint(model: string, effort: string): Promise<void> {
   updateContextBar({
     pct: 0,
     contextSize: 0,
-    summarizationPct: 80,
+    compaction: { band: 80, t: 80 },
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,
@@ -105,8 +103,8 @@ describe("the model pill", () => {
 
     const { $ } = await import("./dom.js");
     expect($.ctxModelPill.textContent).toBe("claude opus 5");
-    // Hidden rather than emptied: `.pill` is a flex row with a gap, so an empty
-    // span would still pad the pill.
+    // Hidden rather than emptied: `.pill` is a flex row with a gap, so an empty span would still
+    // pad the pill.
     expect($.ctxEffortPill.textContent).toBe("");
     expect($.ctxEffortPill.classList.contains("hidden")).toBe(true);
     expect($.switchModelBtn.getAttribute("aria-label")).toBe(
@@ -120,8 +118,8 @@ describe("the model pill", () => {
     await paint("claude-opus-5", "max");
 
     const { $ } = await import("./dom.js");
-    // Its OWN span, not appended to the model label: the label is capped at 10rem
-    // with an ellipsis, so a concatenated tier is the half that gets clipped.
+    // Its OWN span, not appended to the model label: the label is capped at 10rem with an ellipsis,
+    // so a concatenated tier is the half that gets clipped.
     expect($.ctxModelPill.textContent).toBe("claude opus 5");
     expect($.ctxEffortPill.textContent).toBe("· max");
     expect($.ctxEffortPill.classList.contains("hidden")).toBe(false);
@@ -132,9 +130,8 @@ describe("the model pill", () => {
 
     await paint("claude-opus-5", "max");
 
-    // The button's aria-label wins over its own text, so this is the only path
-    // the selection reaches assistive tech by. Spelled in words: the separator
-    // above is read out.
+    // The button's aria-label wins over its own text, so this is the only path the selection
+    // reaches assistive tech by. Spelled in words: the separator above is read out.
     const { $ } = await import("./dom.js");
     expect($.switchModelBtn.getAttribute("aria-label")).toBe(
       "Switch model, currently claude opus 5 at max reasoning effort",
@@ -147,8 +144,8 @@ describe("the model pill", () => {
     await paint("claude-opus-5", "max");
     await paint("claude-sonnet-5", "");
 
-    // A model switch can leave the new model with no tier to name, so the span
-    // has to empty again rather than keep the previous model's.
+    // A model switch can leave the new model with no tier to name, so the span has to empty again
+    // rather than keep the previous model's.
     const { $ } = await import("./dom.js");
     expect($.ctxModelPill.textContent).toBe("claude sonnet 5");
     expect($.ctxEffortPill.textContent).toBe("");
@@ -167,22 +164,21 @@ describe("the model pill", () => {
   });
 });
 
-// --- The ring itself ---
-//
-// context-ring.ts owns both computations and this module is their one writer, so
-// what is under test here is that each computed value reaches its own element.
+// context-ring.ts owns both computations and this module is their one writer, so what is under test
+// here is that each computed value reaches its own element.
 
 /** One paint of the ring's two halves. */
 async function paintRing(
   pct: number,
   contextSize: number,
-  summarizationPct: number,
+  band: number | null,
+  t: number = band ?? 100,
 ): Promise<void> {
   const { updateContextBar } = await import("./status.js");
   updateContextBar({
     pct,
     contextSize,
-    summarizationPct,
+    compaction: { band, t },
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,
@@ -199,8 +195,8 @@ describe("the context ring", () => {
   it("writes the fill's sweep and stroke and the band's dash from one update", async () => {
     mountContextBar();
 
-    // 65% sits inside the ramp's second segment, so the stroke is a mix rather
-    // than a saturated token — a constant would satisfy a green or a red arm.
+    // 65% sits inside the ramp's second segment, so the stroke is a mix rather than a saturated
+    // token — a constant would satisfy a green or a red arm.
     await paintRing(65, 200_000, 80);
 
     const { $ } = await import("./dom.js");
@@ -208,8 +204,8 @@ describe("the context ring", () => {
     expect($.contextRingFill.style.stroke).toBe(
       "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))",
     );
-    // Read back COMMA-separated: the CSSOM reserializes a dash list, so
-    // `wedgeDash`'s own "20 80" is not what the element reports.
+    // Read back COMMA-separated: the CSSOM reserializes a dash list, so `wedgeDash`'s own "20 80"
+    // is not what the element reports.
     expect($.contextRingWedge.style.strokeDasharray).toBe("20, 80");
     expect($.contextRingWedge.style.strokeDashoffset).toBe("20");
   });
@@ -224,13 +220,42 @@ describe("the context ring", () => {
     expect($.contextRingWedge.style.strokeDashoffset).toBe("5");
   });
 
+  it("draws no band and says so when automatic compaction is off", async () => {
+    mountContextBar();
+
+    await paintRing(85, 200_000, null, 100);
+
+    const { $ } = await import("./dom.js");
+    expect($.contextRingWedge.style.strokeDasharray).toBe("0, 100");
+    // Off keys the ramp on 100: 85 is past 70 and short of 90, so still a mix.
+    expect($.contextRingFill.style.stroke).toBe(
+      "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))",
+    );
+    expect($.contextIndicator.getAttribute("data-tooltip")).toContain(
+      "Automatic compaction is off",
+    );
+  });
+
+  it("names the band's percentage and keys the ramp on it", async () => {
+    mountContextBar();
+
+    await paintRing(65, 200_000, 90);
+
+    const { $ } = await import("./dom.js");
+    expect($.contextRingWedge.style.strokeDasharray).toBe("10, 90");
+    expect($.contextRingFill.style.stroke).toBe(
+      "color-mix(in oklch, var(--c-yellow) 50.0%, var(--c-green))",
+    );
+    expect($.contextIndicator.getAttribute("data-tooltip")).toContain("marks 90%");
+  });
+
   it("reads the token count out of the ramp's own derivation", async () => {
     mountContextBar();
 
     await paintRing(25, 200_000, 80);
 
-    // The readout and the ramp are one derivation: 25% of 200K is the 50K that
-    // put the stroke half way through the first segment above.
+    // The readout and the ramp are one derivation: 25% of 200K is the 50K that put the stroke half
+    // way through the first segment above.
     const { $ } = await import("./dom.js");
     expect($.ctxTokens.textContent).toBe("50.0K / 200.0K");
   });

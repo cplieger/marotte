@@ -1,7 +1,6 @@
-// The revealed field's glyphs as BOXES. Size and stroke come only from the `ic-*`
-// tier class the producer emits, so a class replacement leaves an unsized SVG that
-// `flex-shrink: 0` forbids the row squeezing back: 370px in a 363px row against
-// 16px in a 35px one. An element-presence assertion cannot see either number.
+// The revealed field's glyphs as BOXES. Size and stroke come only from the `ic-*` tier class the
+// producer emits, so a class replacement leaves an unsized SVG that `flex-shrink: 0` forbids the
+// row squeezing back: 370px in a 363px row against 16px in a 35px one.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -21,9 +20,9 @@ afterAll(() => {
 interface Box {
   glyph: SVGElement;
   closeGlyph: SVGElement;
-  /** An `ic-ui` glyph this factory never touched, so a size claim resolves from the
-   *  tier rather than from a number pinned here — `--icon-ui` is 1rem on a fine
-   *  pointer and 1.25rem on a coarse one. */
+  /** An `ic-ui` glyph this factory never touched, so a size claim resolves from the tier rather
+   *  than from a number pinned here — `--icon-ui` is 1rem on a fine pointer and 1.25rem on a
+   *  coarse one. */
   reference: SVGElement;
   input: HTMLInputElement;
   row: HTMLElement;
@@ -71,8 +70,8 @@ describe("the search popup's glyphs keep the size their producer gave them", () 
   });
 
   it("resolves the leading glyph to the tier's size, for both kinds", () => {
-    // Computed `inline-size` rather than a rect: the popup reveals under a scale
-    // transform, which a rect taken mid-reveal carries (15.68 for a 16px box).
+    // Computed `inline-size` rather than a rect: the popup reveals under a scale transform, which a
+    // rect taken mid-reveal carries (15.68 for a 16px box).
     for (const kind of ["search", "filter"] as const) {
       const { glyph, reference } = open(kind);
       const g = getComputedStyle(glyph);
@@ -85,8 +84,8 @@ describe("the search popup's glyphs keep the size their producer gave them", () 
   });
 
   it("agrees with the × beside it on size and on stroke weight", () => {
-    // Both properties are the tier's, so one glyph sized at its use site disagrees
-    // with its row on both at once.
+    // Both properties are the tier's, so one glyph sized at its use site disagrees with its row on
+    // both at once.
     const { glyph, closeGlyph, reference } = open("search");
     const g = getComputedStyle(glyph);
     const x = getComputedStyle(closeGlyph);

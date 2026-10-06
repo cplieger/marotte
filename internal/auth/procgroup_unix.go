@@ -7,13 +7,9 @@ import (
 	"syscall"
 )
 
-// setProcGroup starts a kiro-cli subprocess in its own process group so the
-// whole tree can be killed on timeout. kiro-cli is a bun/Node wrapper that
-// may spawn children; a PID-only kill orphans them and leaves the stdout
-// pipe open, pinning cmd.Wait to the last descendant's lifetime.
-//
-// This is only the process-group half of an own-group child wrapper — no
-// graceful drain, since this login flow wants a hard SIGKILL on timeout.
+// setProcGroup starts a kiro-cli subprocess in its own process group so the whole tree can be killed: a PID-only
+// kill orphans its children, which keep stdout open and pin cmd.Wait. Only the group half of a child wrapper:
+// login wants a hard SIGKILL on timeout, not a graceful drain.
 func setProcGroup(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }

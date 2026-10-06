@@ -1,8 +1,5 @@
-// A steer read by a DELEGATE. Its entry carries the delegate's lane, and it is the one kind
-// whose lane does not decide where it draws: the words are the reader's, so the note belongs
-// in the parent's flow at its own `seq`, with a marker naming who consumed them. Inside the
-// delegate's own view it draws nothing, because a reader looking for their own message would
-// not find it in a box they have to open.
+// A steer read by a delegate carries the delegate's lane but draws in the parent's flow at its own `seq`, with a
+// marker naming who consumed it; inside the delegate's own view it draws nothing.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Turn } from "./turns.js";
@@ -72,8 +69,7 @@ function sealed(
   };
 }
 
-/** The three-entry turn every case renders: the agent's own text, the steer, and the ack
- *  the delegate's lane carries. `lane` is the steer's, which is what each case varies. */
+/** The agent's text, the steer, and the delegate's ack; each case varies the steer's lane. */
 function turnWithSteer(lane?: string): Turn {
   turnSeq += 1;
   const turnID = `t-${String(turnSeq)}`;
@@ -135,13 +131,12 @@ describe("a steer a delegate read", () => {
 
     const note = host.querySelector(".steer-note");
     expect(note).not.toBeNull();
-    // The lane itself, for a surface that has to address the delegate; the label carries
-    // the fact, because a lane id is a uuid.
+    // The lane, for a surface that addresses the delegate; the label carries the fact, since a lane id is a uuid.
     expect((note as HTMLElement).dataset["lane"]).toBe(LANE);
     expect(note?.querySelector(".steer-note-label")?.textContent).toBe(
       "Mid-turn message · acknowledged by a delegate",
     );
-    // At its own position: the agent's text above it, the ack's own words below.
+    // At its own position: the agent's text above, the ack's words below.
     expect([...host.children].indexOf(note as HTMLElement)).toBe(1);
   });
 
@@ -161,7 +156,7 @@ describe("a steer a delegate read", () => {
     buildDetachedBody(host, turn, CHAT_ID, LANE, false);
 
     expect(host.querySelector(".steer-note")).toBeNull();
-    // The ack IS the delegate's own content and stays: only the reader's words move.
+    // The ack is the delegate's own content and stays; only the reader's words move.
     expect(host.textContent).toContain("tabs it is");
   });
 });

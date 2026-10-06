@@ -18,8 +18,7 @@ func bigFile(n int) string {
 	return b.String()
 }
 
-// itoa is a tiny decimal formatter, kept local so bigFile stays allocation-cheap
-// and the test file needs no strconv import for one call.
+// itoa is a local decimal formatter for bigFile.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -41,15 +40,10 @@ func replaceLine(text string, idx int, want string) string {
 	return strings.Join(lines, "\n")
 }
 
-// TestLineDelta covers the counts a turn footer shows.
-//
-// The headline case is the reported bug: one line rewritten inside a 300-line
-// file used to report 300 added / 300 removed, because the counts were the
-// newline count of each whole-file side rather than a diff.
+// TestLineDelta covers the turn footer's counts. One line rewritten in a 300-line file once reported 300/300.
 func TestLineDelta(t *testing.T) {
 	big := bigFile(300)
 
-	// The 150th line, rewritten. 300 lines in, 300 lines out, one changed.
 	oneEdited := replaceLine(big, 149, "line 149 EDITED")
 
 	inserted := strings.Replace(big, "line 40\n", "line 40\n"+bigFile(10), 1)
@@ -91,8 +85,7 @@ func TestLineDelta(t *testing.T) {
 	}
 }
 
-// TestLineDelta_BudgetFallback pins the coarse answer past maxDiffCells: a
-// bounded delete-all / add-all, never a panic and never a quadratic pass.
+// TestLineDelta_BudgetFallback pins the coarse delete-all/add-all past maxDiffCells.
 func TestLineDelta_BudgetFallback(t *testing.T) {
 	const n = 6000 // 6000*6000 = 36M cells, past maxDiffCells
 	var a, b strings.Builder
@@ -106,8 +99,7 @@ func TestLineDelta_BudgetFallback(t *testing.T) {
 	}
 }
 
-// TestLineDelta_Fixture reads the cross-language fixture. Its TypeScript twin is
-// static-src/line-delta.node.test.ts; both must agree on every case.
+// TestLineDelta_Fixture reads the cross-language fixture shared with static-src/line-delta.node.test.ts.
 func TestLineDelta_Fixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/line_delta.json")
 	if err != nil {
@@ -138,8 +130,7 @@ func TestLineDelta_Fixture(t *testing.T) {
 	}
 }
 
-// TestSplitDiffLines pins the canonical line vocabulary the counts rest on:
-// a final newline adds no line, and a trailing CR is not part of the line.
+// TestSplitDiffLines pins the line vocabulary: a final newline adds no line, a trailing CR is not part of it.
 func TestSplitDiffLines(t *testing.T) {
 	tests := []struct {
 		name string
@@ -171,8 +162,7 @@ func TestSplitDiffLines(t *testing.T) {
 	}
 }
 
-// TestLcsLen pins the primitive the counts derive from, including the symmetry
-// the row-width swap depends on.
+// TestLcsLen pins the primitive, including the symmetry the row swap relies on.
 func TestLcsLen(t *testing.T) {
 	tests := []struct {
 		name string
@@ -197,9 +187,7 @@ func TestLcsLen(t *testing.T) {
 	}
 }
 
-// TestLineHunks covers the editor gutter's input: which NEW-text lines a diff
-// touched. The headline case is the sibling of the footer bug — a one-line edit
-// used to record 1..300 for a 300-line file, painting the whole gutter.
+// TestLineHunks covers the gutter's input; a one-line edit once recorded 1..300 for a 300-line file.
 func TestLineHunks(t *testing.T) {
 	big := bigFile(300)
 	tests := []struct {
@@ -256,11 +244,8 @@ func TestLineHunks(t *testing.T) {
 	}
 }
 
-// TestLineHunks_BudgetFallback pins maxHunkCells, the traceback's own budget: the
-// dense table is 8 bytes a cell, so the hunks path degrades to one coarse hunk far
-// earlier than the counts path does. A trimmed middle of 2099 lines each side is
-// 4.4M cells — past maxHunkCells, well under maxDiffCells — and every odd line
-// differs, so a dense traceback would return ~1050 separate hunks.
+// TestLineHunks_BudgetFallback pins maxHunkCells: 2099 lines a side is 4.4M cells, past it and under maxDiffCells,
+// and every odd line differs, so a dense traceback would return about 1050 hunks.
 func TestLineHunks_BudgetFallback(t *testing.T) {
 	const n = 2100
 	old := bigFile(n)
@@ -271,7 +256,7 @@ func TestLineHunks_BudgetFallback(t *testing.T) {
 	got := lineHunks(old, strings.Join(lines, "\n"))
 	want := lineHunk{StartLine: 2, EndLine: n}
 	if len(got) != 1 {
-		// Print the count, not the slice: the dense path returns ~1050 hunks here.
+		// Print the count, not the slice.
 		t.Fatalf("lineHunks over the traceback budget returned %d hunks, want 1 coarse hunk %+v", len(got), want)
 	}
 	if got[0] != want {
@@ -279,8 +264,7 @@ func TestLineHunks_BudgetFallback(t *testing.T) {
 	}
 }
 
-// TestLineHunks_StayInsideNewText pins the invariant the gutter depends on:
-// every recorded range sits inside the new text, ordered and non-inverted.
+// TestLineHunks_StayInsideNewText pins that every range is inside the new text, ordered and non-inverted.
 func TestLineHunks_StayInsideNewText(t *testing.T) {
 	cases := [][2]string{
 		{"a\nb\nc\n", "a\nB\nc\n"},

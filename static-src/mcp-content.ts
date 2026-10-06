@@ -1,14 +1,8 @@
-// ---------------------------------------------------------------------------
-// Pure extraction of insertable text from raw MCP prompt/resource results.
-// Kept DOM-free so it unit-tests without a browser env and mcp-ui.ts stays a
-// thin view over it.
-// ---------------------------------------------------------------------------
+// Pure extraction of insertable text from MCP prompt/resource results, DOM-free so mcp-ui.ts stays a thin view.
 
 import type { MCPPromptResult, MCPResourceResult, MCPContentBlock } from "./actions/mcp.js";
 
-/** Join the text of the text blocks in one MCP content field, which the
- *  protocol allows to be a single block or an array. Non-text blocks
- *  (images/audio/resource links) are skipped. */
+/** Join the text blocks of one MCP content field (a single block or an array). Non-text blocks are skipped. */
 export function blockText(content: MCPContentBlock | MCPContentBlock[] | undefined): string {
   if (content === undefined) {
     return "";

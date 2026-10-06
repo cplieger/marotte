@@ -1,12 +1,6 @@
-// ---------------------------------------------------------------------------
-// Fundamental: ReasoningBlock — the collapsible "Thinking…" / "Thinking
-// completed" trace for a `thinking` block.
-//
-// Pure view: composition feeds deltas (streaming) or a full string (replay)
-// and seals it when the trace ends or the first sibling text arrives. The
-// summary row carries a right-aligned word count (number only, no preview —
-// nothing of the reasoning content should leak into a collapsed summary).
-// ---------------------------------------------------------------------------
+// ReasoningBlock: the collapsible "Thinking…" trace for a `thinking` block. Pure view, sealed when
+// the trace ends or sibling text arrives. The summary shows a word count only: no reasoning
+// content may leak into a collapsed summary.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
@@ -16,18 +10,9 @@ import { preserveReadingPosition } from "../scroll.js";
 /** One whitespace character. No `g` flag, so `test` stays stateless. */
 const SPACE = /\s/u;
 
-/**
- * Words `chunk` adds to a trace ending `openWord`, plus whether it ends
- * mid-word after it. Whitespace-separated tokens only — a CJK trace with no
- * inter-word spaces reads as "1 word"; a character-count fallback was tried
- * and removed because it misjudged a URL/hash/stack-frame token as its
- * character count. `Intl.Segmenter` would fix both; separate work.
- *
- * Added up PER DELTA rather than recounted from the whole string: a real
- * trace reaches tens of KB (measured: 1.2 MB thinking over 3133 blocks), so
- * recounting per delta is O(length²) per block, re-driven on every repaint
- * even for a collapsed trace nobody is looking at.
- */
+/** Words `chunk` adds to a trace ending `openWord`, and whether it ends mid-word. Whitespace
+ *  tokens only (a CJK trace reads as "1 word"). Summed PER DELTA: a trace reaches megabytes, so
+ *  recounting the whole string is O(length²) per block. */
 function foldWords(chunk: string, openWord: boolean): { added: number; openWord: boolean } {
   if (chunk === "") {
     return { added: 0, openWord };
@@ -56,12 +41,8 @@ export interface ReasoningView {
   seal(): void;
 }
 
-/**
- * Build a reasoning block. `live` owns the pulse and the label ("Thinking…" against
- * "Reasoning"); `open` owns the disclosure, and it is the CALLER's to decide — under
- * the newest-element policy a settled trace nothing followed still renders expanded,
- * so the two inputs are genuinely separate.
- */
+/** Build a reasoning block. `live` owns the pulse and label; `open` owns the disclosure and is
+ *  the caller's (a settled trace nothing followed still renders expanded). */
 export function buildReasoning(initial: string, live: boolean, open: boolean): ReasoningView {
   const root = el("details", {
     className: "reasoning-block msg-reasoning",
@@ -69,11 +50,8 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
   // Own element so seal() can rewrite it without touching the chevron beside it.
   const label = el("span", { className: "reasoning-label" }, live ? "Thinking…" : "Reasoning");
   const count = el("span", { className: "reasoning-count" });
-  // `<summary>`'s accessible name is computed from its descendants, and it is
-  // focusable — repainting a number in it on every chunk would rename a
-  // focusable control dozens of times per trace and re-announce on each
-  // rename. Hidden permanently (not just while live), since a screen reader
-  // needs the label's STATE, not a footnote it costs nothing to miss.
+  // `<summary>`'s accessible name comes from its descendants: a count repainted per chunk would
+  // rename a focusable control dozens of times. Hidden permanently.
   count.setAttribute("aria-hidden", "true");
   const summary = el(
     "summary",

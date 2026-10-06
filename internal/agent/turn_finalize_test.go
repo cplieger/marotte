@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// closesOf decodes every turn_close in entries, in file order. Counting them is
-// the point: a turn closed twice is two footers in the transcript for one turn.
+// closesOf decodes every turn_close in entries; two would be two footers for one turn.
 func closesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnClose {
 	t.Helper()
 	var out []marotte.EntryTurnClose
@@ -70,10 +70,7 @@ func closedBroadcasts(t *testing.T, h *Runtime) []marotte.EntryTurnClose {
 	return closesOf(t, entries)
 }
 
-// deadContext is a context already cancelled, which is what BOTH doors into
-// finalizeTurn are handed at shutdown: the prompt door's cancel is AfterFunc'd
-// onto the shutdown context, and the bridge-death door is passed that context
-// itself.
+// deadContext is an already-cancelled context, what both finalizeTurn doors get at shutdown.
 func deadContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -81,8 +78,7 @@ func deadContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// streamingPromptTurn stages a prompt turn with text already sealed into its
-// accumulator, the way a live prompt leaves it mid-reply.
+// streamingPromptTurn stages a prompt turn with text already sealed, as mid-reply.
 func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) (string, *turnlog.Turn) {
 	t.Helper()
 	id, log := h.stagePromptTurn(t, chatID)
@@ -95,9 +91,10 @@ func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text s
 // shellTurn opens a `!cmd` turn and starts it, answering its id.
 func shellTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) string {
 	t.Helper()
-	id, err := h.coord.OpenTurn(t.Context(), chatID, marotte.TurnSourceLocalShell,
-		&marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
-		func(c *marotte.Chat) { c.Name = "test chat" })
+	id, err := h.coord.OpenTurn(t.Context(), chatID, command.TurnOpen{
+		Source: marotte.TurnSourceLocalShell, Prompt: &marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
+		Init: func(c *marotte.Chat) { c.Name = "test chat" },
+	})
 	if err != nil {
 		t.Fatalf("OpenTurn(local_shell): %v", err)
 	}
@@ -107,11 +104,7 @@ func shellTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) string {
 	return id
 }
 
-// TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn is the third actor. A prompt whose
-// bridge dies has a settle that may never arrive, so nothing else is going to
-// close the turn: the streamed text would stay unsealed, the next turn's frames
-// would fold into it, and the client would be left with `thinking` set on a chat
-// whose process is gone.
+// TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn pins that with the bridge dead nothing else closes the turn.
 func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const partial = "the model got this far before the pipe died"
@@ -141,10 +134,7 @@ func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 	}
 }
 
-// TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn: a bridge culled while
-// idle, or one whose turn a closer already finished, must record nothing. Opening
-// a turn in order to close it would report an interruption nothing was
-// interrupted from, on every bridge exit the app performs.
+// TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn pins that opening a turn to close it would invent an interruption on every exit.
 func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
@@ -159,9 +149,7 @@ func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 	}
 }
 
-// TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled is the deliberate
-// stop's grade: a chat deleted or closed mid-turn asked for the stop, so the
-// footer must not read BROKEN for a stop the reader caused.
+// TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled pins that a stop the reader caused is not BROKEN.
 func TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled(t *testing.T) {
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "half an answer")
@@ -177,15 +165,8 @@ func TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled(t *testing.T
 	}
 }
 
-// TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow is the death
-// closer's third step, and the only thing that records a loss nothing else can see:
-// a bridge that dies while KAS holds AGENT rows it queued and never delivered leaves
-// the log short of words KAS persisted. One steer entry per queued id, with EMPTY
-// text, is that record — an empty text says "KAS holds words this process never
-// received", which is what the resume-time reconcile predicate reads to decide the
-// projection must not be discarded silently. The text is dropped on purpose even
-// when the buffered row carried one, so the arming rows here carry text. A user
-// row is the steer record's, resent by its turn end.
+// TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow pins that one empty-text steer per agent row KAS queued
+// and never delivered, which the resume reconcile reads. Text is dropped on purpose; user rows are the steer record's.
 func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testing.T) {
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "the model was mid-reply when the pipe died")
@@ -198,8 +179,7 @@ func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testin
 
 	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
-	// The waiting set is a map, so the order the ids come back in is arbitrary and is
-	// not part of the contract; what is pinned is ONE entry per id.
+	// One entry per id; the order is arbitrary.
 	recorded := map[string]marotte.EntrySteer{}
 	for _, e := range logOf(t, cs, "c1") {
 		if e.Kind != marotte.EntryKindSteer {
@@ -228,15 +208,13 @@ func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testin
 	}
 }
 
-// TestFinalizeTurn_ALostClaimAmendsNothing pins the exclusion at the coordinator:
-// two closers reaching one turn produce one turn_close, and the loser's account
-// never reaches the footer the winner wrote; a lost claim logs at Debug only.
+// TestFinalizeTurn_ALostClaimAmendsNothing pins that two closers produce one turn_close, and the loser's account never reaches it.
 func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the first closer's account")
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonCancelled, "the loser's account")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the first closer's account", "", 0)
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonCancelled, "the loser's account", "", 0)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -250,9 +228,7 @@ func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
 	}
 }
 
-// TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd is the shell
-// turn's whole shape: turn_open, one text entry carrying the output, turn_close
-// concluding completed, and one turn_closed frame.
+// TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd pins that turn_open, the output text, a completed turn_close, one turn_closed frame.
 func TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id := shellTurn(t, h, "c1")
@@ -280,14 +256,12 @@ func TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd(t *testing.
 	}
 }
 
-// TestWireTurnEnd_StampsTheOutcomeAndTheRawStop is the wire's own closer: the
-// turn_close carries the graded outcome, the stop exactly as sent, and the
-// engine's details as the failure reason.
+// TestWireTurnEnd_StampsTheOutcomeAndTheRawStop pins that the graded outcome, the raw stop, and the outcome's own sentence.
 func TestWireTurnEnd_StampsTheOutcomeAndTheRawStop(t *testing.T) {
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "the model refused the request")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -296,22 +270,19 @@ func TestWireTurnEnd_StampsTheOutcomeAndTheRawStop(t *testing.T) {
 	if closes[0].Outcome != marotte.TurnOutcomeFailed || closes[0].StopReasonRaw != string(marotte.StopReasonError) {
 		t.Errorf("turn_close = outcome %q stop %q, want failed/error", closes[0].Outcome, closes[0].StopReasonRaw)
 	}
-	if closes[0].FailureReason != "the model refused the request" {
-		t.Errorf("failure_reason = %q, want the wire's details", closes[0].FailureReason)
+	if want := marotte.DefaultFailureReason(marotte.TurnOutcomeFailed); closes[0].FailureReason != want {
+		t.Errorf("failure_reason = %q, want the outcome default %q", closes[0].FailureReason, want)
 	}
 }
 
-// TestWireTurnEnd_TheFailureReasonIsSanitizedAndBounded: the details are upstream
-// text, and a transcript footer is no place for a wall of it or for a control
-// sequence.
-func TestWireTurnEnd_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
+// TestPromptFailure_TheFailureReasonIsSanitizedAndBounded pins that upstream text, capped and stripped of control sequences.
+func TestPromptFailure_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
 	h, cs, _ := newTestHub()
-	streamingPromptTurn(t, h, "c1", "half an answer")
-	// The cap is spelled as a number here on purpose: a test that derives both its
-	// input and its bound from maxReasonBytes cannot see the constant move.
+	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
+	// A literal: a bound derived from maxReasonBytes cannot see the constant move.
 	details := strings.Repeat("x", 3000) + "\n\x1b[31mred"
 
-	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, details)
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, details, "", 0)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -329,17 +300,14 @@ func TestWireTurnEnd_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
 	}
 }
 
-// TestWireTurnEnd_TruncationCompletesRatherThanFails pins the one mapping a reader
-// would get wrong by instinct: a turn stopped at a bound finished the work it was
-// allowed to do, so it completed with its answer cut off. Grading it failed would
-// report a bounded turn as broken.
+// TestWireTurnEnd_TruncationCompletesRatherThanFails pins that a bounded turn finished its allowed work.
 func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 	for _, stop := range []marotte.StopReason{marotte.StopReasonMaxTokens, marotte.StopReasonMaxTurnRequests} {
 		t.Run(string(stop), func(t *testing.T) {
 			h, cs, _ := newTestHub()
 			streamingPromptTurn(t, h, "c1", "half an answer")
 
-			h.coord.WireTurnEnd(t.Context(), "c1", stop, "")
+			h.coord.WireTurnEnd(t.Context(), "c1", stop)
 
 			closes := closesOf(t, logOf(t, cs, "c1"))
 			if len(closes) != 1 {
@@ -355,10 +323,7 @@ func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 	}
 }
 
-// TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing is the empty-turn
-// check's input: the result names a turn that produced no content, so the prompt
-// path can conclude `empty` and recover, and a turn that did produce content is
-// never recreated.
+// TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing feeds the empty-turn check; a turn with content is never recreated.
 func TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing(t *testing.T) {
 	h, _, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -378,13 +343,8 @@ func TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing(t *testing.T) {
 	}
 }
 
-// TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry is the flush-before-
-// measure order, and the defect it closes is a user-visible one: the steering
-// filter withholds any trailing text that could still grow into an acknowledgement
-// marker, so a reply ending in `[` sits entirely in the carry when the turn
-// settles. Measured before the release, that turn reports having produced nothing,
-// the empty-turn recovery recreates the session and re-prompts a question the agent
-// had already answered.
+// TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry pins that a reply ending in `[` sits in the steering filter's carry, so
+// measuring before the release would re-prompt an answered question.
 func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, log := h.stagePromptTurn(t, "c1")
@@ -406,11 +366,7 @@ func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
 	}
 }
 
-// TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease is the retention bound.
-// The record leaves the chat's lifecycle the moment the turn finalizes, so without
-// a handle a caller awaiting its OWN turn would be told the turn never existed; and
-// with retention keyed on anything but the handle it could be evicted before that
-// caller read it.
+// TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease pins retention by handle.
 func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 	h, _, _ := newTestHub()
 	id := shellTurn(t, h, "c1")
@@ -434,9 +390,7 @@ func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 	}
 }
 
-// TestAwaitTurn_UnknownTurnReportsNoSuchTurn: an id the chat never held is the one
-// case that answers ErrNoSuchTurn, which is what makes the sentinel meaningful for
-// the caller that does hold a handle.
+// TestAwaitTurn_UnknownTurnReportsNoSuchTurn pins that only an id the chat never held answers ErrNoSuchTurn.
 func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 	h, _, _ := newTestHub()
 	if _, err := h.coord.AwaitTurn(t.Context(), "c1", "t-never-opened"); !errors.Is(err, marotte.ErrNoSuchTurn) {
@@ -444,10 +398,7 @@ func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 	}
 }
 
-// TestAwaitTurn_DeadContextReturnsRatherThanParking: a waiter selects on its own
-// context as well as on the handle, so a caller whose turn context died does not
-// park until something finalizes. The finalize afterwards shows the abandoned wait
-// left the chat's lifecycle usable.
+// TestAwaitTurn_DeadContextReturnsRatherThanParking, leaving the lifecycle usable.
 func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id := shellTurn(t, h, "c1")
@@ -463,17 +414,12 @@ func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	}
 }
 
-// An id-scoped closer handed an EMPTY id closes nothing.
-//
-// Empty is also what OpenTurn answers when it refuses, which is reachable, so
-// reading it as "take whatever is open" let a failed prompt claim an
-// agent-initiated turn and close it under an interrupt carrying ANOTHER turn's
-// failure reason. That meaning has its own spelling (Own) now.
+// An id-scoped closer handed an empty id closes nothing: OpenTurn's refusal is empty too, and taking whatever is open
+// let a failed prompt close an agent turn. Own spells that intent.
 func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
-	// A turn the ENGINE started, streaming. It holds no prompt slot, so admission
-	// never refused the prompt whose open then failed.
+	// An engine-started streaming turn holds no prompt slot.
 	engine := h.stageWireTurn(t, "c1")
 	if engine == nil {
 		t.Fatal("no engine turn was opened")
@@ -482,7 +428,7 @@ func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 		t.Fatalf("TextDelta: %v", err)
 	}
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", "", marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", "", marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.", "", 0)
 
 	if own, ok := h.coord.OwnTurn("c1"); !ok || own != engine {
 		t.Errorf("own turn = (%p, %v), want the engine's turn %p still open: a prompt failure "+
@@ -496,14 +442,12 @@ func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 	}
 }
 
-// TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted: an unset stop must
-// never grade a prompt failure `unknown`, which would report a broken turn as one
-// that merely stopped for a reason marotte could not read.
+// TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted pins that never `unknown` for a prompt failure.
 func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, "", "a reason")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, "", "a reason", "", 0)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -517,10 +461,7 @@ func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
 	}
 }
 
-// The closer seals the accumulator under its own mutex, so a fold still in flight
-// when the claim landed cannot tear the text: the delta that landed before the
-// close is in the sealed entry whole, and the folder is refused after it. Run with
-// -race; that is the point of it.
+// The closer seals under the accumulator's mutex, so an in-flight fold cannot tear the text (-race).
 func TestCloseTurn_ConcurrentFoldDoesNotRaceTheSeal(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, log := streamingPromptTurn(t, h, "c1", "the first delta")
@@ -545,9 +486,7 @@ func TestCloseTurn_ConcurrentFoldDoesNotRaceTheSeal(t *testing.T) {
 			}
 		}
 	}()
-	// The folder must be LOOPING before the closer starts, or the two never overlap
-	// and the detector has nothing to see: a race the test cannot reach is a test
-	// that cannot fail.
+	// The folder must loop before the closer starts, or nothing overlaps.
 	<-running
 
 	h.coord.SettleTurnOnResponse(t.Context(), "c1", id, 0,
@@ -566,10 +505,8 @@ func TestCloseTurn_ConcurrentFoldDoesNotRaceTheSeal(t *testing.T) {
 	}
 }
 
-// TestFinalizeTurn_PersistsOnACancelledContext is the incident: a chat streamed
-// for 46 minutes, the container restarted, and the transcript came back holding
-// only the user message. The store refused the close on its entry guard seeing the
-// shutdown-cancelled context, and everything unsealed went with the refusal.
+// TestFinalizeTurn_PersistsOnACancelledContext pins that a restart once lost a 46-minute stream when the store refused the
+// close on the shutdown-cancelled context.
 func TestFinalizeTurn_PersistsOnACancelledContext(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const partial = "the model got this far before the container restarted"
@@ -592,18 +529,13 @@ func TestFinalizeTurn_PersistsOnACancelledContext(t *testing.T) {
 	}
 }
 
-// TestFinalizeTurn_DoesNotDetachThePositionWait is the placement guard: the
-// detach sits BELOW the position wait rather than at the top of finalizeTurn.
-//
-// awaitPosition exits on the folder reaching the position, the folder going away,
-// or ctx.Done(), and a wedged kiro-cli that never closes its pipe leaves the third
-// as the only one that fires. A detach above it trades a lost turn for a hung
-// shutdown, so this asserts on ELAPSED TIME: moved up, it hangs, not fails.
+// TestFinalizeTurn_DoesNotDetachThePositionWait pins that the detach sits below awaitPosition, whose only timed exit is
+// ctx.Done(); above it a wedged kiro-cli hangs shutdown, hence the elapsed-time assertion.
 func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, log := streamingPromptTurn(t, h, "c1", "half an answer")
 
-	// A position the folder will never reach: nothing is attached to advance it.
+	// Unreachable: nothing advances it.
 	const unreachable = 99
 	settled := make(chan struct{})
 	start := time.Now()
@@ -625,8 +557,7 @@ func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
 		t.Errorf("finalizeTurn took %v to abandon an unreachable position, want a prompt return", elapsed)
 	}
 
-	// And it claimed nothing: the position could not be reached, so the
-	// bridge-death closer owns whatever is still open.
+	// It claimed nothing; the bridge-death closer owns the open turn.
 	if own, ok := h.coord.OwnTurn("c1"); !ok || own != log {
 		t.Errorf("own turn = (%p, %t), want turn %q still open", own, ok, id)
 	}

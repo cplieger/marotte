@@ -1,29 +1,8 @@
 package parallel
 
-// Every assertion about the pool's SHAPE runs in a synctest bubble, because on a
-// real clock none of the three properties this package exists for is assertable
-// as an equality — only as a bound wide enough to admit the behaviour being
-// rejected. Measured on go1.27.0, each conversion strengthened the assertion it
-// replaced and the whole file now costs no real time:
-//
-//   - peak concurrency was `<= maxWorkers`, which a pool that started ONE worker
-//     satisfies. Inside a bubble the clock cannot advance until every worker is
-//     durably blocked on its sleep, so the peak is exactly the degree and the
-//     assertion is an equality. Red-checked: `workers := 1` passes the old bound
-//     and fails the new equality naming `peak=1, want exactly 3`.
-//   - cancellation was `processed < len(items)`, which a check performed once
-//     every ten items also satisfies (measured: that mutant processes 20 of 100
-//     and clears the old bound). It is now the exact count, which pins the
-//     per-item check the package doc claims.
-//   - the slow-item property released its held item from a 1s real-clock poll and
-//     asserted a `>= maxWorkers` threshold. synctest.Wait releases it at the
-//     instant nothing else in the bubble can progress, which turns the threshold
-//     into "every other item finished while one was held" — and that equality
-//     rejects a pre-cut-slice batch loop, which the old threshold admitted.
-//
-// The sleeps inside fn are class (c): the sleep IS the fixture, holding a worker
-// so the counter can be observed. They stay, and inside a bubble they are what
-// makes the observation exact rather than probabilistic.
+// Every assertion about the pool's SHAPE runs in a synctest bubble: on a real clock none of its
+// properties is assertable as an equality, only as a bound wide enough to admit the behaviour being
+// rejected.
 
 import (
 	"context"
@@ -107,8 +86,8 @@ func TestBoundedParallel_DegreeIsCappedByTheItemCount(t *testing.T) {
 //
 // With two workers pulling in order, the item that cancels is index 5, its
 // in-flight sibling is index 4, and both workers see the dead context on their
-// next pull — so exactly six items run. The old assertion was `processed <
-// len(items)`, which a check performed every tenth item also satisfies.
+// next pull — so exactly six items run. `processed < len(items)` would also be
+// satisfied by a check performed every tenth item.
 func TestBoundedParallel_CancellationLandsOnTheNextItem(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const cancelAt = 5
@@ -132,16 +111,8 @@ func TestBoundedParallel_CancellationLandsOnTheNextItem(t *testing.T) {
 	})
 }
 
-// The RETURN VALUE is what a caller needs to tell a whole answer from a prefix,
-// so it has to survive the cancellation it exists to report.
-//
-// A worker that `return`s on the cancel check instead of breaking skips the
-// publish of its own local count, which loses every item it had already run — the
-// count then under-reports and a caller reading `done == len(items)` still gets
-// the right verdict while `done` itself is a lie to anything that reports it (the
-// cross-chat search publishes it as `Scanned`). Two workers and a cancel partway
-// through is what separates the two: the survivor's tally must include the items
-// it finished before the cancel landed.
+// TestBounded_ReportsWhatItRanUnderCancellation: the return value tells a whole answer from a
+// prefix, so it must survive the cancellation it reports.
 func TestBounded_ReportsWhatItRanUnderCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const cancelAt = 5
@@ -190,22 +161,8 @@ func TestBounded_EmptyReportsZero(t *testing.T) {
 	}
 }
 
-// TestBounded_SlowItemDoesNotStallTheRest is the property the pull-based shape
-// exists for, and neither of the two copies this package replaced covered it.
-//
-// A worker pool that pulls indices from a shared channel keeps draining while one
-// item is held; any loop that hands each worker a fixed batch does not, because
-// the batch containing the slow item stalls for its whole remainder.
-//
-// The discriminating instant is while the slow item is still HELD — after
-// Bounded returns, every item has run under either implementation. synctest.Wait
-// is exactly that instant: it returns when every other goroutine in the bubble
-// is durably blocked, which is the moment no further progress is possible with
-// the slow item outstanding. So the count captured there is the property, and it
-// is an EQUALITY: a pull pool finishes all 11 siblings, a barrier-per-batch loop
-// finishes 1, and a pre-cut-slice loop finishes 6 (measured, 12 items / 2
-// workers). The `>= maxWorkers` threshold this replaced admitted the last of
-// those, since 6 clears 2.
+// TestBounded_SlowItemDoesNotStallTheRest is the property the pull-based shape exists for: a
+// finished worker takes the next index while a slow item runs.
 func TestBounded_SlowItemDoesNotStallTheRest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const (

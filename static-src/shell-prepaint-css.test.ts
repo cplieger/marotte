@@ -1,11 +1,5 @@
-// The pre-paint panel state is a root attribute the stylesheet turns into "the
-// closed panel, painted at its open height". Its whole value is the hand-over:
-// shell.ts takes the panel from that rule to the base rule in one task, and the
-// two must paint the same height or the panel jumps (or animates) at boot.
-//
-// Asserted against the assembled bundle in real Chromium, at a phone width so the
-// composer's padding rule (50-mobile.css) differs from the shell-open one and the
-// padding assertion can fail.
+// The pre-paint panel state is a root attribute the stylesheet turns into "the closed panel,
+// painted at its open height".
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";

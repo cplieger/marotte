@@ -6,11 +6,12 @@ import {
   profileFor,
   toolDepth1,
   hasDepth1,
-  readSubject,
   formatMCPToolName,
   renderInfoFor,
   isToolActive,
   isToolDone,
+  toolTitleText,
+  commandTitle,
 } from "./tool-schema.js";
 import type { ToolKind, ToolDepth1 as Depth1 } from "./tool-schema.js";
 import type { ToolStatus } from "./types.js";
@@ -255,37 +256,6 @@ describe("toolDepth1", () => {
 });
 
 // ---------------------------------------------------------------------------
-// readSubject — a read claim must be true for the whole family
-// ---------------------------------------------------------------------------
-
-describe("readSubject", () => {
-  // `kind: "read"` covers seven action types and four of them read something
-  // other than files, so "Read 3 files" is false for those four.
-  it.each([
-    ["read_files", "files"],
-    ["read_file", "files"],
-    ["read_code", "files"],
-    ["list_processes", "processes"],
-    ["get_process_output", "processes"],
-    ["open_folders", "folders"],
-    ["get_diagnostics", "diagnostics"],
-  ])("%s reads %s", (name, subject) => {
-    expect(readSubject(name)).toBe(subject);
-  });
-
-  it("resolves the legacy camelCase aliases persisted sessions carry", () => {
-    expect(readSubject("listProcesses")).toBe("processes");
-    expect(readSubject("getProcessOutput")).toBe("processes");
-    expect(readSubject("openFolders")).toBe("folders");
-    expect(readSubject("getDiagnostics")).toBe("diagnostics");
-  });
-
-  it("falls back to files for an unknown reader", () => {
-    expect(readSubject("someNewReadTool")).toBe("files");
-  });
-});
-
-// ---------------------------------------------------------------------------
 // formatMCPToolName
 // ---------------------------------------------------------------------------
 
@@ -345,6 +315,60 @@ describe("renderInfoFor", () => {
     expect(info.mcp).toEqual({ server: "github", tool: "create_issue" });
   });
 
+  it("deferred tool_call: renders as the server's integration call", () => {
+    const info = renderInfoFor("Tool Call", "other", {
+      tool_id: "github::create_issue",
+      arguments: { title: "x" },
+    });
+    expect(info.kind).toBe("mcp");
+    expect(info.mcp).toEqual({ server: "github", tool: "create_issue" });
+  });
+
+  it("deferred tool_call: the live frame, titled by the MCP wrapper", () => {
+    const info = renderInfoFor("@probe/echo_text", "other", {
+      tool_id: "probe::echo_text",
+      arguments: { text: "hello-p5" },
+    });
+    expect(info.kind).toBe("mcp");
+    expect(info.mcp).toEqual({ server: "probe", tool: "echo_text" });
+  });
+
+  it("deferred tool_call: identified by its arguments when the title is model-written", () => {
+    const info = renderInfoFor("Open an issue", "other", {
+      tool_id: "github::create_issue",
+      arguments: {},
+    });
+    expect(info.kind).toBe("mcp");
+    expect(info.mcp).toEqual({ server: "github", tool: "create_issue" });
+  });
+
+  it.each([
+    ["a builtin routed through the envelope", "builtin::read_file"],
+    ["an id with two separators", "a::b::c"],
+    ["an empty server", "::create_issue"],
+    ["an empty tool", "github::"],
+    ["no separator", "github"],
+  ])("deferred tool_call: %s is not an integration", (_desc, toolID) => {
+    const info = renderInfoFor("tool_call", "other", { tool_id: toolID, arguments: {} });
+    expect(info.kind).not.toBe("mcp");
+    expect(info.mcp).toBeNull();
+  });
+
+  it("a tool_id outside the envelope shape is not unwrapped", () => {
+    const info = renderInfoFor("someTool", "other", { tool_id: "github::create_issue" });
+    expect(info.kind).toBe("other");
+    expect(info.mcp).toBeNull();
+  });
+
+  it.each(["tool_load", "Tool Load", "tool_search", "Tool Search"])(
+    "%s renders as a search",
+    (title) => {
+      expect(renderInfoFor(title, "other", { tool_ids: ["github::create_issue"] }).kind).toBe(
+        "search",
+      );
+    },
+  );
+
   it("unknown tool with no input", () => {
     const info = renderInfoFor("mystery", "unknown", undefined);
     expect(info.kind).toBe("other");
@@ -367,13 +391,9 @@ describe("renderInfoFor", () => {
 // ---------------------------------------------------------------------------
 
 describe("the status predicates partition the wire enum", () => {
-  /** Keyed over the GENERATED union so the table is complete in both directions at
-   *  compile time, the shape `store.test.ts`'s `DOT_BY_TOOL_STATUS` states in full.
-   *
-   *  `active` and `done` must stay complements: `messages-tools.ts` stamps a duration
-   *  and collapses a group on `done`, and a status answering neither is a card that
-   *  never settles. That is why `aborted` is here — a call marotte settled at turn
-   *  close is terminal, not a third state. */
+  /** Keyed over the GENERATED union, so the table is complete in both directions at compile time.
+   *  `active` and `done` stay complements: `messages-tools.ts` settles a card on `done`, so
+   *  `aborted` (settled at turn close) is terminal, not a third state. */
   const PREDICATES: Readonly<Record<ToolStatus, { active: boolean; done: boolean }>> = {
     pending: { active: true, done: false },
     in_progress: { active: true, done: false },
@@ -391,4 +411,58 @@ describe("the status predicates partition the wire enum", () => {
       expect(isToolDone(status)).toBe(want.done);
     });
   }
+});
+
+describe("toolTitleText", () => {
+  const cases: readonly (readonly [string, string])[] = [
+    ["web_search", "web search"],
+    ["remote_web_search", "remote web search"],
+    ["Running: read_files", "read files"],
+    ["Run tests in ./internal/foo_bar", "Run tests in ./internal/foo_bar"],
+    ["Run go test with --dry-run", "Run go test with --dry-run"],
+    ["Check marotte-acp.md", "Check marotte-acp.md"],
+    ["foo_bar.go", "foo_bar.go"],
+    ["Run Command", "Run Command"],
+    ["Hook fired: lint-on-save", "Hook fired: lint-on-save"],
+  ];
+  for (const [raw, want] of cases) {
+    it(`renders ${JSON.stringify(raw)} as ${JSON.stringify(want)}`, () => {
+      expect(toolTitleText(raw)).toBe(want);
+    });
+  }
+});
+
+describe("commandTitle", () => {
+  it("answers the command for KAS's placeholder on an execute call", () => {
+    expect(commandTitle("Run Command", "execute", { command: "go test ./..." })).toBe(
+      "go test ./...",
+    );
+  });
+
+  it("collapses whitespace and bounds the result", () => {
+    expect(commandTitle("Run Command", "execute", { command: "  make\n\tlint  " })).toBe(
+      "make lint",
+    );
+    expect(commandTitle("Run Command", "execute", { command: "a".repeat(200) })).toBe(
+      "a".repeat(117) + "\u2026",
+    );
+  });
+
+  it("leaves a model-written description to the caller", () => {
+    expect(commandTitle("Check vet output", "execute", { command: "go vet ./..." })).toBeNull();
+  });
+
+  // An MCP or custom tool titled "Run Command" with a command input is representable;
+  // the literal is KAS's execute_bash fallback and nothing else's.
+  it("answers nothing for a non-execute kind", () => {
+    expect(commandTitle("Run Command", "other", { command: "go vet ./..." })).toBeNull();
+  });
+
+  it("answers nothing when the input carries no usable command", () => {
+    expect(commandTitle("Run Command", "execute", undefined)).toBeNull();
+    expect(commandTitle("Run Command", "execute", null)).toBeNull();
+    expect(commandTitle("Run Command", "execute", "go vet")).toBeNull();
+    expect(commandTitle("Run Command", "execute", { command: 7 })).toBeNull();
+    expect(commandTitle("Run Command", "execute", { command: " \n " })).toBeNull();
+  });
 });

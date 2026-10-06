@@ -9,13 +9,9 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// TestSwapMerged_ABindForTheHeadersSessionFilesNoSessionRecord pins clearerAdopts'
-// turn_bind arm through the rewrite branch: a merged turn_bind naming the header's
-// session means the record already adopted that session, so insertReconciled must not
-// file a session-form reconciled record for it. The control is a bind naming a
-// DIFFERENT session, which adopts nothing, so the session record is the clearer that
-// retires condition (i). Both cases also carry an orphan the replay cannot settle and a
-// turn the record never held, so the swap takes the rewrite branch either way.
+// TestSwapMerged_ABindForTheHeadersSessionFilesNoSessionRecord pins clearerAdopts' turn_bind
+// arm on the rewrite branch: a bind naming the header's session files no session record; one
+// naming another session does.
 func TestSwapMerged_ABindForTheHeadersSessionFilesNoSessionRecord(t *testing.T) {
 	cases := []struct {
 		name         string

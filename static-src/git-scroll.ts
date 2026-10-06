@@ -1,16 +1,6 @@
-// ---------------------------------------------------------------------------
-// Scroll-preservation utility for the git multi-repo dashboard.
-//
-// Each tab module calls preserveGitScroll(paintFn) when re-rendering
-// the per-repo sections. The git view's scroll container is
-// #git-view (overflow-y: auto); replaceChildren on any descendant
-// resets its scrollTop to 0, which the user perceives as "the page
-// scrolled to the top after I clicked Clone".
-// ---------------------------------------------------------------------------
+// replaceChildren on any descendant of #git-view resets its scrollTop to 0, so tab repaints run through this.
 
-/** Run `paint` while preserving the scroll position of #git-view.
- *  If the element doesn't exist (e.g. test harness without the git
- *  view rendered), `paint` runs unchanged. */
+/** Run `paint` while preserving #git-view's scroll position; without the element, `paint` runs unchanged. */
 export function preserveGitScroll(paint: () => void): void {
   const view = document.getElementById("git-view");
   if (view === null) {
@@ -19,10 +9,7 @@ export function preserveGitScroll(paint: () => void): void {
   }
   const saved = view.scrollTop;
   paint();
-  // Restore on next frame so layout has had a chance to settle.
-  // We re-check after paint because `paint` might rebuild a tab
-  // panel that affected the available scroll height — clamp to the
-  // post-paint max so we don't try to restore past the end.
+  // Restored next frame and clamped to the post-paint max, since `paint` may change the scroll height.
   requestAnimationFrame(() => {
     const max = view.scrollHeight - view.clientHeight;
     view.scrollTop = Math.min(saved, Math.max(0, max));

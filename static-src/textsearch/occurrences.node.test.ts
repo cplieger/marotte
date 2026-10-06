@@ -1,12 +1,6 @@
-// The cross-language pin for the match kernel. Go PRODUCES
-// internal/textsearch/testdata/occurrences.json from its own Needle.Occurrences
-// (TestOccurrencesFixture, regenerated behind UPDATE_GOLDEN=1) and this file
-// CONSUMES it: every row's hit count and every hit's `utf16` position must be
-// what `occurrences` answers here. Two hand-written columns that no test compares
-// would not be a contract; one producer and one consumer are.
-//
-// Node placement because the fixture is a disk read, which throws on import in
-// the browser project, so a misplacement is loud rather than vacuous.
+// The cross-language pin for the match kernel: Go PRODUCES testdata/occurrences.json
+// (TestOccurrencesFixture, UPDATE_GOLDEN=1) and this file CONSUMES it, hit counts and `utf16`
+// positions. Node placement: the fixture is a disk read.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";

@@ -1,11 +1,5 @@
-// ---------------------------------------------------------------------------
-// The git view's activation half and its fetch half.
-//
-// `initGitPanel` used to fetch twice over: its `onGitTabChange` subscription fires
-// immediately on attach, and its `else` branch ran the active sub-tab's refresh
-// inline. With the dispatcher supplying the fetch, either would DOUBLE-fetch on
-// every activation.
-// ---------------------------------------------------------------------------
+// The git view's activation and fetch halves: the dispatcher supplies the fetch, so the panel must not fetch on
+// activation too.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import type * as ModGit from "./git.js";
@@ -30,8 +24,7 @@ vi.mock("./git-tabs.js", () => ({
   initGitTabs: vi.fn(),
   onGitTabChange: (fn: (tab: string) => void) => {
     H.listener.fn = fn;
-    // `subscribe` fires immediately on attach, which is the fire the `painted` gate
-    // exists to refuse: it is a DOM sync, not a reader switching sub-tabs.
+    // `subscribe` fires immediately on attach, the fire the `painted` gate refuses: a DOM sync, not a switch.
     fn(H.tab.current);
     return () => undefined;
   },
@@ -135,8 +128,7 @@ describe("refreshGitView", () => {
   });
 
   it("runs the one-shot init itself, so it does not depend on onShow having run", async () => {
-    // Two dynamic imports of one specifier resolve in whatever order the host
-    // chooses, so the refresh cannot assume the activation's init landed first.
+    // Two dynamic imports of one specifier resolve in any order, so the refresh cannot assume the init landed first.
     const { refreshGitView } = await load();
 
     refreshGitView();

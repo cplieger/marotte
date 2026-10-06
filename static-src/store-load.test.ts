@@ -1,21 +1,15 @@
-// Tests for store-load.ts, the ENTRY-LOG loaders: the chat list, the window GET of section
-// 6.3 and the range read of 6.4. The unit is the TURN, so a page is a set of whole turns
-// walked into `TurnState`s, a position is a `seq`, and a `seq` that is not the next one is a
-// HOLE that asks for one range read rather than being folded in at the wrong index. There is
-// no window base: `turn_open.n` is session-absolute in every window.
-//
-// `./store.js` is mocked at the boundary, so this file owns WHICH door a window takes and
-// with what; what each door does to the store is store.test.ts's, against the real thing.
+// Tests for store-load.ts, the ENTRY-LOG loaders: the chat list, the window GET of section 6.3 and
+// the range read of 6.4.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Session, TurnState } from "./types.js";
 import { _resetForTest as resetVersions, hasSubject, versionMap } from "./subject-versions.js";
-// The module's own shape, for the fresh-instance loader at the foot of this file:
-// `chatListLoaded`, `listReach` and the outcome counters are module state, so their cases
-// re-evaluate the module and need a type for what the dynamic import hands back.
+// The module's own shape, for the fresh-instance loader at the foot of this file: `chatListLoaded`,
+// `listReach` and the outcome counters are module state, so their cases re-evaluate the module and
+// need a type for what the dynamic import hands back.
 import type * as StoreLoad from "./store-load.js";
-// The store's shape, for the `importOriginal` call in its mock factory below. A type-only
-// import, so it adds no runtime edge the `vi.mock` would have to reach around.
+// The store's shape, for the `importOriginal` call in its mock factory below. A type-only import,
+// so it adds no runtime edge the `vi.mock` would have to reach around.
 import type * as Store from "./store.js";
 import type { ChatHeader, Entry, OpenEntry, SubjectStamp, Usage } from "./wire/types.gen.js";
 
@@ -33,25 +27,25 @@ const {
 } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
   mockApiGetTyped: vi.fn(),
-  // The status-bearing GET. `confirmChatExists` reads the STATUS rather than a collapsed
-  // null, so its fixture is the whole `ApiResult` envelope.
+  // The status-bearing GET. `confirmChatExists` reads the STATUS rather than a collapsed null, so
+  // its fixture is the whole `ApiResult` envelope.
   mockApiGetTypedOrError: vi.fn(),
   mockSetSessions: vi.fn(),
-  // The single adoption door for a chat header. A spy so the confirm cases can assert that a
-  // chat the server DOES know lands in the store.
+  // The single adoption door for a chat header. A spy so the confirm cases can assert that a chat
+  // the server DOES know lands in the store.
   mockUpsertHeader: vi.fn(),
   mockBumpMessages: vi.fn(),
-  // The channel a MOUNTED tool card refreshes through. A spy, because what this file owns is
-  // that a fetched window is put on it at all and with which turns; what the channel then
-  // does to a card's signal is store.test.ts's, against the real one.
+  // The channel a MOUNTED tool card refreshes through. A spy, because what this file owns is that a
+  // fetched window is put on it at all and with which turns; what the channel then does to a card's
+  // signal is store.test.ts's, against the real one.
   mockRepublishToolCalls: vi.fn(),
-  // The store's own gap mark. A spy: this file owns that a hole MARKS the window, and what
-  // the mark does to `residency` and to `transcriptStale` is store.test.ts's.
+  // The store's own gap mark. A spy: this file owns that a hole MARKS the window, and what the mark
+  // does to `residency` and to `transcriptStale` is store.test.ts's.
   mockMarkWindowStale: vi.fn(),
   mockSetTurnOpen: vi.fn(),
-  // The shared turn teardown, mocked at the boundary rather than run for real: the real one
-  // reaches the tab strip and the decision dock, and none of that is what a fetch-lifecycle
-  // file owns. turn-teardown.test.ts drives the real thing against the real store.
+  // The shared turn teardown, mocked at the boundary rather than run for real: the real one reaches
+  // the tab strip and the decision dock, and none of that is what a fetch-lifecycle file owns.
+  // turn-teardown.test.ts drives the real thing against the real store.
   mockClearTurnState: vi.fn(),
 }));
 
@@ -67,10 +61,9 @@ vi.mock("./turn-teardown.js", () => ({
   retractStaleThinking: vi.fn(),
 }));
 vi.mock("./store.js", async (importOriginal) => {
-  // `derivedHasMore` is the REAL one, and that is deliberate: it is the rule the `has_more`
-  // cases below are ABOUT, so a hand-written copy here would assert the mock rather than the
-  // production rule and would go stale silently the first time the rule moved. Pure, two
-  // numbers in, no store state, so importing it costs nothing this factory exists to avoid.
+  // `derivedHasMore` is the REAL one, and that is deliberate: it is the rule the `has_more` cases
+  // below are ABOUT, so a hand-written copy here would assert the mock rather than the production
+  // rule and would go stale silently the first time the rule moved.
   const { derivedHasMore } = await importOriginal<typeof Store>();
   return {
     derivedHasMore,
@@ -99,8 +92,6 @@ import {
   requestTurnRange,
 } from "./store-load.js";
 
-// --- Fixtures -------------------------------------------------------------------------
-
 function usage(): Usage {
   return {
     context_pct: 0,
@@ -111,8 +102,8 @@ function usage(): Usage {
   };
 }
 
-// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a
-// `Partial` widens every required field to include `undefined`, which the target refuses.
+// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a `Partial`
+// widens every required field to include `undefined`, which the target refuses.
 function header(id: string, over: Partial<ChatHeader> = {}): ChatHeader {
   const base: ChatHeader = {
     id,
@@ -137,8 +128,8 @@ function turnOpen(turnID: string, n: number): Entry {
   };
 }
 
-/** A sealed entry of any kind at `seq`. `lane` is `""` unless named, which is the
- *  transcript's own lane. */
+/** A sealed entry of any kind at `seq`. `lane` is `""` unless named, which is the transcript's
+ *  own lane. */
 function entry(
   turnID: string,
   seq: number,
@@ -222,8 +213,8 @@ interface PageAnswer {
   readonly header?: Partial<ChatHeader>;
 }
 
-/** The DECODED window answer. `apiGetTyped` is mocked, so the module's own decoder does not
- *  run on this path — the raw-wire door below is what exercises it. */
+/** The DECODED window answer. `apiGetTyped` is mocked, so the module's own decoder does not run
+ *  on this path — the raw-wire door below is what exercises it. */
 function answerPage(chatID: string, o: PageAnswer = {}): void {
   mockApiGetTyped.mockResolvedValue({
     chat: header(chatID, o.header ?? {}),
@@ -300,8 +291,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   sessions.clear();
   resetVersions();
-  // Every loader reports its outcome on the console; a case that is about the LINE spies on
-  // it itself, and the rest would otherwise print one per assertion.
+  // Every loader reports its outcome on the console; a case that is about the LINE spies on it
+  // itself, and the rest would otherwise print one per assertion.
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
 });
@@ -311,11 +302,9 @@ afterEach(() => {
   debug.mockRestore();
 });
 
-// --- loadList: pruning ----------------------------------------------------------------
-
 describe("loadList pruning", () => {
-  // Server-minted ids mean a chat with a store row is a chat the server has, so absence
-  // from the listing means DELETED and no id is exempt from the prune.
+  // Server-minted ids mean a chat with a store row is a chat the server has, so absence from the
+  // listing means DELETED and no id is exempt from the prune.
   it("prunes a chat the server does not list", async () => {
     seedSession("real");
     seedSession("c-untracked");
@@ -327,8 +316,8 @@ describe("loadList pruning", () => {
   });
 
   it("keeps a chat that arrived while the request was in flight", async () => {
-    // `upsertHeader` builds that row from an SSE frame, so the answer being applied predates
-    // it and is not entitled to drop it.
+    // `upsertHeader` builds that row from an SSE frame, so the answer being applied predates it and
+    // is not entitled to drop it.
     mockApiGetTyped.mockImplementation(() => {
       seedSession("c-sse");
       return Promise.resolve({ chats: [header("kept")] });
@@ -340,9 +329,9 @@ describe("loadList pruning", () => {
   });
 
   it("drops a provisional row the server did not name", async () => {
-    // Identical on every axis the rule above tests — unknown before the request, unnamed by
-    // the answer — and the opposite meaning: the boot snapshot painted it, so the chat may
-    // have been deleted since that capture and there is nothing to preserve.
+    // Identical on every axis the rule above tests — unknown before the request, unnamed by the
+    // answer — and the opposite meaning: the boot snapshot painted it, so the chat may have been
+    // deleted since that capture and there is nothing to preserve.
     mockApiGetTyped.mockImplementation(() => {
       seedSession("c-hint", { provisional: true });
       return Promise.resolve({ chats: [header("kept")] });
@@ -362,8 +351,6 @@ describe("loadList pruning", () => {
   });
 });
 
-// --- loadList: rebuilding a row from a header -----------------------------------------
-
 describe("loadList rebuilds each row from the header", () => {
   async function rebuild(h: ChatHeader): Promise<Session> {
     mockApiGetTyped.mockResolvedValue({ chats: [h] });
@@ -382,8 +369,8 @@ describe("loadList rebuilds each row from the header", () => {
   });
 
   it("carries the resident window over as ONE value", async () => {
-    // The map and the order describe the same turns, so carrying one without the other is a
-    // window that renders nothing or renders it twice.
+    // The map and the order describe the same turns, so carrying one without the other is a window
+    // that renders nothing or renders it twice.
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
 
@@ -393,8 +380,8 @@ describe("loadList rebuilds each row from the header", () => {
   });
 
   it("DERIVES has_more over the header's count against the carried window", async () => {
-    // A header carries no window, so this is the derivation and never an answer. Never OR'd
-    // with the previous value: a sticky true is a Load-older button with nothing behind it.
+    // A header carries no window, so this is the derivation and never an answer. Never OR'd with
+    // the previous value: a sticky true is a Load-older button with nothing behind it.
     const s = seedSession("c1", { has_more: true });
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
 
@@ -413,8 +400,8 @@ describe("loadList rebuilds each row from the header", () => {
   });
 
   it("replaces last_turn_outcome, and an ABSENT one is a CLEAR", async () => {
-    // The server's own statement rather than client memory, unlike `model` and
-    // `effort_levels` one bullet over, which carry forward.
+    // The server's own statement rather than client memory, unlike `model` and `effort_levels` one
+    // bullet over, which carry forward.
     seedSession("c1", { last_turn_outcome: "failed" });
     expect(
       (await rebuild(header("c1", { last_turn_outcome: "completed" }))).last_turn_outcome,
@@ -425,13 +412,26 @@ describe("loadList rebuilds each row from the header", () => {
   });
 
   it("replaces pending_model in both directions", async () => {
-    // The badge's ONE input: an absent `pending_model` is a CLEAR, which is how a pick
-    // applied at a turn's close reaches every device.
+    // The badge's ONE input: an absent `pending_model` is a CLEAR, which is how a pick applied at a
+    // turn's close reaches every device.
     seedSession("c1", { pending_model: "old" });
     expect((await rebuild(header("c1", { pending_model: "new" }))).pending_model).toBe("new");
 
     seedSession("c1", { pending_model: "old" });
     expect((await rebuild(header("c1"))).pending_model).toBeUndefined();
+  });
+
+  it("replaces the interrupt mode and the queued rows, an absent one reading as none", async () => {
+    seedSession("c1", { interrupt_mode: "queue", queued: [{ id: "m-old", text: "gone" }] });
+    const rebuilt = await rebuild(header("c1"));
+    expect(rebuilt.interrupt_mode).toBe("steer");
+    expect(rebuilt.queued).toEqual([]);
+
+    const fresh = await rebuild(
+      header("c1", { interrupt_mode: "queue", queued_prompts: [{ id: "m-q1", text: "next" }] }),
+    );
+    expect(fresh.interrupt_mode).toBe("queue");
+    expect(fresh.queued?.map((q) => q.id)).toEqual(["m-q1"]);
   });
 
   it("replaces updated_at, which is required on the wire", async () => {
@@ -440,9 +440,9 @@ describe("loadList rebuilds each row from the header", () => {
   });
 
   it("carries every client-only projection across the rebuild", async () => {
-    // The server sends none of these, so rebuilding from a header alone silently resets
-    // them — and `loadList` runs on every `connected`, so an ordinary network recovery
-    // dropped the agent's declared status and read a loaded chat as never-loaded.
+    // The server sends none of these, so rebuilding from a header alone silently resets them — and
+    // `loadList` runs on every `connected`, so an ordinary network recovery dropped the agent's
+    // declared status and read a loaded chat as never-loaded.
     const s = seedSession("c1", {
       thinking: true,
       working_label: "Working",
@@ -471,8 +471,6 @@ describe("loadList rebuilds each row from the header", () => {
   });
 });
 
-// --- loadList: the digest stamp -------------------------------------------------------
-
 describe("loadList observes the chats stamp", () => {
   it("observes it once the list is committed", async () => {
     mockApiGetTyped.mockResolvedValue({
@@ -492,8 +490,6 @@ describe("loadList observes the chats stamp", () => {
   });
 });
 
-// --- loadList: the retry ladder -------------------------------------------------------
-
 describe("the retry ladder behind a failed list load", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -503,8 +499,8 @@ describe("the retry ladder behind a failed list load", () => {
   });
 
   it("climbs three rungs at a doubling delay and then gives up", async () => {
-    // Bounded because the next SSE `connected` refetches the list anyway: what this covers
-    // is the window in between, which no other trigger revisits.
+    // Bounded because the next SSE `connected` refetches the list anyway: what this covers is the
+    // window in between, which no other trigger revisits.
     mockApiGetTyped.mockResolvedValue(null);
     await loadList();
     expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
@@ -520,10 +516,8 @@ describe("the retry ladder behind a failed list load", () => {
   });
 
   it("arms nothing when the failure was an ABORT", async () => {
-    // An abort is a fact about a REQUEST, so it records no verdict about the server and a
-    // ladder armed on `!ok` would chase a load a newer one superseded. A FRESH instance,
-    // because the verdict is module state: the case above leaves it `unreachable`, and an
-    // abort leaving it alone is exactly the behaviour under test.
+    // An abort is a fact about a REQUEST, so it records no verdict about the server and a ladder
+    // armed on `!ok` would chase a load a newer one superseded.
     const loader = await freshLoader();
     const controller = new AbortController();
     mockApiGetTyped.mockImplementation(() => {
@@ -571,8 +565,6 @@ describe("the retry ladder behind a failed list load", () => {
   });
 });
 
-// --- loadMessages: walking a page into turns ------------------------------------------
-
 describe("loadMessages walks a page's entries into whole turns", () => {
   it("opens a TurnState per turn_open and appends every other entry at its seq", async () => {
     seedSession("c1");
@@ -588,8 +580,8 @@ describe("loadMessages walks a page's entries into whole turns", () => {
   });
 
   it("keeps FILE order when two turns interleave", async () => {
-    // Two of a chat's turns are open together in one state, so a few lines of two turns
-    // alternate and nothing may assume a turn is a contiguous byte range.
+    // Two of a chat's turns are open together in one state, so a few lines of two turns alternate
+    // and nothing may assume a turn is a contiguous byte range.
     seedSession("c1");
     answerPage("c1", {
       entries: [
@@ -649,12 +641,10 @@ describe("loadMessages walks a page's entries into whole turns", () => {
   });
 });
 
-// --- loadMessages: holes and the repair ----------------------------------------------
-
 describe("a gap the walk cannot fold in is a HOLE, and it asks for one range read", () => {
   it("records the FIRST gap's watermark and asks past it", async () => {
-    // The first gap's watermark, kept: a later entry of the same turn sits past it, so its
-    // index would ask the repair for less than the turn is actually missing.
+    // The first gap's watermark, kept: a later entry of the same turn sits past it, so its index
+    // would ask the repair for less than the turn is actually missing.
     seedSession("c1");
     answerPage("c1", {
       entries: [turnOpen("t1", 1), textEntry("t1", 2), textEntry("t1", 4)],
@@ -668,8 +658,8 @@ describe("a gap the walk cannot fold in is a HOLE, and it asks for one range rea
   });
 
   it("asks for the WHOLE turn when the page did not open it", async () => {
-    // A turn whose `turn_open` the tolerant decode dropped: the server serves whole turns,
-    // so an entry naming a turn this page did not open can only be that.
+    // A turn whose `turn_open` the tolerant decode dropped: the server serves whole turns, so an
+    // entry naming a turn this page did not open can only be that.
     seedSession("c1");
     answerPage("c1", {
       entries: [turnOpen("t1", 1), textEntry("t2", 1)],
@@ -720,13 +710,10 @@ describe("a gap the walk cannot fold in is a HOLE, and it asks for one range rea
   });
 });
 
-// --- loadMessages: the tolerant decode (addendum 9(b)) --------------------------------
-
 describe("an undecodable entry is DROPPED, never the window", () => {
   it("keeps the rest of the page and leaves the gap to the range read", async () => {
-    // One unknown field may not cost the whole window: the member is dropped with a warn
-    // naming what it was, and the `seq` gap it leaves reaches the same hole check every
-    // other gap does.
+    // One unknown field may not cost the whole window: the member is dropped with a warn naming
+    // what it was, and the `seq` gap it leaves reaches the same hole check every other gap does.
     seedSession("c1");
     answerWire({
       chat: header("c1", { turn_count: 1 }),
@@ -780,8 +767,8 @@ describe("an undecodable entry is DROPPED, never the window", () => {
   });
 
   it("tolerates an answer that carries no subject list at all", async () => {
-    // Optional for the reason the `chats` stamp is: a server from before the stamp still
-    // answers a usable page.
+    // Optional for the reason the `chats` stamp is: a server from before the stamp still answers a
+    // usable page.
     seedSession("c1");
     answerWire({
       chat: header("c1", { turn_count: 1 }),
@@ -796,12 +783,10 @@ describe("an undecodable entry is DROPPED, never the window", () => {
   });
 });
 
-// --- loadMessages: merging a page with what is held -----------------------------------
-
 describe("mergeTurn keeps what landed while the request was in flight", () => {
   it("puts held entries past the page's end back on, contiguously", async () => {
-    // The page is a point-in-time read, so an entry that landed during the flight is NEWER
-    // than the answer and the answer is not entitled to drop it.
+    // The page is a point-in-time read, so an entry that landed during the flight is NEWER than the
+    // answer and the answer is not entitled to drop it.
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1), textEntry("t1", 1), textEntry("t1", 2)]);
     answerPage("c1", {
@@ -816,8 +801,8 @@ describe("mergeTurn keeps what landed while the request was in flight", () => {
   it("stops at the first held entry whose seq is not next", async () => {
     const s = seedSession("c1");
     const held = seedTurn(s, "t1", [turnOpen("t1", 1)]);
-    // A held array with a hole in it: index 1 carries seq 2, so nothing past the page's end
-    // may be re-seated.
+    // A held array with a hole in it: index 1 carries seq 2, so nothing past the page's end may be
+    // re-seated.
     held.entries.push(textEntry("t1", 2));
     answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
 
@@ -871,8 +856,6 @@ describe("mergeTurn keeps what landed while the request was in flight", () => {
   });
 });
 
-// --- loadMessages: applyPage and has_more --------------------------------------------
-
 describe("applyPage decides whose has_more is the answer", () => {
   it("PREPENDS an older page and takes the server's answer", async () => {
     const s = seedSession("c1", { has_more: true });
@@ -913,8 +896,8 @@ describe("applyPage decides whose has_more is the answer", () => {
   });
 
   it("keeps the resident turns OLDER than the page's oldest, in front of it", async () => {
-    // Those are pages this client already fetched that the answer says nothing about, so
-    // dropping them would throw a paged-up reader's history away on every no-cursor reload.
+    // Those are pages this client already fetched that the answer says nothing about, so dropping
+    // them would throw a paged-up reader's history away on every no-cursor reload.
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     seedTurn(s, "t2", [turnOpen("t2", 2)]);
@@ -931,8 +914,8 @@ describe("applyPage decides whose has_more is the answer", () => {
 
   it("DERIVES has_more when older turns sit in front of the page", async () => {
     // The page said nothing about this window's left edge, so `has_more` falls back to the
-    // derivation rather than preserving the previous value: preserving is only right when
-    // that value was an ANSWER.
+    // derivation rather than preserving the previous value: preserving is only right when that
+    // value was an ANSWER.
     const s = seedSession("c1", { has_more: true });
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     seedTurn(s, "t2", [turnOpen("t2", 2)]);
@@ -962,8 +945,8 @@ describe("applyPage decides whose has_more is the answer", () => {
   });
 
   it("REPLACES the window when the page overlaps nothing it holds", async () => {
-    // No overlap means the window moved out from under what is held, and then the page
-    // replaces, which is the honest answer.
+    // No overlap means the window moved out from under what is held, and then the page replaces,
+    // which is the honest answer.
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     answerPage("c1", {
@@ -988,8 +971,6 @@ describe("applyPage decides whose has_more is the answer", () => {
     expect(sessions.get("c1")?.has_more).toBe(true);
   });
 });
-
-// --- loadMessages: residency ---------------------------------------------------------
 
 describe("residency", () => {
   it("marks the chat loaded on a successful newest-page load", async () => {
@@ -1025,8 +1006,6 @@ describe("residency", () => {
   });
 });
 
-// --- loadMessages: the stamps it observes --------------------------------------------
-
 describe("the digest stamps a window certifies", () => {
   it("observes the chat stamp and one live_turn per open turn, epoch included", async () => {
     seedSession("c1");
@@ -1044,8 +1023,8 @@ describe("the digest stamps a window certifies", () => {
     answerPage("c1", { subject: [stamp("chat", "c1", "1")] });
 
     await loadMessages("c1");
-    // A stamp certifies exactly the entries this page served, so it may not be recorded
-    // before they are in the store.
+    // A stamp certifies exactly the entries this page served, so it may not be recorded before they
+    // are in the store.
     expect(sessions.get("c1")?.residency).toBe("loaded");
     expect(hasSubject("chat", "c1")).toBe(true);
   });
@@ -1067,8 +1046,6 @@ describe("the digest stamps a window certifies", () => {
     expect(heldCount()).toBe(0);
   });
 });
-
-// --- loadMessages: the server's liveness statement ------------------------------------
 
 describe("loadMessages turn_open", () => {
   it("stores the server's statement from a newest page, in both directions", async () => {
@@ -1104,9 +1081,8 @@ describe("loadMessages turn_open", () => {
   });
 
   it("runs the teardown on a stated live === false, after the repaint", async () => {
-    // A stated `false` covers the chat's WHOLE liveness, so it retracts a `thinking` this
-    // client is holding for a turn that is over — and the repaint and the dot must read one
-    // settled window.
+    // A stated `false` covers the chat's WHOLE liveness, so it retracts a `thinking` this client is
+    // holding for a turn that is over — and the repaint and the dot must read one settled window.
     seedSession("c1");
     answerPage("c1", { live: false });
 
@@ -1127,13 +1103,11 @@ describe("loadMessages turn_open", () => {
   });
 });
 
-// --- loadMessages: the card channel and the draft -------------------------------------
-
 describe("loadMessages publishes a fetched window's tool calls", () => {
   it("hands the newest page's own turns to the card channel", async () => {
-    // A card already on screen has ONE refresh channel, the per-call signal, and the repaint
-    // writes none — so a card built from a truncated copy would keep its hint for the life
-    // of the document.
+    // A card already on screen has ONE refresh channel, the per-call signal, and the repaint writes
+    // none — so a card built from a truncated copy would keep its hint for the life of the
+    // document.
     seedSession("c1");
     answerPage("c1", {
       entries: [turnOpen("t1", 1), turnOpen("t2", 2)],
@@ -1191,8 +1165,6 @@ describe("loadMessages parks the server's draft", () => {
   });
 });
 
-// --- loadMessages: the replay announcement and the aborts ----------------------------
-
 describe("loadMessages announces a fetched window as a replay", () => {
   it("bumps the newest page with the load cause", async () => {
     seedSession("c1");
@@ -1244,8 +1216,6 @@ describe("loadMessages announces a fetched window as a replay", () => {
   });
 });
 
-// --- confirmChatExists ---------------------------------------------------------------
-
 describe("confirmChatExists asks the SERVER about one chat id", () => {
   function answer(over: { ok?: boolean; data?: unknown; status?: number; error?: string }): void {
     mockApiGetTypedOrError.mockResolvedValue({
@@ -1290,9 +1260,8 @@ describe("confirmChatExists asks the SERVER about one chat id", () => {
   });
 
   it("refuses to read a request-level 400 as no such chat", async () => {
-    // A stale CSRF header, a host check or a body limit is not evidence about a
-    // conversation, and reading one as "no such chat" is the false-terminal claim this
-    // whole path exists to remove.
+    // A stale CSRF header, a host check or a body limit is not evidence about a conversation, and
+    // reading one as "no such chat" is the false-terminal claim this whole path exists to remove.
     answer({ status: 400 });
     expect(await confirmChatExists("c-abc")).toBe("unresolved");
   });
@@ -1338,8 +1307,6 @@ describe("confirmChatExists asks the SERVER about one chat id", () => {
   });
 });
 
-// --- the range read of section 6.4 ---------------------------------------------------
-
 describe("the range read repairs one turn", () => {
   function answerRange(o: {
     entries?: Entry[];
@@ -1384,9 +1351,6 @@ describe("the range read repairs one turn", () => {
   });
 
   it("REPLACES the turn's open tails with the answer's, lane set included", async () => {
-    // The answer is the turn's whole open state, so a lane the answer does not carry has no
-    // tail any more — unlike the WINDOW merge, where a held tail in an unmentioned lane
-    // survives because the page is a point-in-time read of a turn the client also streams.
     const s = seedSession("c1");
     seedTurn(
       s,
@@ -1402,11 +1366,8 @@ describe("the range read repairs one turn", () => {
   });
 
   it("stops at a SECOND gap rather than folding an entry in at the wrong index", async () => {
-    // The answer's entries are seated contiguously from the held turn's own end and the walk
-    // stops at the first `seq` that is not next, which is a second gap. The re-ask that gap
-    // asks for is NOT observable today — see the hand-off in this box's report: the
-    // recursive `requestTurnRange` runs while `runTurnRange` still holds the `(chat, turn)`
-    // key, so it early-returns and the warn below is the whole signal.
+    // The answer's entries are seated contiguously from the held turn's own end and the walk stops
+    // at the first `seq` that is not next, which is a second gap.
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     answerRange({ entries: [textEntry("t1", 1), textEntry("t1", 3)] });
@@ -1417,8 +1378,8 @@ describe("the range read repairs one turn", () => {
   });
 
   it("seats a whole-turn answer by its turn_open.n among the resident turns", async () => {
-    // The ordinal is session-absolute in every window, so it orders a repaired turn against
-    // the ones already held without a second projection.
+    // The ordinal is session-absolute in every window, so it orders a repaired turn against the
+    // ones already held without a second projection.
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     seedTurn(s, "t3", [turnOpen("t3", 3)]);
@@ -1449,8 +1410,8 @@ describe("the range read repairs one turn", () => {
   });
 
   it("asks ONCE per (chat, turn) while a read is in flight", async () => {
-    // A burst of holes on one turn asks once, because the answer covers every gap that
-    // arrived while it was out.
+    // A burst of holes on one turn asks once, because the answer covers every gap that arrived
+    // while it was out.
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     let release = (): void => undefined;
@@ -1470,16 +1431,16 @@ describe("the range read repairs one turn", () => {
     await vi.waitFor(() => expect(mockBumpMessages).toHaveBeenCalled());
     requestTurnRange("c1", "t1", 0);
     expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
-    // Release the last one too: the in-flight table is module state, so a repair left out
-    // here would make every later case's `requestTurnRange("c1", "t1", …)` a no-op.
+    // Release the last one too: the in-flight table is module state, so a repair left out here
+    // would make every later case's `requestTurnRange("c1", "t1", …)` a no-op.
     release();
     await vi.waitFor(() => expect(mockBumpMessages).toHaveBeenCalledTimes(2));
   });
 
   it("leaves the window PARTIAL while another repair is still out", async () => {
-    // The restore is read after one lands, so `residency` may go back to `loaded` only when
-    // nothing is missing rather than after whichever answer arrives last. The restore
-    // ITSELF is not observable today; see this box's report for the hand-off.
+    // The restore is read after one lands, so `residency` may go back to `loaded` only when nothing
+    // is missing rather than after whichever answer arrives last. The restore ITSELF is not
+    // observable today; see this box's report for the hand-off.
     const s = seedSession("c1", { residency: "partial" });
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     seedTurn(s, "t2", [turnOpen("t2", 1)]);
@@ -1537,22 +1498,11 @@ describe("the range read repairs one turn", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Module state: `chatListLoaded`, `serverMayAnswer` and the outcome counters.
-//
-// Each case takes a FRESH module instance, because the latch is module state and a
-// successful load anywhere in this file would otherwise decide the answer for the rest
-// of it.
-// ---------------------------------------------------------------------------
 
 let bootSeq = 0;
 
-/** A fresh `store-load` instance, so the latch starts where a page load starts.
- *
- *  The busted specifier is what makes it fresh: the browser's module map is URL-keyed, so
- *  `vi.resetModules()` alone hands back the cached instance. The `.ts` extension is
- *  mandatory — written `.js` the suite stays green while v8 attributes every evaluation to a
- *  file that does not exist. */
+/** A fresh `store-load` instance, so the latch starts where a page load starts. */
 async function freshLoader(): Promise<typeof StoreLoad> {
   vi.resetModules();
   bootSeq++;
@@ -1566,8 +1516,8 @@ describe("chatListLoaded", () => {
   });
 
   it("is true for a list that landed EMPTY, which is a real answer", async () => {
-    // The distinction the predicate exists for, from the side that is easy to get wrong: a
-    // server with no chats HAS answered, so a deep link naming one is genuinely dead.
+    // The distinction the predicate exists for, from the side that is easy to get wrong: a server
+    // with no chats HAS answered, so a deep link naming one is genuinely dead.
     const loader = await freshLoader();
     mockApiGetTyped.mockResolvedValue({ chats: [] });
 
@@ -1584,8 +1534,8 @@ describe("chatListLoaded", () => {
   });
 
   it("stays true after a LATER failed refetch", async () => {
-    // Latched rather than a snapshot of the last attempt: once a list has landed the store
-    // holds a row per chat, and a failed refetch does not un-know them.
+    // Latched rather than a snapshot of the last attempt: once a list has landed the store holds a
+    // row per chat, and a failed refetch does not un-know them.
     const loader = await freshLoader();
     mockApiGetTyped.mockResolvedValue({ chats: [header("c1")] });
     await loader.loadList();
@@ -1621,8 +1571,8 @@ describe("serverMayAnswer", () => {
   });
 
   it("stays true once a list has landed, even after the server goes down", async () => {
-    // `listLoaded` is LATCHED where the reach is not, so rows in the store outlive a server
-    // that has since gone away.
+    // `listLoaded` is LATCHED where the reach is not, so rows in the store outlive a server that
+    // has since gone away.
     const loader = await freshLoader();
     mockApiGetTyped.mockResolvedValue({ chats: [header("c1")] });
     await loader.loadList();
@@ -1634,9 +1584,9 @@ describe("serverMayAnswer", () => {
 });
 
 describe("the refetch-outcome line", () => {
-  // The counters are module state, so each case takes a fresh instance and its counts start
-  // at zero. The mocked GET performs no fetch, so every line ends in `proto=?`; the regexes
-  // stop at `proto=` so they hold for a real request too.
+  // The counters are module state, so each case takes a fresh instance and its counts start at
+  // zero. The mocked GET performs no fetch, so every line ends in `proto=?`; the regexes stop at
+  // `proto=` so they hold for a real request too.
   it("warns with the chat id and the counts when a newest-page load fails", async () => {
     const loader = await freshLoader();
     seedSession("c1");
@@ -1660,8 +1610,8 @@ describe("the refetch-outcome line", () => {
   });
 
   it("reports unchanged when the page carried the window it already held", async () => {
-    // The measurement is over turn ids plus each turn's entry ids and open tails: enough to
-    // tell a page that changed nothing from one that did.
+    // The measurement is over turn ids plus each turn's entry ids and open tails: enough to tell a
+    // page that changed nothing from one that did.
     const loader = await freshLoader();
     const s = seedSession("c1");
     seedTurn(s, "t1", [turnOpen("t1", 1), textEntry("t1", 1)]);

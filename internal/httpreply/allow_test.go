@@ -30,13 +30,10 @@ func TestMethodNotAllowedSetsAllow(t *testing.T) {
 			},
 			want: "GET, PUT, PATCH, DELETE",
 		},
-		// RFC 9110 §5.6.1.1 forbids generating empty list elements.
 		"empty variadic entries are dropped": {
 			call: func(w http.ResponseWriter) { MethodNotAllowed(w, http.MethodGet, "", http.MethodPost, "") },
 			want: "GET, POST",
 		},
-		// RFC 9110 §9.1: method tokens are case-sensitive, so a caller's
-		// spelling is emitted verbatim rather than normalised.
 		"tokens are emitted verbatim": {
 			call: func(w http.ResponseWriter) { MethodNotAllowed(w, "get") },
 			want: "get",
@@ -51,8 +48,6 @@ func TestMethodNotAllowedSetsAllow(t *testing.T) {
 			if got := rec.Header().Get("Allow"); got != tc.want {
 				t.Errorf("Allow = %q, want %q", got, tc.want)
 			}
-			// The header is the whole change: status and body must be
-			// exactly what MethodNotAllowed emitted before it existed.
 			if rec.Code != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 			}

@@ -9,17 +9,9 @@ import (
 	"github.com/cplieger/pinstall/v3"
 )
 
-// TestAuthReasonIsTheClientContract pins the sign-in reason literal and the one
-// property that makes it a SECOND family rather than a variant of the install
-// family: it must not carry the "kiro-cli" prefix.
-//
-// static-src/runtime-health.ts decides a verdict is a kiro-cli INSTALL verdict by
-// that prefix, then keys its copy on each install literal in full. A sign-in
-// reason spelled "kiro-cli ..." would match the family, miss every key, and
-// render the terminal "the install failed and its retries are exhausted; restart
-// the container" copy — telling the reader to do the one thing that cannot fix an
-// expired sign-in. Change this string and change AUTH_REASON_PREFIX there in the
-// same commit.
+// TestAuthReasonIsTheClientContract pins the sign-in reason literal and that it lacks the
+// "kiro-cli" prefix, which runtime-health.ts reads as an install verdict. Change
+// AUTH_REASON_PREFIX there in the same commit.
 func TestAuthReasonIsTheClientContract(t *testing.T) {
 	if reasonSignIn != "sign-in required" {
 		t.Errorf("reasonSignIn = %q, want %q (runtime-health.ts prefix-matches this)", reasonSignIn, "sign-in required")
@@ -27,8 +19,7 @@ func TestAuthReasonIsTheClientContract(t *testing.T) {
 	if strings.HasPrefix(reasonSignIn, "kiro-cli") {
 		t.Errorf("reasonSignIn %q carries the install family's prefix, so the client would render install copy for a signed-out runtime", reasonSignIn)
 	}
-	// And the reverse: no install reason may be read as a sign-in one, or the
-	// banner would offer a login modal for a missing binary.
+	// And the reverse: no install reason may read as a sign-in one.
 	for _, install := range []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings} {
 		if strings.HasPrefix(install, reasonSignIn) {
 			t.Errorf("install reason %q starts with the sign-in prefix", install)
@@ -36,11 +27,8 @@ func TestAuthReasonIsTheClientContract(t *testing.T) {
 	}
 }
 
-// TestHealthReportsTheSignInLeg: readiness reports a dead sign-in, it reports it
-// BEHIND the kiro-cli leg (the envelope carries one reason, and an uninstalled
-// runtime is the superset failure), and it reads a value rather than probing — a
-// health handler that spawned kiro-cli would hand a monitor's poll a
-// process-launch lever.
+// TestHealthReportsTheSignInLeg pins that readiness reports a dead sign-in, behind the
+// kiro-cli leg, by reading a value rather than probing (no process-launch lever).
 func TestHealthReportsTheSignInLeg(t *testing.T) {
 	ready := func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady }
 	installing := func() (bool, pinstall.Reason) { return false, pinstall.ReasonInstalling }
@@ -116,11 +104,8 @@ func TestHealthReportsTheSignInLeg(t *testing.T) {
 	}
 }
 
-// TestHealthNeverLeaksTheAuthFailureReason pins the disclosure rule for this leg.
-// /api/health is unauthenticated, and kiro-cli's own token error can name a path
-// on the volume (an SSO cache file, a version directory). The specific failure
-// goes to the log line and the SSE error frame; readiness serves a fixed literal,
-// which is why the latch holds a bool and not a string.
+// TestHealthNeverLeaksTheAuthFailureReason pins that unauthenticated /api/health serves a
+// fixed literal: kiro-cli's error can name a path on the volume.
 func TestHealthNeverLeaksTheAuthFailureReason(t *testing.T) {
 	s := &Server{
 		kiroReady:       func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady },

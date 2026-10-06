@@ -1,9 +1,7 @@
 package agent
 
-// The idle window measures LIVENESS, not tool-call frames: any live step frame refills
-// it, a live agent terminal holds it, and it fires only on a true stall, which is what
-// the recorded reason then says. The trade-off it accepts is stated at cancelExpired: a
-// shell command that is genuinely hung is bounded by the backstop alone.
+// The idle window measures liveness: any live step frame refills it, a live terminal holds it, and it
+// fires only on a true stall. A genuinely hung shell meets the backstop alone (cancelExpired).
 
 import (
 	"encoding/json"
@@ -16,18 +14,14 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// terminalsAnswering is a runTerminalReader with one fixed answer per chat, for the
-// cases below whose subject is the refill arithmetic rather than the scoping: it
-// answers for whatever sessions it is asked about. What the scope itself decides is
-// pinned by terminalsBySession (run_bounds_step_test.go).
+// terminalsAnswering gives one fixed answer per chat, for refill arithmetic; scoping is terminalsBySession's.
 type terminalsAnswering map[marotte.ChatID]bool
 
 func (t terminalsAnswering) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
 	return len(sessions) > 0 && t[chatID]
 }
 
-// stagedExpiry leases, arms and stages a deadline already in the past, returning
-// the staged deadline the timer would have fired for.
+// stagedExpiry leases, arms and stages a past deadline, returning it.
 func stagedExpiry(t *testing.T, rs *Runs, id string, launch launchOrigin) time.Time {
 	t.Helper()
 	rs.grantLease(t.Context(), id, "publish", launch)
@@ -103,8 +97,7 @@ func TestCancelExpired_NoFrameAndNoShellIsAStall(t *testing.T) {
 	}
 }
 
-// A live shell holds the idle window and nothing else: the backstop is the bound a
-// genuinely hung command meets, so it fires whatever the terminal registry says.
+// A live shell holds only the idle window; the backstop fires regardless.
 func TestCancelExpired_ASpentBackstopOutranksALiveTerminal(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -125,10 +118,7 @@ func TestCancelExpired_ASpentBackstopOutranksALiveTerminal(t *testing.T) {
 	}
 }
 
-// A live terminal met inside the last minute before the backstop: the refill used to
-// decline (the throttle read the spent deadline as a standing timer) and the arm
-// returned anyway, leaving the run bounded by nothing. Now the refill stamps the
-// backstop instant, so a timer stands and no cancel goes out.
+// A live terminal inside the backstop's last minute: the refill stamps the backstop instant, so a timer stands and no cancel goes out.
 func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing.T) {
 	h, _, br := newTestHub()
 	defer shutdownHub(t, h)
@@ -154,9 +144,7 @@ func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing
 	}
 }
 
-// A permission ask is the last frame a step produces until a person answers, and it
-// arrives as its own request rather than a session/update, so the report has its own
-// door. Attributed over the request's session id.
+// A permission ask arrives as its own request, so it reports progress through its own door, by session id.
 func TestRequestPermission_AStepsAskRefillsTheWindow(t *testing.T) {
 	const (
 		chatID  = marotte.ChatID("chat-step")
@@ -190,9 +178,8 @@ func TestRequestPermission_AStepsAskRefillsTheWindow(t *testing.T) {
 	}
 }
 
-// TestHandleSessionUpdate_AStepsThinkingChunkRefillsTheWindow pins the report's
-// placement at the frame's door: a thinking chunk reaches no tool handler, so under
-// the old tool-call report a step that only reasoned for fifteen minutes was a stall.
+// TestHandleSessionUpdate_AStepsThinkingChunkRefillsTheWindow pins the report at the frame's door: a
+// step that only reasons is not a stall.
 func TestHandleSessionUpdate_AStepsThinkingChunkRefillsTheWindow(t *testing.T) {
 	const (
 		chatID  = marotte.ChatID("chat-step")
@@ -255,9 +242,7 @@ func TestHandleSessionUpdate_AReplayedStepFrameIsNotProgress(t *testing.T) {
 	}
 }
 
-// TestFinishTermination_TellsTheLaunchingChatWhy: KAS's cancel carries no reason, so
-// the launching chat hears only "aborted" unless the bound leaves its own note, as an
-// agent-origin steer carrying the run and when it finished.
+// TestFinishTermination_TellsTheLaunchingChatWhy pins that KAS's cancel carries no reason, so the bound leaves an agent-origin note.
 func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
 	h, cs, br := newTestHub()
 	defer shutdownHub(t, h)
@@ -277,7 +262,7 @@ func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
 	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
 	before := time.Now().UnixMilli()
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, carrier); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, carrier); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 
@@ -317,7 +302,7 @@ func TestFinishTermination_AParentlessRunLeavesNoNote(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), carrier)
 	leased(t, h.runs, id)
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, carrier); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, carrier); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 	if got := h.runs.endReason(id); got != runEndStalled {

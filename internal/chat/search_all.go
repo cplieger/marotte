@@ -1,20 +1,9 @@
 package chat
 
-// Cross-chat search: the History page's box, answering "which conversation was
-// that in". A DIFFERENT question from the in-chat Ctrl-F, so this returns CHATS
-// ranked by match quality, each with its single best line, rather than every hit.
-// Lexical, fanning the per-chat scan out over the bounded-parallel reader, with
-// the candidate index (search_index.go) deciding which chats are read at all: a
-// chat whose filter cannot hold the query is not opened, and one it admits is
-// scanned exactly as it would be without the index.
-//
-// MATCHING is not this file's: each chat goes through the in-chat scan, so a body
-// and a title fold through the same needle and a hit here is a hit Ctrl-F would
-// find. What this file owns is the fan-out, the per-chat verdict (chatScan) and
-// the ranking, which spends the whole per-chat tally: Hits is every occurrence,
-// and the score divides it by the byte volume of the spans the SAME walk read.
-// The reply's tally counts chats; its three fields are textsearch.Tally's, and
-// chatScan says which chats are read, unread, and skipped.
+// Cross-chat search for the History page: which conversation was it in, so it returns chats ranked by match quality,
+// each with its best line. Each chat goes through the in-chat scan, so a hit here is one Ctrl-F would find; the
+// candidate index (search_index.go) skips chats that cannot hold the query. This file owns the fan-out, the per-chat
+// verdict (chatScan) and the ranking: every occurrence divided by the byte volume the same walk read.
 
 import (
 	"cmp"
@@ -31,13 +20,11 @@ import (
 	"github.com/cplieger/marotte/internal/textsearch"
 )
 
-// The result cap and title boost are KiroCrew's `search_sessions(limit=50)` and
-// `_TITLE_BOOST`, adopted with their values.
+// The result cap and title boost are KiroCrew's `search_sessions(limit=50)` and `_TITLE_BOOST`, values included.
 const (
-	// maxChatResults caps the returned list. Past this a search is not a search.
+	// maxChatResults caps the returned list.
 	maxChatResults = 50
-	// titleBoost multiplies TITLE hits: titles are short and intentional, so a hit
-	// there is stronger evidence than a mention in the body.
+	// titleBoost multiplies title hits: titles are short and intentional, stronger evidence than a body mention.
 	titleBoost = 10.0
 )
 
@@ -46,21 +33,20 @@ const searchWorkers = 8
 
 // Match is one chat that matched, with the evidence for showing it.
 type Match struct {
-	// Best is the earliest hit (bestHit): the line the row shows and the jump target.
-	// Absent on a title-only match, which has no line inside the transcript.
+	// Best is the earliest hit (bestHit), the row's line and jump target; absent on a title-only match.
 	Best *Hit           `json:"best,omitempty"`
 	Name string         `json:"name"`
 	ID   marotte.ChatID `json:"id"`
 	// Hits is every occurrence the chat holds, so a row can say "and 11 more".
 	Hits int `json:"hits"`
-	// Score ranks the row; see scoreChat for what it balances.
+	// Score ranks the row (scoreChat).
 	Score float64 `json:"score"`
 	// UpdatedAt breaks ties toward the more recent conversation.
 	UpdatedAt int64 `json:"updated_at"`
 }
 
-// SearchAllResult is GET /api/chats/search's reply: the ranked chats, cut at
-// maxChatResults, beside the tally over the chats the answer covers.
+// SearchAllResult is GET /api/chats/search's reply: ranked chats capped at maxChatResults, with the tally over the
+// chats covered.
 type SearchAllResult struct {
 	Matches []Match `json:"matches"`
 	textsearch.Tally
@@ -76,8 +62,7 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 		return SearchAllResult{Matches: []Match{}, Truncated: truncated}
 	}
 
-	// The filters are asked about the FREE text, the string the needle scans
-	// with; a filter-only query has none, so every chat is a candidate for it.
+	// Ask the filters about the free text the needle scans; a filter-only query has none, so every chat is a candidate.
 	want := queryTrigrams(parseSearchQuery(query, false).text)
 	found := make([]chatScan, len(entries))
 	ran := parallel.Bounded(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
@@ -104,10 +89,8 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 	if len(matches) > maxChatResults {
 		matches = matches[:maxChatResults]
 	}
-	// `ran` is what the fan-out actually dispatched, not how many entries it was given:
-	// a context dying between chatEntries returning and this drain is caught only
-	// here. A slot the fan-out never reached is zero-valued, so it is neither a match
-	// nor an unread chat, and only `ran` accounts for it.
+	// `ran` is what the fan-out dispatched: a context dying after chatEntries is caught only here, since an unreached slot
+	// is zero-valued.
 	return SearchAllResult{
 		Matches:   matches,
 		Scanned:   ran - unread,
@@ -116,27 +99,17 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 	}
 }
 
-// chatScan is one chat's verdict from the fan-out. Bounded reports only how many
-// entries it dispatched, so whether a chat was READ has to travel back on the
-// result, or Scanned would count a file the scan never got into. The zero value is
-// a scanned chat with no match: the verdict for a chat read and found empty, and
-// for one its filter answered for without a read.
+// chatScan is one chat's fan-out verdict. Whether a chat was read travels on the result, since Bounded reports only
+// dispatches. The zero value is a scanned chat with no match, read or answered by its filter.
 type chatScan struct {
 	match Match
-	// unread marks a chat that exists and could not be read: it is not scanned,
-	// and the reply is truncated by it.
+	// unread marks an existing chat that could not be read: not scanned, and it truncates the reply.
 	unread bool
 }
 
-// searchOneChat scans one chat, or lets its filter answer for it: a chat whose
-// filter lacks a trigram of the query cannot hold the query, so its log is not read
-// and its zero verdict counts it as scanned. A chat with no filter yet is read
-// through indexedRead, which records one from that read.
-//
-// The scan runs outside every lock; the read of an admitted chat takes the chat's
-// own lock for the length of the log read, because the offset index it reads
-// through is the store's. searchWorkers of them run at once, so an unlimited cap
-// bounds the fan-out by nothing but the chats on disk.
+// searchOneChat scans one chat, or lets its filter answer: a filter lacking a query trigram cannot match, so the log
+// is not read and it counts as scanned. A chat with no filter goes through indexedRead, which records one. The scan
+// runs unlocked; the log read takes the chat's lock, since the offset index is the store's.
 func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, want []uint64) chatScan {
 	id := marotte.ChatID(ce.id)
 	if f, ok := s.index.lookup(id); ok && !f.holdsAll(want) {
@@ -144,17 +117,16 @@ func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, w
 	}
 	c, entries, drawn, err := s.indexedRead(ctx, ce)
 	if err != nil {
-		// A chat deleted since the listing is a skip the answer covers; anything
-		// else left an existing chat unread, and the answer must say so.
+		// Deleted since the listing is a covered skip; anything else is an unread chat the answer must report.
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrChatNotFound) {
 			return chatScan{}
 		}
 		slog.Warn("chat search: skipping unreadable chat", "chat_id", ce.id, "error", err)
 		return chatScan{unread: true}
 	}
-	// Case-INSENSITIVE always: the question is asked from memory, which drops case.
+	// Always case-insensitive: the question is asked from memory.
 	res, chars := searchEntries(entries, drawn, query, false)
-	// A TITLE naming the subject is a result even when the body never repeats the word.
+	// A title naming the subject is a result even if the body never repeats it.
 	titles := titleHits(c.Name, query)
 	if res.Matched == 0 && titles == 0 {
 		return chatScan{}
@@ -166,9 +138,8 @@ func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, w
 		Score:     scoreChat(res.Matched, titles, chars),
 		UpdatedAt: c.UpdatedAt,
 	}
-	// A title-only match has no line to show; the row falls back to the name. The
-	// hit list is capped, but it is in log order, so the earliest turn's hit is
-	// always inside it.
+	// A title-only match has no line; the row shows the name. The capped list is in log order, so the earliest hit is in
+	// it.
 	if len(res.Matches) > 0 {
 		best := bestHit(res.Matches)
 		m.Best = &best
@@ -176,12 +147,8 @@ func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, w
 	return chatScan{match: m}
 }
 
-// indexedRead reads one chat's header, log and rail under its own lock and records
-// its filter from that read when it has none. The lock is the one every writer
-// holds when it appends, so a filter built here describes exactly the bytes that
-// were on disk and a later append extends it under that lock rather than racing
-// it. Two queries missing on one chat at once both build; the second put replaces
-// an equal filter, which costs the hashing and nothing else.
+// indexedRead reads one chat's header, log and rail under its lock and records its filter when it has none. Writers
+// append under the same lock, so the filter matches the bytes on disk. Two concurrent builds cost only hashing.
 func (s *Store) indexedRead(ctx context.Context, ce chatEntry) (c *marotte.Chat, entries []marotte.Entry, drawn map[string]struct{}, err error) {
 	id := marotte.ChatID(ce.id)
 	m := s.lock(id)
@@ -206,29 +173,26 @@ func (s *Store) indexedRead(ctx context.Context, ce chatEntry) (c *marotte.Chat,
 	return c, entries, drawn, nil
 }
 
-// chatEntries lists every chat directory in the store's directory: a valid id
-// holding a chat.json. A directory that cannot be listed, or a context dying
-// mid-walk, cuts the list SHORT, and `truncated` is the field that says so; without
-// it SearchAll publishes an authoritative "in none of your chats" for a scan that
-// opened none of them.
+// chatEntries lists every chat directory (a valid id with chat.json). A failed listing or a dying context cuts it
+// short and sets `truncated`, so SearchAll never claims "in none of your chats" for a scan that read none.
 func (s *Store) chatEntries(ctx context.Context) (entries []chatEntry, truncated bool) {
 	des, err := os.ReadDir(s.dir)
 	if err != nil {
 		slog.Error("chat search: unreadable dir", "dir", s.dir, "error", err)
 		return nil, true
 	}
-	entries = make([]chatEntry, 0, len(des))
-	for _, ce := range chatDirs(des, s.dir) {
+	dirs, complete := chatDirs(des, s.dir)
+	entries = make([]chatEntry, 0, len(dirs))
+	for _, ce := range dirs {
 		if ctx.Err() != nil {
 			return entries, true
 		}
 		entries = append(entries, ce)
 	}
-	return entries, false
+	return entries, !complete
 }
 
-// bestHit picks the hit a result row shows: the earliest one, where the conversation
-// first touches the subject.
+// bestHit picks the row's hit: the earliest, where the conversation first touches the subject.
 func bestHit(hits []Hit) Hit {
 	best := hits[0]
 	for i := range hits {
@@ -239,21 +203,18 @@ func bestHit(hits []Hit) Hit {
 	return best
 }
 
-// scoreChat ranks a matching chat, using KiroCrew's formula verbatim:
+// scoreChat ranks a matching chat with KiroCrew's formula:
 //
 //	score = title_hits*titleBoost + content_hits/sqrt(1 + docChars/1024)
 //
-// The title term MULTIPLIES by the hit count, the normaliser divides by the byte
-// volume of the spans the scan read, in KiB, and the `1 +` keeps a tiny chat from
-// being divided by nearly zero.
+// docChars is the byte volume the scan read; the `1 +` keeps a tiny chat from dividing by nearly zero.
 func scoreChat(contentHits, titleHitCount, docChars int) float64 {
 	lengthNorm := math.Sqrt(1 + float64(docChars)/1024)
 	return float64(titleHitCount)*titleBoost + float64(contentHits)/lengthNorm
 }
 
-// titleHits counts the query's free text in the chat name. It goes through
-// parseSearchQuery so the filter vocabulary (`file:x`) lives in one place, and a
-// filter-only query leaves an empty needle, which matches nothing.
+// titleHits counts the query's free text in the chat name, through parseSearchQuery so a filter-only query has an
+// empty needle that matches nothing.
 func titleHits(name, query string) int {
 	return parseSearchQuery(query, false).needle.Count(name)
 }

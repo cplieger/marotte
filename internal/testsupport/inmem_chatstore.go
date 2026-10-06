@@ -9,10 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// InMemoryChatStore is a functional in-memory chat store with broadcast
-// support. Suitable for integration-style tests that need real Mutate/Get
-// semantics without filesystem I/O. Assign Bus to fan out lifecycle events
-// (same shape as RecordingChatStore).
+// InMemoryChatStore is an in-memory chat store with real Mutate/Get semantics and an optional
+// Bus for lifecycle events.
 type InMemoryChatStore struct {
 	// Bus is the fan-out lifecycle events go to; see RecordingChatStore.Bus
 	// for why the type is spelled out rather than named.
@@ -59,6 +57,19 @@ func (s *InMemoryChatStore) List(_ context.Context) []marotte.ChatHeader {
 	return hs
 }
 
+// SessionClaimed reports whether any held chat's session chain names sessionID;
+// the in-memory store reads every record, so the answer is always complete.
+func (s *InMemoryChatStore) SessionClaimed(_ context.Context, sessionID string) (claimed, complete bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.chats {
+		if slices.Contains(c.SessionChain(), sessionID) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
 // Mutate applies the mutate function to the chat with the given id, creating it if needed.
 func (s *InMemoryChatStore) Mutate(_ context.Context, id marotte.ChatID, mutate func(*marotte.Chat, bool) bool) (string, error) {
 	s.mu.Lock()
@@ -86,10 +97,8 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id marotte.ChatID, mutate 
 	return version, nil
 }
 
-// SetDraft stores the chat's draft without touching UpdatedAt and without
-// broadcasting; see (*chat.Store).SetDraft for why those two absences are the point.
-// Absent chat: no-op, like the real store's load-then-write. Reports the state
-// that landed, nil when nothing did.
+// SetDraft stores the chat's draft without touching UpdatedAt and without broadcasting (see
+// (*chat.Store).SetDraft). A no-op on an absent chat; reports the state that landed, or nil.
 func (s *InMemoryChatStore) SetDraft(_ context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

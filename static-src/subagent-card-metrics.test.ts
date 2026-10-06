@@ -1,24 +1,13 @@
-// `.subagent-block`'s intrinsic-size estimate has to cover the RESTING shape both
-// delegate boxes share, on every pointer tier, and only a layout measurement can check
-// it: with `content-visibility: auto` plus `contain-intrinsic-size: auto <len>`, a box
-// that has never rendered contributes `<len>` PLUS its own padding, border and
-// `min-height`, while one that HAS contributes its remembered real size -- so a wrong
-// `<len>` moves the transcript's `scrollHeight` by `(real - skipped) x (boxes not yet
-// rendered)`. No source read answers which of the three regions BINDS, or whether the
-// value states the content box or the border box; both are used-value questions.
+// `.subagent-block`'s intrinsic-size estimate must cover the RESTING shape on every pointer tier.
+// A never-rendered `content-visibility: auto` box contributes `<len>` plus padding, border and
+// `min-height`, so a wrong `<len>` moves `scrollHeight` per unrendered box; only layout answers it.
 
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-// The viewport control. Both terms of the reserve move on the POINTER tier, which the
-// attribute alone reaches, so the two coarse cases exist to PROVE nothing here keys on
-// width -- `01-tokens.css` carries a width-keyed no-JS fallback for both tokens, and
-// only a real resize would catch a rule that read it.
-// `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` throws.
+// The reserve moves on the POINTER tier, so the coarse cases prove nothing keys on width
+// (`01-tokens.css` has a width-keyed fallback). `@vitest/browser/context` throws; use `vitest/browser`.
 import { page } from "vitest/browser";
 
-// The delegate boxes compensate their own fold and failure re-open through scroll.ts,
-// which is a self-initialising singleton over a real `#messages`; the canonical mock is
-// what every other suite reaching that graph uses. Nothing here folds anything -- the
-// container arm is built collapsed -- so the mock only has to exist.
+// scroll.ts is a singleton over a real `#messages`; nothing folds here, so the mock only has to exist.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -45,13 +34,8 @@ const PROBE = "subagent-metrics-probe-estimate";
  *  produces cannot be confused with a rounding difference. */
 const PROBE_PX = 400;
 
-/** Per-case timeout. A case's cost here is SIX rAF turns, and a loaded `npm test`
- *  prices a turn at hundreds of ms whatever the list holds -- measured on
- *  `files-row-metrics.test.ts`, whose cases run 86-280ms cold in isolation and
- *  ~4.1s inside a full run. Widened rather than restructured, because there is no
- *  timing dependence to remove: nothing polls, awaits a duration or samples a
- *  window, and the assertion is a deterministic comparison of two synchronous
- *  `scrollHeight` reads. */
+/** Per-case timeout: six rAF turns, which a loaded full run prices at hundreds of ms each. Nothing
+ *  here is timing-dependent; the assertion compares two synchronous `scrollHeight` reads. */
 const LOADED_BUDGET_MS = 30_000;
 
 let style: HTMLStyleElement;
@@ -87,14 +71,8 @@ afterEach(() => {
   host.replaceChildren();
 });
 
-/** The ledger the settled shapes rest with. `elapsedMs` is what earns the footer here:
- *  an aggregate `commands` with no `kindCounts` behind it earns nothing, and nothing
- *  renders it either. The row's tallest child is the `.turn-ledger-summary` BUTTON,
- *  the term `--hit-floor` is in the expression for -- and the reserve does NOT move with
- *  that trigger's info `i` or its `.sr-only` name: measured, the button is 24px with
- *  those two children and 24px with both removed, and the footer 33px either way,
- *  because an `--icon-ui` glyph is shorter than the `--hit-floor` the button is already
- *  floored at and a visually-hidden span has no box. */
+/** The settled shapes' ledger; `elapsedMs` earns the footer. Its tallest child is the
+ *  `.turn-ledger-summary` button at `--hit-floor`; the info `i` and `.sr-only` name do not move it. */
 const LEDGER = { elapsedMs: 3_000 } as const;
 
 /** What the transcript builds for a LEAF delegate: an identity row that is itself
@@ -132,10 +110,8 @@ function collapsedContainer(i: number): HTMLElement {
 
 type Build = (i: number) => HTMLElement;
 
-/** The production nesting: a fixed-height scroller holding the `.turn-body` block
- *  container a turn's boxes live in. `.turn-body` is a flex column with a gap, and
- *  the gap is the same in all three readings, so it cancels out of the drift while
- *  staying faithful to what the transcript lays out. */
+/** The production nesting: a fixed-height scroller around a `.turn-body` flex column, whose gap
+ *  cancels out of the drift. */
 function mountList(build: Build): { wrap: HTMLElement; list: HTMLElement } {
   const wrap = document.createElement("div");
   wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
@@ -161,22 +137,9 @@ async function frame(): Promise<void> {
   });
 }
 
-/** Jump every entry animation to its end.
- *
- *  Required, and NOT cosmetic: `.subagent-block`'s `vk-slide-up` starts at
- *  `translateY(6px)`, and a transformed descendant extends its container's
- *  SCROLLABLE OVERFLOW, so the container's `scrollHeight` reads 6px high for the
- *  0.25s the animation runs. Finishing rather than awaiting, so the reading does
- *  not depend on a duration token.
- *
- *  AN INFINITE ANIMATION IS SKIPPED, and this file is the first of the metrics
- *  suites to need that: a RUNNING card's `.subagent-spinner` is `vk-spin` on an
- *  infinite iteration count, and `Animation.finish()` throws `InvalidStateError`
- *  on one ("Cannot finish Animation with an infinite target effect end"), which
- *  takes the whole reading down before any assertion runs. It is also not one of
- *  the animations this exists for: the spin is a `rotate` on a glyph inside the
- *  card's own `overflow: hidden`, so it cannot reach the list's scrollable
- *  overflow, where the card's own `translateY` can. */
+/** Jump every entry animation to its end: `vk-slide-up`'s `translateY(6px)` extends scrollable
+ *  overflow while it runs. INFINITE animations (a running card's `vk-spin`) are skipped:
+ *  `finish()` throws on one, and a glyph spin inside `overflow: hidden` cannot reach the list. */
 function finishAnimations(root: Element): void {
   for (const anim of root.getAnimations({ subtree: true })) {
     if (Number.isFinite(anim.effect?.getComputedTiming().endTime ?? Infinity)) {
@@ -195,13 +158,8 @@ interface Metrics {
   readonly listRendered: number;
 }
 
-/** Read the same 200-box list three times: on the shipped estimate, on a
- *  deliberately wrong one, and with the skip turned off.
- *
- *  The list TOTAL is the only honest instrument here. A per-box
- *  `getBoundingClientRect()` is not: measured in Chromium 151, querying an element
- *  inside a skipped subtree reports its REAL box, so a per-box assertion would
- *  compare a rendered box against a rendered box and pass against the defect. */
+/** Read the same 200-box list three times: shipped estimate, a wrong one, and no skip. The list
+ *  TOTAL is the instrument: `getBoundingClientRect()` inside a skipped subtree reports the REAL box. */
 async function measure(build: Build): Promise<Metrics> {
   const { wrap, list } = mountList(build);
   await frame();
@@ -230,11 +188,8 @@ function tier(name: "fine" | "coarse"): void {
   document.documentElement.dataset["pointer"] = name;
 }
 
-/** THE PREMISE, without which every assertion below is vacuous: if Chromium were
- *  not skipping any box, the first and third readings would agree for the trivial
- *  reason that both measured rendered boxes, and the case would pass against any
- *  estimate at all. Inflating the estimate has to move the total, and by a lot --
- *  most of the list is off the scrollport, so the shift is tens of thousands of px. */
+/** THE PREMISE: inflating the estimate must move the total by a lot, or the other readings agree
+ *  trivially. */
 function expectPremise(m: Metrics): void {
   expect(
     m.listProbe - m.listSkipped,
@@ -242,13 +197,8 @@ function expectPremise(m: Metrics): void {
   ).toBeGreaterThan(CARDS * 10);
 }
 
-/** THE PROPERTY for a RESTING box -- a settled card or a collapsed container: the
- *  reserve IS that shape, so the container reports one height whether its boxes are
- *  skipped or rendered. The two resting shapes measure identically, so both arms assert
- *  a drift of exactly 0. Stated as the DRIFT so a failure names the px rather than two
- *  five-figure totals. The per-box height rides the MESSAGE rather than the compared
- *  object: it says which tier failed, and asserting it would pin a font-dependent
- *  number (Chromium 152 measures 82.94px fine and 102.94px coarse). */
+/** For a RESTING box the reserve IS the shape, so skipped and rendered agree: a drift of exactly 0.
+ *  The per-box height rides the MESSAGE, since it is font-dependent. */
 function expectNoDrift(m: Metrics): void {
   expectPremise(m);
   expect(
@@ -257,15 +207,8 @@ function expectNoDrift(m: Metrics): void {
   ).toBe(0);
 }
 
-/** THE PROPERTY for a RUNNING card (49.94px fine, 57.94px coarse): one estimate cannot be
- *  exact for both lifecycle states, and this is the one the reserve deliberately
- *  over-states, because the POPULATION is settled. Census over the chat files on one
- *  live volume, applying `earnsTurnFooter`'s conditions to each invocation: of 527 leaf
- *  cards, 521 are settled with a footer, 1 settled without one and 5 running, and all
- *  298 pipeline drivers are settled. The fallback is consulted only before a box has
- *  rendered once, and a running card is the newest work at the live edge. The SIGN is
- *  what is pinned, and it is what fails if the running shape grows into the reserve;
- *  the magnitude rides the message, for `expectNoDrift`'s reason. */
+/** A RUNNING card is deliberately over-stated: the POPULATION is settled, and the fallback applies
+ *  only before first render. The SIGN is pinned; the magnitude rides the message. */
 function expectOverStates(m: Metrics): void {
   expectPremise(m);
   const drift = m.listSkipped - m.listRendered;
@@ -275,11 +218,8 @@ function expectOverStates(m: Metrics): void {
   ).toBe(true);
 }
 
-// RED CHECK, observed before any of this was trusted: restoring `contain-intrinsic-size:
-// auto 4rem` (66px rendered) turns the five SETTLED and CONTAINER cases red and leaves
-// the two RUNNING cases green -- correctly, since a value below a running card's real
-// height cannot stop over-stating one. The running arm needs the opposite probe, and
-// `--subagent-content: 30px` (32px rendered, under the running card's 38px) reddens it.
+// Red-check probes: `contain-intrinsic-size: auto 4rem` reddens the settled and container cases;
+// `--subagent-content: 30px` reddens the running arm.
 describe("the fine-pointer tier", () => {
   it(
     "reports one height whether its settled cards are skipped or rendered",
@@ -310,13 +250,8 @@ describe("the fine-pointer tier", () => {
 });
 
 describe("the coarse-pointer tiers, measured at real viewport sizes", () => {
-  // A coarse pointer has TWO cases -- narrow, where `01-tokens.css`'s width-keyed
-  // fallback also binds, and wide, where only the attribute does -- and they measure
-  // identically here, which is the finding rather than a redundancy: it is what makes
-  // one expression exact on all three tiers. The block sits LAST in the file and
-  // restores the size it found, because `page.viewport` has no getter and a
-  // hand-copied pair would silently leave every later file measuring at the wrong
-  // size.
+  // Coarse narrow (where `01-tokens.css`'s fallback also binds) and wide measure identically. LAST in
+  // the file, restoring the size it found: `page.viewport` has no getter.
   let entry: { readonly width: number; readonly height: number } | null = null;
 
   beforeAll(() => {

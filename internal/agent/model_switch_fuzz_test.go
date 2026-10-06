@@ -6,8 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// FuzzResolveSwitchModel exercises model resolution logic with
-// arbitrary model strings. Asserts no panic and consistent semantics.
+// FuzzResolveSwitchModel asserts no panic and consistent resolution for arbitrary model strings.
 func FuzzResolveSwitchModel(f *testing.F) {
 	f.Add("claude-sonnet", "claude-opus")
 	f.Add("claude-sonnet", "")

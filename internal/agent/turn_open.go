@@ -1,36 +1,37 @@
 package agent
 
-// A turn begins in exactly one place: the turn_open append and the registry record
-// are one operation under the chat's lifecycle mutex, so the log and the registry
-// never disagree about which turns exist.
+// The turn_open append and the registry record are one operation under the lifecycle mutex, so the log and the
+// registry never disagree about which turns exist.
 
 import (
 	"context"
 	"log/slog"
 
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// OpenTurn appends the turn_open for a turn of source and creates its registry
-// record, answering the turn id every later handle names. It refuses on a dead ctx
-// BEFORE it appends and waits out a finalizing own turn first; a source whose slot
-// is held (local_shell over an open turn, a prompt while one is still owed its
-// bracket) is refused with ErrTurnSlotHeld. The header's turn_count rewrite runs
-// after both locks are released, so two opens racing to it both write the higher
-// value. The caller holds one completion handle on the id until ReleaseTurn.
-func (bc *BridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, prompt *marotte.EntryPrompt, init func(*marotte.Chat)) (string, error) {
+// OpenTurn appends the turn_open, creates its registry record and returns the turn id. A dead ctx refuses before the
+// append; a held slot answers ErrTurnSlotHeld; a broken fence answers command.ErrTurnSuperseded. The turn_count
+// rewrite runs after both locks are released, so racing opens both write the higher value. The caller holds one
+// completion handle until ReleaseTurn.
+func (bc *BridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	spec := &chat.TurnSpec{Prompt: prompt, Source: source.Name()}
+	source := open.Source
+	spec := &chat.TurnSpec{Prompt: open.Prompt, Source: source.Name()}
 	var t *Turn
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
+		if !lc.fenceHoldsLocked(open.Fence) {
+			return command.ErrTurnSuperseded
+		}
 		if !lc.slotFreeLocked(source) {
 			return ErrTurnSlotHeld
 		}
-		opened, err := bc.chatStore.OpenTurn(ctx, chatID, spec, init)
+		opened, err := bc.chatStore.OpenTurn(ctx, chatID, spec, open.Init)
 		if err != nil {
 			return err
 		}
@@ -53,16 +54,14 @@ func (bc *BridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID
 	return t.ID, nil
 }
 
-// openWireTurn opens turn_open{source: wire_turn_start} as own for a frame of the
-// chat's own session that found no open turn. Nil when the open was refused, and
-// the caller drops the frame. Takes no completion handle: nobody would release it.
+// openWireTurn opens a wire_turn_start turn as own for a frame of the chat's session that found no open turn. Nil
+// when refused, and the caller drops the frame. It takes no completion handle: nobody would release it.
 func (bc *BridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.ChatID) *Turn {
 	var t *Turn
 	created := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		if lc.own != nil && !lc.own.finalizing {
-			// A frame that lost the open race to another: the turn is already
-			// announced, so the caller folds into it and nothing below runs.
+			// Lost the open race: fold into the turn already announced.
 			t = lc.own
 			return nil
 		}
@@ -100,9 +99,8 @@ func (bc *BridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 	return t
 }
 
-// announceTurnOpened broadcasts turn_opened for a turn the registry just recorded.
-// The entry is re-read from the accumulator's id rather than carried, so the one
-// frame every client keys the card on is built from the record that was written.
+// announceTurnOpened broadcasts turn_opened for a turn the registry just recorded, re-reading the entry so the
+// frame is built from the record that was written.
 func (bc *BridgeCoordinator) announceTurnOpened(ctx context.Context, chatID marotte.ChatID, t *Turn) {
 	if t == nil || t.opened == nil {
 		return
@@ -114,10 +112,9 @@ func (bc *BridgeCoordinator) announceTurnOpened(ctx context.Context, chatID maro
 	})
 }
 
-// StartTurn stamps the model and the credit baseline onto the turn the id names,
-// with the bridge live, immediately before the call that drives it, and makes it
-// own when own is still nil. False for a dead ctx and for an id the registry no
-// longer holds; the caller then runs the turn end rule on that turn itself.
+// StartTurn stamps the model and the credit baseline onto the named turn just before the call that drives it, and
+// makes it own when own is nil. False for a dead ctx or an id the registry no longer holds; the caller then runs
+// the turn end rule itself.
 func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool {
 	if ctx.Err() != nil {
 		return false
@@ -144,30 +141,35 @@ func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatI
 	return true
 }
 
-// AwaitTurn blocks until the named turn has finalized and reports what it did, so a
-// caller reads the turn's account rather than state the finalize has consumed. It
-// runs on the CALLER's goroutine: deciding inside the finalizer deadlocks against
-// the close it awaits.
+// AwaitTurn blocks until the named turn has finalized and reports what it did. It runs on the caller's goroutine:
+// deciding inside the finalizer deadlocks against the close it awaits.
 func (bc *BridgeCoordinator) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
 	return bc.turns.await(ctx, chatID, turnID)
 }
 
-// ReleaseTurn gives up the completion handle OpenTurn issued. The finalized record
-// is dropped when its last handle goes, which is what bounds retention.
+// ReleaseTurn gives up the completion handle OpenTurn issued; the finalized record is dropped with the last handle.
 func (bc *BridgeCoordinator) ReleaseTurn(chatID marotte.ChatID, turnID string) {
 	bc.turns.release(chatID, turnID)
 }
 
-// TurnOpenedAfter reports whether any own turn on the chat opened after the named
-// one: the structural half of the empty-turn gate.
+// TurnOpenedAfter reports whether any own turn opened after the named one (the empty-turn gate's structural half).
 func (bc *BridgeCoordinator) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
 	return bc.turns.openedAfter(chatID, turnID)
 }
 
-// turnOpenModel reads the model a turn records at open, empty for a local shell.
-// From the chat record rather than the bridge: a resumed session's own accessors
-// answer the zero value for whatever session/load omitted, which routinely
-// includes the model.
+// RequestStop records the reader's stop on the chat's turn sequence, so a replacing turn (the empty-turn retry)
+// can see it.
+func (bc *BridgeCoordinator) RequestStop(chatID marotte.ChatID) {
+	bc.turns.requestStop(chatID)
+}
+
+// StopRequestedAfter reports whether a stop was requested after the named turn opened.
+func (bc *BridgeCoordinator) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
+	return bc.turns.stoppedAfter(chatID, turnID)
+}
+
+// turnOpenModel reads the model a turn records at open, empty for a local shell. From the chat record: a resumed
+// session's accessors answer the zero value for fields session/load omitted, often the model.
 func (bc *BridgeCoordinator) turnOpenModel(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) string {
 	ch, ok := bc.chatStore.Get(ctx, chatID)
 	if !ok || source == marotte.TurnSourceLocalShell {

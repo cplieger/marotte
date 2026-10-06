@@ -2,19 +2,13 @@
 // server while the client was away: the page's own stamps are what let the digest say what
 // was missed, and one range read for that turn is the repair.
 
-// Design 13 property 8's THIRD arm, chat half, in full: the stamps the page records, the ONE
-// read the mismatch earns, the older page that records neither stamp, and that the read
-// restores a state equal to the undropped fold. The last case's oracle is the fixture
-// server's own log rather than a copy of the seat's arithmetic, and the read's `?after=` is
-// left unpinned so the claim is the FOLD rather than one spelling of the query.
+// Reload recovery, chat half: the stamps the page records, the ONE read a mismatch earns, an older
+// page with neither stamp, and a read restoring the undropped fold. The oracle is the fixture
+// server's log, and `?after=` is unpinned so the claim is the FOLD.
 
-// The arm's run-pane clause is absent from THIS file rather than unavailable: the route is
-// registered and its client arm is `sse-adapter.ts`'s `run_turn`, pinned in
-// `sse-adapter.test.ts` (the range read past the held seq, and the same read for a `gone`
-// verdict). What is still owed is the reload shape of it — a pane opened by reload holding the
-// stamp the step GET gave it. And the digest ANSWER is derived from the request the
-// client posted rather than scripted, so the mismatch is read out of the version arithmetic
-// instead of asserted into existence.
+// The run-pane half is `sse-adapter.ts`'s `run_turn`, pinned in `sse-adapter.test.ts`; its reload
+// shape (a pane holding the step GET's stamp) is not covered yet. The digest ANSWER derives from the
+// client's request, so the mismatch comes out of the version arithmetic.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -70,8 +64,8 @@ function sealDuringGap(): void {
   tail = undefined;
 }
 
-/** A `live_turn` stamp's version is `<turn>:<seq>` at the turn's newest sealed `seq`, which
- *  is design 6.3's spelling and the digest arm's own. */
+/** A `live_turn` stamp's version is `<turn>:<seq>` at the turn's newest sealed `seq`, the
+ *  digest arm's own spelling. */
 function turnVersion(): string {
   return `${TURN}:${String((log.at(-1) as Entry).seq)}`;
 }

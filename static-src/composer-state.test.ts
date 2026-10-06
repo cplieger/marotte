@@ -1,9 +1,5 @@
-// Per-chat composer state: the draft text and the staged attachments.
-//
-// The bug these cover is a bleed: one textarea and one pill row served every
-// chat, so switching tabs carried the previous conversation's half-written
-// message over and threw its attachments away. Every case here is about the
-// save-then-restore pair holding across a switch, a reload and a failed send.
+// Per-chat composer state: the draft and the staged attachments. The bug is a bleed across a switch, a reload or a
+// failed send, since one textarea and one pill row serve every chat.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const { mockDispatch, mockFlush, mockPending } = vi.hoisted(() => ({
@@ -12,17 +8,13 @@ const { mockDispatch, mockFlush, mockPending } = vi.hoisted(() => ({
   mockPending: vi.fn(() => false),
 }));
 
-// The debounce is the library's; what this file tests is WHICH chat id and text
-// reach it and WHEN a flush is forced. The fake records both and reports its own
-// pending state so the flush rule can be driven either way.
+// The debounce is the library's; the fake records chat id and text and reports its own pending state.
 vi.mock("./actions/index.js", () => ({
   debouncedDispatch: () =>
     Object.assign(mockDispatch, { isPending: mockPending, flush: mockFlush, cancel: vi.fn() }),
   registerCleanup: vi.fn(),
 }));
-// Both composer writers, because attachments.ts dispatches through the same
-// debounced-action layer as the draft: a mock naming only one of them fails the
-// module's IMPORT, not an assertion, so the whole file goes red with no clue why.
+// Both composer writers: a mock naming only one fails the module's import, not an assertion.
 vi.mock("./actions/chat.js", () => ({
   setDraft: { name: "chat.set_draft" },
   setAttachments: { name: "chat.set_attachments" },
@@ -83,9 +75,7 @@ function input(): HTMLTextAreaElement {
   return document.getElementById("prompt-input") as HTMLTextAreaElement;
 }
 
-/** Type into the composer the way a keystroke does: the value AND the `input`
- *  event that tells this module the value is now the draft. A bare `.value` write
- *  is deliberately NOT this — see the history case below. */
+/** The value AND the `input` event a keystroke produces; a bare `.value` write is deliberately not this. */
 function type(text: string): void {
   input().value = text;
   input().dispatchEvent(new Event("input"));
@@ -98,8 +88,7 @@ beforeEach(() => {
       <ul id="attachment-row" class="hidden"></ul>
     </div>`;
   _resetComposerStateForTest();
-  // Every chat referenced below is dropped so the attachment stash cannot carry
-  // between cases through the module singleton.
+  // Dropped so the attachment stash cannot carry between cases through the module singleton.
   for (const id of ["c1", "c2", "c3"]) {
     dropComposerState(id);
   }
@@ -116,7 +105,6 @@ describe("draft text across a chat switch", () => {
     input().value = "half a question about auth";
     noteComposerText(input().value);
 
-    // Switching: save the outgoing chat, then restore the incoming one.
     saveComposerState();
     restoreComposerState("c2");
     expect(input().value).toBe("");
@@ -132,15 +120,8 @@ describe("draft text across a chat switch", () => {
     expect(input().value).toBe("unrelated thought");
   });
 
-  // The reported bug, and the one case the save-then-restore pair could not
-  // reach: THREE call sites move the store's active chat without an activation
-  // behind them, and two of them then await a tab round trip. For the length of
-  // that await the box still belonged to the previous chat, so a keystroke went
-  // into ITS entry and was flushed to the server as ITS draft.
-  //
-  // Both halves of what the user sees are in this one case: the text vanishes
-  // out of the box when the activation finally repaints it, and it is sitting in
-  // the previous chat the next time that chat is opened.
+  // The reported bug: three call sites move the store's active chat before its activation repaints, so a keystroke in
+  // that window landed in the previous chat's draft and vanished from the box.
   describe("a chat that becomes active before its tab does", () => {
     it("files a keystroke in the window under the NEW chat", () => {
       restoreComposerState("c1");
@@ -150,12 +131,10 @@ describe("draft text across a chat switch", () => {
       retargetComposer("c2");
       type("the new chat's first line");
 
-      // The activation lands and repaints. It must find the text still there.
       saveComposerState();
       restoreComposerState("c2");
       expect(input().value).toBe("the new chat's first line");
 
-      // And the chat the user left must be untouched by any of it.
       saveComposerState();
       restoreComposerState("c1");
       expect(input().value).toBe("half a question about auth");
@@ -177,8 +156,6 @@ describe("draft text across a chat switch", () => {
   });
 
   it("empties the box for a chat with no draft rather than leaving it alone", () => {
-    // Leaving it alone IS the bleed. A chat that has never been typed into must
-    // not inherit the previous conversation's text.
     restoreComposerState("c1");
     input().value = "text belonging to c1";
     noteComposerText(input().value);
@@ -195,8 +172,7 @@ describe("draft text across a chat switch", () => {
     input().value = "for c1";
     mockPending.mockReturnValue(true);
     saveComposerState();
-    // The flush carries c1, not the chat being switched TO: the outgoing id is
-    // unrecoverable once the store has moved on, which is why the save runs first.
+    // The flush carries c1: the outgoing id is unrecoverable once the store moves on.
     expect(mockFlush).toHaveBeenCalledWith({ chatID: "c1", text: "for c1" });
   });
 
@@ -222,9 +198,7 @@ describe("the listeners this module owns on the composer element", () => {
   });
 
   it("records a programmatic write, which prompt-input announces the same way", () => {
-    // The submit clear and the failed-send restore both write .value and then
-    // dispatch input; without that the autosave would keep a sent message on the
-    // chat record and a reload would put it back.
+    // The submit clear and failed-send restore write .value and dispatch input, or autosave keeps a sent message.
     restoreComposerState("c1");
     input().value = "about to be sent";
     input().dispatchEvent(new Event("input"));
@@ -267,11 +241,7 @@ describe("flushing a pending save", () => {
   });
 
   it("flushes the recorded draft, not whatever the box happens to be showing", () => {
-    // The textarea is a DISPLAY surface: ArrowUp puts a submitted prompt in it
-    // through a write that deliberately emits no `input` event, so the map is what
-    // the draft IS. Reading the element here sent that old prompt to the server and
-    // replaced the draft with it, losing the text in both places at once.
-    // prompt-input-composer.test.ts drives the same loss through the real key path.
+    // The textarea is a display surface: ArrowUp shows a submitted prompt without an `input` event, so the map is the draft.
     restoreComposerState("c1");
     type("the real draft");
     input().value = "a prompt from the history"; // silent, like setInputValue
@@ -305,7 +275,6 @@ describe("adopting the server's draft (the reload case)", () => {
     input().value = "what the user is typing now";
     noteComposerText(input().value);
     seedComposerState("c1");
-    // Unchanged: the fetch does not get to overwrite live typing.
     expect(input().value).toBe("what the user is typing now");
     saveComposerState();
     restoreComposerState("c1");
@@ -313,7 +282,6 @@ describe("adopting the server's draft (the reload case)", () => {
   });
 
   it("loses to text already in the box, even with no recorded draft", () => {
-    // The fetch can land after a failed send put its text back.
     setSessions([makeSession("c1", "server copy")]);
     restoreComposerState("c1");
     input().value = "restored after a failed send";
@@ -330,9 +298,6 @@ describe("adopting the server's draft (the reload case)", () => {
   });
 });
 
-// The other half of what submit.ts does on a refused send. The version this
-// replaced wrote the shared box with no chat argument at all, while the
-// attachment half beside it was already chat-scoped.
 describe("restoring a send that the server refused", () => {
   it("puts the text back when the failing chat is the one on screen", () => {
     restoreComposerState("c1");
@@ -346,7 +311,6 @@ describe("restoring a send that the server refused", () => {
     restoreComposerState("c2");
 
     restoreFailedSend("c1", "the refused message");
-    // The visible conversation is untouched: it never sent this.
     expect(input().value).toBe("");
 
     saveComposerState();
@@ -372,8 +336,6 @@ describe("restoring a send that the server refused", () => {
   });
 
   it("leaves a non-empty box alone even with no recorded draft", () => {
-    // ArrowUp puts a previously sent prompt in the box through a write that emits
-    // no `input` event, so the box can hold history while the draft is empty.
     restoreComposerState("c1");
     input().value = "a prompt recalled from history";
     restoreFailedSend("c1", "the refused message");
@@ -388,8 +350,7 @@ describe("restoring a send that the server refused", () => {
   });
 });
 
-// The Edit-side races (typing, a chat switch) are driven through the real dock in
-// pending-steers-edit-rollback.test.ts; these are the two states only the map shows.
+// Edit-side races run through the real dock in pending-steers-edit-rollback.test.ts; these are the map-only states.
 describe("undoing a refused Edit", () => {
   it("leaves a history preview in the box while restoring the draft behind it", () => {
     restoreComposerState("c1");
@@ -426,7 +387,6 @@ describe("attachments across a chat switch", () => {
 
     saveComposerState();
     restoreComposerState("c2");
-    // c2 starts clean: the pills the user staged belong to c1.
     expect(takeAttachments()).toEqual([]);
 
     saveComposerState();
@@ -437,11 +397,11 @@ describe("attachments across a chat switch", () => {
   it("restores a failed send's attachments to the chat that failed, not the visible one", () => {
     restoreComposerState("c1");
     addAttachment("src/a.ts");
-    takeAttachments(); // the send took them
+    takeAttachments();
 
     saveComposerState();
     restoreComposerState("c2");
-    addAttachmentTo("c1", "src/a.ts"); // the failure lands after the switch
+    addAttachmentTo("c1", "src/a.ts");
     expect(takeAttachments()).toEqual([]);
 
     saveComposerState();
@@ -461,13 +421,8 @@ describe("attachments across a chat switch", () => {
     expect(takeAttachments()).toEqual([]);
   });
 
-  // Dropping the LIVE chat's state clears the box, and that is not cosmetic. On
-  // an ordinary close the tab store activates a neighbour straight after, and
-  // restoreComposerState overwrites the box anyway; on the close that empties the
-  // strip nothing follows, so the text stayed on screen in a composer that was
-  // still live while removeChat had already pointed the store's active chat at an
-  // unrelated row. Send then posted it there, which is the reported "my message
-  // ended up in a previous tab".
+  // Dropping the live chat's state clears the box: on the close that empties the strip nothing activates after, and Send
+  // would post the stale text to whatever chat the store pointed at.
   it("clears the composer when the live chat's state is dropped", () => {
     restoreComposerState("c1");
     type("half a thought");
@@ -477,8 +432,6 @@ describe("attachments across a chat switch", () => {
     expect(input().value).toBe("");
   });
 
-  // The box belongs to whoever is live, so dropping some OTHER chat's state must
-  // not reach into it.
   it("leaves the composer alone when a background chat's state is dropped", () => {
     restoreComposerState("c1");
     type("still typing");
@@ -488,9 +441,7 @@ describe("attachments across a chat switch", () => {
     expect(input().value).toBe("still typing");
   });
 
-  // The close and the failure race, and the close is the one that has to win: it
-  // said this chat's staged files are forgotten, so a request that was already in
-  // flight must not write them back for the next open to find.
+  // The close must win the race: a request already in flight must not write forgotten attachments back.
   it("does not resurrect a closed chat's attachments when the send fails afterwards", () => {
     restoreComposerState("c1");
     addAttachment("src/a.ts");
@@ -505,8 +456,7 @@ describe("attachments across a chat switch", () => {
   });
 
   it("still restores a failed send's attachments when the chat was NOT closed", () => {
-    // The other direction of the same guard: a failure is the normal case and must
-    // keep putting the pills back, or a throttled turn costs the files too.
+    // A failure must keep putting the pills back, or a throttled turn costs the files too.
     restoreComposerState("c1");
     addAttachment("src/a.ts");
     const gen = attachmentGeneration("c1");
@@ -522,8 +472,7 @@ describe("attachments across a chat switch", () => {
   });
 
   it("keeps a genuinely new attachment on a reopened chat", () => {
-    // The invalidation is per-generation, not per-chat-forever: attaching again
-    // after a close is a new state and belongs to the chat like any other.
+    // Invalidation is per generation: attaching after a close belongs to the chat like any other.
     restoreComposerState("c1");
     addAttachment("src/old.ts");
     const stale = attachmentGeneration("c1");
@@ -537,11 +486,7 @@ describe("attachments across a chat switch", () => {
   });
 });
 
-// A `draft_changed` frame converges a device that is NOT typing. Before it, a
-// phone that had looked at a chat kept whatever it saw until the next full
-// activation — and a tab switch then flushed that stale copy back over the newer
-// one, which is the drift the local-authoritative rule exists to prevent in the
-// OTHER direction.
+// A `draft_changed` frame converges a device that is not typing in that chat.
 describe("adopting a remote composer change", () => {
   it("updates a chat this device is not looking at", () => {
     restoreComposerState("c1");
@@ -552,15 +497,13 @@ describe("adopting a remote composer change", () => {
     expect(input().value).toBe("typed on the desktop");
   });
 
-  // The LIVE chat's map entry is authoritative: adopting there would overwrite the
-  // box under the caret with a value that was current 600ms ago somewhere else.
+  // The live chat's map entry is authoritative: adopting would overwrite the box under the caret with a stale value.
   it("ignores a frame for the chat on screen", () => {
     restoreComposerState("c1");
     type("what I am typing right now");
     adoptRemoteComposerState("c1", "what the desktop had", []);
     expect(input().value).toBe("what I am typing right now");
 
-    // And the map, not just the box: a switch away and back must not surface it.
     saveComposerState();
     restoreComposerState("c2");
     saveComposerState();
@@ -575,9 +518,7 @@ describe("adopting a remote composer change", () => {
     expect(input().value).toBe("mine");
   });
 
-  // Unlike the seed it does NOT lose to a local copy. The frame was produced by a
-  // write the server accepted, so it is newer than whatever this device flushed
-  // before it stopped typing in that chat.
+  // Unlike the seed, a frame beats the local copy: it came from a write the server accepted.
   it("replaces a parked draft rather than deferring to it", () => {
     restoreComposerState("c1");
     type("stale, flushed an hour ago");
@@ -591,8 +532,7 @@ describe("adopting a remote composer change", () => {
     expect(input().value).toBe("fresh, from the desktop");
   });
 
-  // BOTH halves ride one frame, because a receiver cannot know which of the two
-  // commands fired. Carrying only the field that moved would blank the other one.
+  // Both halves ride one frame because a receiver cannot know which command fired.
   it("carries the attachments with the text", () => {
     restoreComposerState("c1");
     adoptRemoteComposerState("c2", "look at these", ["docs/spec.pdf"]);
@@ -603,9 +543,7 @@ describe("adopting a remote composer change", () => {
     expect(takeAttachments().map((a) => a.path)).toEqual(["docs/spec.pdf"]);
   });
 
-  // An adoption is not a local edit, so it must not schedule a save. Publishing it
-  // back would bump the record for a change that came from it, and every device
-  // would re-apply what it already had.
+  // An adoption is not a local edit: publishing it back would make every device re-apply what it already had.
   it("persists nothing", () => {
     restoreComposerState("c1");
     mockDispatch.mockClear();
@@ -615,8 +553,7 @@ describe("adopting a remote composer change", () => {
   });
 });
 
-// The seed adopts the whole composer, not half of it: a reload that restored the
-// sentence without the files it describes is worse than restoring neither.
+// The seed adopts the whole composer: the sentence without the files it describes is worse than neither.
 describe("seeding the staged attachments from the chat record", () => {
   it("restores the row a reload emptied", () => {
     setSessions([{ ...makeSession("c1", "half a question"), attachments: ["docs/spec.pdf"] }]);

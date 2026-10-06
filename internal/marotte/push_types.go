@@ -43,15 +43,9 @@ const (
 	PushKindRunOutcome PushKind = "run_outcome"
 )
 
-// pushKinds is the authoritative set of valid push notification kinds.
-// PushKind.Valid() derives from this set; adding a new kind requires
-// only a new entry here.
-//
-// This map must be updated BEFORE push.kindRegistry gains the same kind: the
-// registry's init() panics through validateKindRegistry on a kind Valid() rejects,
-// so the wrong order is a boot failure rather than a silent drop. The reverse
-// order (here but not in the registry) fails silently instead, because
-// preflightSend drops a kind its prefs map has no entry for.
+// pushKinds is the authoritative set of push notification kinds, from which PushKind.Valid()
+// derives. Add a kind HERE before push.kindRegistry: the registry's init panics on a kind Valid()
+// rejects, while the reverse order silently drops the kind in preflightSend.
 var pushKinds = map[PushKind]struct{}{
 	PushKindAgentFinished: {},
 	PushKindPermission:    {},
@@ -67,19 +61,10 @@ func (k PushKind) Valid() bool {
 	return ok
 }
 
-// PushSubject names what a notification is ABOUT.
-//
-// One value carries both halves of the subject because the service worker derives
-// both from it and cannot derive either from the title and body: the OS coalescing
-// tag (one tray slot per subject, so an ask on one chat cannot silently replace
-// the finished note on another) and the click target. A notification has one
-// subject; the tag and the target are two readings of it.
-//
-// ChatID is a notification about one chat. Key is a notification with NO chat
-// behind it, and it carries a kind prefix (`pr:`) rather than a URL because the
-// client owns the route vocabulary (route-path.ts) — a path assembled here would be
-// a second copy of it. Exactly one field is set; an empty PushSubject is the
-// workspace-global case that coalesces under a constant tag.
+// PushSubject names what a notification is ABOUT; the service worker derives both the OS coalescing
+// tag and the click target from it. ChatID is a notification about one chat; Key is one with no
+// chat, carrying a kind prefix (`pr:`) rather than a URL, since route-path.ts owns routes. Exactly
+// one is set; empty is the workspace-global case.
 type PushSubject struct {
 	ChatID ChatID `json:"chat_id,omitempty"`
 	Key    string `json:"subject,omitempty"`

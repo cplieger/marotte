@@ -34,9 +34,7 @@ func TestStripSteerAcks_RemovesAWholeMarker(t *testing.T) {
 	}
 }
 
-// The marker arrives inside ordinary text deltas, so it can be cut at ANY byte.
-// Every split has to produce the same answer or the filter is only accidentally
-// correct — this is the case that makes the carry necessary at all.
+// TestStripSteerAcks_SurvivesEverySplitPoint pins one answer for every byte split.
 func TestStripSteerAcks_SurvivesEverySplitPoint(t *testing.T) {
 	full := "Here is the work. " + ack + " And a closing line."
 	want := "Here is the work.  And a closing line."
@@ -68,9 +66,8 @@ func TestStripSteerAcks_SurvivesByteAtATime(t *testing.T) {
 	}
 }
 
-// Prose is allowed to open with the marker's own words. Holding this back until
-// the carry bound released it would stall a real sentence for 8 KiB, so the
-// filter must commit only once it sees `[STEERING steer-`.
+// TestStripSteerAcks_DoesNotHoldProseHostage pins commitment only at `[STEERING steer-`, so
+// prose opening with the words is not stalled.
 func TestStripSteerAcks_DoesNotHoldProseHostage(t *testing.T) {
 	cases := []string{
 		"[STEERING is the name of the feature]",
@@ -115,17 +112,9 @@ func TestStripSteerAcks_RemovesEveryMarkerInAChunk(t *testing.T) {
 	}
 }
 
-// Text in front of a complete marker is finished, so it is emitted rather than
-// withheld. Two things go wrong when it is held instead, and the second is the
-// serious one: the carry stops being a suffix of the input (found by
-// FuzzStripSteerAcks_AccountsForEveryByte, seed f5c17fda28252ee5's sibling
-// 04153f86c7909901), and a candidate held from before a removed marker splices
-// onto the NEXT chunk across text that is already gone.
-//
-// The splice case is the second row. `[STEERING stee` is followed in the stream
-// by a complete marker, so KAS's own reader sees it as prose; joining it to a
-// later `r-9: y]` would strip it as an acknowledgement of a steer the agent
-// never answered, with an id the model does not control either.
+// TestStripSteerAcks_DoesNotHoldTextInFrontOfAMarker pins that text before a complete marker
+// is emitted: holding it breaks the suffix invariant and could splice a stale candidate onto
+// the NEXT chunk (row two).
 func TestStripSteerAcks_DoesNotHoldTextInFrontOfAMarker(t *testing.T) {
 	tests := map[string]struct {
 		chunks   []string
@@ -177,8 +166,6 @@ func TestStripSteerAcks_ReleasesAnOverlongCandidate(t *testing.T) {
 	}
 }
 
-// --- The marker's CONTENT, which used to be thrown away ---
-
 // feedAcks is feed's sibling for the extraction half: it accumulates the
 // acknowledgements across chunks, which is what the live caller does one
 // broadcast at a time.
@@ -226,9 +213,8 @@ func TestStripSteerAcks_LiftsEveryMarkerInOrder(t *testing.T) {
 	}
 }
 
-// The marker can be cut at any byte, so the ack must be reported exactly once
-// and only when the marker CLOSES. Reporting on a partial would put a truncated
-// sentence on the chip; reporting twice would fire the broadcast twice.
+// TestStripSteerAcks_ReportsAnAckOnceAcrossEverySplit pins exactly one ack, when the marker
+// CLOSES.
 func TestStripSteerAcks_ReportsAnAckOnceAcrossEverySplit(t *testing.T) {
 	full := "Here is the work. " + ack + " And a closing line."
 	for i := 1; i < len(full); i++ {
@@ -276,9 +262,8 @@ func TestStripSteerAcks_TrimsTheAgentsStatement(t *testing.T) {
 	}
 }
 
-// The invariant the original doc asserts and a third return value must not
-// break: the emitted text plus the carry account for every byte that was not
-// part of a matched marker.
+// FuzzStripSteerAcks_AccountsForEveryByte pins that emitted text plus carry account for every
+// byte not in a matched marker.
 func FuzzStripSteerAcks_AccountsForEveryByte(f *testing.F) {
 	f.Add("Done. " + ack)
 	f.Add("[STEERING steer-1: a][STEERING steer-2: b]")
@@ -291,8 +276,7 @@ func FuzzStripSteerAcks_AccountsForEveryByte(f *testing.F) {
 		}
 		consumed := len(emit) + len(carry)
 		for _, a := range acks {
-			// A matched marker is `[STEERING ` + id + `: ` + body + `]`, so its
-			// span is at least the two captured groups plus the fixed literals.
+			// A matched marker's span is at least its two groups plus the fixed literals.
 			if a.SteerID == "" {
 				t.Errorf("ack with an empty id: %+v", a)
 			}
@@ -307,11 +291,8 @@ func FuzzStripSteerAcks_AccountsForEveryByte(f *testing.F) {
 	})
 }
 
-// The carry bound measures the CANDIDATE, and its edge belongs to the candidate
-// too. Two ways to get it wrong, and both surface as text vanishing: measuring
-// the whole reply instead of the withheld tail releases machinery the moment a
-// turn grows past 8 KiB, and releasing at the edge rather than past it hands the
-// client a marker that was still one byte inside the budget.
+// TestStripSteerAcks_TheBoundMeasuresTheCandidate pins the bound on the withheld CANDIDATE
+// (not the whole reply) and its edge inside the budget.
 func TestStripSteerAcks_TheBoundMeasuresTheCandidate(t *testing.T) {
 	atBound := turnlog.SteerAckPrefix + strings.Repeat("x", maxSteerCarry-len(turnlog.SteerAckPrefix))
 	longReply := strings.Repeat("y", maxSteerCarry)

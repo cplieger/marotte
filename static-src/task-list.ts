@@ -1,8 +1,4 @@
-// ---------------------------------------------------------------------------
-// Task list pill: shows the agent's running plan as a checklist in the
-// prompt bar. Badge shows pending + in-progress count. Popover shows
-// all plan entries with status indicators.
-// ---------------------------------------------------------------------------
+// Task list pill: the agent's running plan as a checklist in the prompt bar.
 
 import type { PlanEntry, Session } from "./types.js";
 import { getActive, watchActiveId, messagesVersionOf } from "./store.js";
@@ -13,12 +9,8 @@ import { paintStatus } from "./fundamentals/work-status.js";
 
 export function initTaskListPill(): void {
   effect(() => {
-    // The transcript effect's two inputs, for the same reason it has two: the
-    // body below reads `getActive()`, which is a `peek` and subscribes to
-    // nothing, so the version alone left the pill showing the PREVIOUS chat's
-    // plan until some chat happened to bump it. Versions are per chat now, so
-    // the pill tracks the ACTIVE chat's — and the switch itself via the tracked
-    // active id.
+    // Two inputs: `getActive()` is a `peek`, so the active id must be tracked or the pill shows the
+    // previous chat's plan; versions are per chat.
     const id = watchActiveId();
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     messagesVersionOf(id).value;

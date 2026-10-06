@@ -1,34 +1,14 @@
-//
-// The attention system's BINDING and its trigger rules: the three sinks against a
-// real document, the visible-rows test against real geometry, and initAttention
-// wired to the real tab store.
-//
-// The decisions are attention-no-dom.node.test.ts's subject, under `node` with no DOM at all.
-// What is here is everything that can only be wrong against a browser:
-//
-//  1. THE TITLE BASE. The retired `setBadge` asserted its own copy of
-//     static/index.html's <title> over whatever that file declared, and nothing
-//     pinned the two literals together. The sink composes prefix + a base
-//     captured from the served document instead, which is only correct if it
-//     never reads the current title back — that value already carries a prefix.
-//  2. EVERY ICON LINK. Which link a browser picks differs (Chrome prefers the
-//     SVG), so mutating one element is unreliable; and every variant must be
-//     computed from the ORIGINAL href, or repeated swaps compound into a 404.
-//  3. THE VISIBLE-ROWS RULE. `#tab-list` scrolls and the mobile sidebar is a
-//     drawer parked at translateX(-100%). checkVisibility() answers neither
-//     question, so the geometry is the rule and this is where it is measured.
-//  4. THE RECOMPUTE FUNNEL. `setTabStatus` deliberately does not `emit()`, so a
-//     funnel on the tab store's one signal covers the tab SET and misses every
-//     status change; one on the dot alone misses a chat closing. Both legs are
-//     driven here through the real store.
+// The attention system's BINDING, against a real browser (the decisions are
+// attention-no-dom.node.test.ts's): the title sink composes prefix + a base captured from
+// the served document, never reading the title back; every icon link is swapped from its
+// ORIGINAL href; the visible-rows rule is geometric (scrolled list, translated drawer);
+// and the recompute funnel covers both the tab SET and every dot write, via the real store.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
-// EVERY glyph, generated from the module rather than hand-listed: the projection's
-// graph reaches several more icon consumers now, and real-ESM linking needs each
-// name to be a real property — a Proxy answers a property read and still fails to
-// link. No case here asserts on a glyph.
+// EVERY glyph, generated from the module: real-ESM linking needs each name to be a real
+// property (a Proxy still fails to link).
 vi.mock("./icons.js", () => ({
   ICON_EDIT: "",
   ICON_EDIT_UI: "",
@@ -40,7 +20,6 @@ vi.mock("./icons.js", () => ({
   ICON_PIN_FILLED: "",
   ICON_COPY: "",
   ICON_COPY_MD: "",
-  ICON_SOURCE: "",
   ICON_LINK: "",
   ICON_EXTERNAL: "",
   ICON_DOWNLOAD: "",
@@ -133,9 +112,8 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
-// The sidebar and the tab list must be the SAME document-attached elements the
-// production code looks up, because the rule under test is geometric. Every other
-// getter stays a throwaway, as in tabs.test.ts.
+// The sidebar and tab list are the SAME document-attached elements production looks up,
+// because the rule under test is geometric.
 vi.mock("./dom.js", () => ({
   $: new Proxy(
     {},
@@ -155,13 +133,9 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
-  // `byId` is reached through this graph by page-title.ts. ESM links for real, so
-  // a name any module in the graph imports must exist on the mock or the whole
-  // FILE fails at link time, naming the export rather than the test. Inlined
-  // rather than shared because a `vi.mock` factory is hoisted above every
-  // top-level import, so it cannot reach a helper module. Resolve-or-create,
-  // because the real `byId` throws and a suite mocking `dom.js` stages only what
-  // its own subject needs.
+  // `byId` is reached through this graph and ESM links for real, so it must exist on the
+  // mock. Inlined: a `vi.mock` factory is hoisted above imports. Resolve-or-create, because
+  // the real `byId` throws.
   byId: (id: string): HTMLElement => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -201,10 +175,6 @@ import { bindTabsSync, tabServer } from "./__test-helpers__/tabs-server.js";
 import type { TabDotStatus } from "./tab-view.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 function rect(top: number, height: number, left = 0, width = 260): DOMRect {
   return {
@@ -255,12 +225,10 @@ function hidePage(hidden: boolean): void {
   });
 }
 
-/** The dot the tab FACTORY seeds a chat row with, per chat ref.
- *
- *  This is the boot-restore path's channel: a spec's `dotStatus` is derived from
- *  current session state at materialization, so a restored chat holding a latch
- *  never calls `setTabStatus`. Registered rather than passed at a door, because a
- *  tab's behaviour cannot depend on who opened it. */
+/**
+ * The dot the tab FACTORY seeds a chat row with, per chat ref: the boot-restore channel,
+ * where a restored chat holding a latch never calls `setTabStatus`.
+ */
 const seededDots = new Map<string, TabDotStatus>();
 
 function registerOpeners(): void {
@@ -274,9 +242,7 @@ function registerOpeners(): void {
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
-    // `TabOpeners` gained a required `spec` member, so a fixture without one does not
-    // type-check. Inert here: no case opens a spec tab, and closing the member is not
-    // this suite taking a position on the kind.
+    // `TabOpeners` requires `spec`; inert here, since no case opens a spec tab.
     spec: { show: vi.fn(), refresh: vi.fn() },
   });
 }
@@ -303,10 +269,6 @@ async function settle(): Promise<void> {
   await Promise.resolve();
 }
 
-// ---------------------------------------------------------------------------
-// 1. The browser sinks.
-// ---------------------------------------------------------------------------
-
 describe("the title sink", () => {
   beforeEach(() => {
     document.head.innerHTML = "";
@@ -314,9 +276,7 @@ describe("the title sink", () => {
   });
 
   it("composes the count onto the title the document was SERVED with", () => {
-    // Not a constant of its own. The literal this replaced was a second copy of
-    // static/index.html's <title> with nothing keeping them equal, so editing
-    // that file lost silently to the first count write.
+    // Not a constant: the base comes from static/index.html's <title> itself.
     const env = browserAttentionEnv();
     env.titlePrefix("(2) ");
     expect(document.title).toBe("(2) Whatever The Server Served");
@@ -429,11 +389,8 @@ describe("the icon sink", () => {
   });
 
   it("leaves it alone even when it is named like a favicon", () => {
-    // `rel~="icon"` is the mechanism, and this is the shape that needs it: a
-    // touch icon whose file happens to be a sized favicon is a real page, and
-    // iconVariantHref would happily rewrite that name. The OS caches this icon
-    // when the app is installed, so a swap cannot reach it and pointing it at a
-    // variant only 404s the installed app's icon.
+    // `rel~="icon"` skips a touch icon even when its file is a sized favicon: the OS caches it
+    // at install, so a variant would only 404 the installed app's icon.
     document.head.innerHTML =
       '<link rel="icon" href="/favicon.svg">' +
       '<link rel="apple-touch-icon" sizes="180x180" href="/favicon-180x180.png">';
@@ -478,10 +435,6 @@ describe("the icon sink", () => {
     expect(document.querySelector("link")?.getAttribute("href")).toBe("/favicon-input.svg");
   });
 });
-
-// ---------------------------------------------------------------------------
-// 2. The visible-rows rule.
-// ---------------------------------------------------------------------------
 
 describe("rowsInView", () => {
   beforeEach(() => {
@@ -545,12 +498,8 @@ describe("rowsInView", () => {
   });
 
   it("reports nothing when the sidebar has collapsed in either dimension", () => {
-    // The shape a desktop collapse would most likely take, and checkVisibility()
-    // calls a zero-width element visible because nothing about it is display:none.
-    // Both placements are checked because a collapsed box AT the viewport edge is
-    // already rejected by the intersection clauses — only one sitting INSIDE the
-    // viewport isolates the extent test, and where a future collapse would put the
-    // sidebar is not something this rule should have to assume.
+    // checkVisibility() calls a zero-width element visible. The box sits INSIDE the viewport,
+    // because one at the edge is already rejected by the intersection clauses.
     const { sidebar, tabList } = buildSidebar([{ id: "a", top: 110, height: 40 }]);
     for (const collapsed of [rect(0, 700, 0, 0), rect(0, 700, 100, 0), rect(100, 0, 0, 260)]) {
       place(sidebar, collapsed);
@@ -567,9 +516,7 @@ describe("rowsInView", () => {
   });
 
   it("is transform-invariant, so it holds while the drawer animates in", () => {
-    // The rows and the clip box sit in the same transformed subtree, so a
-    // translate moves both identically and containment is preserved. That is what
-    // lets the drawer's settled event ask this question mid-flight.
+    // Rows and the clip box share the transformed subtree, so containment holds mid-flight.
     const { sidebar, tabList } = buildSidebar([
       { id: "a", top: 110, height: 40 },
       { id: "b", top: 900, height: 40 },
@@ -595,20 +542,7 @@ describe("pageVisible", () => {
     hidePage(true);
     expect(pageVisible()).toBe(false);
   });
-
-  // An `isWatching(chatID)` sat here until 2026-08, giving the `turn_done` latch
-  // and the acknowledgement pass one definition of "looking at it". The latch
-  // stopped asking (a finished turn is `done` whoever is watching), which left the
-  // pass as its only reader — and that derives the condition from its own injected
-  // wiring, so the exported helper had no production caller left. The behaviour it
-  // described is still pinned, by the two cases in the raise-rule block below:
-  // a cue on the active visible chat raises nothing, and the same cue on a hidden
-  // page raises the count.
 });
-
-// ---------------------------------------------------------------------------
-// 3. initAttention against the real tab store.
-// ---------------------------------------------------------------------------
 
 describe("initAttention", () => {
   let dispose: (() => void) | null = null;
@@ -658,9 +592,7 @@ describe("initAttention", () => {
     document.head.innerHTML = '<link rel="icon" href="/favicon.svg">';
     document.title = "Marotte for Kiro";
     vi.stubGlobal("navigator", {});
-    // The persistent desktop sidebar, with the list clipping to 100..600. The
-    // rows are placed per test; the store's own renderDOM is rAF-coalesced and
-    // its markup is tabs.test.ts's subject, so the geometry is stated here.
+    // The persistent desktop sidebar, clipping to 100..600; rows are placed per test.
     const sidebar = document.createElement("div");
     sidebar.id = "sidebar";
     const tabList = document.createElement("div");
@@ -691,8 +623,7 @@ describe("initAttention", () => {
     expect(iconVariant()).toBe("/favicon-done.svg");
   });
 
-  // "Watching" is a fact about the TAB, not about the chat store's active id: every
-  // key in this wiring is a tab id, and a chat id is no longer one.
+  // "Watching" is a fact about the TAB: every key here is a tab id.
   it("raises nothing for the tab the reader is watching", async () => {
     const a = await openChat("a");
     setTabStatus(a, "done");
@@ -720,10 +651,8 @@ describe("initAttention", () => {
   });
 
   it("raises a cue the SPEC carried in, with no dot write at all", async () => {
-    // The boot-restore path. The factory seeds a chat row's dot from current
-    // session state at materialization, so a restored chat holding a latch never
-    // calls `setTabStatus` — the tab-set signal is the only thing that can wake the
-    // fold for it. This is the leg a funnel hung off the dot alone would miss.
+    // The boot-restore path: a restored chat holding a latch never calls `setTabStatus`, so
+    // the tab-set signal is the only thing that wakes the fold.
     seededDots.set("a", "failed");
     await openChat("a", { activate: false });
     expect(count()).toBe(1);
@@ -814,9 +743,7 @@ describe("initAttention", () => {
   });
 
   it("acknowledges the in-view rows when the drawer's class changes", async () => {
-    // The drawer opening is a class toggle, which is not an event, so it is
-    // OBSERVED — that covers the menu button and the edge-swipe path in
-    // platform.ts by construction rather than by a call at each site.
+    // The drawer opening is a class toggle, so it is OBSERVED, covering every opener.
     const a = await openChat("a", { activate: false });
     setTabStatus(a, "done");
     rows([{ id: a, top: 110, height: 40 }]);
@@ -829,9 +756,7 @@ describe("initAttention", () => {
   });
 
   it("acknowledges the in-view rows once the drawer has settled", async () => {
-    // The mutation lands BEFORE the transform animates, so on a real phone the
-    // drawer's box is still off-viewport at that instant and the geometric test
-    // correctly declines. The settled event is what acknowledges then.
+    // The mutation lands before the transform, so the settled event acknowledges.
     const a = await openChat("a", { activate: false });
     setTabStatus(a, "done");
     rows([{ id: a, top: 110, height: 40 }]);
@@ -914,18 +839,9 @@ describe("initAttention", () => {
     expect(iconVariant()).toBe("/favicon.svg");
   });
 
-  // -------------------------------------------------------------------------
-  // The badge count follows the same rule the notification does: a chat whose
-  // turn ended while a run it launched is still going contributes NOTHING, and
-  // starts contributing when the work is over.
-  //
-  // The probe is INJECTED here rather than imported, exactly as production does
-  // it: the real answer lives in `chat-settled.ts`, which reads the chat store,
-  // the live-run inventory and the decision dock, and this file mocks
-  // `./run-store.js` down to one export. What is under test is the FOLD's rule,
-  // so a probe backed by a signal is the honest fixture — a plain boolean would
-  // pass a version of `cueCandidates` that had stopped subscribing to it.
-  // -------------------------------------------------------------------------
+  // The badge count follows the notification's rule: a chat whose run is still going counts
+  // NOTHING until the work is over. The probe is injected, as in production, and backed by a
+  // signal so a `cueCandidates` that stopped subscribing fails.
   describe("a chat with outstanding work contributes 0", () => {
     const unsettled = new Set<string>();
     const settleVersion = signal(0);
@@ -985,9 +901,7 @@ describe("initAttention", () => {
       expect(iconVariant()).toBe("/favicon-alert.svg");
     });
 
-    // The suppression is narrow on purpose. An unanswered decision IS the reader's
-    // business and is what they are being pointed at, so it counts whatever the
-    // chat's runs are doing.
+    // An unanswered decision counts whatever the chat's runs are doing.
     it("never blanks an unanswered decision", async () => {
       await openChat("a");
       const b = await openChat("b", { activate: false });
@@ -1018,10 +932,8 @@ describe("initAttention", () => {
       expect(count()).toBe(1);
     });
 
-    // THE `""`-NOT-`idle` RULE. `attention.ts` reads `""` as "no information" and
-    // leaves the acknowledgement map alone, where `idle` is a real non-cue state
-    // that FORGETS the entry — so blanking with `idle` would re-raise the cue from
-    // scratch the moment the run ended, for a chat the reader had already visited.
+    // The `""`-not-`idle` rule: `""` leaves the acknowledgement alone, while `idle` forgets it
+    // and would re-raise the cue once the run ended.
     it("keeps the reader's acknowledgement across the blank", async () => {
       const a = await openChat("a");
       const b = await openChat("b", { activate: false });
@@ -1045,9 +957,7 @@ describe("initAttention", () => {
       expect(count()).toBe(0);
     });
 
-    // Unregistered, nothing is suppressed — the behaviour before the probe existed,
-    // which is what makes a composition root that forgot to wire it degrade rather
-    // than silently blank every cue.
+    // Unregistered suppresses nothing, so a root that forgot the probe degrades safely.
     it("suppresses nothing when no probe is registered", async () => {
       _resetForTest();
       registerOpeners();
@@ -1072,14 +982,8 @@ describe("initAttention", () => {
   });
 
   it("persists an acknowledgement so a reconnect cannot re-raise it", async () => {
-    // The latches behind every cue are rebuilt from server state — the connect
-    // handshake names every busy chat and re-pushes every unanswered decision — so
-    // without persistence a dismissed count came back on a phone simply returning to
-    // a backgrounded page.
-    //
-    // The KEY is the tab id, which survives a reload because ids are server-minted
-    // and persisted with the collection: the same subject comes back under the same
-    // id, which is what makes the acknowledgement addressable at all.
+    // Cue latches rebuild from server state on reconnect, so acknowledgements persist, keyed
+    // by the server-minted tab id that survives a reload.
     const a = await openChat("a", { activate: false });
     setTabStatus(a, "input");
     rows([{ id: a, top: 110, height: 40 }]);
@@ -1108,9 +1012,7 @@ describe("initAttention", () => {
   });
 
   it("hands the page's own icon back when the page goes away with a cue lit", async () => {
-    // A browser remembers one icon per URL and shows it for the bookmark, the
-    // history row and the new-tab tile. A tab closed on a lit cue would leave a
-    // status variant standing in for this app until the next page load.
+    // A browser remembers one icon per URL, so a tab closed on a lit cue would leave a variant.
     const a = await openChat("a", { activate: false });
     setTabStatus(a, "done");
     expect(iconVariant()).toBe("/favicon-done.svg");
@@ -1122,9 +1024,7 @@ describe("initAttention", () => {
   });
 
   it("KEEPS the cue when the browser merely freezes a background tab", async () => {
-    // The case the restore must not reach. A frozen tab is still in the strip
-    // rendering its icon, so `freeze` is not a proxy for the page going away and
-    // restoring there would blank the cue in exactly the case it exists for.
+    // A frozen tab is still in the strip showing its icon, so `freeze` must not restore.
     const a = await openChat("a", { activate: false });
     setTabStatus(a, "input");
 

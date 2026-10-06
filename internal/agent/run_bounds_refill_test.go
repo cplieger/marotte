@@ -1,10 +1,7 @@
 package agent
 
-// The activity-based watchdog: the refill that rolls a run's idle window forward, the
-// backstop that stops a productive-looking runaway, and the classification that tells
-// those two expiries apart. Every fixture stages the deadline and the executing stretch BY
-// HAND: no budget the arm computes is short enough to observe, since NextDeadline floors
-// at minRunBudget, and staging the start places a run deep into its work for free.
+// The refill, the backstop and the expiry classification. Fixtures stage deadline and stretch by
+// hand: NextDeadline floors at minRunBudget, too long to observe.
 
 import (
 	"context"
@@ -19,10 +16,8 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// stagedStretch gives a run a lease, a deadline, and an OPEN executing stretch beginning
-// at stretchStart. It does not go through armDeadline deliberately: the arm reads its own
-// clock and opens the stretch at that instant, so a case needing a run already deep into
-// its work could not express one.
+// stagedStretch gives a run a lease, a deadline and an open stretch from stretchStart, bypassing
+// armDeadline, which opens the stretch at its own now.
 func stagedStretch(t *testing.T, rs *Runs, workflowID string, deadline, stretchStart time.Time) {
 	t.Helper()
 	leased(t, rs, workflowID)
@@ -37,16 +32,13 @@ func stagedStretch(t *testing.T, rs *Runs, workflowID string, deadline, stretchS
 	rs.bounds.armedAt[workflowID] = stretchStart
 }
 
-// TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives: a run stays alive by
-// WORKING, not by being young. The stretch is staged 90 minutes deep, so under a one-hour
-// bound on executing time this run was cancelled half an hour ago, mid-work, with nothing
-// wrong — hence the two-part assertion: a full idle window from the progress, AND past
-// where a start-anchored ceiling would have fired.
+// TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives pins that a run 90 minutes deep gets a full
+// window from progress, past where a start-anchored ceiling would fire.
 func TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
 	stretchStart := time.Now().Add(-90 * time.Minute)
-	// Two minutes from expiring: the state a run is in just before a stall is called.
+	// Two minutes from expiring.
 	stagedStretch(t, h, id, time.Now().Add(2*time.Minute), stretchStart)
 
 	progressAt := time.Now()
@@ -60,8 +52,7 @@ func TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives(t *testing.T) {
 		t.Errorf("the refilled deadline is %v out, want a full idle window %v measured from the "+
 			"progress", budget.Round(time.Millisecond), runIdleWindow)
 	}
-	// The retired bound, stated as the property rather than as a number: a run
-	// this deep into its work must not be bounded by when it STARTED.
+	// A run this deep must not be bounded by when it started.
 	if retired := stretchStart.Add(time.Hour); !l.Deadline.After(retired) {
 		t.Errorf("the refilled deadline %v is not past %v, one hour into the run's own executing "+
 			"stretch — a run still making progress must not be cancelled for being long",
@@ -69,10 +60,7 @@ func TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives(t *testing.T) {
 	}
 }
 
-// TestRefillDeadline_RefusesAPausedRun is why the refill and the arm are separate doors
-// rather than one operation with a flag: disarmDeadline parks the deadline precisely so a
-// run held paused is never cancelled for having been held, and a refill that re-armed one
-// would do it from a frame emitted BEFORE the park, cancelling a run waiting on a person.
+// TestRefillDeadline_RefusesAPausedRun pins that a refill re-arming a parked run would cancel one waiting on a person.
 func TestRefillDeadline_RefusesAPausedRun(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
@@ -96,9 +84,7 @@ func TestRefillDeadline_RefusesAPausedRun(t *testing.T) {
 	}
 }
 
-// TestRefillDeadline_RefusesARunWithNoLease is the arm's own refusal, for the same
-// population: a TUI-launched run has no lease, no bridge here and no cancel path
-// marotte owns, so a frame from one must not install a timer against it.
+// TestRefillDeadline_RefusesARunWithNoLease pins that a TUI run has no lease or cancel path here.
 func TestRefillDeadline_RefusesARunWithNoLease(t *testing.T) {
 	h := &Runs{}
 	h.refillDeadline(t.Context(), "wf_tui")
@@ -111,16 +97,12 @@ func TestRefillDeadline_RefusesARunWithNoLease(t *testing.T) {
 	if timers != 0 {
 		t.Errorf("a leaseless run left %d timers behind", timers)
 	}
-	// And the empty id, which is what a frame carrying no workflow block decodes to.
+	// The empty id a frame with no workflow block decodes to.
 	h.refillDeadline(t.Context(), "")
 }
 
-// TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove is the disk cost the granularity
-// exists for. Each landed refill is a whole-file fsynced rewrite of runs.json and a busy
-// step emits a tool call every few seconds, so a refill moving the deadline by
-// milliseconds must not spend one. The SAME-TIMER assertion is the sharper half: a skip
-// that still swapped the timer would stop the live callback and install a replacement on
-// every tool call, making enforcement depend on the last frame the run happened to emit.
+// TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove pins the granularity's disk saving, and that a
+// skip keeps the same timer.
 func TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
@@ -135,8 +117,7 @@ func TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove(t *testing.T) {
 		t.Fatal("the arm installed no timer, so there is nothing for a refill to preserve")
 	}
 
-	// Two refills immediately after the arm: each would move the deadline by the
-	// microseconds since it, which is far below the granularity.
+	// Each would move the deadline by microseconds.
 	h.refillDeadline(t.Context(), id)
 	h.refillDeadline(t.Context(), id)
 
@@ -154,12 +135,8 @@ func TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove(t *testing.T) {
 	}
 }
 
-// TestRefillDeadline_SwapsTheTimerForTheNewDeadline is the invariant a store-only refill
-// would break, and the one that makes the whole watchdog inert if missed: the deadline
-// travels INTO the callback and claimExpiredDeadline compares it against what the lease
-// says at fire time, with no generation token, so leaving the old closure installed arms a
-// callback that ALWAYS refuses. Driven by Reset rather than by waiting, because Reset
-// reschedules the SAME func with the same captured deadline.
+// TestRefillDeadline_SwapsTheTimerForTheNewDeadline pins that the callback compares its captured deadline with
+// the lease, so an unswapped timer always refuses. Driven by Reset, which keeps the captured deadline.
 func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -173,8 +150,7 @@ func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 	stale := h.runs.bounds.timers[id]
 	h.runs.mu.Unlock()
 
-	// Push the stored deadline back to near-expiry so the refill clears the
-	// throttle. The stretch stays open, so the backstop is untouched.
+	// Near-expiry, so the refill clears the throttle; the stretch stays open.
 	if err := h.runs.leaseStore().SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("stage a near-expiry deadline: %v", err)
 	}
@@ -195,8 +171,7 @@ func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 		t.Fatal("the refill wrote the store and kept the old timer, whose captured deadline the " +
 			"lease no longer holds — that callback can only ever refuse")
 	}
-	// Stop reports false for a timer already stopped, so this proves the replaced one was
-	// stopped rather than left to fire. Without it a run leaks one AfterFunc per call.
+	// Stop is false for an already-stopped timer, proving the replaced one was stopped.
 	if stale.Stop() {
 		t.Error("the replaced timer was left live, so a refilling run accumulates one pending " +
 			"callback per progress frame")
@@ -217,17 +192,12 @@ func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 	}
 }
 
-// TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop is the bound the idle window
-// cannot supply: a repeat node re-driving one step forever emits a completed node every
-// pass, refilling the window indefinitely. The first refill CLAMPS at the backstop and
-// every later one recomputes that same instant, so "refreshes forever" is unreachable. The
-// stretch is staged HALF AN HOUR DEEP because BackstopAt must be anchored on the stretch's
-// start, and a `now`-anchored version only differs once the gap exceeds the granularity.
+// TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop pins that the first refill clamps at the backstop and
+// every later one recomputes that instant. Staged 30 minutes deep so a now-anchored version differs.
 func TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
-	// 37 minutes of backstop left against a stretch 30 minutes old, so the backstop comes
-	// due 7 minutes from now — inside the idle window, and above minRunBudget.
+	// The backstop comes due in 7 minutes: inside the window, above minRunBudget.
 	const deep, left = 30 * time.Minute, 37 * time.Minute
 	stretchStart := time.Now().Add(-deep)
 	stagedStretch(t, h, id, time.Now().Add(2*time.Minute), stretchStart)
@@ -246,8 +216,7 @@ func TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop(t *testing.T) {
 			budget.Round(time.Second), left)
 	}
 
-	// Progress arriving over and over: every refill recomputes the same instant,
-	// because BackstopAt is anchored on the stretch rather than on now.
+	// Every refill recomputes the same instant.
 	for range 5 {
 		h.refillDeadline(t.Context(), id)
 		after, _ := h.lease(id)
@@ -258,24 +227,16 @@ func TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop(t *testing.T) {
 	}
 }
 
-// TestRunBackstop_MeasuresExecutingTimeNotWallTime is the anchor decision, and the test
-// that fails for the obvious alternative. The backstop is anchored on an in-memory
-// accumulator of executing STRETCHES, not on Lease.StartedAt: StartedAt is wall time, so
-// `StartedAt + runBackstop` would cancel a run parked on a person's answer for longer than
-// the backstop five minutes after they gave it. Both halves are here — a lease that has
-// executed that long, then one started that long ago that has barely executed at all.
+// TestRunBackstop_MeasuresExecutingTimeNotWallTime pins that anchored on executing stretches, not
+// Lease.StartedAt, which would cancel a run parked on a person.
 func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 	t.Run("stretches accumulate across pauses", func(t *testing.T) {
 		h := &Runs{}
 		const id = "wf_1"
 		leased(t, h, id)
 
-		// Two UNEQUAL stretches, each closed by a pause, together exceeding the
-		// backstop. The pause banks them and the delete inside it stops a double
-		// charge; unequal so a sum ignoring one cannot land on the same total. DERIVED
-		// from runBackstop, never hardcoded: this fixture's subject is that the next arm
-		// finds the backstop SPENT, so a literal chosen against today's value silently
-		// becomes a not-spent fixture asserting the opposite when the constant is raised.
+		// Two unequal paused stretches together exceeding the backstop, derived from runBackstop so the
+		// fixture stays spent when the constant moves.
 		firstStretch := runBackstop / 3
 		secondStretch := runBackstop - firstStretch + time.Hour
 		wantBanked := firstStretch + secondStretch
@@ -302,9 +263,7 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 				"double-charge the backstop", open)
 		}
 
-		// The observable consequence: the next arm finds the backstop spent, so its
-		// deadline is already PAST and the timer fires at once. The claim is taken first
-		// so that callback refuses, leaving the stamped value readable without a race.
+		// The next arm's deadline is already past; claim first so the callback refuses.
 		if !h.claimTermination(id) {
 			t.Fatal("the parked run already held a termination claim")
 		}
@@ -317,11 +276,7 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 				banked.Round(time.Hour), armed.Deadline.Sub(before).Round(time.Second))
 		}
 
-		// And PROGRESS ARRIVING AFTERWARDS CANNOT LIFT IT, which the arm alone does not
-		// show. Each lap ages the stored deadline by a granularity so the refill is not
-		// merely throttled, and it must recompute the same spent instant. Answer with the
-		// floor instead and every lap grants a fresh minimum, degrading the absolute
-		// bound into a rolling window an ordinary pause-and-resume never reaches.
+		// Later progress cannot lift it: each lap clears the throttle and recomputes the spent instant.
 		for lap := range 3 {
 			stored, _ := h.lease(id)
 			aged := stored.Deadline.Add(-refillGranularity - time.Second)
@@ -357,8 +312,7 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 				banked, open)
 		}
 
-		// The observable consequence, since the accumulator is white-box state: the
-		// reused id gets a full window rather than the floor.
+		// A reused id gets a full window, not the floor.
 		leased(t, h, id)
 		before := time.Now()
 		h.armDeadline(t.Context(), id)
@@ -372,12 +326,7 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 	t.Run("wall time spent parked burns none of it", func(t *testing.T) {
 		h := &Runs{}
 		const id = "wf_1"
-		// A lease granted longer ago than the whole backstop that has executed almost
-		// nothing: the overnight run parked on a person. StartedAt is the only field a
-		// wall-clock anchor could read, and it is staler than the entire budget. DERIVED
-		// for a sharper reason than the sibling above: a literal short of the backstop
-		// makes this pass for BOTH implementations, so the fixture stops discriminating
-		// instead of going red.
+		// Granted longer ago than the backstop, barely executed. Derived: a shorter literal passes both implementations.
 		staleBy := runBackstop + time.Hour
 		l := runlease.Lease{
 			StartedAt:  time.Now().Add(-staleBy),
@@ -404,15 +353,9 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 	})
 }
 
-// TestCancelExpiredRun_TellsAStallFromASpentBackstop is why there are two messages rather
-// than one: they describe opposite failures an operator acts on differently — a stalled run
-// stopped producing and needs looking at, a run that spent its whole budget of real work
-// needs its workflow shortened. Folding them would make the interesting one unfindable, and
-// logMsgRunStalled is the line worth a Loki rule.
+// TestCancelExpiredRun_TellsAStallFromASpentBackstop pins that two messages for opposite failures; logMsgRunStalled is the one worth an alert rule.
 func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
-	// The backstop case banks LESS than the whole budget and carries the rest in an open
-	// stretch, the only shape the backstop's own deadline can fire in: it comes due
-	// mid-stretch, so a classifier reading the banked total alone reports it as a stall.
+	// The backstop case carries the rest of its budget in an open stretch, where its deadline fires.
 	const openStretch = 10 * time.Minute
 	for name, tc := range map[string]struct {
 		banked     time.Duration
@@ -469,13 +412,8 @@ func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 	}
 }
 
-// TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline: every tool call
-// a run makes is a further concurrent stamper, so the contender count is the run's own
-// frame rate. Read as three separately-locked steps, two stampers compute deadlines A and
-// B, the stores land in one order and the timer swaps in the other, and the lease carries B
-// while only A's timer survives — a run reading BOUNDED with no live callback. The observer
-// reads the timer map and the lease under ONE hold, and the store is DISK-BACKED because
-// the persist widens the window from nanoseconds to a file write.
+// TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline pins that concurrent stampers must leave
+// the timer armed for the stored deadline. Observed under one hold, on a disk-backed store to widen the window.
 func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *testing.T) {
 	const rounds, refills = 6, 4
 	for round := range rounds {
@@ -490,7 +428,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 		h.runs.leases = st
 		h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
 		h.runs.armDeadline(t.Context(), id)
-		// Near-expiry, so a refill clears the throttle and genuinely lands.
+		// Near-expiry, so a refill genuinely lands.
 		if sErr := st.SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); sErr != nil {
 			t.Fatalf("round %d: stage a near-expiry deadline: %v", round, sErr)
 		}
@@ -505,8 +443,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 					return
 				default:
 				}
-				// ONE observation of both halves. Read through the store directly:
-				// h.runs.lease would take the same mutex again.
+				// One observation of both halves, read through the store: h.runs.lease would retake the mutex.
 				h.runs.mu.Lock()
 				_, hasTimer := h.runs.bounds.timers[id]
 				l, held := st.Get(id)
@@ -549,8 +486,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 			t.Fatalf("round %d: %d refills left %d timers, want 1", round, refills, timers)
 		}
 
-		// And the survivor is armed for what the lease holds, which is the half a
-		// count cannot see.
+		// The survivor is armed for what the lease holds.
 		timer.Reset(time.Millisecond)
 		stop := time.Now().Add(2 * time.Second)
 		for h.runs.endReason(id) == "" {
@@ -564,17 +500,14 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 	}
 }
 
-// TestHealProgress_ACompletedNodeRefillsTheIdleWindow is the OTHER progress signal, and
-// the only one both run populations share: the run bridge reuses chatHandlers for every
-// `_kiro/workflow/*` method, so one wrapper covers a chat-parented run and a parentless one
-// alike. A completed node is the strongest evidence there is, so it spends the same frame
-// on all three of the run's budgets.
+// TestHealProgress_ACompletedNodeRefillsTheIdleWindow pins that one wrapper covers both run populations, and a
+// completed node refills all three budgets.
 func TestHealProgress_ACompletedNodeRefillsTheIdleWindow(t *testing.T) {
 	h, _, _ := newTestHub()
 	const id = "wf_1"
 	leased(t, h.runs, id)
 	h.runs.armDeadline(t.Context(), id)
-	// Near-expiry, so a landed refill is visible past the throttle.
+	// Near-expiry, so the refill is visible past the throttle.
 	if err := h.runs.leaseStore().SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("stage a near-expiry deadline: %v", err)
 	}
@@ -595,10 +528,8 @@ func TestHealProgress_ACompletedNodeRefillsTheIdleWindow(t *testing.T) {
 	}
 }
 
-// TestRunMadeProgress_IsTheDoorTranslateUses pins the exported surface the translator
-// calls, because everything above it drives the unexported refill. It is called once per
-// tool-call frame, so the no-op cases are the common ones and the reason for the `bounded`
-// pre-check: a run marotte is not bounding must cost a map read, not a store transaction.
+// TestRunMadeProgress_IsTheDoorTranslateUses pins the exported surface; called per tool-call frame,
+// so a run marotte is not bounding must cost one map read.
 func TestRunMadeProgress_IsTheDoorTranslateUses(t *testing.T) {
 	h, _, _ := newTestHub()
 	const id = "wf_1"
@@ -616,8 +547,7 @@ func TestRunMadeProgress_IsTheDoorTranslateUses(t *testing.T) {
 			budget.Round(time.Second), runIdleWindow)
 	}
 
-	// A run this process is not bounding: the TUI's own runs, and every frame that
-	// arrives for a run whose lease is already gone.
+	// Not bounded here: a TUI run, or one whose lease is gone.
 	h.runs.RunMadeProgress("wf_never_leased")
 	if h.runs.bounded("wf_never_leased") {
 		t.Error("the progress door bounded a run with no lease")

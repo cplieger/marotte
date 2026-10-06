@@ -1,23 +1,11 @@
 // Adjacent `text` entries are ONE prose run, and a residency window may not cut one.
-//
-// Two halves, and they are one property rather than two: the run is one `.msg-row` holding
-// one markdown stream, so a window edge landing between two of its members would mount it
-// as two rows with two parsers — which is why `sliceTurn` snaps `from` down to the run's
-// first entry and `to` up past its last. The window case drives both at once: the snapped
-// range is what the mount is then asserted over, so the arithmetic and the DOM cannot agree
-// separately.
-//
-// DEVIATION from the property's own wording: it lists `steer_ack` among the kinds that render
-// nothing between two `text` entries, and ADDENDUM 5 overrides that — an ack is the model's
-// own words, so it renders at its own `seq` and ENDS the run it interrupted. The case below
-// pins the addendum.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Entry, EntryToolCall, EntryToolResult, OpenEntry } from "./types.js";
 import type { Turn } from "./turns.js";
 
-// The dispatcher's import graph reaches the shared DOM registry, which throws on a missing
-// app root, so these ids exist before the import is evaluated.
+// The dispatcher's import graph reaches the shared DOM registry, which throws on a missing app
+// root, so these ids exist before the import is evaluated.
 for (const id of [
   "messages",
   "messages-wrap",
@@ -37,8 +25,8 @@ const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, toolCallSigs } = await import("./store-signals.js");
 const { setActive } = await import("./store.js");
 
-/** The chat every render here belongs to. It is part of the per-tool signal key, and it must
- *  be the store's ACTIVE chat: the live-anchor scan only considers the active chat's renders. */
+/** The chat every render here belongs to. It is part of the per-tool signal key, and it must be
+ *  the store's ACTIVE chat: the live-anchor scan only considers the active chat's renders. */
 const CHAT_ID = "c-prose-run";
 setActive(CHAT_ID);
 
@@ -92,8 +80,8 @@ function text(turnID: string, seq: number, s: string): Entry {
   return sealed(turnID, seq, "text", { text: s });
 }
 
-// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a
-// `Partial` widens every required field to include `undefined`.
+// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a `Partial`
+// widens every required field to include `undefined`.
 function toolCall(id: string): EntryToolCall {
   const base: EntryToolCall = {
     id,
@@ -238,8 +226,8 @@ describe("a seal inside a prose run is invisible", () => {
   });
 
   it("renders a run straddling a LATER plan identically to one text entry", () => {
-    // A turn's first plan renders; every plan after it folds into that card, so it is the
-    // second one that leaves a run whole.
+    // A turn's first plan renders; every plan after it folds into that card, so it is the second
+    // one that leaves a run whole.
     const straddle = render((t) => [
       planEntry(t, 1, "step one"),
       text(t, 2, "one **two** "),
@@ -272,8 +260,8 @@ describe("an entry that RENDERS ends the run it interrupted", () => {
   });
 
   it("puts a steer_ack's own words in a bubble of their own (ADDENDUM 5)", () => {
-    // The ack is the model's content at the position it was stripped from, so it renders as
-    // the model's rather than inside the reader's note — which ends the run.
+    // The ack is the model's content at the position it was stripped from, so it renders as the
+    // model's rather than inside the reader's note — which ends the run.
     const r = render((t) => [
       text(t, 1, "one"),
       sealed(t, 2, "steer_ack", { steer_id: "steer-1", text: "tabs it is" }, { id: "steer-1:ack" }),
@@ -285,8 +273,8 @@ describe("an entry that RENDERS ends the run it interrupted", () => {
 });
 
 describe("a residency window may not cut a prose run", () => {
-  /** A run of `k` text entries with a rendering entry on each side, so every edge inside the
-   *  run is strictly inside it. The run spans `[2, k + 2)`. */
+  /** A run of `k` text entries with a rendering entry on each side, so every edge inside the run
+   *  is strictly inside it. The run spans `[2, k + 2)`. */
   function withRun(k: number): (t: string) => Entry[] {
     return (t) => [
       callEntry(t, 1, "tool-before"),
@@ -295,10 +283,10 @@ describe("a residency window may not cut a prose run", () => {
     ];
   }
 
-  /** EVERY window the property is about: both edges inside the turn's span, overlapping the
-   *  run. Enumerated rather than sampled — the space is 125 windows over these five k, 95 of
-   *  them with an edge STRICTLY inside the run, so a table covers it whole where a sample
-   *  reaches part of it and says nothing about the rest. */
+  /** EVERY window the property is about: both edges inside the turn's span, overlapping the run.
+   *  Enumerated rather than sampled — the space is 125 windows over these five k, 95 of them
+   *  with an edge STRICTLY inside the run, so a table covers it whole where a sample reaches
+   *  part of it and says nothing about the rest. */
   function edgeWindows(k: number): { readonly from: number; readonly to: number }[] {
     const span = k + 3;
     const out: { from: number; to: number }[] = [];

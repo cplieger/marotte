@@ -1,83 +1,17 @@
-// ---------------------------------------------------------------------------
-// `block-heights.ts`'s estimate table is a SHADOW of the stylesheet, and this is what
-// holds it there.
-//
-// The module prices an unmounted block from literals, and it has to: the reserves are
-// custom properties, and `getPropertyValue` on an unregistered one answers the
-// substituted token stream rather than a used length (`--btn-h` is `2.25rem`,
-// `--run-card-content` the whole `calc()`), so resolving either to px needs a probe
-// element plus layout — which a pure pricing module cannot take. So the literals stay,
-// and this file is the drift guard that makes them a shadow rather than a second
-// source of truth.
-//
-// WHAT IS BEING ASSERTED IS THE RULE, NOT THE CONTENTS. A skipped element's box is
-// `max(min-height, contain-intrinsic-size + padding-block + border-block)`, which is a
-// function of the CSS alone — so the fixtures below need the class list their real
-// builder gives them and nothing more, and every case names which term moved when it
-// fails. TWO entries have no reserve to shadow — `thinking` and `steerNote` — and both
-// are measured as REAL heights off their real builders, with the OPPOSITE premise: that
-// the element is never skipped, so a rule that ever gave one `content-visibility: auto`
-// fails here rather than making the estimate a shadow of a number nobody wrote.
-//
-// THE INSTRUMENT IS THE PER-ELEMENT RECT OF THE LAST INSTANCE, which is the one place
-// that read is legitimate. `files-row-metrics.test.ts` records the instrument fact
-// this appears to break — querying an element INSIDE a skipped subtree reports its
-// real box — and the difference is what is being measured: here the element is the
-// containment ROOT, whose own rect IS the rendered-skipped box, rather than something
-// inside one. Both readings are checked against a container total: the four numbers
-// this file pins for `subagentCard` and `runCard` are the ones
-// `subagent-card-metrics.test.ts` and `run-card-metrics.test.ts` independently drive
-// to a drift of exactly zero over a 200-box list.
-//
-// ONE CASE CANNOT USE THAT INSTRUMENT AND SAYS SO: the PIPELINE case, whose subject is
-// what a stage card inside a collapsed container contributes. Neither per-element
-// reading can see that — a SKIPPED container's own rect is its reserve whatever it
-// holds, and a rect on the stage card inside reports that card's real box (measured at
-// 71px for a card contributing 0) — so it reads the CONTAINER TOTAL three times
-// instead, through `readTotals`.
-//
-// THE PREMISE, without which every reserve case reads a REAL box and passes against
-// any literal at all: `checkVisibility({ contentVisibilityAuto: true })` must be FALSE
-// on a child of the last instance and TRUE on a child of the first. `readTotals` states
-// the same premise the metrics suites do, as an inflated estimate moving the total.
-//
-// RED CHECKS, each observed one at a time and restored before the next:
-//   - shift ONE table entry by 1px      -> that entry's cases red, the rest green
-//     (`fine.subagentCard` 71 -> 72: the fine reserve case AND the fine pipeline case,
-//     2 failed / 14 passed, coarse untouched)
-//   - restore `toolCard: 40`            -> the fine and coarse tool cases red at 2 and 6px
-//   - force `content-visibility: visible` on the subjects -> every reserve case red on
-//     the PREMISE rather than on the number, which is what proves the premise is load-bearing
-//   - give the COLLAPSED body its padding back (undo `14-tools.css`'s
-//     `.subagent-body[aria-hidden="true"] { padding-block: 0 }`) -> only the two
-//     pipeline cases red, at 92px against 71 and 120 against 99 with a drift of
-//     -2,142 / -2,184. The reserve cases stay GREEN, because the DECLARED reserve did
-//     not move: that is what makes the pipeline case non-redundant with them.
-//   - build the container OPEN -> the two pipeline cases red at 163px against 71 and
-//     219 against 99, which is the opposite probe proving the reading can see a stage
-//     card's contribution at all
-//   - `planCard` 70 -> 71 on the FINE tier alone -> that tier's plan case red at 70
-//     against 71, the coarse one and the other 18 green, which is what says the entry
-//     is pinned per tier rather than by one shared literal
-//   - `steerNote` 62 -> 66 on the fine tier -> that case alone red, the note measuring
-//     62.19px, so the pixel of slack below is the font's and nothing wider
-//   - force `content-visibility: auto` onto `.steer-note` -> BOTH steer cases red on
-//     the premise rather than on the number, the mirror of the reserve cases' probe
-//
-// Follows `tool-box-height.test.ts` for reading box facts off the assembled stylesheet
-// and `css-rules.ts` for assembling it through `?raw` rather than the gitignored bundle.
-//
-// 20 cases: 10 per tier, through one shared `tierCases(name, enter)` helper invoked from
-// both tier describes, so neither tier can be pinned while the other is forgotten.
-// ---------------------------------------------------------------------------
+// `block-heights.ts`'s estimate table is a SHADOW of the stylesheet, and this holds it
+// there: custom-property reserves cannot be resolved to px without layout, so the module
+// keeps literals. A skipped element's box is `max(min-height, contain-intrinsic-size +
+// padding + border)`, a function of the CSS alone, read off the LAST instance's rect (the
+// containment ROOT's rect is the rendered-skipped box). The premise: the last instance is
+// skipped and the first is not. `thinking` and `steerNote` have no reserve and are
+// measured as real heights on the opposite premise. The pipeline case reads container
+// totals instead. 10 cases per tier, through one `tierCases` helper.
 
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` throws.
 import { page } from "vitest/browser";
 
-// Two of the three real builders reach `scroll.ts`, a self-initialising singleton over
-// a real `#messages`; the canonical mock is what every other suite reaching that graph
-// uses. Nothing here folds anything, so the mock only has to exist.
+// Two builders reach `scroll.ts`, a self-initialising singleton; the canonical mock suffices.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -88,9 +22,7 @@ import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { planElement } from "./messages-plan.js";
 
-/** Enough instances that the last one is far past the scrollport whatever the box
- *  resolves to: the smallest reserve here is 38px, so 120 of them is 4,560px against a
- *  400px scroller. */
+/** Enough instances that the last is far past the scrollport: 120 x 38px against 400px. */
 const INSTANCES = 120;
 
 /** The scrollport's height. Every instance past it is off-viewport and therefore
@@ -101,9 +33,10 @@ const WRAP_H = 400;
  *  a loaded `npm test` prices a turn at hundreds of ms. */
 const LOADED_BUDGET_MS = 30_000;
 
-/** How far a font metric may move the ONE entry that is a measured height rather than
- *  a declared reserve — see the `thinking` case, which is where this is spent. Every
- *  other entry is pinned to the byte. */
+/**
+ * How far a font metric may move the ONE measured entry (`thinking`); every other entry
+ * is pinned to the byte.
+ */
 const FONT_SLACK_PX = 1;
 
 /** Class that turns the skip off, so the same list reads a second time with every box
@@ -138,19 +71,17 @@ afterEach(() => {
   host.replaceChildren();
 });
 
-/** A child for the premise probe. Its shape is irrelevant to the box being measured
- *  (see the header) and its only job is to be something
- *  `checkVisibility({ contentVisibilityAuto: true })` can be asked about. */
+/** A child for the premise probe, something `checkVisibility` can be asked about. */
 function marker(): HTMLElement {
   const s = document.createElement("span");
   s.textContent = "x";
   return s;
 }
 
-/** `.msg-row`, as `messages.ts` `makeRow` builds one: `el("div", { className: "msg-row" })`
- *  and nothing else, so the class list here is the whole of it. Hand-built because that
- *  builder is private to a module this file must not import — the transcript's own
- *  entry point, whose graph is the whole feature layer. */
+/**
+ * `.msg-row` as `messages.ts` `makeRow` builds it; hand-built because that builder's
+ * module graph is the whole feature layer.
+ */
 function msgRow(): HTMLElement {
   const row = document.createElement("div");
   row.className = "msg-row";
@@ -166,10 +97,10 @@ function emptyRow(): HTMLElement {
   return row;
 }
 
-/** A claim-only `.tool-call`, in the class list `tool-card.ts` gives one: the card
- *  class plus its depth-1 tier (`tool-card.ts` `buildToolCard`, `tool-call
- *  tool-depth1-${depth1}`, which is `none` for a `read`). Hand-built for `msgRow`'s
- *  reason — that builder's graph reaches the editor and the tab store. */
+/**
+ * A claim-only `.tool-call` in `buildToolCard`'s class list (`tool-depth1-none` for a
+ * `read`); hand-built for `msgRow`'s reason.
+ */
 function toolCard(): HTMLElement {
   const card = document.createElement("div");
   card.className = "tool-call tool-depth1-none";
@@ -186,9 +117,7 @@ function subagentCard(i: number): HTMLElement {
   return sa.root;
 }
 
-/** A collapsed run card, from its real builder. The disclosure state does not reach
- *  the box being measured — the reserve does — but it is what the table's number
- *  MEANS, so the fixture states it. */
+/** A collapsed run card from its real builder; collapsed is what the table's number MEANS. */
 function runCard(i: number): HTMLElement {
   const view = buildRunCard(`wf-${String(i)}`, `recipe-${String(i)}`, () => undefined, {
     wasOpen: () => undefined,
@@ -198,10 +127,10 @@ function runCard(i: number): HTMLElement {
   return view.root;
 }
 
-/** A COLLAPSED pipeline container over `stages` settled stage cards, from its real
- *  builder — the box a pipeline's DRIVER block mounts. Its stage cards are the subject:
- *  `subagentCard` is the price of a WHOLE pipeline, so what has to hold is that the
- *  cards inside contribute nothing to the box around them. */
+/**
+ * A COLLAPSED pipeline container over `stages` settled stage cards, from its real builder:
+ * `subagentCard` prices a WHOLE pipeline, so the cards inside must contribute nothing.
+ */
 function pipelineBox(stages: number): (i: number) => HTMLElement {
   return (i: number): HTMLElement => {
     const c = buildSubagentContainer(
@@ -219,18 +148,15 @@ function pipelineBox(stages: number): (i: number) => HTMLElement {
   };
 }
 
-/** A plan card, from its real builder. ONE entry, because the reserve's own comment
- *  says the fallback counts one entry row ("a plan always has at least one entry under
- *  it") — so a card with none would be the one shape the declared value is not about. */
+/** A plan card with ONE entry: the reserve counts one entry row. */
 function planCard(i: number): HTMLElement {
   return planElement([{ content: `step ${String(i)}`, priority: "medium", status: "pending" }]);
 }
 
-/** A one-line steer note, from its real builder: the OTHER fixture whose contents
- *  matter, because `.steer-note` declares no reserve either and the estimate is a
- *  measured height. One line and no clause on the label — `read`, user origin, no
- *  reason, no resend, unacknowledged — which is the shape the table's comment prices
- *  ("a one-line note, head + one text line + padding") and the least the note can be. */
+/**
+ * A one-line steer note from its real builder, the least it can be (`read`, user origin,
+ * no clause): the shape the table prices.
+ */
 function steerNote(i: number): HTMLElement {
   return buildSteerNote({
     text: `keep going ${String(i)}`,
@@ -239,9 +165,7 @@ function steerNote(i: number): HTMLElement {
   });
 }
 
-/** A SEALED reasoning trace, from its real builder: the one fixture whose contents
- *  matter, because there is no reserve here and the value is the element's real
- *  collapsed height. */
+/** A SEALED reasoning trace from its real builder; no reserve, so its contents matter. */
 function sealedTrace(): HTMLElement {
   const r = buildReasoning("a few sentences of a settled trace", false, false);
   r.settle();
@@ -258,10 +182,10 @@ async function frame(): Promise<void> {
   });
 }
 
-/** Jump every finite entry animation to its end. An INFINITE one is skipped, because
- *  `Animation.finish()` throws on one; none of the fixtures here carries a spinner,
- *  but the guard costs nothing and a fixture that grew one would otherwise take the
- *  reading down rather than fail an assertion. */
+/**
+ * Jump every finite entry animation to its end; an infinite one is skipped because
+ * `Animation.finish()` throws on it.
+ */
 function finishAnimations(root: Element): void {
   for (const anim of root.getAnimations({ subtree: true })) {
     if (Number.isFinite(anim.effect?.getComputedTiming().endTime ?? Infinity)) {
@@ -338,28 +262,22 @@ interface Totals {
   readonly bodyTerms: { readonly contentVisibility: string; readonly blockSize: string };
 }
 
-/** How far an inflated estimate has to move the total before the readings above can be
- *  believed. Most of the list is off the scrollport, so the real shift is tens of
- *  thousands of px; this is a floor, not an expectation. */
+/**
+ * How far an inflated estimate must move the total before the readings can be believed; a
+ * floor, not an expectation.
+ */
 const PREMISE_FLOOR = INSTANCES * 10;
 
 /** The estimate the premise probe substitutes. Far from every real box height here, so
  *  the shift it produces cannot be a rounding difference. */
 const PROBE_PX = 400;
 
-/** The CONTAINER TOTAL over one list, read three times: on the estimate, on a
- *  deliberately wrong one, and with the skip forced off.
- *
- *  THE ONLY INSTRUMENT THAT CAN SEE WHAT A STAGE CARD CONTRIBUTES, which is why the
- *  pipeline case does not use `read` above. Neither per-element reading can: a SKIPPED
- *  container's own rect is its reserve whatever it holds, and a rect taken on the stage
- *  card INSIDE the collapsed body reports that card's REAL box — measured at 71px for a
- *  card contributing 0 — because Chromium answers with the real box for an element
- *  inside a skipped or hidden subtree. Only the container the boxes sit in can tell a
- *  stage that costs nothing from one that costs a card.
- *
- *  The probe reading is taken BEFORE the force-render, because a box that has rendered
- *  once remembers its real size and stops consulting the fallback. */
+/**
+ * The CONTAINER TOTAL over one list, read three times: on the estimate, on a wrong one,
+ * and with the skip forced off. The only instrument that sees a stage card's contribution:
+ * a skipped container's rect is its reserve, and an inner card's rect is its real box.
+ * The probe reading comes before the force-render, after which a box remembers its size.
+ */
 async function readTotals(build: (i: number) => HTMLElement): Promise<Totals> {
   const wrap = document.createElement("div");
   wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
@@ -403,10 +321,8 @@ async function readTotals(build: (i: number) => HTMLElement): Promise<Totals> {
   })();
 
   return {
-    // `.turn-body` puts one gap BETWEEN instances, so N boxes carry N-1 of them, and
-    // its own block PADDING is in `scrollHeight` while no box's height includes it —
-    // so it comes out for the same reason the gaps do. Read off the container rather
-    // than stated: it is `--sp-3` today and the arithmetic must not pin that.
+    // `.turn-body` puts N-1 gaps between N boxes and its own padding is in `scrollHeight`,
+    // both read off the container rather than stated.
     perBox: (rendered - (INSTANCES - 1) * ROW_GAP_PX - pad) / INSTANCES,
     drift: skipped - rendered,
     bodyTerms: {
@@ -456,9 +372,7 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
     async () => {
       await enter();
       const r = await read(emptyRow);
-      // The one entry with NO premise to state: `display: none` generates no box at
-      // all, so nothing is being skipped and `checkVisibility` answers false for the
-      // first instance as well as the last. The rule itself is the assertion.
+      // `display: none` generates no box, so there is no premise: the rule is the assertion.
       expect(getComputedStyle(host.querySelector(".msg-row.is-empty")!).display).toBe("none");
       expect({ box: r.box, realBox: r.realBox }).toEqual({ box: 0, realBox: 0 });
       expect(est().emptyText).toBe(0);
@@ -497,10 +411,8 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
     "prices `planCard` at .plan-message's reserve plus its padding and border",
     async () => {
       await enter();
-      // The one reserve here whose declared value states the CONTENT height alone, so
-      // the box model adds the block padding on top — which is what the rule's own
-      // comment records having got wrong once (90px claimed against a real 70). The
-      // entry is tier-INVARIANT, and running it at both tiers is what says so.
+      // This reserve states the CONTENT height alone, so padding adds on top. Tier-invariant,
+      // which running both tiers proves.
       expectShadows(await read(planCard), est().planCard, "planCard");
     },
     LOADED_BUDGET_MS,
@@ -510,13 +422,8 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
     "prices a whole PIPELINE at `subagentCard`, whatever its stage count",
     async () => {
       await enter();
-      // The entry `block-heights.ts` charges at a pipeline's DRIVER block, where the
-      // container stands. What makes ONE card the price of a whole pipeline is that a
-      // stage card inside the collapsed body contributes nothing to the box around it —
-      // `.subagent-block.collapsed > .subagent-body` is `content-visibility: hidden` at
-      // the disclosure controller's inline height 0 — so the box does not grow with the
-      // count. Read at ONE stage and at THREE: two extra cards would show up as roughly
-      // +158px per box.
+      // A stage card inside the collapsed body (`content-visibility: hidden` at height 0) adds
+      // nothing, so one card prices the whole pipeline: read at ONE stage and at THREE.
       const one = await readTotals(pipelineBox(1));
       const three = await readTotals(pipelineBox(3));
       expect(
@@ -544,10 +451,8 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
     async () => {
       await enter();
       const r = await read(sealedTrace);
-      // The premise here is the OPPOSITE one, and it is what makes a real per-element
-      // rect legitimate: `.reasoning-block` declares no `content-visibility`, so
-      // nothing is skipped, there is no reserve to shadow, and both instances report
-      // their real box. A rule that ever gave this element `auto` would fail here.
+      // The opposite premise: `.reasoning-block` declares no `content-visibility`, so its real
+      // rect is legitimate.
       expect(
         {
           contentVisibility: r.terms.contentVisibility,
@@ -556,15 +461,9 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
         },
         "a sealed trace is never skipped, so its price is a measured height",
       ).toEqual({ contentVisibility: "visible", reserve: "none", bothReal: true });
-      // The one entry this file cannot pin to the byte, because it is a MEASUREMENT
-      // rather than a function of the CSS. The row resolves to `max(--hit-floor, its
-      // line box + padding)`, and on the fine tier those two sit under a pixel apart —
-      // 12px italic at 1.4 plus 8px of padding against a 24px floor — so which term
-      // wins depends on the machine's font stack, and the same stylesheet measures
-      // 25px in this container and 24px on a CI runner. FONT_SLACK_PX is that
-      // disagreement and nothing wider: red-checked at a 2px shift of the entry (this
-      // case alone red, both tiers), at a raised summary floor and at the hit floor
-      // dropped from `summary` altogether.
+      // The one entry not pinned to the byte: on the fine tier `max(--hit-floor, line box +
+      // padding)` has its terms under a pixel apart, so the font stack decides; FONT_SLACK_PX is
+      // that disagreement and no wider.
       expect(
         Math.abs(r.box - est().thinking),
         `thinking: the collapsed summary row measured ${String(r.box)}px against an estimate of ${String(est().thinking)}px`,
@@ -578,11 +477,7 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
     async () => {
       await enter();
       const r = await read(steerNote);
-      // `thinking`'s premise, and the same reason it is the legitimate one: `.steer-note`
-      // declares no `content-visibility`, so nothing is skipped, there is no reserve to
-      // shadow, and both instances report their real box. A rule that ever gave the note
-      // `auto` would fail here rather than silently making the estimate a shadow of a
-      // number nobody wrote.
+      // `thinking`'s premise: `.steer-note` declares no `content-visibility`, so nothing is skipped.
       expect(
         {
           contentVisibility: r.terms.contentVisibility,
@@ -591,12 +486,8 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
         },
         "a steer note is never skipped, so its price is a measured height",
       ).toEqual({ contentVisibility: "visible", reserve: "none", bothReal: true });
-      // TIER-DEPENDENT, and the table says which term moves: the head's floor is
-      // `--btn-h` (36 -> 44) while the text line and the body's padding do not tier. So
-      // the two tiers differ by exactly the floor's own step, and running the case at
-      // both is what holds that — a single-tier case would pass against one number
-      // whatever the other did. `FONT_SLACK_PX` for `thinking`'s reason: one of the
-      // terms is a rendered line box, so the machine's font stack owns its last pixel.
+      // Tier-dependent: the head's floor is `--btn-h` (36 -> 44) and nothing else tiers, so the
+      // tiers differ by that step. FONT_SLACK_PX for `thinking`'s reason.
       expect(
         Math.abs(r.box - est().steerNote),
         `steerNote: a one-line note measured ${String(r.box)}px against an estimate of ${String(est().steerNote)}px`,
@@ -609,10 +500,8 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
     "puts ROW_GAP_PX on the gapped level and none on the spacer's own parent",
     async () => {
       await enter();
-      // `spacerHeight` adds ROW_GAP_PX once MORE than the boxes it replaces carried,
-      // on the premise that a spacer sits under `.turn`, which supplies no gap of its
-      // own. Both halves are assertions about the stylesheet, so both are read off a
-      // mounted instance — `--sp-3` reads back as a token rather than a length.
+      // `spacerHeight` adds one more ROW_GAP_PX on the premise that `.turn` supplies no gap;
+      // both halves are read off a mounted instance.
       const turn = document.createElement("div");
       turn.className = "turn";
       const body = document.createElement("div");
@@ -642,11 +531,8 @@ describe("the fine-pointer tier", () => {
 });
 
 describe("the coarse-pointer tier, measured at a real viewport size", () => {
-  // The block sits LAST in the file and restores the size it found, because
-  // `page.viewport` has no getter and a hand-copied pair would silently leave every
-  // later file measuring at the wrong size. 768px is the widest viewport that also
-  // engages `01-tokens.css`'s width-keyed no-JS fallback, so the attribute and the
-  // fallback agree here rather than one masking the other.
+  // Last in the file and restoring the size it found (`page.viewport` has no getter). 768px
+  // also engages `01-tokens.css`'s width-keyed fallback, so attribute and fallback agree.
   let entry: { readonly width: number; readonly height: number } | null = null;
 
   beforeAll(() => {

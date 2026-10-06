@@ -1,31 +1,8 @@
-// ---------------------------------------------------------------------------
-// A tool card's file-name chip TRUNCATES WITH AN ELLIPSIS instead of cutting a
-// glyph in half.
-//
-// Reported by eye and invisible in source, because the chip's clip-and-ellipsis
-// set was all present — just on the wrong element. `.tool-file-link` is
-// `display: inline-flex`, so its two children are flex items and the button holds
-// no inline content of its own for `text-overflow` to act on: that declaration
-// could never fire. The span that holds the name had no rule at all, and as a flex
-// item at the default `min-width: auto` its automatic minimum size is the whole
-// filename, so a long name overflowed the 12.5rem cap and the button's
-// `overflow: hidden` cut it mid-character.
-//
-// CHROMIUM EXPOSES NO API FOR "AN ELLIPSIS GLYPH IS PAINTED." What it does expose
-// is every condition that makes one appear, so the cases below assert those on the
-// element that must carry them: `text-overflow: ellipsis`, an `overflow` other
-// than `visible`, a `white-space` that takes no wrap opportunity, and content
-// overflowing that element's OWN content box. Together those are equivalent to the
-// glyph, and the fourth is the one a source-only check could not see — it is what
-// separates "the rule is declared" from "the rule is doing something".
-//
-// EVERY FIXTURE IS BUILT BY THE PRODUCTION BUILDER, for tool-group-height.test.ts's
-// reason: the chip's DOM (button > icon span + name span) IS the subject here, so a
-// hand-rolled two-span fixture would be asserting against a copy of the thing under
-// test. The control case is what makes case 2 mean anything — without a short name
-// proving the same span does NOT overflow, an assertion that it overflows says
-// nothing about WHY.
-// ---------------------------------------------------------------------------
+// A tool card's file-name chip TRUNCATES WITH AN ELLIPSIS instead of cutting a glyph. Chromium
+// exposes no "ellipsis painted" API, so the cases assert every condition for one on the element
+// that must carry them: `text-overflow: ellipsis`, non-visible `overflow`, no-wrap `white-space`,
+// and content overflowing its OWN content box. Fixtures come from the production builder (the
+// chip's DOM is the subject); the short-name control gives the overflow case its meaning.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -120,13 +97,9 @@ describe(
   { timeout: CHIP_TIMEOUT_MS },
   () => {
     it("keeps a long file name INSIDE the chip instead of overflowing it", async () => {
-      // Cause B, the mechanism of the reported hard clip: the span is a flex item at
-      // the default `min-width: auto`, so its automatic minimum size is the whole
-      // filename and it refuses to shrink below the button's cap. Absolute x
-      // positions from ONE layout pass, because `getBoundingClientRect` reports the
-      // LAYOUT box — an ancestor's `overflow: hidden` does not hide the overflow from
-      // it. Pre-fix the overflow measures in the tens of pixels, so the 1px sub-pixel
-      // tolerance cannot mask it.
+      // Cause B: a flex item at `min-width: auto` refuses to shrink below its filename. Absolute x
+      // positions from ONE layout pass; `getBoundingClientRect` reports the LAYOUT box regardless of an
+      // ancestor's clip.
       const { chip, name } = await mount(LONG_PATH);
       expect(
         name.getBoundingClientRect().right,
@@ -135,10 +108,8 @@ describe(
     });
 
     it("truncates with an ellipsis, on the element that HOLDS the text", async () => {
-      // Cause A: the ellipsis was declared on the inline-flex button, which has no
-      // inline content of its own, so it could never fire. All four conditions on the
-      // span, plus the proof that it is really clipping — a rule that is declared and
-      // has nothing to truncate would satisfy the first three alone.
+      // Cause A: an ellipsis on the inline-flex button has no inline content to act on. All four
+      // conditions on the span, plus proof it is really clipping.
       const { name } = await mount(LONG_PATH);
       const s = getComputedStyle(name);
       expect(s.textOverflow, "the span that holds the name must carry the ellipsis").toBe(

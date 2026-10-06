@@ -24,9 +24,7 @@ func reconciledOf(t *testing.T, entries []marotte.Entry) []marotte.EntryReconcil
 	return out
 }
 
-// The TURN form clears the signal of the turn it NAMES, and only that one: the record
-// is the merge saying it looked at this turn and had nothing to add, so a record filed
-// anywhere else would stop a signal about a turn nobody read.
+// The turn form clears only the named turn's signal.
 func TestAppendReconciled_TurnFormClearsTheSignalOfTheTurnItNames(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
@@ -76,10 +74,7 @@ func TestAppendReconciled_TurnFormClearsTheSignalOfTheTurnItNames(t *testing.T) 
 	}
 }
 
-// The SESSION form is condition (i)'s clearer, and on an EMPTY log behind a session it
-// has no turn to live in: it mints one and CLOSES it in the same operation. The close
-// is the whole point — an open carrier is synthesized `unterminated` at the next open,
-// which is condition (ii), so the write that clears (i) would raise the signal again.
+// On an empty log the session form mints a carrier and closes it at once: an open carrier would raise condition (ii).
 func TestAppendReconciled_SessionFormMintsAndClosesItsOwnCarrier(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
@@ -122,8 +117,7 @@ func TestAppendReconciled_SessionFormMintsAndClosesItsOwnCarrier(t *testing.T) {
 	}
 }
 
-// With a turn to live in, the session form takes the newest SURVIVING one and mints
-// nothing: a carrier per adoption would leave one bodyless turn per resume.
+// With a surviving turn the session form joins it and mints nothing.
 func TestAppendReconciled_SessionFormJoinsTheNewestSurvivingTurn(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
@@ -150,13 +144,9 @@ func TestAppendReconciled_SessionFormJoinsTheNewestSurvivingTurn(t *testing.T) {
 	}
 }
 
-// Condition (i) is a read of the BIND SET, and the arm is generated in the order
-// production produces it: `openPromptTurn` appends the log's first line
-// (internal/command/prompt.go) BEFORE `OpenBridge` drives the session/load and the merge,
-// so the predicate is always asked about a log that already exists and already holds a
-// turn. A file-existence condition — what the design's earlier rounds specified — clears
-// on exactly that first append, so it answers false for every resumed session and that
-// chat's whole history is never merged, silently, for the life of its log.
+// Condition (i) reads the bind set. openPromptTurn appends the first line (internal/command/prompt.go) before
+// OpenBridge loads and merges, so a file-existence condition would clear on that append and no resumed history would
+// ever merge.
 func TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
@@ -175,9 +165,7 @@ func TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile(t *testing.
 			"this log names, with the prompt's own turn already on disk")
 	}
 
-	// turn_bind is what adopts the session, and it lands AFTER the prompt is dispatched:
-	// internal/translate/user_message_id.go writes it when KAS answers with the id it
-	// stored the prompt under. That is the fact condition (i) reads.
+	// turn_bind lands after dispatch, when KAS answers with the stored prompt id (internal/translate/user_message_id.go).
 	f.append(turn, "", turn+":bind", marotte.EntryKindTurnBind,
 		marotte.EntryTurnBind{KASMessageID: "kas-1", SessionID: "sess-1"})
 	if f.log.NeedsReconcile() {
@@ -189,8 +177,7 @@ func TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile(t *testing.
 	}
 }
 
-// The ORDINARY chat is the other half of the same read: its own prompt's bind names the
-// session, so a log full of turns answers false and no resume rewrites it.
+// An ordinary chat's own bind names its session, so it answers false.
 func TestNeedsReconcile_AChatWhoseOwnBindNamesItsSessionIsQuiet(t *testing.T) {
 	f := newLogFixture(t)
 	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
@@ -210,13 +197,8 @@ func TestNeedsReconcile_AChatWhoseOwnBindNamesItsSessionIsQuiet(t *testing.T) {
 	}
 }
 
-// A rewind loses nothing, so it raises no reconcile signal — for j > 1, where the record
-// files into a survivor, and for j = 1, where the log mints a carrier because no turn
-// survives. The CLOSE of that carrier is the load-bearing half: an
-// open turn is synthesized `turn_close{unterminated}` at the next open, which IS condition
-// (ii), so a rewind that lost nothing would raise the signal one restart later and every
-// later resume of that chat would rewrite its whole file. j = 1 is the arm that can see
-// it, because it is the only one that mints a carrier at all.
+// A rewind raises no reconcile signal, for j > 1 (record in a survivor) and j = 1 (a minted carrier). The carrier's
+// close matters: an open one is synthesized unterminated at the next open, and every resume would rewrite the file.
 func TestNeedsReconcile_ARewindRaisesNoSignal(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -245,8 +227,7 @@ func TestNeedsReconcile_ARewindRaisesNoSignal(t *testing.T) {
 				t.Errorf("targets = (%q, %q) after the rewind, want none", turns, session)
 			}
 
-			// The next process, which is where an unclosed carrier costs: the store-open
-			// closer runs over whatever the rewind left behind.
+			// The next process, where an unclosed carrier would cost.
 			f.reopen()
 			if turns, _ := f.log.ReconcileTargets(); len(turns) != 0 {
 				t.Errorf("the next open synthesized a closer for %q, so the rewind left a "+
@@ -256,9 +237,7 @@ func TestNeedsReconcile_ARewindRaisesNoSignal(t *testing.T) {
 	}
 }
 
-// Exactly one field, refused at the door: a record naming both clears two signals from
-// one read of one thing, and a record naming neither clears none while still appending
-// an entry every later scan has to classify.
+// Exactly one field: both clears two signals from one read, neither clears nothing and still appends.
 func TestAppendReconciled_RefusesUnlessExactlyOneFieldIsSet(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("one")

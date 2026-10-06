@@ -30,33 +30,46 @@ const (
 // --- /api/file (GET read) + /api/file/download ---
 
 func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string) {
-	// atomicfile.ReadBoundedInRoot owns the confined bounded read: it opens
-	// through the root, stats the OPEN HANDLE, requires a regular file, and
-	// opens non-blocking so a FIFO under a granted root cannot wedge the
-	// handler.
+	// ReadBoundedInRoot stats the OPEN handle, requires a regular file, and opens non-blocking so a
+	// FIFO cannot wedge the handler.
 	data, err := atomicfile.ReadBoundedInRoot(ctx, l.m.root, l.rel(), MaxFileSize)
 	if err != nil {
-		readFileError(w, l, err)
+		readFileError(w, l.abs, err)
 		return
 	}
+	writeRead(w, data, reqPath, false)
+}
+
+// readToolOutput serves a KAS tool output from the descriptor openToolOutput
+// pinned, marked read-only.
+func readToolOutput(ctx context.Context, w http.ResponseWriter, out toolOutput, reqPath string) {
+	data, err := atomicfile.ReadBoundedFile(ctx, out.f, MaxFileSize)
+	if err != nil {
+		readFileError(w, out.abs, err)
+		return
+	}
+	writeRead(w, data, reqPath, true)
+}
+
+// writeRead answers a read; readOnly marks a file the editor must not offer to
+// edit (a KAS tool output).
+func writeRead(w http.ResponseWriter, data []byte, reqPath string, readOnly bool) {
 	if looksBinary(data) {
 		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
 			httpreply.ErrorJSON("binary file"))
 		return
 	}
-	// content_hash is the client's handle on "the bytes I loaded"; it comes
-	// back on save as expected_hash, turning a blind overwrite into a
-	// detected conflict.
-	//
-	// A DIGEST rather than the mtime, deliberately: Linux stamps inode
-	// timestamps from a coarse clock, so two writes inside one tick are
-	// byte-identical in mtime and an mtime-based guard would miss exactly
-	// the rapid agent write it exists to catch.
-	webhttp.WriteJSON(w, map[string]string{
+	// content_hash comes back on save as expected_hash, turning a blind overwrite into a detected
+	// conflict. A digest, not the mtime: two writes inside one coarse clock tick share an mtime.
+	resp := map[string]any{
 		"content":      string(data),
 		"content_hash": contentHash(data),
 		respPath:       reqPath,
-	})
+	}
+	if readOnly {
+		resp["read_only"] = true
+	}
+	webhttp.WriteJSON(w, resp)
 }
 
 // contentHash is the stale-write guard's comparison key: a hex SHA-256 of
@@ -88,66 +101,61 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing path")
 		return
 	}
+	if out, granted, err := h.openToolOutput(reqPath); granted {
+		if err != nil {
+			readFileError(w, out.abs, err)
+			return
+		}
+		defer out.f.Close()
+		serveDownload(w, r, out.f, out.info, out.abs)
+		return
+	}
 	l, ok := h.resolveOrForbid(w, reqPath)
 	if !ok {
 		return
 	}
-	// Open through the mount's os.Root rather than http.ServeFile, which
-	// re-opens by path and follows symlinks at serve time — reintroducing
-	// the check-to-serve TOCTOU resolvePath's EvalSymlinks otherwise closes.
-	f, err := l.m.root.Open(l.rel())
+	// Through the mount's os.Root, not http.ServeFile, which re-opens by path and follows symlinks
+	// at serve time.
+	f, info, err := atomicfile.OpenRegularInRoot(l.m.root, l.rel())
 	if err != nil {
-		if os.IsNotExist(err) {
+		var nr *atomicfile.NotRegularError
+		switch {
+		case os.IsNotExist(err):
 			httpreply.NotFound(w, "not found")
-			return
+		case errors.As(err, &nr) && nr.Mode.IsDir():
+			httpreply.BadRequest(w, "cannot download directory")
+		case errors.Is(err, atomicfile.ErrNotRegular):
+			httpreply.BadRequest(w, "not a regular file")
+		default:
+			slog.Warn("filebrowse: download open failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
+			webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+				httpreply.ErrorJSON(errReadFailed))
 		}
-		slog.Warn("filebrowse: download open failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		slog.Warn("filebrowse: download stat failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpreply.ErrorJSON(errReadFailed))
-		return
-	}
-	if info.IsDir() {
-		httpreply.BadRequest(w, "cannot download directory")
-		return
-	}
-	name := filepath.Base(l.abs)
+	serveDownload(w, r, f, info, l.abs)
+}
+
+// serveDownload streams an already-open, confined regular file as an attachment.
+func serveDownload(w http.ResponseWriter, r *http.Request, f *os.File, info fs.FileInfo, abs string) {
+	name := filepath.Base(abs)
 	ct := cmp.Or(mime.TypeByExtension(filepath.Ext(name)), "application/octet-stream")
 	w.Header().Set("Content-Type", ct)
-	// `attachment` is a SECURITY CONTROL here, not a UX preference: an SVG
-	// served inline (mime.TypeByExtension(".svg") is "image/svg+xml") would
-	// execute script if navigated to as a document, and CSP does not close
-	// this — `frame-src` falls back to `default-src 'self'`, which permits
-	// a same-origin frame. Do not relax to `inline` for images: that turns
-	// the existing download anchor into stored XSS.
-	// TestHandleDownload_SVGIsAttachment pins it.
+	// `attachment` is a SECURITY CONTROL: an SVG served inline would run script as a document, and
+	// CSP's frame-src falls back to `default-src 'self'`. Inline would make the download anchor
+	// stored XSS (TestHandleDownload_SVGIsAttachment).
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
-	// Revalidate on every impression: a validator with no explicit lifetime
-	// gets heuristic caching whose window scales with the document's age,
-	// which bites the agent's screenshot loop where a re-shot frame keeps
-	// its filename (see utils-url.ts rewriteWorkspaceImageSrc). `no-cache`
-	// requires revalidation rather than forbidding caching.
+	// Revalidate every impression: a validator with no explicit lifetime gets heuristic caching,
+	// which serves a re-shot screenshot under the same filename stale.
 	w.Header().Set("Cache-Control", "no-cache")
-	// A strong validator: Last-Modified's HTTP-date truncates to ONE SECOND,
-	// so two writes within a second answer 304 with stale bytes (see
-	// content_hash above for the same mtime-resolution problem). Size plus
-	// mtime-in-nanoseconds shrinks that window to one clock tick at zero I/O
-	// cost. The QUOTING is load-bearing — an unquoted value is not a valid
-	// strong validator and ServeContent falls back to the mtime. Not a
-	// content hash: this handler streams from an open fd and supports
-	// Range, so hashing means a second full read per impression.
+	// A strong validator: Last-Modified truncates to a second, so size plus mtime in nanoseconds
+	// narrows the window to one clock tick at no I/O cost. The quoting is load-bearing: unquoted,
+	// ServeContent falls back to the mtime.
 	w.Header().Set("ETag", strconv.Quote(fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())))
-	// Debug (not Info): the resolved path can name a workspace file and
-	// this line ships to Loki. http.ServeContent serves from the already-
-	// open, confined fd (handles Range requests + conditional headers too).
-	slog.Debug("filebrowse: download", "path", logsafe.Field(l.abs), "size", info.Size())
+	// Debug: the resolved path can name a workspace file. ServeContent serves the confined fd,
+	// Range and conditionals included.
+	slog.Debug("filebrowse: download", "path", logsafe.Field(abs), "size", info.Size())
 	// Deliberately UNCAPPED: a size guard here runs before ServeContent reads
 	// the Range header, so it answered 413 to the cheapest request there is.
 	http.ServeContent(w, r, name, info.ModTime(), f)
@@ -157,7 +165,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 // client needs. atomicfile's sentinels distinguish the cases without
 // inspecting error text; a cancelled request is silent since the client
 // is gone.
-func readFileError(w http.ResponseWriter, l loc, err error) {
+func readFileError(w http.ResponseWriter, abs string, err error) {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return
@@ -168,7 +176,7 @@ func readFileError(w http.ResponseWriter, l loc, err error) {
 	case errors.Is(err, atomicfile.ErrFileTooLarge):
 		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON(errFileTooLarge))
 	default:
-		slog.Warn("filebrowse: read failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
+		slog.Warn("filebrowse: read failed", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(errReadFailed))
 	}
 }

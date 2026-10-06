@@ -4,10 +4,8 @@ package mcp
 // secret-preserving merge.
 
 import (
-	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -136,65 +134,7 @@ func TestConfiguredNames_IncludesDisabled(t *testing.T) {
 	}
 }
 
-// TestAllNames_IncludesThePowersBlock is the origin lookup: a Power's server is
-// named only in the `powers.mcpServers` block of the file marotte renders but
-// never writes, and reading it is what separates OriginPower from
-// OriginUnknown.
-func TestAllNames_IncludesThePowersBlock(t *testing.T) {
-	tmp := t.TempDir()
-	kasPath := filepath.Join(tmp, "kas-mcp.json")
-	seed := `{"mcpServers":{},"powers":{"mcpServers":{"from-a-power":{"command":"x"}}}}`
-	if err := os.WriteFile(kasPath, []byte(seed), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s, err := New(t.Context(), tmp, nil, WithKASConfigPath(kasPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := t.Context()
-	_, _ = s.Create(ctx, &Server{Name: "mine", Transport: TransportStdio, Command: "a", Enabled: true})
-
-	all := s.AllNames(ctx)
-	if _, ok := all["from-a-power"]; !ok {
-		t.Errorf("the powers block's server is missing from AllNames: %+v", all)
-	}
-	if _, ok := all["mine"]; !ok {
-		t.Errorf("marotte's own server is missing from AllNames: %+v", all)
-	}
-	if _, ok := s.ConfiguredNames(ctx)["from-a-power"]; ok {
-		t.Error("a Power's server must NOT appear in ConfiguredNames; the runtime would read it as marotte's own")
-	}
-}
-
-// TestAllNames_UnparseableFileDegradesToConfigured: a file a hand-edit made
-// unreadable must leave the server unattributable (OriginUnknown), never drop it
-// and never fail. Only the log records the problem.
-func TestAllNames_UnparseableFileDegradesToConfigured(t *testing.T) {
-	tmp := t.TempDir()
-	kasPath := filepath.Join(tmp, "kas-mcp.json")
-	s, err := New(t.Context(), tmp, nil, WithKASConfigPath(kasPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := t.Context()
-	_, _ = s.Create(ctx, &Server{Name: "mine", Transport: TransportStdio, Command: "a", Enabled: true})
-	// Written AFTER Create so the store's own render does not overwrite it.
-	if err := os.WriteFile(kasPath, []byte(`{"powers": {"mcpServers": [not json`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	buf := captureSlog(t)
-	all := s.AllNames(ctx)
-	if _, ok := all["mine"]; !ok || len(all) != 1 {
-		t.Errorf("AllNames = %+v, want just the configured server", all)
-	}
-	if !strings.Contains(buf.String(), "unparseable") {
-		t.Errorf("no warning logged for the unreadable file: %s", buf.String())
-	}
-}
-
-// F6 (partial, no rapid dep): mergeSecrets round-trip + idempotency as
-// table tests. Property-based variant deferred to TODO (needs pgregory.net/rapid).
+// mergeSecrets round-trip + idempotency as table tests.
 func TestMergeSecrets_IdempotentAndNoMutation(t *testing.T) {
 	existing := []KeyPair{
 		{Name: "TOKEN", Value: "secret"},

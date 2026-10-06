@@ -49,9 +49,8 @@ func TestLoadPreferences_HonoursTheMasterSwitch(t *testing.T) {
 	}
 }
 
-// TestLoadPreferences_OnlyAnExplicitFalseRefuses is the polarity half, and it is
-// what stops the fix above silencing every workspace that has never opened
-// Settings. This key's default is OFF ("the reader has not opted in") while each
+// TestLoadPreferences_OnlyAnExplicitFalseRefuses is the polarity half: it stops
+// the master switch silencing every workspace that has never opened Settings. This key's default is OFF ("the reader has not opted in") while each
 // kind carries its own declared default, so an absent master is not a decision —
 // and a value that will not parse is not a request for silence either.
 func TestLoadPreferences_OnlyAnExplicitFalseRefuses(t *testing.T) {

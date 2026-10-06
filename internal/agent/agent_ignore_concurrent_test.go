@@ -1,14 +1,7 @@
 package agent
 
-// A settings write that lands while a bridge is mid-spawn reaches that bridge, and
-// the only channel it can reach it by is the spawn's OWN send.
-//
-// StartOpts.IgnoreFiles is a RESOLVER rather than a slice for exactly this window.
-// The eager shape read the list where the StartOpts literal is written, before
-// `initialize`, so a concurrent save was overwritten by the pre-save list for the
-// connection's whole life: the push cannot help, because a bridge that has not
-// finished `initialize` refuses the write (bridge.ErrBridgeNotStarted), and nothing
-// re-sends the list afterwards.
+// A settings save landing mid-spawn reaches that bridge only through the spawn's own
+// send: the push is refused before `initialize`, which is why StartOpts.IgnoreFiles is a resolver.
 
 import (
 	"context"
@@ -24,24 +17,16 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// errProbeNotStarted mirrors bridge.ErrBridgeNotStarted, the refusal a write takes
-// before `initialize` has run. Modelling it is what makes the test tell the whole
-// mechanism rather than only its remedy: without it the push looks like a second
-// channel that could have carried the new list.
+// errProbeNotStarted mirrors bridge.ErrBridgeNotStarted, the refusal a write takes before `initialize`.
 var errProbeNotStarted = errors.New("bridge not started")
 
-// ignoreProbeBridge parks inside Start where the real bridge sits during
-// `initialize`, then resolves StartOpts.IgnoreFiles at the point
-// bridge_process.go's applyIgnoreFiles would. It embeds the shared fake so it
-// satisfies ACPBridge without restating it, and overrides the two methods whose
-// timing is the subject.
+// ignoreProbeBridge parks inside Start, then resolves StartOpts.IgnoreFiles where applyIgnoreFiles would.
 type ignoreProbeBridge struct {
 	*fakeBridge
-	// arrival fires once Start has been handed its StartOpts, so the test knows the
-	// literal has been evaluated without polling for it.
+	// arrival fires once Start has its StartOpts.
 	arrival chan struct{}
 	once    sync.Once
-	// release holds the spawn open; closing it is the moment `initialize` returns.
+	// release holds the spawn open; closing it is `initialize` returning.
 	release chan struct{}
 
 	mu       sync.Mutex
@@ -69,8 +54,7 @@ func (b *ignoreProbeBridge) Start(ctx context.Context, opts *marotte.StartOpts) 
 	first := !b.started
 	b.started = true
 	b.mu.Unlock()
-	// Only the FIRST spawn is recorded: one factory serves every bridge in this
-	// runtime, so a later spawn would overwrite the answer under test.
+	// Only the first spawn is recorded: one factory serves every bridge here.
 	if first && opts.IgnoreFiles != nil {
 		files := opts.IgnoreFiles(ctx)
 		b.mu.Lock()
@@ -102,8 +86,7 @@ func (b *ignoreProbeBridge) refusedNotifies() int {
 	return b.refused
 }
 
-// writeIgnoreFiles rewrites the whole settings document, which is what the PATCH
-// handler's own save does.
+// writeIgnoreFiles rewrites the whole settings document, as the PATCH handler's save does.
 func writeIgnoreFiles(t *testing.T, dir string, entries []string) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{settings.KeyAgentIgnoreFiles: entries})
@@ -115,13 +98,8 @@ func writeIgnoreFiles(t *testing.T, dir string, entries []string) {
 	}
 }
 
-// A save landing between the StartOpts literal and `initialize` reaches the
-// spawning bridge, because the list is resolved at SEND time.
-//
-// The refusal count is asserted alongside, because it is the half that makes the
-// resolver necessary: PushAgentIgnoreFiles does reach into the bridge map (the
-// record is inserted before Start, so concurrent opens coalesce) and its write is
-// refused, so the spawn's own send is the only channel left.
+// TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge pins send-time resolution;
+// the refusal count proves the push could not have carried the new list.
 func TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge(t *testing.T) {
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{"pre.ignore"})
@@ -130,11 +108,9 @@ func TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge(t *testing.T) {
 	cs := newTestChatStore()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return probe }, cs, WithConfigDir(dir))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 
 	released := sync.OnceFunc(func() { close(probe.release) })
-	// Released on every exit path: a parked spawn would otherwise hold Shutdown's
-	// inflight wait for its whole budget, turning one failed assertion into a hang.
+	// Released on every exit path, or a parked spawn turns a failed assertion into a hang.
 	t.Cleanup(func() { released(); shutdownHub(t, h) })
 
 	ctx := t.Context()

@@ -44,9 +44,8 @@ func feedLaneChunk(t *testing.T, tr *Translator, chatID marotte.ChatID, lane, te
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, body), false, FrameAttribution{})
 }
 
-// The agent's own statement about a steer reaches the record instead of being
-// discarded with the marker: a steer_ack entry naming the steer, carrying the
-// sentence and nothing of the reader's words, announced as entry_appended.
+// TestHandleAssistantChunk_RecordsTheAgentsAcknowledgement pins a steer_ack entry naming the
+// steer with the agent's sentence, announced as entry_appended.
 func TestHandleAssistantChunk_RecordsTheAgentsAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -70,11 +69,8 @@ func TestHandleAssistantChunk_RecordsTheAgentsAcknowledgement(t *testing.T) {
 	}
 }
 
-// The marker closing a response usually arrives as its OWN delta, and that delta
-// emits no text — so the handler returns early. This is the case an append placed
-// after that return would silently never serve. The ack seals the text it
-// followed, so the record reads text then steer_ack, and the marker itself
-// reaches neither.
+// TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta pins the ack when the
+// marker arrives as its own text-less delta (an append after the early return would miss it).
 func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -99,9 +95,8 @@ func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing
 	}
 }
 
-// Split across chunk boundaries the ack lands exactly once, on the delta that
-// closes the marker, and the prose on either side of it stays prose: the text
-// before it is sealed by the ack, the text after it opens a new entry.
+// TestHandleAssistantChunk_AcknowledgementLandsOnceWhenSplit pins one ack across chunk
+// boundaries, the prose either side staying prose.
 func TestHandleAssistantChunk_AcknowledgementLandsOnceWhenSplit(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -132,9 +127,8 @@ func TestHandleAssistantChunk_AcknowledgementLandsOnceWhenSplit(t *testing.T) {
 	}
 }
 
-// A delegate's chunk keeps its lane, so the ack sits in the delegate's own stream
-// and the entry_appended frame names that lane: the client positions it inside
-// the reply it interrupted, not the agent's.
+// TestHandleAssistantChunk_AcknowledgementKeepsTheDelegatesLane pins the ack in the
+// delegate's lane.
 func TestHandleAssistantChunk_AcknowledgementKeepsTheDelegatesLane(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -168,9 +162,8 @@ func TestHandleAssistantChunk_AcknowledgementKeepsTheDelegatesLane(t *testing.T)
 	t.Errorf("no entry_appended{steer_ack} frame: %v", eventTypes(*events))
 }
 
-// Reasoning is not screened for markers at all (KAS's own recordSteeringAcks
-// reads text entries only), so a marker-shaped string in a thought must not
-// record an ack for a steer nothing answered, and the thought keeps its bytes.
+// TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement pins no marker screening on
+// reasoning (KAS reads text entries only).
 func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -193,10 +186,8 @@ func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 	}
 }
 
-// An empty body is not an answer. The marker `[STEERING steer-1: ]` cannot match
-// the pattern at all (it requires at least one body character), but a body of
-// pure whitespace trims to nothing, and a steer_ack with no text is a row that
-// says the agent said nothing.
+// TestHandleAssistantChunk_EmptyAcknowledgementIsNotRecorded pins that a whitespace-only body
+// records no ack.
 func TestHandleAssistantChunk_EmptyAcknowledgementIsNotRecorded(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))

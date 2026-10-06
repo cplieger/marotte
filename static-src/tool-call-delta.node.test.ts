@@ -1,21 +1,13 @@
-// The client half of the tool-progress contract, read from the fixture the Go BUILDER is
-// driven against (internal/translate/streaming_tools_roundtrip_test.go). The server decides
-// what a frame carries and this decides what a frame means, in two languages — so a case
-// added to one side's own table only would let the two folds disagree on exactly that
-// transition, and a reader would see a card missing a diff or stuck on a stale status with
-// nothing red anywhere.
-//
-// `.node` because it reads the filesystem. The path is relative to this file.
+// The client half of the tool-progress contract, read from the fixture the Go BUILDER is driven
+// against (internal/translate/streaming_tools_roundtrip_test.go), so the two folds cannot disagree
+// on a transition one side's table alone covers. `.node`: filesystem read.
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { foldToolCallDelta } from "./store.js";
 import type { ToolCall, ToolProgressPayload } from "./types.js";
 
-/** The fixture's `delta` is the wire frame MINUS `turn`, because that fixture is the Go
- *  side's and still spells the frame the retired `tool_call_update` way: every case carries
- *  a `message_id` the fold ignores and none carries the `turn` the entry model's
- *  `tool_progress` puts on it. HAND-OFF to the run that owns `internal/translate`: drop
- *  `message_id` from each case's delta and add `turn`, and this `Omit` goes with it. */
+/** The fixture's `delta` is the wire frame MINUS `turn`: the Go fixture still spells the retired
+ *  `tool_call_update` shape (`message_id`, no `turn`). When it is updated, this `Omit` goes. */
 interface DeltaCase {
   name: string;
   before: ToolCall;

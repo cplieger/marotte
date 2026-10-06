@@ -392,10 +392,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
     });
   }
 
-  const d = await apiGet<{ content?: string; content_hash?: string; error?: string }>(
-    routeForPath(state.path).readURL,
-    signal,
-  );
+  const d = await apiGet<FileRead>(routeForPath(state.path).readURL, signal);
   skeleton?.cancel();
   if (signal?.aborted === true) {
     return;
@@ -408,6 +405,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
     failBufferLoad(state, d.error);
     return;
   }
+  state.readOnly = d.read_only === true;
   adoptDiskBytes(state, d.content ?? "", d.content_hash ?? "");
   state.loaded = true;
   repaint(state);
@@ -427,7 +425,7 @@ function adoptDiskBytes(state: FileState, content: string, hash: string): void {
   state.error.value = "";
   const parsed = parseConflicts(content);
   const mode = state.mode.value.kind;
-  if (parsed.hunks.length > 0 && (mode === "edit" || mode === "conflict")) {
+  if (!state.readOnly && parsed.hunks.length > 0 && (mode === "edit" || mode === "conflict")) {
     state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   } else if (parsed.hunks.length === 0 && mode === "conflict") {
     state.mode.value = { kind: "edit", editing: false };
@@ -480,6 +478,7 @@ interface FileRead {
   content?: string;
   content_hash?: string;
   error?: string;
+  read_only?: boolean;
 }
 
 function applyRefreshedRead(

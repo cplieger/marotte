@@ -25,14 +25,9 @@ func ValidMessageID(id string) bool {
 // message returned when a chat ID fails validation.
 const ErrMsgInvalidChatID = "invalid chat_id"
 
-// ValidChatID reports whether id is a valid chat identifier. Accepts
-// ULIDs, UUIDs, and the legacy "chat-<ms>" shape: alphanumerics, hyphens,
-// and underscores only. Rejects empty, >128 chars, and anything containing
-// path separators or traversal segments.
-//
-// A chat id reaches the filesystem as the name of the chat's own JSON file,
-// so this is the gate rather than a format preference, and it is the single
-// source of truth: every boundary that accepts one delegates here.
+// ValidChatID reports whether id is a valid chat identifier: alphanumerics, hyphens and
+// underscores, at most 128 chars (ULIDs, UUIDs, legacy "chat-<ms>"). It is a filesystem gate, since
+// a chat id names the chat's own file, and every boundary delegates here.
 func ValidChatID(id string) bool {
 	if id == "" || len(id) > 128 {
 		return false

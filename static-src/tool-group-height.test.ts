@@ -1,22 +1,7 @@
-// ---------------------------------------------------------------------------
-// A tool group's HEADER and the member rows inside it are the same height, and a
-// BARE group renders as a plain card.
-//
-// Both halves are numeric because both were reported by eye and neither is visible
-// in source. The heights came from two DIFFERENT tokens — the header `--btn-h`, the
-// member rows `--ctl-h-dense` — so a box's own header sat 4px taller than every row
-// inside it on both pointer tiers (36/32 fine, 44/40 coarse). The member floor is
-// deleted now, so the two sides read ONE declaration
-// (`.tool-header { min-height: var(--btn-h) }`) and the equality is structural
-// rather than two numbers kept in step.
-//
-// EVERY FIXTURE HERE IS BUILT BY THE PRODUCTION BUILDERS, and that is not
-// convenience. A hand-rolled card with an empty icon slot and a short title measures
-// under both floors, so it reports 36px in a bare group AND 36px standalone —
-// hiding a real 6px gap, because the member row's `padding-block: var(--sp-1)` was
-// still in force while bare. A real card's content clears the floor (40px of line
-// box), which is what surfaced it. Do not replace `buildToolCard` with markup here.
-// ---------------------------------------------------------------------------
+// A tool group's HEADER and its member rows are one height, and a BARE group renders as a plain
+// card. Both read ONE declaration (`.tool-header { min-height: var(--btn-h) }`). Every fixture is
+// built by the PRODUCTION BUILDERS: a hand-rolled card measures under the floor and hides a 6px
+// gap. Do not replace `buildToolCard` with markup here.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
@@ -46,8 +31,8 @@ const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("./tool-group.js");
 const { buildToolCard } = await import("./tool-card.js");
 
-/** A transcript-width column, IN the viewport. It was parked at -9999px, which
- *  is no longer a place a `.tool-call` can be measured from — see `rendered()`. */
+/** A transcript-width column, IN the viewport: off-screen is not a place a `.tool-call`
+ *  can be measured from — see `rendered()`. */
 const host = document.createElement("div");
 host.style.cssText = "position:fixed;top:0;left:0;inline-size:760px;";
 document.body.appendChild(host);
@@ -88,24 +73,11 @@ function card(i: number): HTMLDivElement {
 }
 
 /**
- * Wait for Chromium to decide the mounted cards are near the viewport.
- *
- * `.tool-call` carries `content-visibility: auto` with a `contain-intrinsic-size`
- * fallback (14-tools.css), so until that decision lands a card's OWN box IS the
- * fallback — 40px, whatever its contents measure. A layout query on a DESCENDANT
- * still reports real geometry, because Chromium lays a locked subtree out on
- * demand, and that asymmetry is what makes the failure so quiet: every row height
- * here stayed correct while the two cases that read a card's outer box started
- * reading a constant. The cost was not one red case. With the cards unrendered,
- * the bare-vs-standalone case below compares two copies of the same 40px estimate
- * and stays GREEN with the exact defect it exists to catch planted — measured, by
- * putting the group ROW's tighter `padding-block` back on a bare member: 42 against
- * 42 unrendered, 38 against 42 rendered.
- *
- * Measured in this Chromium: the decision lands on the second frame after the
- * mount, and never at all while the host is off-screen — which is why the host
- * above is in the viewport. Three passes for margin, and it is a count of
- * lifecycle passes rather than a wall-clock wait, so load does not move it.
+ * Wait for Chromium to decide the cards are near the viewport. Until then a card's OWN box IS the
+ * 40px `contain-intrinsic-size` fallback while descendants report real geometry, so the
+ * bare-vs-standalone case compared two copies of one estimate and stayed GREEN with its defect
+ * planted. The decision lands on the second frame and never while the host is off-screen; three
+ * lifecycle passes for margin.
  */
 async function rendered(): Promise<void> {
   for (let i = 0; i < 3; i++) {
@@ -131,21 +103,10 @@ async function run(n: number): Promise<HTMLElement> {
   return g;
 }
 
-/** Border-box height in whole pixels, which is the unit every claim here is made
- *  in ("exactly the header's height", "exactly 1px taller").
- *
- *  `offsetHeight` rather than `getBoundingClientRect().height`, and not for
- *  convenience: a rect's `height` is a float SUBTRACTION of two absolute
- *  positions, so a box sitting at a fractional y reports its own height off by a
- *  float epsilon — and both inputs to that are live here, since the group carries
- *  an entry animation that translates it and the root font size is fluid, so
- *  `--btn-h` is 35.999996px at some viewport widths. Measured: the group header
- *  and a member row, both resolving `min-height: var(--btn-h)`, read 36 and
- *  35.999996 in the same pass, which turns an exact-equality case into a
- *  coin-flip on what else is on the page. `offsetHeight` is rounded and ignores
- *  transforms, so it answers the question the assertions actually ask. Both
- *  planted mutants (a 2px hairline, a bare member keeping the row's padding) are
- *  still caught — the regressions this file guards are 1px and 4px, not 0.5px. */
+/** Border-box height in whole pixels, the unit every claim here uses. `offsetHeight`, not a rect:
+ *  a rect height is a float subtraction, and the entry animation plus the fluid root size made two
+ *  `var(--btn-h)` boxes read 36 and 35.999996 in one pass. The guarded regressions are 1px and
+ *  4px. */
 function h(e: Element | null | undefined): number {
   return e instanceof HTMLElement ? e.offsetHeight : -1;
 }
@@ -162,12 +123,8 @@ function hitFloorPx(): number {
   return v;
 }
 
-/** The file badge's declared height in pixels for the tier currently set, resolved
- *  the way `hitFloorPx` resolves its own token and for the same reason: a custom
- *  property reads back as raw text, so only the engine can turn
- *  `calc(var(--btn-h) - 2 * var(--sp-2))` into a length. Probing the TOKEN rather
- *  than restating 20/28 is what makes a control-height retune move the assertion
- *  instead of breaking it. */
+/** The file badge's declared height for the current tier, probed from the TOKEN so a control-height
+ *  retune moves the assertion. */
 function badgeBoxPx(): number {
   const probe = document.createElement("div");
   probe.className = "tool-header";
@@ -193,10 +150,7 @@ describe(
   { timeout: GROUP_TIMEOUT_MS },
   () => {
     it.each(["fine", "coarse"] as const)("declare the SAME floor on a %s pointer", async (tier) => {
-      // The floor is the thing that regressed, so it is asserted directly: the header
-      // and every member row must resolve `min-height` to one value. A substitution
-      // back to `--ctl-h-dense` fails here at both tiers, where the RENDERED equality
-      // below can only see it at one.
+      // The floor itself, asserted directly: a header/row token split fails here at both tiers.
       document.documentElement.dataset["pointer"] = tier;
       const g = await run(3);
       const floor = getComputedStyle(headerOf(g)).minHeight;
@@ -253,23 +207,9 @@ describe(
     });
 
     it("RENDERS a header and its member rows at one height on a coarse pointer too, because the badge fits the room the row already has", async () => {
-      // OVERTURNS the case this replaces THREE times, and the first two readings were
-      // the same mistake — treating the badge's own box as the place the target has to
-      // live. First it asserted the coarse row was TALLER than its header and called
-      // that "not a regression": `.tool-file-link` is a real `<button>` declaring no
-      // size, so `61-mcp-tools.css`'s hit-target floor arrived as its BOX, 44px square
-      // around a 15.4px line box, and the row grew to 52px to contain it. Then it
-      // pinned the chip at `--ctl-h-sm` and asserted 24px, which held at both tiers
-      // for a row of a real group and nowhere else — see the bare-group case below
-      // for the 40px lone row that left.
-      //
-      // Then it pinned the chip to the kind GLYPH beside it (`--icon-ui`), which fit
-      // and wasted the room: the glyph is not the tallest thing the row can carry, so
-      // a 15.4px line box sat in a 16px button inside a 36px row with no vertical
-      // padding at all. The badge reads `--tool-badge-h` now — the content box a
-      // STANDALONE header leaves, the tightest context — so it FILLS that room and
-      // still cannot grow any row. Asserted against a probe of the token rather than a
-      // number, so a control-height retune moves both.
+      // The badge's box is not where the target lives: it reads `--tool-badge-h`, the content box a
+      // STANDALONE header leaves, so it fills that room and cannot grow any row. Asserted against a probe
+      // of the token, so a control-height retune moves both.
       document.documentElement.dataset["pointer"] = "coarse";
       const g = await run(3);
       const head = h(headerOf(g));
@@ -295,13 +235,9 @@ describe(
     it.each(["fine", "coarse"] as const)(
       "keeps the badge's TARGET on the hit floor at %s, past the box it paints",
       async (tier) => {
-        // The other half of shrinking the badge to the glyph: WCAG 2.5.8 is still 24px
-        // on a mouse and 44px under a finger, and the box is now under both. The
-        // expander is what carries it (`61-mcp-tools.css`'s idiom, `inset` off
-        // `--hit-floor`), and this is a real hit test rather than a style read, because
-        // a declared `::after` that some `overflow` clips away reads identically in the
-        // cascade and hits nothing — which is exactly why the chip's own
-        // `overflow: hidden` had to go.
+        // WCAG 2.5.8 (24px mouse, 44px finger) is carried by the `--hit-floor` expander. A real hit test,
+        // because a clipped `::after` reads the same in the cascade, which is why the chip has no
+        // `overflow: hidden`.
         document.documentElement.dataset["pointer"] = tier;
         const g = await run(3);
         const chip = members(g)[0]!.querySelector<HTMLElement>("button.tool-file-link")!;
@@ -383,11 +319,8 @@ describe("a bare group renders as a plain tool card", { timeout: GROUP_TIMEOUT_M
     expect(got.borderTopColor).toBe(want.borderTopColor);
     expect(got.borderTopLeftRadius).toBe(want.borderTopLeftRadius);
 
-    // The bare state drops BOTH of the group's row treatments: the separator
-    // hairline (a stray line with no header to separate from) and the tighter
-    // `padding-block` (the ROW idiom, which needs a list around it to mean
-    // anything). Either one left in place makes a lone call render differently from
-    // the card it is.
+    // The bare state drops BOTH row treatments, the separator hairline and the tighter
+    // `padding-block`; either left makes a lone call differ from the card it is.
     expect(getComputedStyle(member).borderTopWidth).toBe("0px");
     const memberPad = getComputedStyle(member.querySelector(".tool-header")!);
     const standalonePad = getComputedStyle(standalone.querySelector(".tool-header")!);
@@ -400,19 +333,9 @@ describe("a bare group renders as a plain tool card", { timeout: GROUP_TIMEOUT_M
   });
 
   it("takes the ROW treatment back once a second member lands", async () => {
-    // Both halves are dropped for the BARE state only. A two-member group needs the
-    // hairline back, or its rows lose the rule that makes them read as a list, and
-    // the tighter padding back, or a run of twelve reads as twelve cards.
-    //
-    // The density half asserts the DECLARATION, and it used to assert a rendered
-    // height difference (36 against 40) — which was never the row idiom working. It
-    // was the file badge: at `--ctl-h-sm` the badge was 24px, which fits the 28px a
-    // row's `padding-block: var(--sp-1)` leaves inside the 36px floor and does NOT
-    // fit the 20px a lone card's `var(--sp-2)` leaves, so the whole visible
-    // difference was one control overflowing one of the two. With the badge at
-    // `--icon-ui` nothing in a header reaches either content box and every row sits
-    // on the floor, which is what `.tool-header`'s own comment says density must not
-    // come from — it comes from the flattened chrome, asserted above.
+    // A two-member group needs both back, or its rows stop reading as a list. Density is asserted as the
+    // DECLARATION: with the badge at `--icon-ui` every row sits on the floor, so no rendered height
+    // difference remains to measure.
     document.documentElement.dataset["pointer"] = "fine";
     const bare = await run(1);
     const lonePad = parseFloat(
@@ -438,12 +361,8 @@ describe("a bare group renders as a plain tool card", { timeout: GROUP_TIMEOUT_M
   });
 
   it("renders a LONE card carrying a file badge at the height of one without", async () => {
-    // THE REPORTED DEFECT, in the shape no case here covered: every card in the
-    // transcript is inside a group, a single call is a BARE one, and a bare member
-    // keeps a card's own `padding-block: var(--sp-2)` — 20px of content box inside the
-    // 36px floor. A 24px badge did not fit, so a lone Read File rendered a 40px row
-    // beside every 36px row on the page (52px against 44px on a finger). Every case
-    // above ran on a group of three, where the row idiom's 28px absorbed it.
+    // A single call is a BARE group; a member keeping a card's `padding-block: var(--sp-2)` would
+    // grow a lone row with a 24px badge to 40px beside 36px ones.
     for (const tier of ["fine", "coarse"] as const) {
       document.documentElement.dataset["pointer"] = tier;
       host.replaceChildren();
@@ -482,13 +401,8 @@ describe("a bare group renders as a plain tool card", { timeout: GROUP_TIMEOUT_M
   });
 
   it("holds on a PHONE viewport with no pointer tier declared yet", async () => {
-    // The case setting `data-pointer` by hand cannot reach: `boot.ts` writes that
-    // attribute from a real `PointerEvent`, so until one arrives the tokens come from
-    // `01-tokens.css`'s no-JS fallback (`:root:not([data-pointer="fine"])` under
-    // `width <= 48rem`) — which is the state EVERY device renders its first paint in,
-    // not an edge. It is also the one axis a rule in `50-mobile.css` could move
-    // without any case above noticing, since that file is late in the cascade and
-    // beats every feature slice at equal specificity.
+    // No `data-pointer` yet (boot.ts writes it from a real PointerEvent): every device's first paint
+    // uses 01-tokens.css's no-JS fallback, and 50-mobile.css could move it unseen.
     document.documentElement.removeAttribute("data-pointer");
     await page.viewport(390, 844);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([

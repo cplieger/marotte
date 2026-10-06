@@ -1,19 +1,5 @@
-// ---------------------------------------------------------------------------
-// Licensed-code attribution footnote (v3 _kiro/code_references).
-//
-// KAS flags a completion that reproduces a recognizable chunk of a referenced
-// open-source file (when the account's code-reference tracker is enabled). The
-// wire carries {license_name, repository, url} per reference — no content span,
-// so an attribution can't map to one region of the turn; it annotates the whole
-// turn. We render a compact, collapsible footnote at the bottom
-// of the turn: a scale glyph + count summary that expands to license + source
-// link per reference.
-//
-// syncCodeReferences is idempotent and cheap: it's called on every paint of the
-// turn card (once per streaming chunk), so it no-ops unless the count changed. It
-// takes the RESOLVED list — `turn_close.code_references` durable, store.ts's
-// `codeReferencesFor` live until that entry exists — so the precedence has one home.
-// ---------------------------------------------------------------------------
+// Licensed-code attribution footnote (v3 `_kiro/code_references`). The wire carries {license_name, repository, url}
+// per reference with no content span, so an attribution annotates the whole turn.
 
 import { el } from "@cplieger/reactive";
 import type { CodeReference } from "./types.js";
@@ -24,24 +10,19 @@ import { featureDisabled } from "./governance.js";
 
 const CLS = "code-refs";
 
-/** Ensure `wrap`'s licensed-code footnote matches the turn's attributions.
- *  Appends the footnote when references exist, removes it when they don't,
- *  and rebuilds only when the count changed (so repeated streaming paints
- *  are a no-op). Preserves the open/closed state across rebuilds. */
+/**
+ * Make `wrap`'s footnote match `refs`: append, remove, or rebuild only when the count changed, preserving open state.
+ * Takes the resolved list (`turn_close.code_references`, else store.ts `codeReferencesFor`), so precedence has one home.
+ */
 export function syncCodeReferences(wrap: HTMLElement, refs?: readonly CodeReference[]): void {
   const existing = wrap.querySelector<HTMLDetailsElement>(`:scope > .${CLS}`);
-  // Gate on the org/account policy: when governance is KNOWN and the
-  // code-reference tracker is off, never surface the attribution chip — the
-  // feature is disabled server-side, so any hint would imply a capability the
-  // account doesn't have. (KAS won't emit references then, but this keeps the
-  // UI honest even against a stray persisted one.)
+  // Hidden when governance reports the tracker off, even against a stray persisted reference.
   const shown = featureDisabled("code_reference_tracker") ? [] : (refs ?? []);
   if (shown.length === 0) {
     existing?.remove();
     return;
   }
-  // Count is a safe signature: the server sends a monotonically-growing
-  // deduped list, so equal length means equal content.
+  // Count is a safe signature: the server sends a monotonically growing, deduped list.
   if (existing !== null && existing.dataset["count"] === String(shown.length)) {
     return;
   }
@@ -54,7 +35,6 @@ export function syncCodeReferences(wrap: HTMLElement, refs?: readonly CodeRefere
   }
 }
 
-/** Build the `<details>` footnote for a non-empty reference list. */
 function buildCodeRefs(refs: readonly CodeReference[], open: boolean): HTMLDetailsElement {
   const count = refs.length;
   const details = el("details", {
@@ -83,9 +63,7 @@ function buildCodeRefs(refs: readonly CodeReference[], open: boolean): HTMLDetai
   return details;
 }
 
-/** Build one `<li>` for a reference: license name + a link to the source
- *  (only when the URL is http/https-safe, per url-safety.ts isSafeURL),
- *  else the plain source label. */
+/** A link only when the URL passes `isSafeURL`; otherwise the plain source label. */
 function buildItem(ref: CodeReference): HTMLLIElement {
   const item = el("li", { className: "code-refs-item" }) as HTMLLIElement;
   item.appendChild(el("span", { className: "code-refs-license" }, ref.license_name));
@@ -113,10 +91,7 @@ function buildItem(ref: CodeReference): HTMLLIElement {
   return item;
 }
 
-/** Human label for a reference's source: the repository if present, else the
- *  host of the (already-validated) safe URL, else "source". Never returns the
- *  raw URL. safeURL is empty unless the caller confirmed it via isSafeURL, so
- *  the URL parse here can't throw. */
+/** Never the raw URL. `safeURL` is empty unless `isSafeURL` confirmed it, so the parse cannot throw. */
 function sourceLabel(ref: CodeReference, safeURL: string): string {
   const repo = (ref.repository ?? "").trim();
   if (repo !== "") {

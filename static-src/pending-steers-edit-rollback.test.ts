@@ -1,24 +1,29 @@
-// A refused Edit puts the replaced draft back, and the delete it waits on can take a
-// lock, a clear and a KAS round trip. These cases hold the reply open while the reader
-// keeps typing or switches chats, against the real composer, so the rollback has to
-// lose to whatever the composer holds by then.
+// A refused Edit puts the replaced draft back, and the delete it waits on can take a lock, a clear
+// and a KAS round trip.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import type * as Toast from "./toast.js";
 import type * as ActionsIndex from "./actions/index.js";
 import type * as ChatActions from "./actions/chat.js";
+import type * as NoticeSubject from "./notice-subject.js";
 
 type RemoveOutcome =
   { status: "success" } | { status: "error"; error: { status?: number; message: string } };
 
-const mocks = vi.hoisted(() => ({
-  removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
-    outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
-  })),
-  saveDispatch: vi.fn(),
-  saveFlush: vi.fn(),
-  savePending: vi.fn(() => false),
-  errorToastMock: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const errorToastMock = vi.fn();
+  return {
+    removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
+    })),
+    saveDispatch: vi.fn(),
+    saveFlush: vi.fn(),
+    savePending: vi.fn(() => false),
+    errorToastMock,
+    chatNoticeMock: vi.fn((_chatID: string, message: string, _level?: string, _name?: string) => {
+      errorToastMock(message);
+      return () => undefined;
+    }),
+  };
+});
 
 // The debounce is the library's; what matters here is which chat and text reach it.
 vi.mock("./actions/index.js", async (importOriginal) => ({
@@ -35,10 +40,15 @@ vi.mock("./actions/chat.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ChatActions>()),
   removeSteer: { dispatch: mocks.removeDispatch },
 }));
-vi.mock("./toast.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Toast>()),
-  error: mocks.errorToastMock,
-}));
+// The refusal is a chat notice; the message is what these cases read.
+vi.mock("./notice-subject.js", async (importOriginal) => {
+  const store = await import("./store.js");
+  return {
+    ...(await importOriginal<typeof NoticeSubject>()),
+    chatNotice: mocks.chatNoticeMock,
+    subjectName: (id: string) => store.get(id)?.name ?? "",
+  };
+});
 
 const { removeDispatch, saveDispatch, saveFlush, savePending, errorToastMock } = mocks;
 
@@ -186,8 +196,8 @@ describe("a refused Edit's rollback", () => {
     await refusalReported();
 
     expect(input().value).toBe("words for the other chat");
-    // The live chat's pending save goes out first, so the rollback's own save
-    // cannot take its place in the one shared debounce slot.
+    // The live chat's pending save goes out first, so the rollback's own save cannot take its place
+    // in the one shared debounce slot.
     expect(saveFlush.mock.calls).toEqual([
       [{ chatID: "chat-2", text: "words for the other chat" }],
       [{ chatID: "chat-1", text: "half a draft" }],

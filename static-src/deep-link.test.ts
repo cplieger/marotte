@@ -1,19 +1,5 @@
-// `settleDeepLinkedChat`: what a pasted `/chat/<id>` the store has no row for does.
-//
-// All four of these rules used to live inside `applyRoute`, a private function in
-// the composition root, so none of them had a test address — and three of the four
-// are about EVIDENCE rather than routing:
-//
-//  - the ask gate (is there evidence the server cannot answer at all),
-//  - the URL guard (does a verdict that arrived a round trip late still describe
-//    the screen),
-//  - the notice gate (is an unanswered ask this reader's first notice or a second
-//    copy of one boot already raised).
-//
-// `router.js` is REAL here, and deliberately: the URL guard's whole subject is the
-// browser's location, so a mocked `parseRoute` would leave the test asserting
-// against its own fixture. Each case drives `history.replaceState` the way a tab
-// click or a back press does and reads the location back afterwards.
+// `settleDeepLinkedChat` for a pasted `/chat/<id>` with no store row. `router.js` is real: the URL guard's subject is
+// the browser's location.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
@@ -39,9 +25,7 @@ vi.mock("./store-load.js", () => ({
   chatListLoaded: mockListLoaded,
   serverMayAnswer: mockMayAnswer,
 }));
-// The async factory with a dynamic import is the house form: a `vi.mock` factory is
-// hoisted above every top-level statement, so a static import of the helper is not
-// initialized when it runs.
+// Async factory with a dynamic import: a hoisted `vi.mock` factory runs before a static import initializes.
 vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   getActiveTabRoute: mockActiveTabRoute,
@@ -49,12 +33,10 @@ vi.mock("./tabs.js", async () => ({
 }));
 vi.mock("./toast.js", () => ({ error: mockToastError }));
 
-/** The location the reader is at, driven the way the app drives it. */
 function at(path: string): void {
   history.replaceState(null, "", path);
 }
 
-/** The retry the notice offered, or undefined when it offered none. */
 function offeredRetry(): (() => void) | undefined {
   const retry = mockToastError.mock.calls[0]?.[1] as { onClick?: () => void } | undefined;
   return retry?.onClick;
@@ -68,20 +50,18 @@ beforeEach(() => {
   mockListLoaded.mockReturnValue(true);
   mockMayAnswer.mockReturnValue(true);
   mockActiveTabRoute.mockReturnValue(null);
-  // The empty answer, which is `tabs.ts`'s own for a route no open tab carries.
+  // The empty answer is `tabs.ts`'s own for a route no open tab carries.
   mockTabIdForRoute.mockReturnValue("");
 });
 
 afterEach(() => {
-  // The runner's own page: leaving it on /chat/... breaks whatever loads next.
+  // Leaving the runner on /chat/... breaks whatever loads next.
   history.replaceState(null, "", origin);
 });
 
 describe("settleDeepLinkedChat", () => {
   it("opens the chat and says nothing when the server knows it", async () => {
-    // The direction the round trip exists for. A refusal inside `resolveUnknownChat`
-    // raises its own notice through the action framework, so a second one here would
-    // report one refusal twice.
+    // A refusal inside `resolveUnknownChat` raises its own notice, so a second here would report it twice.
     at("/chat/c-elsewhere");
     mockResolve.mockResolvedValue("opened");
 
@@ -91,8 +71,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("canonicalizes the URL and says so when the SERVER says the chat is gone", async () => {
-    // The one terminal outcome, and the only thing that licenses it is the server
-    // having read its own store.
+    // The one terminal outcome, licensed only by the server reading its own store.
     at("/chat/c-deleted");
     mockActiveTabRoute.mockReturnValue({ kind: "chat", id: "c-open" });
     mockResolve.mockResolvedValue("gone");
@@ -110,13 +89,7 @@ describe("settleDeepLinkedChat", () => {
     expect(location.pathname).toBe("/");
   });
 
-  // -------------------------------------------------------------------------
-  // The `unresolved` arm. This was SILENT: a confirmation that 5xx'd, timed out
-  // or died on the network correctly refused the terminal claim and then raised
-  // nothing at all, so a reader pasted a link, the page did nothing, and there was
-  // no explanation and no way to try again. Unlike the failed-boot arm there is no
-  // boot toast standing behind it, because the chat list loaded fine.
-  // -------------------------------------------------------------------------
+  // Nobody answered (5xx, timeout, network): no terminal claim, but a notice with a retry; no boot toast covers this.
 
   it("RAISES a non-terminal notice with a retry when nobody answered", async () => {
     at("/chat/c-real");
@@ -128,9 +101,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("does NOT claim the chat is gone in that notice", async () => {
-    // The defect being avoided, asserted as a property of the words rather than by
-    // pinning the sentence: the server failed to answer, so anything terminal here
-    // is the false claim this whole path refuses to make.
+    // Asserted on the words: anything terminal here is the false claim this path refuses.
     at("/chat/c-real");
     mockResolve.mockResolvedValue("unresolved");
 
@@ -141,9 +112,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("HOLDS the URL, so the retry and a reload both still address the chat", async () => {
-    // Canonicalizing here would point the URL at the fallback view, and then the
-    // retry — and a reload, and a re-share of the same link — would ask about
-    // whatever the reader landed on instead of the chat they asked for.
+    // Canonicalizing would make the retry, a reload or a re-share ask about the fallback view.
     at("/chat/c-real");
     mockResolve.mockResolvedValue("unresolved");
 
@@ -152,9 +121,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("re-ASKS the server on retry rather than reloading the page", async () => {
-    // A reload throws away the live SSE connection, every open tab's state and the
-    // transcript underneath, to repeat one GET. The retry re-enters the same door,
-    // so a server that has recovered opens the chat.
+    // The retry re-enters the same door instead of reloading (which drops SSE and tab state).
     at("/chat/c-real");
     mockResolve.mockResolvedValue("unresolved");
     await settleDeepLinkedChat("c-real");
@@ -169,10 +136,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("stays SILENT on an unresolved when boot has already raised a notice", async () => {
-    // The non-duplication rule. Boot toasts "Couldn't load your chats." whenever its
-    // own load failed, and a load that failed did not latch — so an unlatched list
-    // means the reader is already holding a notice about this server and this would
-    // be the second copy of it. The URL is held either way.
+    // Boot already toasted an unlatched list's failure, so this would be a second copy. The URL is held either way.
     at("/chat/c-real");
     mockListLoaded.mockReturnValue(false);
     mockResolve.mockResolvedValue("unresolved");
@@ -182,11 +146,7 @@ describe("settleDeepLinkedChat", () => {
     expect(location.pathname).toBe("/chat/c-real");
   });
 
-  // -------------------------------------------------------------------------
-  // The ask gate: a reload of any `/chat/<id>`
-  // against a restarting server holds the URL and stays quiet, and does not spend a
-  // round trip to be told what boot's own toast already said.
-  // -------------------------------------------------------------------------
+  // The ask gate: with evidence the server cannot answer, hold the URL and stay quiet.
 
   it("does not ask at all when there is evidence the server cannot answer", async () => {
     at("/chat/c-real");
@@ -198,19 +158,12 @@ describe("settleDeepLinkedChat", () => {
     expect(location.pathname).toBe("/chat/c-real");
   });
 
-  // -------------------------------------------------------------------------
-  // The URL guard. The answer arrives a round trip after the route was applied, and
-  // in that window a tab click or a back press moves the location. Acting on a
-  // verdict about an older location is the same stale-answer defect the verdict
-  // itself exists to remove, one layer up.
-  // -------------------------------------------------------------------------
+  // The URL guard: a late verdict about an older location must not replace a newer one.
 
   it("drops a late `gone` verdict when the reader has moved to another chat", async () => {
     at("/chat/c-asked");
     mockActiveTabRoute.mockReturnValue({ kind: "chat", id: "c-open" });
     mockResolve.mockImplementation(() => {
-      // The move happens WHILE the request is in flight, which is the only window
-      // this guard exists for.
       at("/chat/c-moved-on");
       return Promise.resolve("gone");
     });
@@ -221,9 +174,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("drops a late `gone` verdict when the reader has moved to another VIEW", async () => {
-    // The guard compares the KIND as well as the id: a reader who left for /files is
-    // not owed a claim about a conversation, and rewriting that URL would take them
-    // off the view they chose.
+    // The guard compares kind as well as id: a reader on /files is owed no claim about a conversation.
     at("/chat/c-asked");
     mockResolve.mockImplementation(() => {
       at("/files/src");
@@ -246,8 +197,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("acts on a verdict for the SAME id even if the URL was rewritten to itself", async () => {
-    // The guard must not be so strict that an ordinary re-entry looks stale — the
-    // comparison is on the id, not on identity of the visit.
+    // Compared on id, not on the visit, so an ordinary re-entry is not stale.
     at("/chat/c-asked");
     mockResolve.mockImplementation(() => {
       at("/chat/c-asked");
@@ -259,9 +209,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   it("opens a chat that resolved while the reader was elsewhere", async () => {
-    // The guard gates the URL rewrite and the notice, NOT the open: a chat that
-    // exists should end up on the strip whether or not the reader is still looking
-    // at its URL, and `resolveUnknownChat` has already opened it by then.
+    // The guard gates the URL rewrite and notice, not the open.
     at("/chat/c-asked");
     mockResolve.mockImplementation(() => {
       at("/files/src");
@@ -273,23 +221,11 @@ describe("settleDeepLinkedChat", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// `admitLocation`: whether a location may OPEN the view it names.
-//
-// The cross-device defect this closes: device A sleeps, device B closes a tab,
-// device A wakes as a fresh document load, and its URL still names the closed tab.
-// The resync itself is a clean replace and drops the row correctly — and then the
-// boot applied that URL as a deep link, which RE-CREATED the tab server-side and
-// broadcast it back to every device, including the one that closed it.
-//
-// A restored location is `active_view`'s twin, and it was the copy with no guard:
-// `tabs.ts` only adopts a saved `active_view` when a row for it exists, while the
-// URL was applied unconditionally.
-// ---------------------------------------------------------------------------
+// `admitLocation`: a woken device's restored URL naming a tab closed elsewhere must not re-open it (`openTab` is a
+// server mutation that broadcasts). A restored location is `active_view`'s twin and gets the same guard.
 
 describe("admitLocation", () => {
   it("admits a deliberate navigation to a tab nothing has open", () => {
-    // A pasted or shared link is the case the openers exist for.
     expect.assertions(1);
     mockTabIdForRoute.mockReturnValue("");
 
@@ -297,8 +233,6 @@ describe("admitLocation", () => {
   });
 
   it("admits a RESTORED location whose tab is still open", () => {
-    // The ordinary reload: the tab survived the resync, so the URL names something
-    // real and its opener is idempotent by subject.
     expect.assertions(1);
     mockTabIdForRoute.mockReturnValue("t-docs");
 
@@ -306,27 +240,20 @@ describe("admitLocation", () => {
   });
 
   it("refuses a RESTORED location whose tab was closed on another device", () => {
-    // The reported defect. `openTab` is a server mutation, so admitting this is what
-    // put the closed tab back on every screen.
+    // `openTab` is a server mutation, so admitting this re-created the closed tab on every screen.
     expect.assertions(1);
     mockTabIdForRoute.mockReturnValue("");
 
     expect(admitLocation({ kind: "docs", tab: "hooks" }, "restore")).toBe("canonicalized");
   });
 
-  // A files route reaches this gate on the SAME terms as every other kind: there is
-  // no per-kind carve-out, and there must not be one. The folder-to-browser
-  // resolution that makes `tabIdForRoute` answer an id for a folder no tab was
-  // opened at is `tabs.ts`'s, pinned in tabs.test.ts; what this pins is that a
-  // non-empty answer is enough here, so a history entry onto a folder the open
-  // browser can move to is ADMITTED rather than redirected away from it.
+  // Files routes pass on the same terms, no per-kind carve-out: a non-empty `tabIdForRoute` answer (folder resolution
+  // is `tabs.ts`'s) admits.
   it("admits a files location on the strength of the resolver's answer alone", () => {
     expect.assertions(2);
     mockTabIdForRoute.mockReturnValue("t-files");
     expect(admitLocation({ kind: "files", path: "/workspace/_ui-qa" }, "history")).toBe("opens");
 
-    // And refuses it when nothing is open, which is the one case that has no
-    // browser to move.
     mockTabIdForRoute.mockReturnValue("");
     expect(admitLocation({ kind: "files", path: "/workspace/_ui-qa" }, "history")).toBe(
       "canonicalized",
@@ -345,8 +272,6 @@ describe("admitLocation", () => {
   });
 
   it("points a refused location at the empty state when no tab survived", () => {
-    // The remote close that emptied the strip: `activateSuccessor` reaches the empty
-    // state and respawns nothing, so there is no route to name.
     expect.assertions(1);
     at("/chat/c-gone");
     mockTabIdForRoute.mockReturnValue("");
@@ -358,18 +283,13 @@ describe("admitLocation", () => {
   });
 
   it("refuses a back press onto a tab this device closed, as it always has", () => {
-    // The `history` origin's own rule, unchanged: the widening added `restore` beside
-    // it rather than replacing it.
     expect.assertions(1);
     mockTabIdForRoute.mockReturnValue("");
 
     expect(admitLocation({ kind: "history" }, "history")).toBe("canonicalized");
   });
 
-  // The docs kind is the one whose router arm now FORCES a sub-tab before opening, so
-  // it is the one where admitting a back press onto a closed tab would move the
-  // reader's panel as well as re-opening the tab for every other device. No per-kind
-  // carve-out: the sub-position being "only a correction" is not a licence to apply it.
+  // The docs router arm forces a sub-tab, so admitting a back press would also move the panel. No carve-out.
   it("refuses a back press onto a closed docs tab, sub-tab and all", () => {
     expect.assertions(1);
     mockTabIdForRoute.mockReturnValue("");
@@ -378,8 +298,7 @@ describe("admitLocation", () => {
   });
 
   it("leaves the URL alone for every location it admits", () => {
-    // A guard that canonicalized on the way through would rewrite the address bar
-    // under a reader who navigated deliberately.
+    // A canonicalizing guard would rewrite the address bar under a deliberate navigation.
     expect.assertions(2);
     at("/chat/c-linked");
     mockTabIdForRoute.mockReturnValue("");

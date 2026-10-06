@@ -19,13 +19,9 @@ const (
 	fieldHeadSHA = "head_sha"
 )
 
-// handleRepos dispatches /api/forges/{id}/repos/* paths. A repository is the
-// {repo_id} segment, decoded once on the connection's family.
-//
-// `?refresh=1` means the reader pressed a refresh control and is asking for the
-// truth, mirroring `/api/git/status-all?fetch=1`, the same distinction on the
-// local-git side: a list's first page comes from the forge and replaces what is
-// cached. Anything else reads through the cache.
+// handleRepos dispatches /api/forges/{id}/repos/* paths; the {repo_id} segment is decoded once on
+// the connection's family. `?refresh=1` is the reader asking for the truth, as
+// `/api/git/status-all?fetch=1` is on the local side.
 func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
 	fc, ok := h.connectionClient(w, id)
 	if !ok {

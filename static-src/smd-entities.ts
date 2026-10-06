@@ -1,12 +1,9 @@
-// The named character references this parser decodes: HTML 4.01's Latin-1, symbol
-// and special entity blocks (https://www.w3.org/TR/html4/sgml/entities.html) minus
-// `amp`, `gt`, `lt` and `quot`, which smd-parser-handlers.ts decodes inline. A row
-// changes only to match those blocks. WHATWG's 2,125 is a DECLINED CommonMark 6.2
-// conformance: every named reference measured in agent markdown is in HTML 4.01's
-// set, and an unknown name stays literal, as CommonMark requires.
+// GENERATED FILE — do not hand-edit.
+// The HTML 4.01 named character references (https://www.w3.org/TR/html4/sgml/entities.html),
+// minus `amp`, `gt`, `lt` and `quot`, which smd-parser-handlers.ts decodes inline.
 
-/** The longest name in the table, which bounds how long the parser holds a
- *  candidate reference before deciding it is not one. */
+/** The longest name in the table, which bounds how long the parser holds a candidate reference
+ *  before deciding it is not one. */
 export const MAX_ENTITY_NAME_LENGTH = 8;
 
 export const NAMED_ENTITIES: Readonly<Record<string, string>> = {

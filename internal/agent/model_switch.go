@@ -1,7 +1,6 @@
 package agent
 
-// A model switch never touches a turn: it writes pending_model on the header and
-// applies it when the chat is idle, at once or from the closer that makes it idle.
+// A model switch never touches a turn: it writes pending_model and applies it when the chat is idle.
 
 import (
 	"context"
@@ -17,8 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// resolveSwitchModel returns the effective model after applying the
-// optional payload override.
+// resolveSwitchModel returns the effective model after the optional payload override.
 func resolveSwitchModel(chat *marotte.Chat, p marotte.SwitchModelCommand) (model string, isSwitch bool) {
 	model = chat.Model
 	if p.Model == "" || p.Model == modelAuto || p.Model == model {
@@ -30,8 +28,7 @@ func resolveSwitchModel(chat *marotte.Chat, p marotte.SwitchModelCommand) (model
 // responseOK2 is the success body for commands routed through h.respond.
 var responseOK2 = map[string]bool{"ok": true}
 
-// errModelNotServed is the 409 body for a pick this account cannot run: the id
-// is well-formed, so the refusal is about entitlement, not the request.
+// errModelNotServed is the 409 body for a pick the account cannot run.
 var errModelNotServed = errors.New("that model is not available on this account")
 
 // cmdSwitchModel records the pick as pending_model and applies it when the chat is
@@ -74,12 +71,9 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientComman
 	return responseOK2, nil
 }
 
-// applyPendingModel applies the header's pending_model when the chat is idle: on a
-// live bridge through session/set_config_option, with the model_switched entry
-// appended between turns and the header taking the pick; with no bridge the pick
-// lands on model directly and the next OpenBridge carries it. A busy chat leaves
-// the pick set for the closer that makes it idle. The idle predicate is read
-// under the lifecycle mutex, and the bridge call runs with no lock held.
+// applyPendingModel applies pending_model on an idle chat: through set_config_option on a live
+// bridge (model_switched entry between turns), or straight onto model with no bridge. A busy chat
+// keeps it for the closer. Idleness is read under the lifecycle mutex; the bridge call holds no lock.
 func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID) {
 	ctx = durable.Context(ctx)
 	if rt.coord.turns.live(chatID) {
@@ -94,9 +88,7 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 		rt.coord.persistModelPick(ctx, chatID, model)
 		return
 	}
-	// Resolved ONCE: the level the session is told and the level the entry records
-	// have to be the same value, and PersistModelSwitch clears Chat.Effort, so a
-	// second read after it would answer for a chat that has just forgotten its tier.
+	// Resolved once: PersistModelSwitch clears Chat.Effort, so a second read would forget the tier.
 	effort := rt.coord.EffortForSwitch(ctx, model)
 	if !rt.coord.ApplyModelSwitch(ctx, chatID, model, effort) {
 		rt.clearPendingModel(ctx, chatID)
@@ -126,14 +118,9 @@ func (rt *Runtime) clearPendingModel(ctx context.Context, chatID marotte.ChatID)
 	}
 }
 
-// refuseUnservedModel is the LOUD half of the entitlement check: a spawn withholds
-// an inherited value silently, while a pick the user just made is refused rather
-// than downgraded behind their back. Unrefused, KAS rejects the id mid-prompt on
-// this and every later turn.
-//
-// The chat record is the evidence because config_option_update refreshes it, while
-// the bridge's session-result snapshot can only get older; the set is UNFILTERED,
-// and an empty one means entitlement is unknowable, which ModelServed allows.
+// refuseUnservedModel refuses a fresh pick the account cannot run (a spawn withholds an inherited
+// one silently); KAS would reject it mid-prompt every turn. The chat record is the evidence:
+// config_option_update refreshes it. An empty set is unknowable and allows.
 func (rt *Runtime) refuseUnservedModel(
 	ctx context.Context, chatID marotte.ChatID, chat *marotte.Chat, model string,
 ) error {

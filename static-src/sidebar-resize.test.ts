@@ -15,9 +15,9 @@ beforeAll(() => {
   document.body.style.margin = "0";
 });
 
-// Every test re-evaluates the module, and each evaluation keeps its window resize
-// listener for the life of the page. So the viewport is only ever resized while a
-// `#sidebar` is mounted for those listeners to measure.
+// Every test re-evaluates the module, and each evaluation keeps its window resize listener for the
+// life of the page. So the viewport is only ever resized while a `#sidebar` is mounted for those
+// listeners to measure.
 afterAll(async () => {
   document.body.replaceChildren(shellFixture());
   await page.viewport(1280, 720);
@@ -35,8 +35,8 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-/** Back the pointer-capture methods with a Set: a synthetic event carries no real
- *  pointer for the browser to capture. */
+/** Back the pointer-capture methods with a Set: a synthetic event carries no real pointer for
+ *  the browser to capture. */
 function stubPointerCapture(el: HTMLElement): void {
   const captured = new Set<number>();
   el.setPointerCapture = (id: number): void => {
@@ -73,8 +73,8 @@ function nextFrame(): Promise<void> {
   });
 }
 
-/** A resize event is dispatched inside a frame's rendering steps, so the frame the
- *  handler requests is the one AFTER the frame a test awaited beside it. */
+/** A resize event is dispatched inside a frame's rendering steps, so the frame the handler
+ *  requests is the one AFTER the frame a test awaited beside it. */
 async function afterResize(): Promise<void> {
   await nextFrame();
   await nextFrame();

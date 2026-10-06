@@ -1,17 +1,5 @@
-// Emulating the two accessibility media features this app declares arms for, for
-// the suites that assert a RENDERED arm rather than a source declaration.
-//
-// The mechanism is the `emulateA11yMedia` custom browser command declared in the
-// browser project's `test.browser` block (vitest.config.ts), which reaches a
-// fully-typed Playwright `page.emulateMedia`. This module exists so the
-// `BrowserCommands` augmentation has ONE owner: two suites need the command, and
-// a per-file `declare module` would put one wire contract in two places.
-//
-// A source read cannot answer these questions. `ruleContaining` can say a
-// declaration sits inside the right media query; only an engine can say what the
-// element computes when the query MATCHES, and for forced colours the defect is
-// the UA's own forcing of `background` to `Canvas`, which no stylesheet read
-// reproduces.
+// The one owner of the `emulateA11yMedia` command's `BrowserCommands` augmentation (declared in
+// vitest.config.ts), for suites asserting a RENDERED media arm, which a source read cannot answer.
 
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` is a stub
 // whose module body THROWS ("can be imported only inside the Browser Mode"), so

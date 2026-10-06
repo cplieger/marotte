@@ -1,17 +1,9 @@
-// ---------------------------------------------------------------------------
-// Tests for handlers/turn.ts: ERROR_ROUTES, the three asks, decision_settled, the
-// error handler and turn_closed. Drives the REAL handlers and the REAL store.
-//
-// LIVENESS IS THE LOG, so a case needing a running turn opens one and the close is
-// an ordinary append: no summary stamp, no live-turn marker, no verdict latch. A
-// sibling subsystem stays mocked because a call into one is a command.
-// ---------------------------------------------------------------------------
+// ERROR_ROUTES, the three asks, decision_settled, the error handler and turn_closed, over the REAL
+// handlers and store. Liveness is the LOG; sibling subsystems stay mocked (a call is a command).
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-// Capture SSE handlers via shared helper. FIRST, above every other import: the factory
-// below closes over `createBusMock`, and ESM evaluates imported modules in the source
-// order of their declarations, so with this import below `../store.js` the mocker
-// resolves the factory while linking that graph and the binding is still uninitialized.
+// FIRST, above every import: the factory below closes over `createBusMock`, and the mocker
+// resolves it while linking `../store.js`'s graph.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 vi.mock("../bus.js", () => createBusMock());
 import {
@@ -32,13 +24,8 @@ import type { Entry, EntryTurnClose, TurnOutcome } from "../wire/types.gen.js";
 import { severityOf } from "../turn-severity.js";
 import type * as ApiClient from "../api-client.js";
 
-// The run store's fetcher. Replaced so the live-run cases below seed the inventory
-// without a real request, and spread rather than swapped so every other consumer in
-// this graph keeps the module it had.
-//
-// Through `vi.hoisted` because `run-store.js` is statically imported below and imports
-// api-client, so the mocker resolves this factory during linking — above this file's own
-// top-level initializers, where a plain `const` is still in its temporal dead zone.
+// Spread, so other consumers keep the real module. `vi.hoisted`: the static run-store import
+// resolves this factory during linking, before plain consts initialize.
 const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
 vi.mock("../api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
@@ -71,8 +58,10 @@ vi.mock("../attachments.js", () => ({
   // Present-but-inert so real-ESM linking succeeds: composer-state.ts is in
   // this graph now (the tab projection reaches it), and it imports the rest.
   addAttachmentTo: vi.fn(),
+  removeAttachmentFrom: vi.fn(),
   attachmentGeneration: vi.fn(() => 0),
   takeAttachments: vi.fn(() => []),
+  hasAttachments: vi.fn(() => false),
   stashAttachments: vi.fn(),
   flushAttachments: vi.fn(),
   restoreAttachments: vi.fn(),
@@ -106,11 +95,8 @@ vi.mock("../failure-notice.js", () => ({
 // switch, so the three ask handlers notify unconditionally and only the master gate
 // inside notifyIfHidden applies.
 
-// A HOLDER rather than a constant, so the agent-finished notification can be driven in
-// its own block while staying off elsewhere — the permission-class block depends on
-// that contrast to be non-vacuous. Through `vi.hoisted` because the factory CLOSES
-// OVER it: the mocker resolves it above this file's own top-level initializers, where
-// a plain `const` is in its temporal dead zone and the file dies in linking.
+// A HOLDER so the agent-finished notification can be on in one block only (the permission block
+// needs the contrast). `vi.hoisted` because the factory closes over it.
 const { mockNotifyIfHidden, mockCloseNotificationsFor, notifyGate } = vi.hoisted(() => ({
   mockNotifyIfHidden: vi.fn(),
   mockCloseNotificationsFor: vi.fn(() => Promise.resolve()),
@@ -134,12 +120,8 @@ vi.mock("../modals.js", () => ({ showLoginModal: mockShowLoginModal }));
 
 vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
 
-// `refreshTurnRail` IS the assertion: turn.ts fires it fire-and-forget and three cases below
-// read it as a spy, so removing this mock fails them with "is not a spy" rather than changing
-// what the handler does. Every other export is replaced for a second reason of its own: the
-// real fetchers issue GET /api/chats/{id}/turns at the page's own base URL and leave one
-// request per frame for the window teardown to abort and print as an unhandled AbortError.
-// Permanent, not scaffolding: a call into the rail is a command at the handler's boundary.
+// `refreshTurnRail` is read as a spy, and the real fetchers would leave one request per frame for
+// the teardown to abort as an unhandled AbortError. A rail call is a command at the boundary.
 vi.mock("../turn-rail.js", () => ({
   invalidateTurnRails: vi.fn(),
   mountTurnRail: vi.fn(),
@@ -248,10 +230,8 @@ beforeEach(() => {
 });
 
 describe("ERROR_ROUTES", () => {
-  // A route carries a SURFACE and an optional in-app remedy, and nothing else. There
-  // is deliberately no turn-scoped field: whether a failure finalized a turn is a
-  // property of the emission, so the server states it per frame — see the two
-  // no-turn cases in the "error handler" block below for what a per-code answer cost.
+  // A route is a SURFACE plus an optional remedy; turn-scopedness is per emission, stated per frame
+  // (see the "error handler" block's no-turn cases).
   const expectedRoutes: [
     string,
     {
@@ -276,14 +256,8 @@ describe("ERROR_ROUTES", () => {
         },
       },
     ],
-    // The runtime is running UNAUTHENTICATED, so the session opened and
-    // everything behind it will fail. The only fix is signing in, and there is no
-    // Settings control for that — which is why the action is a discriminated
-    // union rather than a Settings jump with a stretched meaning.
-    // The server marks this one turn-scoped AND it carries an action, which is the
-    // pair that keeps the suppression honest: the turn it failed holds the reason
-    // inline, and the toast is still raised because Sign in is reachable from
-    // nowhere else on screen.
+    // Unauthenticated runtime: the only fix is signing in, which no Settings control does, hence the
+    // discriminated action. Turn-scoped AND actionable, so the toast is raised beside the inline reason.
     [
       "auth_token_unavailable",
       {
@@ -293,10 +267,7 @@ describe("ERROR_ROUTES", () => {
     ],
     ["rate_limit", { surface: "toast" }],
     ["compaction_failed", { surface: "toast" }],
-    // The four failed-ATTEMPT codes. Each ends the turn and each leaves a
-    // promptable chat behind, which is why none of them reaches the send button:
-    // an alert icon on the control whose job is to send claims the chat is dead,
-    // and it is not. The reason lands on a toast and on the turn's own divider.
+    // The four failed-ATTEMPT codes leave a promptable chat, so none reaches the send button.
     ["switch_failed", { surface: "toast" }],
     ["prompt_failed", { surface: "toast" }],
     // A pick refused before it reached the wire: same surface as switch_failed,
@@ -313,10 +284,7 @@ describe("ERROR_ROUTES", () => {
     // The chat runs, just not in the requested mode, and one click on the mode
     // pill fixes it — so it reports without touching the send button.
     ["mode_not_applied", { surface: "toast" }],
-    // The chat runs, it just will not ask before writing, and one click on the
-    // supervised switch fixes it — the same shape as its mode sibling. Mapped
-    // rather than left to the fallthrough: the generic failure surface would claim
-    // the turn failed when the turn is fine.
+    // Mapped, not fallthrough: the generic failure surface would claim the turn failed.
     ["supervised_not_applied", { surface: "toast" }],
   ];
 
@@ -334,11 +302,8 @@ describe("ERROR_ROUTES", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE CLOSE IS AN APPEND, and everything else the handler does follows from what
-// the log then says. The summary is the entry's own payload, read by the footer, so
-// this handler stamps nothing onto anything: `appendEntry` is its whole write.
-// ---------------------------------------------------------------------------
+// THE CLOSE IS AN APPEND: `appendEntry` is the handler's whole write; the footer reads the
+// entry's payload.
 
 describe("turn_closed appends the close", () => {
   it("lands the entry at the seq it claims", () => {
@@ -357,10 +322,8 @@ describe("turn_closed appends the close", () => {
     fireClose("chat-1", { seq: 4 });
     expect(mockRepairTurn).toHaveBeenCalledWith("chat-1", "t1", 0);
     expect(get("chat-1")?.turns.get("t1")?.closeAt).toBeUndefined();
-    // And the chat still SETTLES: the frame is proof the turn ended, so waiting for the
-    // repair would leave `thinking` latched on a turn that is over. This is also what
-    // makes the settle test's `id !== closedTurn` term load-bearing — with the close
-    // absent from the log, the closing turn is the one that reads open.
+    // The chat still SETTLES on the frame, and the close's absence from the log is what makes the
+    // settle test's `id !== closedTurn` term load-bearing.
     expect(get("chat-1")?.thinking).toBe(false);
   });
 
@@ -381,10 +344,7 @@ describe("turn_closed side effects", () => {
     expect(get("chat-1")?.thinking).toBe(false);
   });
 
-  // The server's own liveness statement, set FALSE because this close settled the chat.
-  // Written at the CALL SITE rather than inside `clearTurnState`, deliberately — that
-  // function also runs on `BUS_RECONCILE`, where dropping the server's last statement
-  // while `thinking` is also cleared is the gap-path flash `turnLive` removes.
+  // Written at the CALL SITE, not in `clearTurnState`, which also runs on `BUS_RECONCILE`.
   it("marks the server's turn_open statement closed", () => {
     seedLive();
     fireClose("chat-1");
@@ -402,10 +362,7 @@ describe("turn_closed side effects", () => {
     expect(steerCount("chat-1")).toBe(1);
   });
 
-  // Every ask BLOCKS its turn, so a turn that has closed is not waiting on one. What is
-  // left in the queue is an abandoned card (cmdCancel already cleared the server's own
-  // pending set), and `input` outranks every other dot state — so the chat claimed it
-  // needed a decision indefinitely.
+  // A closed turn is waiting on no ask; a leftover card would hold the `input` dot indefinitely.
   it("discards the turn's abandoned asks", () => {
     seedLive();
     fireClose("chat-1");
@@ -425,14 +382,8 @@ describe("turn_closed side effects", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A CLOSE THAT LEAVES ANOTHER TURN OPEN SETTLES NOTHING, read from the LOG.
-//
-// The frame names its turn, so `superseded` and `workflow_step` — which existed only
-// because the turn-end frame it replaced carried none — are gone. What decides the teardown
-// is `anotherTurnOpen`: a prompt's turn is in the store from its admission, so an
-// agent-initiated turn closing while that prompt waits must leave the chat live.
-// ---------------------------------------------------------------------------
+// A close that leaves another turn open settles nothing, read from the LOG via `anotherTurnOpen`:
+// a prompt's turn is stored from admission, so an agent turn closing meanwhile leaves the chat live.
 
 describe("turn_closed with another turn still open", () => {
   /** Two open turns, the shape 4.1's registry produces: an agent-initiated turn and a
@@ -464,10 +415,7 @@ describe("turn_closed with another turn still open", () => {
   });
 
   it("still appends the close and runs the ungated effects", () => {
-    // The gate covers the teardown, not the handler: the close is a line of the log
-    // whichever turn it names, this chat's turn index changed, and a frame arriving at
-    // all proves an agent is behind the chat. Without this row every case above passes
-    // just as well for a handler that returns early on a second open turn.
+    // The gate covers the teardown, not the handler; without this row an early return would pass.
     seedTwoOpen();
     fireClose("chat-1");
     expect(get("chat-1")?.turns.get("t1")?.closeAt).toBe(1);
@@ -488,11 +436,7 @@ describe("turn_closed with another turn still open", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A RUN'S CLOSE IS `handlers/run.ts`'s, and the guard is what replaced the
-// `workflow_step` marker: a run's frames carry an EMPTY chat id, so without it the
-// settle below would run a chat teardown against "".
-// ---------------------------------------------------------------------------
+// A run's close is `handlers/run.ts`'s: its frames carry an EMPTY chat id.
 
 describe("turn_closed carrying a workflow id", () => {
   it("is left to the run's handler entirely", () => {
@@ -518,13 +462,8 @@ describe("turn_closed carrying a workflow id", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE DOT FOLLOWS THE LOG, and this handler's contribution to it is LIVENESS alone.
-// The verdict has ONE source — the header's `last_turn_outcome`, written by the server
-// at every `turn_close` — so there is no latch here to agree with anything, and
-// store.test.ts owns the outcome-to-dot table. What is this file's is the gate:
-// `failed` and `done` are both unreachable while a turn of the chat is open.
-// ---------------------------------------------------------------------------
+// The dot's verdict is the header's `last_turn_outcome` (store.test.ts owns the table); this file
+// owns the gate: `failed` and `done` are unreachable while a turn is open.
 
 describe("the dot reads the header's outcome once the close lands", () => {
   it("takes a settled chat off working", () => {
@@ -555,10 +494,8 @@ describe("the dot reads the header's outcome once the close lands", () => {
 });
 
 describe("error handler", () => {
-  // The turn lifecycle and the error PROSE are two different questions: `thinking` is what
-  // the renderer reads to decide whether an assistant bubble subscribes to its own deltas,
-  // so clearing it for every code freezes the whole first turn at its first streamed chunk
-  // on a `.kiro/agents` typo, which fires `agent_config_error` at session construction.
+  // `thinking` decides whether a bubble subscribes to its deltas, so clearing it for every code would
+  // freeze the first turn on a `.kiro/agents` typo (`agent_config_error`).
   it("leaves the turn running for a routed error and reports it", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
@@ -623,10 +560,8 @@ describe("error handler", () => {
     expect(mockOpenSetting).not.toHaveBeenCalled();
   });
 
-  // D106. Before this the auth failure existed only as one server log line and a
-  // JSON-RPC error to KAS, and KAS's answer to that error is to run
-  // unauthenticated — the chat opens and every turn fails with nothing on screen
-  // saying the runtime is signed out.
+  // KAS answers an auth failure by running unauthenticated, so without this toast every turn fails
+  // silently.
   it("routes the auth failure to a toast carrying the sign-in CTA", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
@@ -642,10 +577,7 @@ describe("error handler", () => {
       // chain is dead, and no wording invented client-side is more specific.
       "kiro-cli: refresh token expired",
       expect.objectContaining({ label: "Sign in" }),
-      // TURN-SCOPED, off the FRAME, and still raised: the remedy is the half an
-      // inline row cannot offer, so failure-notice.ts never suppresses an
-      // action-bearing notice. This is the code where both conjuncts are true at
-      // once, which is what makes that clause real rather than defensive.
+      // Turn-scoped and still raised: failure-notice.ts never suppresses an action-bearing notice.
       true,
     );
     const action = mockReportFailure.mock.calls[0]?.[2] as
@@ -658,10 +590,8 @@ describe("error handler", () => {
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
-  // The 2026-08 routing change, and the assertion the user's complaint reduces
-  // to: a throttle / 5xx / capacity failure goes to the toast, carrying the
-  // server's prose VERBATIM (no `code: ` prefix — the code is machine vocabulary
-  // in front of a human sentence), and it does NOT touch the send button.
+  // A throttle / 5xx / capacity failure goes to the toast with the server's prose VERBATIM (no
+  // `code: ` prefix) and leaves the send button alone.
   it.each(["prompt_failed", "recovery_failed", "switch_failed", "model_not_served"])(
     "routes %s to the toast and leaves the send button alone",
     (code) => {
@@ -673,12 +603,8 @@ describe("error handler", () => {
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // TURN-SCOPEDNESS COMES OFF THE FRAME, NOT OFF THE CODE. The flag decides whether
-  // failure-notice.ts drops the toast for the chat on screen, and three of the five
-  // emitters behind `prompt_failed` and `recovery_failed` open no turn at all — for those
-  // the toast is the ONLY surface, so a per-code flag reports them nowhere.
-  // ---------------------------------------------------------------------------
+  // TURN-SCOPEDNESS COMES OFF THE FRAME: three of the five emitters behind these codes open no turn,
+  // so for them the toast is the only surface.
 
   it.each(["prompt_failed", "recovery_failed"])(
     "reports a %s that opened NO turn, even on the chat in front of you",
@@ -708,11 +634,8 @@ describe("error handler", () => {
   );
 
   it("reads a frame carrying no turn_scoped field as NOT turn-scoped", () => {
-    // The compatibility direction, and the one that decides which way this fails
-    // safe. A server that predates the field, or an emitter that forgets it, must
-    // leave the failure REPORTED rather than trusting an inline row that is not
-    // there. `false` is therefore the answer for an absent field and for an
-    // explicit `false` alike.
+    // Fails safe: an absent field (an older server, a forgetful emitter) reads as `false`, leaving the
+    // failure REPORTED.
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "compaction_failed", message: "nope" });
@@ -746,10 +669,8 @@ describe("error handler", () => {
     expect(mockReportFailure).not.toHaveBeenCalled();
   });
 
-  // A BACKGROUND chat's failure now reaches the user, which is the hole the old
-  // routing left: the prose was dropped for every non-active chat, so a failed
-  // background turn had nothing but a tab dot. A toast claims no shared control,
-  // so it is safe to raise from any chat; the send button still is not.
+  // A background chat's failure reaches the user via a toast (no shared control); the send button
+  // still is not touched.
   it("reports a background chat's failure and spares its send button", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
@@ -783,11 +704,8 @@ describe("error handler", () => {
   });
 });
 
-// D103: the protected approval floor, at the client's notification site. There
-// is no per-kind switch left, so all three turn-blocking asks reach
-// notifyIfHidden — which is where the master switch is checked. The
-// isAgentFinishedEnabled mock returns false, so a turn-close notification would
-// NOT fire; that contrast is what makes these assertions non-vacuous.
+// The approval floor: all three turn-blocking asks reach notifyIfHidden (the master switch). The
+// agent-finished mock returns false, which keeps these assertions non-vacuous.
 describe("the permission-class asks always notify", () => {
   it.each([
     ["permission_needed", { request_id: 1, options: [] }, "Permission needed"],
@@ -815,21 +733,12 @@ describe("the permission-class asks always notify", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE OFF-SCREEN NOTIFICATION, per outcome, read off the close entry's payload.
-//
-// It gated on `stop_reason !== "cancelled"` and then said `Agent finished` whatever had
-// happened, so a failed, interrupted or refused turn pushed a claim of success to a
-// reader who was not looking. It reads the SEVERITY now. A distinct chat id per case:
-// the cue dedups per chat, so seven frames on one id would measure that window.
-// ---------------------------------------------------------------------------
+// The off-screen notification reads the close entry's SEVERITY, so a failed or refused turn never
+// says "Agent finished". A distinct chat id per case: the cue dedups per chat.
 
 describe("the agent-finished notification reads the severity", () => {
-  /** outcome -> the notification body, or "" for a turn that says nothing.
-   *
-   *  Hardcoded rather than derived through `severityOf`/`defaultFailureReason`: an
-   *  expectation computed by the code under test passes for any mapping at all,
-   *  including the one that shipped the defect. */
+  /** outcome -> notification body, or "" for silence. Hardcoded: an expectation computed by the code
+   *  under test passes for any mapping. */
   const cases: [TurnOutcome, string][] = [
     ["completed", "seeded: Agent finished"],
     ["failed", "seeded: The agent reported an error and the turn stopped."],
@@ -891,7 +800,7 @@ describe("the agent-finished notification reads the severity", () => {
   });
 
   it("still notifies nothing at all when the master switch is off", () => {
-    // The gate the plan required to survive the rewrite: severity decides WHAT is
+    // Severity decides WHAT is
     // said, never WHETHER the user has asked to be told.
     notifyGate.agentFinished = false;
     setSessions([makeSession("gate-off")]);
@@ -922,13 +831,8 @@ describe("the agent-finished notification reads the severity", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE REPORTED DEFECT: a chat that launched a workflow raised the cue at its own turn's
-// end, which is when `run_workflow` returned rather than when the work was done — so an
-// off-screen reader was told the agent had finished up to forty minutes early. The
-// handler hands ONE fact to `agent-finished-cue.ts` now and decides nothing. Nothing
-// mocks `../run-store.js` here, so the cases drive the real live-run inventory.
-// ---------------------------------------------------------------------------
+// A chat that launched a workflow must not raise the cue when `run_workflow` returns, only when the
+// work is done; the handler hands one fact to `agent-finished-cue.ts`. The real live-run inventory.
 
 describe("the notification waits for the work, not just the turn", () => {
   beforeEach(() => {

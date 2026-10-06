@@ -1,5 +1,3 @@
-// Tests for toggleServer and deleteServer optimistic + rollback.
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -66,7 +64,6 @@ describe("toggleServer optimistic + rollback", () => {
     mockUpdate.mockReturnValue(prev);
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
     await toggleServer.dispatch({ id: "a", enabled: false });
-    // Rollback: second call restores prev.enabled
     expect(mockUpdate).toHaveBeenCalledTimes(2);
     expect(mockUpdate).toHaveBeenLastCalledWith("a", { enabled: true });
   });
@@ -119,8 +116,7 @@ describe("importServers", () => {
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/mcp/import");
     expect(init.method).toBe("POST");
-    // Unchanged: the server owns the translation, so a second copy of those
-    // rules here is exactly what must not exist.
+    // Unchanged: the server owns the translation.
     expect(JSON.parse(init.body as string)).toEqual(block);
   });
 

@@ -1,12 +1,7 @@
 package translate
 
-// v3 (KAS) _kiro/* extension-notification handlers whose payloads are
-// reshaped from their v2 _kiro.dev/* counterparts (so they can't just
-// reuse the v2 handler). Shape-compatible v3 notifications (rate_limit,
-// customAgent/not_found, customAgent/config_error) reuse the v2 handlers
-// directly via the dispatch table and are not repeated here.
-//
-// Wire shapes verified against the KAS 2.12 acp-server bundle.
+// v3 _kiro/* notification handlers whose payloads are reshaped from their v2 _kiro.dev/*
+// counterparts. Shape-compatible ones reuse the v2 handlers through the dispatch table.
 
 import (
 	"context"
@@ -15,38 +10,129 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// unstatedFailureReason stands in for an errorMessage KAS left empty. The row's
-// three leads ("Failed to start", the dot's tooltip, the toast) all append the
-// reason, so an empty one renders as a bare colon and the reader is told a
-// server failed with no way to tell whether the cause was withheld or lost.
+// unstatedFailureReason stands in for an errorMessage KAS left empty: every surface
+// appends the reason to a lead, so an empty one renders a bare colon.
 const unstatedFailureReason = "the server did not report a reason"
 
-// v3MCPStatus is the _kiro/mcp/status payload. v3 consolidates v2's
-// per-server server_initialized / server_init_failure / oauth_request
-// notifications into one list keyed by a status enum.
+// v3MCPStatus is the _kiro/mcp/status payload: one list keyed by a status enum, replacing
+// v2's per-server notifications.
 type v3MCPStatus struct {
-	Servers []v3MCPServer `json:"servers"`
+	// Present only while the organization sets an MCP registry; "registry" mode drops every
+	// server that is not a registry entry.
+	AccessMode      string             `json:"accessMode"`
+	Servers         []v3MCPServer      `json:"servers"`
+	Filtered        []string           `json:"accessModeFilteredServers"`
+	Unresolved      []string           `json:"unresolvedRegistryServers"`
+	RegistryServers []v3RegistryServer `json:"registryServers"`
 }
 
-// v3MCPServer is one entry in the _kiro/mcp/status servers list. Fields
-// present depend on status: connected carries tools[] + prompts[] +
-// resources[]; failed carries errorMessage + (for auth failures)
-// authorizationUrl.
+// v3RegistryServer is one entry of the organization's MCP catalog; Enabled reports
+// whether it is running.
+type v3RegistryServer struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
+}
+
+// mcpAccessModeRegistry is the access mode under which KAS runs registry entries only.
+const mcpAccessModeRegistry = "registry"
+
+// registry projects the status's registry fields; nil outside registry mode.
+func (s *v3MCPStatus) registry() *marotte.GovernanceMCPRegistry {
+	if s.AccessMode != mcpAccessModeRegistry {
+		return nil
+	}
+	r := &marotte.GovernanceMCPRegistry{
+		Servers:    make([]marotte.GovernanceRegistryServer, 0, len(s.RegistryServers)),
+		Filtered:   nonNilStrings(s.Filtered),
+		Unresolved: nonNilStrings(s.Unresolved),
+	}
+	for _, rs := range s.RegistryServers {
+		if rs.Name == "" {
+			continue
+		}
+		r.Servers = append(r.Servers, marotte.GovernanceRegistryServer{
+			Name:        rs.Name,
+			Version:     displayText(rs.Version),
+			Description: displayText(rs.Description),
+			Enabled:     rs.Enabled,
+		})
+	}
+	return r
+}
+
+func nonNilStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// credentialsRejectedReason is the reason for a server KAS marks failedAuthorization with
+// no authorization URL: the remedy is editing its headers or token, not signing in.
+const credentialsRejectedReason = "the server rejected its credentials (check its headers or token)" //nolint:gosec // G101: a failure sentence, not a credential
+
+// v3MCPServer is one entry in the _kiro/mcp/status servers list. connected carries the
+// tool, prompt and resource lists; failed carries errorMessage, failedAuthorization and,
+// for OAuth sign-in, authorizationUrl. KAS reports its internal "unavailable" as failed.
 type v3MCPServer struct {
-	Name             string `json:"name"`
-	Status           string `json:"status"` // connecting | connected | failed | disabled
-	ErrorMessage     string `json:"errorMessage"`
-	AuthorizationURL string `json:"authorizationUrl"`
+	Meta             v3MCPServerMeta `json:"_meta"`
+	Name             string          `json:"name"`
+	Status           string          `json:"status"`
+	ErrorMessage     string          `json:"errorMessage"`
+	AuthorizationURL string          `json:"authorizationUrl"`
 	Tools            []struct {
 		Name string `json:"name"`
 	} `json:"tools"`
-	Prompts   []v3MCPPrompt   `json:"prompts"`
-	Resources []v3MCPResource `json:"resources"`
+	Prompts             []v3MCPPrompt           `json:"prompts"`
+	Resources           []v3MCPResource         `json:"resources"`
+	ResourceTemplates   []v3MCPResourceTemplate `json:"resourceTemplates"`
+	FailedAuthorization bool                    `json:"failedAuthorization"`
 }
 
-// v3MCPPrompt mirrors one prompt entry in a connected server's status.
-// promptName is the machine id (passed to _kiro/mcp/getPrompt); name is
-// the display title. Verified against the KAS 2.12 bundle + live probe.
+// v3MCPServerMeta is an entry's _meta.kiro.resource.source provenance stamp.
+type v3MCPServerMeta struct {
+	Kiro struct {
+		Resource struct {
+			Source struct {
+				Origin string `json:"origin"`
+				Root   string `json:"root"`
+				Power  struct {
+					Name string `json:"name"`
+				} `json:"power"`
+			} `json:"source"`
+		} `json:"resource"`
+	} `json:"kiro"`
+}
+
+// source projects the provenance stamp onto the recorder's type.
+func (s *v3MCPServer) source() marotte.MCPSource {
+	src := s.Meta.Kiro.Resource.Source
+	return marotte.MCPSource{Origin: src.Origin, Root: src.Root, Power: src.Power.Name}
+}
+
+// failureReason is the reason recorded for a failed entry with no
+// authorization URL.
+func (s *v3MCPServer) failureReason() string {
+	msg := strings.TrimSpace(s.ErrorMessage)
+	if s.FailedAuthorization {
+		if msg == "" || strings.EqualFold(msg, "unauthorized") {
+			return credentialsRejectedReason
+		}
+		return credentialsRejectedReason + ": " + msg
+	}
+	if msg == "" {
+		return unstatedFailureReason
+	}
+	return s.ErrorMessage
+}
+
+// v3MCPPrompt mirrors one prompt entry in a connected server's status. promptName is the
+// machine id (passed to _kiro/mcp/getPrompt); name is the display title.
 type v3MCPPrompt struct {
 	Name        string `json:"name"`
 	PromptName  string `json:"promptName"`
@@ -66,52 +152,75 @@ type v3MCPResource struct {
 	MimeType    string `json:"mimeType"`
 }
 
-// HandleMCPStatus maps the consolidated v3 _kiro/mcp/status notification
-// onto the same MCP-registry state the v2 mcp/* handlers drive: connected
-// servers record their tool names + connected state; failed servers record
-// an init failure, or an OAuth prompt when an authorization URL is present.
+type v3MCPResourceTemplate struct {
+	Name        string `json:"name"`
+	URITemplate string `json:"uriTemplate"`
+	Description string `json:"description"`
+	MimeType    string `json:"mimeType"`
+}
+
+// HandleMCPStatus maps _kiro/mcp/status onto the MCP-registry state: connected servers
+// record their tools, failed ones an init failure, or an OAuth prompt when a URL is present.
 func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3MCPStatus](msg, "mcp/status")
 	if !ok {
 		return
 	}
+	t.governance.SetMCPRegistry(ctx, p.registry())
 	for i := range p.Servers {
 		s := &p.Servers[i]
 		if s.Name == "" {
 			continue
 		}
+		src := s.source()
 		switch s.Status {
 		case "connected":
-			// Tools, prompts and resources all ride this ONE notification, so they
-			// land in one registry write. They used to split: the tool names went to
-			// the MCP config store — a disk write, on a notification path, of
-			// agent-derived data into a user-intent file.
-			t.mcp.RecordConnected(ctx, s.Name, mcpToolNames(s.Tools), mcpPrompts(s.Prompts), mcpResources(s.Resources))
+			t.mcp.RecordConnected(ctx, s.Name, src, mcpToolNames(s.Tools), mcpPrompts(s.Prompts),
+				mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates))
 		case "failed":
+			// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both.
 			if s.AuthorizationURL != "" {
-				t.mcp.RecordOAuth(ctx, s.Name, s.AuthorizationURL)
+				t.mcp.RecordOAuth(ctx, s.Name, src, s.AuthorizationURL)
 				continue
 			}
-			reason := s.ErrorMessage
-			if strings.TrimSpace(reason) == "" {
-				reason = unstatedFailureReason
-			}
-			t.mcp.RecordInitFailure(ctx, s.Name, reason)
+			t.mcp.RecordInitFailure(ctx, s.Name, src, s.failureReason())
 		case "disabled":
-			// A marotte-configured server's off state is already on its config
-			// row, which is what the MCP page renders it from — so the recorder
-			// drops this frame for one, exactly as the default arm used to. It
-			// keeps the frame only for a server marotte never configured, where
-			// this is the ONLY evidence the server exists: without it, a Power's
-			// disabled server is invisible on a page that claims to list the
-			// agent's integrations.
-			t.mcp.RecordDisabled(ctx, s.Name)
+			// The recorder drops this for marotte's own server (its config row renders the off
+			// state); for every other origin this frame is the only evidence the server exists.
+			t.mcp.RecordDisabled(ctx, s.Name, src)
 		default:
-			// connecting: transient, not terminal. Recording it would paint a row
-			// the same notification's next frame for this server replaces.
+			// connecting is transient: the next frame for this server replaces it.
 		}
 	}
-	t.mcp.SignalReady()
+}
+
+// MCPPoolServer is what one connected server offers the `#` menu.
+type MCPPoolServer struct {
+	Name              string
+	Resources         []marotte.MCPResourceInfo
+	ResourceTemplates []marotte.MCPResourceTemplateInfo
+}
+
+// ReadMCPPool decodes a _kiro/mcp/status frame into the connected servers offering
+// resources or templates. Each frame lists every server, so the result replaces the pool
+// whole; ok is false only for a frame that does not decode.
+func ReadMCPPool(msg *marotte.RPCResponse) (servers []MCPPoolServer, ok bool) {
+	p, err := decodeParams[v3MCPStatus](msg)
+	if err != nil {
+		return nil, false
+	}
+	for i := range p.Servers {
+		s := &p.Servers[i]
+		if s.Name == "" || s.Status != "connected" {
+			continue
+		}
+		resources, templates := mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates)
+		if len(resources) == 0 && len(templates) == 0 {
+			continue
+		}
+		servers = append(servers, MCPPoolServer{Name: s.Name, Resources: resources, ResourceTemplates: templates})
+	}
+	return servers, true
 }
 
 // mcpToolNames extracts the tool-name list from a v3 MCP server entry.
@@ -170,6 +279,19 @@ func mcpResources(in []v3MCPResource) []marotte.MCPResourceInfo {
 	return out
 }
 
-// _kiro/sessions/changed (the v3 session-inventory diff) has no client
-// consumer: on v3 subagents are tool calls, not sessions, so there is no
-// session list to maintain. The method is noop'd in the runtime dispatch.
+func mcpResourceTemplates(in []v3MCPResourceTemplate) []marotte.MCPResourceTemplateInfo {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]marotte.MCPResourceTemplateInfo, 0, len(in))
+	for _, res := range in {
+		if res.URITemplate == "" {
+			continue
+		}
+		out = append(out, marotte.MCPResourceTemplateInfo{Name: res.Name, URITemplate: res.URITemplate, Description: res.Description, MimeType: res.MimeType})
+	}
+	return out
+}
+
+// _kiro/sessions/changed has no consumer: on v3 subagents are tool calls, not sessions.
+// The runtime dispatch noops it.

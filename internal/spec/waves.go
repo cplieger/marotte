@@ -20,21 +20,10 @@ type waveGraph struct {
 	} `json:"waves"`
 }
 
-// parseWaves reads the "Task Dependency Graph" section's fenced JSON body and
-// answers the wave id per dotted task number, or nil.
-//
-// A wave is the set Kiro's orchestrator runs in parallel, so a row's wave is
-// how a reader tells work that can start now from work that is waiting. The
-// section is optional and agent-authored, which is why every departure from
-// the expected shape answers nil rather than a partial map: an absent or
-// unfenced section, a body the decoder refuses, a missing waves key, a
-// negative id, or one task id claimed by two waves. A row carrying the wrong
-// wave is worse than a row carrying none, and a contradictory graph cannot say
-// which wave ANY task is in — the order it describes is what is broken.
-//
-// A repeated heading is not that class: the first section wins, because a
-// heading written twice is a documentation slip where a task in two waves is a
-// broken graph.
+// parseWaves reads the "Task Dependency Graph" section's fenced JSON body and answers the
+// wave id per dotted task number, or nil. Any departure from the expected shape (absent or
+// unfenced section, undecodable body, no waves key, a negative id, one task in two waves)
+// answers nil: a wrong wave is worse than none. A repeated heading: the first wins.
 func parseWaves(lines []string) map[string]int {
 	body, ok := waveBody(lines)
 	if !ok {

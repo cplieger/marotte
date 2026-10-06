@@ -1,8 +1,5 @@
-// ---------------------------------------------------------------------------
-// Notifications: browser Notification API (foreground tab) + Web Push
-// (background/closed). Preferences are global (server-side settings).
-// Each device auto-prompts for browser permission when enabled globally.
-// ---------------------------------------------------------------------------
+// Notifications: the Notification API (foreground tab) and Web Push
+// (background or closed). Preferences are global server-side settings.
 
 import { isIOS, isStandalone } from "./platform.js";
 import { openPushTarget } from "./notification-open.js";
@@ -14,18 +11,8 @@ import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 import { patchSettings } from "./persist.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
-// ---------------------------------------------------------------------------
-// Module-level state (replaces the former NotifyController class).
-// ---------------------------------------------------------------------------
-
 /** Application name used in browser Notification titles. */
 export const NOTIFY_TITLE = "Marotte";
-
-// There is no document-title writer here any more. `setBadge` was named for a
-// badge it never set — it wrote document.title only, was called with the literal
-// 1 and the literal 0, and asserted its own copy of static/index.html's <title>
-// over whatever that file declared. attention.ts owns the title now, with a real
-// count folded from the chat tabs and the base captured from the served document.
 
 type PushState =
   | { kind: "idle" }
@@ -33,14 +20,10 @@ type PushState =
   | { kind: "registered"; registration: ServiceWorkerRegistration }
   | { kind: "failed"; error: string };
 
-/** The push kinds the user can switch off, keyed by their WIRE value (matching
- *  `marotte.PushKind`) and paired with the settings key that carries each one.
- *
- *  Derived from the server's registry rather than restated: a kind with a settings
- *  key is configurable, and `permission` deliberately has none — an ask blocks the
- *  turn and has no per-tab marker, so a channel that could go dark on its own
- *  would stall every later turn with nothing on screen to say why. That absence is
- *  why this map exists as a map and not as an exhaustive record over PushKind. */
+/** The push kinds the user can switch off, keyed by wire value (`marotte.PushKind`)
+ *  and paired with each settings key. `permission` has none on purpose: an ask
+ *  blocks the turn, so a channel that could go dark would stall every later turn
+ *  with nothing on screen to say why. */
 export const KEYED_PUSH_KINDS: Readonly<
   Record<string, "notify_agent_finished" | "notify_pr_status" | "notify_run_outcome">
 > = {
@@ -49,14 +32,9 @@ export const KEYED_PUSH_KINDS: Readonly<
   run_outcome: "notify_run_outcome",
 };
 
-/** The default for each keyed kind. `pr_status` is OFF while its two siblings are
- *  ON: a pull request's CI verdict is already on the forge and in the PRs tab,
- *  where the other two report work this server did while nobody was looking.
- *
- *  A MIRROR the payload cannot replace: `EffectiveSettings` carries each kind's
- *  value in FORCE, so a kind the reader switched off is byte-identical there to
- *  one whose default is off, and "which kinds does the master turn on" is not
- *  derivable from it. `push-kinds.test.ts` holds the two languages in step. */
+/** Each keyed kind's default (`pr_status` is OFF). A mirror the payload cannot
+ *  replace: `EffectiveSettings` carries values in force, so a switched-off kind
+ *  looks like one defaulting off. push-kinds.test.ts keeps the two in step. */
 export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS, boolean>> = {
   agent_finished: true,
   pr_status: false,
@@ -65,40 +43,20 @@ export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS,
 
 let swRegistration: ServiceWorkerRegistration | null = null;
 let enabled = false;
-/** Per-kind enabled state for the KEYED kinds only, seeded from
- *  KEYED_PUSH_DEFAULTS so a config.json that predates a kind behaves the same way
- *  the server does — including for the kind whose default is OFF. */
+/** Seeded from KEYED_PUSH_DEFAULTS, so a config.json predating a kind behaves as
+ *  the server does. */
 const kindEnabled = new Map<string, boolean>(Object.entries(KEYED_PUSH_DEFAULTS));
 let notifyUICallback: (() => void) | null = null;
 let pushState: PushState = { kind: "idle" };
-
-// --- Visibility tracking ---
-
-// THERE IS NONE HERE. This module used to set a `data-tab-hidden` attribute on
-// <html> for one CSS rule that switched off the transcript's entry animations
-// while the tab was backgrounded. That rule is deleted (61-mcp-tools.css records
-// the measurement: Chromium runs those animations in a hidden tab, so it guarded
-// against nothing), and this was its only writer, so the attribute has no reader
-// and no producer. attention.ts owns every other response to visibility — the
-// title count, the favicon cue and the away summary — and it reads
-// `document.visibilityState` itself.
-
-// --- Cleanup registration ---
 
 registerCleanup(() => {
   registerPush.cancel();
 });
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export function areNotificationsEnabled(): boolean {
   return enabled;
 }
-/** Whether a KEYED kind is on. Answers true for any kind not in
- *  KEYED_PUSH_KINDS, because the only such kind is the permission floor and its
- *  answer is always yes — see the note below on why there is no getter for it. */
+/** Whether a keyed kind is on; true for any other kind (the always-on permission floor). */
 export function isKindEnabled(kind: string): boolean {
   return kindEnabled.get(kind) ?? true;
 }
@@ -107,19 +65,15 @@ export function isAgentFinishedEnabled(): boolean {
   return isKindEnabled("agent_finished");
 }
 
-// There is no per-kind getter for the permission ask, and adding one back is
-// the defect: an ask blocks the turn, so a channel that can go dark on its own
-// stalls every later turn with nothing on screen to say so. The master
-// `enabled` switch is the only gate, checked inside notifyIfHidden. See the
-// "no notify_permission key" note in internal/settings/defaults.go.
+// No per-kind getter for the permission ask: the master switch, checked in
+// notifyIfHidden, is its only gate (KEYED_PUSH_KINDS says why).
 
 export function setNotificationsEnabled(v: boolean): void {
   enabled = v;
 }
 
-/** Set one KEYED kind's state. A kind outside KEYED_PUSH_KINDS is ignored rather
- *  than added, so nothing can create an off switch for the permission floor by
- *  passing its name. */
+/** Set one keyed kind. Any other kind is ignored, so nothing can create an off
+ *  switch for the permission floor. */
 export function setKindEnabled(kind: string, v: boolean): void {
   if (!(kind in KEYED_PUSH_KINDS)) {
     return;
@@ -127,27 +81,11 @@ export function setKindEnabled(kind: string, v: boolean): void {
   kindEnabled.set(kind, v);
 }
 
-// There is no setAgentFinishedEnabled. It was the per-kind setter when there was
-// one keyed kind; setKindEnabled is the same function with the kind as an argument,
-// so keeping a named wrapper for one member would be a second door onto one room.
-// isAgentFinishedEnabled stays, because handlers/turn.ts asks about exactly that
-// kind on the foreground-notification path.
-
 export function setNotifyUICallback(fn: () => void): void {
   notifyUICallback = fn;
 }
 
-/** Apply the persisted preferences.
- *
- *  The per-kind values are read through KEYED_PUSH_KINDS, so adding a kind is one
- *  entry there rather than a declared parameter field plus a line in this body.
- *
- *  There is no cast and no `!== false` any more. Both existed to cope with a key
- *  that might be absent: the master switch defaults OFF and the two per-kind
- *  switches default ON (matching push.kindRegistry), so this one function had to
- *  carry two opposite polarities and get each right. The payload states all three
- *  now, and typing KEYED_PUSH_KINDS' values as the payload's own keys is what makes
- *  the runtime lookup type-safe without listing every kind's field here as well. */
+/** Apply the persisted preferences; per-kind values are read through KEYED_PUSH_KINDS. */
 export function restoreNotifications(s: EffectiveSettings): void {
   const wasEnabled = enabled;
   enabled = s.notifications_enabled;
@@ -163,25 +101,15 @@ export function restoreNotifications(s: EffectiveSettings): void {
   notifyUICallback?.();
 }
 
-// ---------------------------------------------------------------------------
-// The permission ask: two doors onto one prompt.
-//
-// `requestPermission` below is the SETTINGS door — the user asked for
-// notifications, so the prompt is raised inside their own click. The arm/gesture
-// pair is the AUTOMATIC door: a cue that wanted to fire and could not arms the ask,
-// and the reader's next click spends it. Both live here so they cannot disagree
-// about what a grant leads to, and the model itself is DOM-free in `notify-ask.ts`.
-// ---------------------------------------------------------------------------
+// Two doors onto one permission prompt: requestPermission (Settings, inside the
+// user's click) and the arm/gesture pair (automatic). Both live here so they agree
+// on what a grant leads to; the model is DOM-free in notify-ask.ts.
 
 let ask: NotifyAsk | null = null;
 
-/** The Notification constructor, or undefined where it is not one.
- *
- *  Read through `unknown` and tested for a FUNCTION rather than with the
- *  `"Notification" in window` idiom the rest of this module uses, which is the shape
- *  `@cplieger/web-terminal-ui`'s own binding takes: `in` answers true for a global
- *  that exists and is not a constructor, and reading `.permission` off that throws
- *  out of the arm — which would take a whole cue down for a capability check. */
+/** The Notification constructor, or undefined. Tested for a FUNCTION, not with
+ *  `"Notification" in window`: `in` is true for a non-constructor global, and
+ *  reading `.permission` off that would throw out of the arm. */
 function notificationCtor(): { permission?: unknown; requestPermission?: unknown } | undefined {
   const value: unknown = (globalThis as { Notification?: unknown }).Notification;
   return typeof value === "function"
@@ -205,9 +133,8 @@ function notifyAsk(): NotifyAsk {
       if (typeof fn !== "function") {
         return "denied";
       }
-      // Both shapes tolerated: modern browsers return a promise, older Safari takes
-      // a callback and returns undefined, in which case the answer is already on
-      // `permission` by the time the await resolves.
+      // Modern browsers return a promise; older Safari takes a callback and leaves the
+      // answer on `permission`.
       const answer: unknown = await (fn as () => unknown).call(api);
       if (typeof answer === "string") {
         return answer;
@@ -215,10 +142,8 @@ function notifyAsk(): NotifyAsk {
       const settled = notificationCtor()?.permission;
       return typeof settled === "string" ? settled : "denied";
     },
-    // A browser blocking site data throws on ACCESS, and both directions of that
-    // failure are chosen deliberately: an unreadable marker reads as NOT spent, so
-    // the feature still works, degrading to the reference's own once-per-page nag
-    // because the module-level flag is then the only bound.
+    // Access throws when site data is blocked: an unreadable marker reads as NOT
+    // spent, so the per-page flag is then the only bound.
     spent: (): boolean => {
       try {
         return localStorage.getItem(LS_NOTIFY_ASK_KEY) === "1";
@@ -246,16 +171,13 @@ export function _resetNotifyAskForTest(): void {
   ask = null;
 }
 
-/** Note that the app wanted to notify and could not, so the next gesture may ask.
- *
- *  Module-private on purpose: `notifyIfHidden` is the one funnel every cue passes
- *  through, so there is no second site that should be able to arm the ask. */
+/** Private: notifyIfHidden is the one funnel every cue passes through, so nothing
+ *  else may arm the ask. */
 function armNotifyAsk(): void {
   notifyAsk().arm();
 }
 
-/** Note a user gesture. Raises the prompt if one is armed and still worth raising.
- *  Private for the same reason — the listener below is the only caller. */
+/** Raises the prompt if one is armed and still worth raising. */
 function noteNotifyGesture(): void {
   notifyAsk().gesture();
 }
@@ -266,11 +188,9 @@ export function spendNotifyAsk(): void {
   notifyAsk().spend();
 }
 
-/** Wire the gesture. ONE delegated `click` listener rather than a handler per
- *  control: a click is what carries user activation to a keyboard user too (Enter on
- *  a button synthesizes one), and it is a discrete deliberate act — `keydown` would
- *  raise the prompt over someone mid-sentence in the composer. Capture phase, so a
- *  `stopPropagation` in app code cannot hide the gesture. */
+/** ONE delegated capture-phase `click` listener: a click carries user activation
+ *  to keyboard users too, `keydown` would prompt someone mid-sentence, and capture
+ *  survives an app-level `stopPropagation`. */
 export function installNotifyAskGesture(): () => void {
   const ac = new AbortController();
   document.addEventListener(
@@ -285,22 +205,10 @@ export function installNotifyAskGesture(): () => void {
   };
 }
 
-/** The browser granted permission through the automatic door, so turn the switch on:
- *  a prompt the reader answered has to leave Settings agreeing with the answer, or the
- *  next cue is refused by a switch they never chose and the app looks broken.
- *
- *  Only the MASTER key is patched. A cue that armed the ask had its own kind on
- *  because the CUE FIRED: every keyed cue site checks its kind before it reaches
- *  notifyIfHidden, and the ask is armed inside that call. So there is nothing
- *  per-kind left to turn on here, and a grant must not silently re-enable a channel
- *  the reader turned off. (The Settings toggle enables the default-ON kinds, because
- *  there the user is answering about the whole feature rather than about the one cue
- *  that fired.)
- *
- *  Push is subscribed only after the server confirms: a subscription under a master
- *  switch the server never accepted would deliver notifications the settings page
- *  shows as off. `notifyUICallback` is what makes the toggle follow — the same seam
- *  `restoreNotifications` uses, so this needs no reach into the settings DOM. */
+/** A grant through the automatic door turns the MASTER switch on, or the next cue
+ *  is refused by a switch the reader never chose. Per-kind switches stay as they
+ *  are: the cue that armed the ask already had its kind on. Push subscribes only
+ *  after the server confirms, so a refused write cannot deliver hidden notifications. */
 async function adoptGrant(): Promise<void> {
   if (!enabled) {
     const saved = await patchSettings({ notifications_enabled: true });
@@ -379,10 +287,8 @@ const shown = new Map<string, Notification>();
  *  same tag the service worker gives the push for that target, so the retraction on
  *  the settled ask reaches both. */
 export function notifyIfHidden(title: string, body: string, target: PushTarget): boolean {
-  // The arm LEADS every gate below, because each of them is a way this call can want
-  // to notify and not be able to — the switch off, the page in front of the reader,
-  // the permission unanswered. This is the one funnel every cue passes through, which
-  // is what keeps a new notify site from having to remember to arm.
+  // The arm leads every gate: each is a way this call wants to notify and cannot.
+  // One funnel, so no new notify site has to remember to arm.
   armNotifyAsk();
   if (!enabled) {
     return false;
@@ -439,13 +345,9 @@ export function _setRegistrationForTest(
   registrationFor = fn ?? defaultRegistration;
 }
 
-/** Retract every notification about `target`: the banner the service worker showed
- *  for a push (found through the registration by its tag) and the foreground one this
- *  page showed while hidden. Called where the ask it announced is settled on every
- *  other surface, so a person coming back to the device finds no banner for a
- *  question already answered. A push in flight when the page reconnected lands after
- *  this, as a page message on a focused window and as a banner otherwise; the
- *  server's per-subject debounce is what bounds that to one. */
+/** Retract every notification about `target`: the service worker's banner (by tag)
+ *  and this page's foreground one. A push in flight at reconnect can still land
+ *  after this; the server's per-subject debounce bounds that to one. */
 export async function closeNotificationsFor(target: PushTarget): Promise<void> {
   const tag = pushTargetTag(target);
   const page = shown.get(tag);
@@ -462,11 +364,8 @@ export async function closeNotificationsFor(target: PushTarget): Promise<void> {
   }
 }
 
-/** Retract every chat and run banner whose tag is not in `live`, the tags of the asks
- *  a fresh hello's pending set still lists. The set is the whole truth about live
- *  asks, so a chat or run it does not name has none; whatever sits in that tray slot
- *  is stale, an ask answered while this page was away or a finished note for work
- *  the reader has now come back to. One registration read for the whole sweep. */
+/** Retract every chat and run banner whose tag is not in `live` (a fresh hello's
+ *  pending asks): the set is the whole truth, so anything else in that slot is stale. */
 export async function closeNotificationsExcept(live: ReadonlySet<string>): Promise<void> {
   for (const [tag, n] of shown) {
     if (settleableTag(tag) && !live.has(tag)) {
@@ -484,10 +383,6 @@ export async function closeNotificationsExcept(live: ReadonlySet<string>): Promi
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 function autoSubscribe(): void {
   if (

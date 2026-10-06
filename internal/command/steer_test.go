@@ -1,10 +1,5 @@
 package command
 
-// A steer reaches a turn that is already running, so the failure modes are about
-// TIMING and CLASSIFICATION rather than about content: the turn ending underneath
-// the send, and KAS deciding the message is a system notice instead of the user's
-// words. Both are pinned here, along with what actually goes onto the wire.
-
 import (
 	"context"
 	"encoding/json"
@@ -67,8 +62,6 @@ func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 	if got := b.gotParams["sessionId"]; got != marotte.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", got)
 	}
-	// Trimmed, because KAS refuses a blank message and a user's trailing newline
-	// should not be the difference between sent and refused.
 	if got := b.gotParams["message"]; got != "use tabs" {
 		t.Errorf("message = %v, want the trimmed text", got)
 	}
@@ -120,12 +113,8 @@ func TestCmdSteer_AnEpochDropLeavesTheRowToTheTurnEnd(t *testing.T) {
 	}
 }
 
-// KAS decides a steer is a NOTIFICATION by sniffing its text, not from a
-// parameter — and a notification yields no acknowledgement and is excluded from
-// the session/load re-injection that carries real steers across a resume. So a
-// user message that happens to open this way would be silently reclassified AND
-// silently lost on the next reload. marotte refuses instead, and refuses BEFORE
-// the wire: the point is that the message never gets misfiled.
+// TestCmdSteer_RefusesTextKASWouldReadAsANotification: KAS sniffs the text, and a notification is
+// excluded from the session/load re-injection.
 func TestCmdSteer_RefusesTextKASWouldReadAsANotification(t *testing.T) {
 	for _, severity := range []string{"info", "success", "warning", "error"} {
 		t.Run(severity, func(t *testing.T) {
@@ -256,8 +245,6 @@ func TestCmdSteerClear_ReportsWhatItDropped(t *testing.T) {
 	if b.gotMethod != marotte.MethodSessionSteerClear {
 		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSessionSteerClear)
 	}
-	// The success body is the handler's RETURN value now, so the ids are read
-	// off it rather than out of serialized JSON.
 	reply, ok := body.(map[string]any)
 	if !ok {
 		t.Fatalf("body = %T, want map[string]any", body)
@@ -385,27 +372,14 @@ func TestCmdSteer_RecordsTheIDAsTheUsersOwn(t *testing.T) {
 		t.Errorf("SteerOrigin(returned id) = %q, want %q — the translate layer has no other "+
 			"way to tell the user's words from a workflow's report", got, marotte.SteerOriginUser)
 	}
-	// The client's own messageId is NOT what a frame carries, so recording it
-	// would file the steer under a name nothing ever asks about.
 	if got := ledger.SteerOrigin("c1", "m-1"); got != marotte.SteerOriginAgent {
 		t.Errorf("SteerOrigin(client id) = %q, want %q", got, marotte.SteerOriginAgent)
 	}
 }
 
-// The ledger already answers "the user's" while the wire call is IN FLIGHT, and that
-// ordering is the whole fix for a race the client saw as a missing send-now arrow.
-//
-// KAS emits `steering_queued` BEFORE it answers `_session/steer`, and that
-// notification is folded on the bridge's own Forward goroutine, which nothing
-// serializes against this handler. So a ledger written after the response loses
-// whenever the fold is prompt, SteerOrigin answers `agent` for the user's own words,
-// and every surface keyed on origin misreports it — the arrow withheld, the transcript
-// note reading as a workflow report, and the boundary resend dropping the message
-// instead of carrying it. Measured before the write moved: 9 of 18 steers whose
-// queued-time origin is observable on disk were labelled the agent's.
-//
-// The mid-call read is what pins it. Asserting after CmdSteer returns passes either
-// way, which is why the defect survived the suite that already checks the recorded id.
+// TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheReply: KAS emits `steering_queued` before it
+// answers `_session/steer`, so the ledger must already answer "the user's" while the call is in
+// flight.
 func TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheCallReturns(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ledger := NewSteerLedger()

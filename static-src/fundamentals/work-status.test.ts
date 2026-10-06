@@ -1,10 +1,5 @@
-// ---------------------------------------------------------------------------
-// Tests for fundamentals/work-status.ts: the one status glyph table.
-//
-// Three properties, each the reason the module exists: one status class per
-// paint and never two, the queued tint as a flag over pending only, and no
-// character in the DOM (the glyph is CSS-drawn).
-// ---------------------------------------------------------------------------
+// The one status glyph table: one status class per paint, the queued tint over pending only, and
+// no character in the DOM (CSS-drawn).
 
 import { describe, it, expect } from "vitest";
 import { STATUS, STATUS_CLASS, QUEUED_CLASS, paintStatus } from "./work-status.js";

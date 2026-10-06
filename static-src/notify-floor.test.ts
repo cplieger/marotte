@@ -1,18 +1,3 @@
-// ---------------------------------------------------------------------------
-// The protected-approval floor (D103), client side.
-//
-// The decision was to REMOVE the notify_permission off switch, and the failure
-// mode a lazy removal leaves behind is a hidden control: the markup gone but the
-// key, the getter and the mirror still wired, so the stall is one hand-edited
-// config.json away. These tests assert the switch is unreachable from every
-// direction the client owns — the markup, the settings type, the notify module's
-// surface, and the module's own restore path.
-//
-// The server's half is push.TestPermissionKindHasNoSettingsKey (structural),
-// push.TestPermissionKindSurvivesEveryConfig (behavioural) and
-// server.TestSyncPushPreferences_permissionIsAFloor (the write path).
-// ---------------------------------------------------------------------------
-
 import { describe, it, expect } from "vitest";
 import { chatTarget } from "./push-subject.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -29,14 +14,10 @@ describe("the permission notification has no off switch", () => {
     expect(html).not.toContain("notify-permission-toggle");
   });
 
-  // Not just deleted: the row is REPLACED by a line saying it is always on and
-  // pointing at the relaxation. A removed control with no explanation reads as a
-  // regression, and the reader who wanted fewer interruptions still needs the
-  // answer.
   it("says the channel is always on and names the real relaxation", () => {
     const section = html.slice(html.indexOf("notify-sub-options"));
     expect(section).toContain("Always on");
-    expect(section).toContain("blocks the turn");
+    expect(section).toContain("waits until you answer");
     expect(section).toContain("Permissions");
   });
 
@@ -44,22 +25,14 @@ describe("the permission notification has no off switch", () => {
     expect(html).toContain("notify-finished-toggle");
   });
 
-  // The permission notice has no off switch because a permission ask blocks the
-  // turn. What IS relaxable is the permission SYSTEM, and since 2026-08-25 that is
-  // the security-profile picker rather than a single checkbox: it removes the asks
-  // instead of hiding the notice about them.
   it("offers the security profile as the control that replaced it", () => {
     expect(html).toContain("security-profile-list");
   });
 });
 
-// The authored markup is the FIRST FRAME of the settings panel: syncRowInputs writes
-// each input from state on every load, so a `checked` attribute that disagrees with
-// the server's default is a visible flicker from on to off on every settings open.
-// Read here because this file already reads index.html, and because no type can
-// express an agreement between hand-authored HTML and a Go constant.
+// The authored markup is the settings panel's first frame: a `checked` that
+// disagrees with the server's default flickers on every open.
 describe("each keyed toggle's authored default matches the server's", () => {
-  /** The `<input>` tag for one toggle id, from the authored markup. */
   function inputTag(id: string): string {
     const at = indexHtml.indexOf(`id="${id}"`);
     expect(at, `${id} is not in static/index.html`).toBeGreaterThan(-1);
@@ -80,23 +53,12 @@ describe("no client code can address the removed setting", () => {
     expect(notifySrc).not.toContain("setPermissionNeededEnabled");
   });
 
-  // restoreNotifications is the one place a config.json value reaches the
-  // client's notification state. A read here is what would let a stale key
-  // silence the ask on this device even with the server's floor holding.
   it("notify.ts never reads notify_permission from the settings payload", () => {
-    // The property read and the type field, not the bare word: the module names
-    // the removed key in a comment explaining why it is gone, and a test that
-    // forbade the word would be a test against its own documentation.
+    // The property read, not the bare word: a comment may name the removed key.
     expect(notifySrc).not.toMatch(/\.notify_permission\b/);
     expect(notifySrc).not.toMatch(/^\s*notify_permission\?/m);
   });
 
-  // Reads the GENERATED type, not persist.ts. This case was written against a
-  // hand-written `AppSettings` interface in persist.ts; that interface is deleted
-  // and persist.ts now re-exports EffectiveSettings, which cmd/wire-codegen emits
-  // from internal/marotte. So the old assertion had stopped looking at the file
-  // that declares the field and could not have failed. The field is also REQUIRED
-  // now rather than optional, hence the `\??`.
   it("the generated settings type declares no field for the key", () => {
     expect(wireTypesSrc).not.toMatch(/^\s*notify_permission\??:/m);
   });
@@ -105,9 +67,7 @@ describe("no client code can address the removed setting", () => {
     expect(domSrc).not.toContain("notifyPermissionToggle");
   });
 
-  // The three turn-blocking asks must notify with no per-kind gate. Asserted on
-  // the source because the behavioural half lives in handlers/turn.test.ts and
-  // this is the structural claim: no gate exists to reintroduce.
+  // Structural claim on the source; the behavioural half is handlers/turn.test.ts.
   it("the ask handlers carry no per-kind gate", () => {
     expect(turnHandlerSrc).not.toContain("isPermissionNeededEnabled");
   });
@@ -116,13 +76,9 @@ describe("no client code can address the removed setting", () => {
 describe("the master switch still governs everything", () => {
   it("notifyIfHidden gates on the master enabled flag", async () => {
     const notify = await import("./notify.js");
-    // Nothing has enabled notifications, so the ask notification is suppressed
-    // by the master gate — the one switch that is still a preference.
     expect(notify.areNotificationsEnabled()).toBe(false);
     expect(notify.notifyIfHidden("Marotte", "Permission needed", chatTarget(""))).toBe(false);
 
-    // And a settings payload still carrying the removed key changes nothing
-    // about the permission channel: there is no field left to land in.
     notify.restoreNotifications(
       settingsPayload({
         notifications_enabled: false,

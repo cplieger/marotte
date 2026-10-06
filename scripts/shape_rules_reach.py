@@ -19,25 +19,15 @@ import pathlib
 import re
 import subprocess
 
-# The repo to audit. Defaults to this script's own repo and is overridable with
-# SHAPE_AUDIT_ROOT so the rules can be pointed at a sibling repo — the same fix
-# cohesion.py needed. A checker that can only ever see one tree is how a whole
-# codebase goes unmeasured while the report reads clean.
+# The repo to audit; SHAPE_AUDIT_ROOT points the rules at a sibling repo.
 ROOT = pathlib.Path(
     os.environ.get("SHAPE_AUDIT_ROOT", pathlib.Path(__file__).resolve().parent.parent)
 )
 
-# A doc comment that STATES the symbol is a test seam. Same discipline as the
-# wide-interface rule: the author answers in the comment, and the answer is what
-# the rule accepts. It discriminates — the two genuinely dead functions this rule
-# found (checkpoint.countLineDelta, Runtime.replayBounds) described an algorithm
-# and a feature, neither claiming a test purpose, while every seam it flags says
-# so outright ("the only caller is this package's own tests", "exists for the
-# store's own tests, which need a synchronous pass").
+# A doc comment that STATES the symbol is a test seam is the author's answer, and the
+# rule accepts it: dead functions describe an algorithm or feature, seams say so outright.
 TEST_SEAM_DOC = re.compile(
-    # Any statement that the symbol's only reach is a test. Kept broad on purpose:
-    # the author is answering in prose, and a rule that accepts only one phrasing
-    # forces the comment to contort to match the checker.
+    # Broad on purpose, so the comment need not contort to one phrasing.
     r"only (caller|callers|reached|used|consumer)[^.]{0,60}tests?\b"
     r"|reached only by[^.]{0,60}tests?\b"
     r"|for (this package's own |the store's own )?tests?\b"
@@ -54,13 +44,8 @@ TEST_SUPPORT = re.compile(r"(^|/)(testsupport|\w*test)$")
 # runtime, the test framework, or a generated file.
 ENTRY = re.compile(r"^(main|init|Test|Benchmark|Fuzz|Example)")
 
-# A method that satisfies one of these is called through an interface the stdlib
-# owns, so there is no call site to find and its body may legitimately ignore the
-# receiver.
-#
-# CURATED, not derived from GOROOT. Scanning every stdlib interface would suppress
-# names as common as Get, Set and Do, which would quietly gut the rules — the
-# suppression has to stay narrower than the thing it protects against.
+# A method satisfying one of these is called through a stdlib-owned interface. CURATED,
+# not derived from GOROOT: every stdlib interface would suppress names like Get and Do.
 STDLIB_CONTRACT = {
     "Error",
     "String",
@@ -81,8 +66,7 @@ STDLIB_CONTRACT = {
     "Value",
     "Format",
     "LogValue",
-    # slog.Handler: a Recorder that captures everything answers Enabled with a
-    # bare true, which is the contract, not a receiver it forgot to use.
+    # slog.Handler: a capture-everything Recorder answers Enabled with a bare true.
     "Enabled",
     "Handle",
     "WithAttrs",
@@ -102,9 +86,8 @@ def dependency_interface_members():
     names = set()
     if not (ROOT / "go.mod").exists():
         return names
-    # `go list` rather than parsing go.mod and guessing a cache path: a /vN module
-    # lives under a versioned directory, and a go.work `replace` can point at a
-    # sibling checkout. Only the toolchain is right about both.
+    # `go list`, not go.mod parsing: a /vN module lives under a versioned directory, and a
+    # go.work `replace` often points at a sibling checkout.
     try:
         out = subprocess.run(
             ["go", "list", "-m", "-f", "{{.Path}} {{.Dir}}", "all"],
@@ -223,11 +206,8 @@ def _reference_counts():
     test = collections.Counter()
     for p in _go_files(include_tests=True):
         text = p.read_text(errors="replace")
-        # Strip DECLARATIONS so a symbol never counts as its own use. Two kinds,
-        # and missing the second made rule_unreferenced_interface_method vacuous:
-        # a func declaration, and a member line inside an interface block. An
-        # interface member declaring itself kept every count at one, so the rule
-        # could never reach zero and reported nothing on a planted violation.
+        # Strip DECLARATIONS so a symbol never counts as its own use: func declarations and
+        # interface member lines (missing those kept every count at one).
         keep, inside = [], False
         for ln in text.split("\n"):
             s = ln.strip()
@@ -239,12 +219,8 @@ def _reference_counts():
                     inside = False
                 continue
             if re.match(r"^func (\(\w+ \*?\w+\) )?\w+\(", ln):
-                # Drop the SIGNATURE, keep an inline body. A one-line function
-                # carries its call on the declaration line, so dropping the whole
-                # line hid it: `func unusableFeedKey(k string) bool { return
-                # secretref.Unusable(k) }` is the only production caller of
-                # Unusable, and the rule reported Unusable as test-only because
-                # this strip ate it.
+                # Drop the SIGNATURE, keep an inline body: a one-line function's call sits on the
+                # declaration line.
                 code = re.sub(r"//.*$", "", ln).rstrip()
                 if code.endswith("{"):
                     continue
@@ -253,11 +229,8 @@ def _reference_counts():
                     continue
                 keep.append(code[lb + 1 :])
                 continue
-            # A doc comment NAMES its symbol, by the convention revive enforces, so
-            # counting comment text made every documented symbol look referenced.
-            # search.WithTimeout is exported, called only by in-package tests, and
-            # takes an unexported interface so no outside package can call it at
-            # all — and it went unreported because its own doc comment mentions it.
+            # A doc comment names its symbol (revive), so counting comment text would make every
+            # documented symbol look referenced.
             keep.append(re.sub(r"//.*$", "", ln))
         body = "\n".join(keep)
         counter = test if p.name.endswith("_test.go") else prod
@@ -288,19 +261,14 @@ def rule_test_only_production(report):
     for p, line, _kind, name in _declarations():
         if ENTRY.match(name) or name in iface or name in STDLIB_CONTRACT:
             continue
-        # A *test / testsupport package exists to be called BY tests, and by tests
-        # in other packages, so "no production caller" is its design rather than a
-        # defect. storetest.Suite is the contract suite every engine runs.
+        # A *test / testsupport package exists to be called by tests; no production caller is
+        # its design.
         if TEST_SUPPORT.search(str(p.parent)):
             continue
         if TEST_SEAM_DOC.search(_doc_comment(p, line)):
             continue
-        # Only report a symbol whose callers MUST be in this repo: an unexported
-        # one, or an exported one under internal/. An EXPORTED symbol in an
-        # importable package is public API whose callers are downstream by design —
-        # running this on cplieger/auth reported forty of them, RequireAuth,
-        # SetSessionCookie and GeneratePKCE among them. Same boundary
-        # rule_unreferenced_interface_method already uses for published contracts.
+        # Only a symbol whose callers MUST be here: unexported, or exported under internal/. An
+        # exported symbol in an importable package is public API with downstream callers.
         if name[:1].isupper() and "internal" not in p.relative_to(ROOT).parts:
             continue
         if prod[name] == 0 and test[name] > 0:
@@ -377,9 +345,7 @@ def rule_method_ignores_receiver(report):
     the type's state that the body does not have. Interface members are exempt —
     an implementation may legitimately ignore state the contract allows it to.
     """
-    # Dependency interfaces too: httpx.Transient declares IsTransient, and an
-    # implementation of it may legitimately return a constant without touching its
-    # receiver. Reading only this repo's interfaces reported that as a defect.
+    # Dependency interfaces too: an implementation of httpx.Transient may return a constant.
     iface = _interface_member_names() | dependency_interface_members()
     owners = _method_names_by_type()
     for p in _go_files(include_tests=False):
@@ -392,27 +358,11 @@ def rule_method_ignores_receiver(report):
             if recv == "_" or name in iface or name in STDLIB_CONTRACT:
                 continue
             if len(owners.get(name, ())) > 1:
-                # Declared on several types: polymorphic in practice, so it is
-                # not a free function even when this one body ignores its state.
+                # Declared on several types: polymorphic, not a free function.
                 continue
-            # Two traps in finding the body, both of which produced false
-            # findings before they were fixed:
-            #
-            #   - a one-line body lives on the signature line, and collecting from
-            #     i+1 walked into the NEXT function, reporting Runtime.Runs (whose
-            #     whole body is `return rt.runs`) as ignoring its receiver.
-            #   - splitting on the FIRST `{` lands inside the signature whenever a
-            #     parameter is a composite type. Every method taking
-            #     `map[string]struct{}` was reported, which is all six of
-            #     kirosession.Reaper's sweep methods, and every one of them uses
-            #     its receiver.
-            #
-            # A line ending in `{` opens a multi-line body; anything else carries
-            # its body inline after the LAST brace.
-            # Strip a trailing line comment first: a signature ending in
-            # `{ //nolint:gocritic ...` does not end with the brace, so the
-            # inline-body path read the COMMENT as the body and reported
-            # activity.Log.startLocked, which uses its receiver eight times.
+            # A line ending in `{` opens a multi-line body; anything else carries its body inline
+            # after the LAST brace (a composite-typed parameter puts a `{` in the signature).
+            # Strip a trailing line comment first, or `{ //nolint...` reads the comment as the body.
             code = re.sub(r"//.*$", "", line).rstrip()
             if code.endswith("{"):
                 blob = None
@@ -455,22 +405,13 @@ def rule_stutter(report):
                 continue
             if not name.lower().startswith(pkg.lower()) or len(name) <= len(pkg):
                 continue
-            # An AGENT NOUN derived from a verb package is not the stutter Google
-            # warns about. Its examples are noun repetition — http.HTTPServer,
-            # strings.StringReader — where the prefix carries nothing. resolve.
-            # Resolver is the same word in a different part of speech: the type IS
-            # the thing the package does, and there is no shorter honest name.
+            # An AGENT NOUN of a verb package (resolve.Resolver) is not Google's stutter, which is
+            # noun repetition (http.HTTPServer).
             rest = name[len(pkg) :]
-            # The remainder must start a NEW CamelCase word. auth.Authenticator is
-            # not a stutter: "authenticator" is a single word that happens to begin
-            # with the package's abbreviation, and the remainder "enticatorStore"
-            # starts lowercase. Google's examples repeat a whole word —
-            # http.HTTPServer leaves "Server", strings.StringReader leaves "Reader".
+            # The remainder must start a NEW CamelCase word: auth.Authenticator is one word.
             if not rest[:1].isupper():
                 continue
-            # An agent noun derived from a verb package is the same word in another
-            # part of speech, not repetition: resolve.Resolver has no shorter honest
-            # name.
+            # An agent-noun suffix is the same word in another part of speech, not repetition.
             if rest.lower() in ("r", "er", "or"):
                 continue
             report(
@@ -495,12 +436,8 @@ def rule_deep_forward(report):
     """
     iface = _interface_member_names() | dependency_interface_members()
     owners = _method_names_by_type()
-    # A struct with NO methods is a field GROUP, not an object. Reaching through
-    # one is a single logical hop: marotte's `bridges` (factory, mgr,
-    # assistantBufs) and `bus` (fanout, pendingPerms, chatStatus) exist only to
-    # keep related collaborators together, and both are shared by two types that
-    # each reach past them. There is no encapsulation to violate, so
-    # `rt.bridge.mgr.get(id)` is not the smell `rt.bus.fanout.Bounds()` was.
+    # A struct with NO methods is a field GROUP, not an object, so reaching through it is one
+    # logical hop with no encapsulation to violate.
     with_methods = {typ for typs in owners.values() for typ in typs}
     groups = set()
     for q in _go_files(include_tests=False):

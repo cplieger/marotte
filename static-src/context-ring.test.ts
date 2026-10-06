@@ -1,36 +1,24 @@
-// ---------------------------------------------------------------------------
-// The 16px context indicator's two halves: the compaction band's geometry, and
-// the fill's colour ramp.
-//
-// Every expectation is a hardcoded string. Recomputing one with the same
-// arithmetic the module uses would assert nothing, and the ramp's whole point is
-// a specific pair of numbers.
-// ---------------------------------------------------------------------------
+// Hardcoded expectations: recomputing them with the module's arithmetic would assert nothing.
 
 import { describe, it, expect } from "vitest";
 
 import {
-  CONTEXT_GREEN_PCT,
-  CONTEXT_RED_PCT,
   KAS_SUMMARIZATION_PCT,
-  KAS_TRUNCATION_PCT,
+  compactionPoint,
   contextStroke,
   tokensUsed,
   wedgeDash,
 } from "./context-ring.js";
 
-describe("the KAS fallbacks", () => {
-  // The two numbers live in ONE place. A second copy is what makes a client and a
-  // server disagree about where compaction happens.
-  it("mirror KAS's own thresholds", () => {
+describe("the KAS fallback", () => {
+  // One number, one place: a second copy lets client and server disagree about where compaction happens.
+  it("mirrors KAS's own summarization threshold", () => {
     expect(KAS_SUMMARIZATION_PCT).toBe(80);
-    expect(KAS_TRUNCATION_PCT).toBe(95);
   });
 });
 
 describe("wedgeDash", () => {
-  // With pathLength="100" every dash number is a percent, so the band from T to
-  // 100 is a `100-T` dash preceded by a `T` gap, offset by the band's own width.
+  // With pathLength="100" every dash is a percent: a `100-T` dash after a `T` gap, offset by the band's width.
   it.each([
     [80, "20 80", "20"],
     [95, "5 95", "5"],
@@ -53,8 +41,7 @@ describe("wedgeDash", () => {
 });
 
 describe("tokensUsed", () => {
-  // ONE derivation, read by the ramp and by the expanded card's readout. Two
-  // owners of it with different inputs is what this export exists to prevent.
+  // One derivation, read by the ramp and the expanded card's readout.
   it.each([
     [25, 200_000, 50_000],
     [50, 200_000, 100_000],
@@ -66,45 +53,61 @@ describe("tokensUsed", () => {
   });
 
   it("never reports more tokens than the window holds", () => {
-    // The ring saturates at 100%, so the readout beside it may not claim 240K of a
-    // 200K window when the wire reports a percentage over 100.
+    // The ring saturates at 100%, so the readout may not claim 240K of a 200K window.
     expect(tokensUsed(120, 200_000)).toBe(200_000);
     expect(tokensUsed(-20, 200_000)).toBe(0);
   });
 });
 
-describe("the ramp's thresholds", () => {
-  // The ramp exists to warm toward the compaction band, so red must land BEFORE
-  // it. A threshold at or past summarization would make the fill reach the band
-  // and the band's own colour at the same moment.
-  it("reach red before KAS summarizes", () => {
-    expect(CONTEXT_GREEN_PCT).toBe(50);
-    expect(CONTEXT_RED_PCT).toBe(70);
-    expect(CONTEXT_GREEN_PCT).toBeLessThan(CONTEXT_RED_PCT);
-    expect(CONTEXT_RED_PCT).toBeLessThan(KAS_SUMMARIZATION_PCT);
+describe("compactionPoint", () => {
+  it("defers to KAS's reported threshold at the default value", () => {
+    expect(compactionPoint({ enabled: true, pct: 80 }, 75)).toEqual({ band: 75, t: 75 });
+    expect(compactionPoint({ enabled: true, pct: 80 }, undefined)).toEqual({ band: 80, t: 80 });
+  });
+
+  it("is the slider's value anywhere else, whatever KAS reports", () => {
+    expect(compactionPoint({ enabled: true, pct: 60 }, 80)).toEqual({ band: 60, t: 60 });
+    expect(compactionPoint({ enabled: true, pct: 90 }, 80)).toEqual({ band: 90, t: 90 });
+  });
+
+  it("has no band and keys the ramp on 100 when switched off", () => {
+    expect(compactionPoint({ enabled: false, pct: 60 }, 75)).toEqual({ band: null, t: 100 });
   });
 });
 
-describe("contextStroke", () => {
-  // A continuous ramp inside the warming band, so two nearby percentages resolve
-  // to different mixes. At one decimal that is the module's own resolution floor.
+describe("the ramp keyed on other compaction points", () => {
+  it.each([
+    [60, 30, "var(--c-green)"],
+    [60, 35, "color-mix(in oklch, var(--c-yellow) 50.0%, var(--c-green))"],
+    [60, 50, "var(--c-red)"],
+    [90, 60, "var(--c-green)"],
+    [90, 75, "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))"],
+    [90, 80, "var(--c-red)"],
+    [100, 70, "var(--c-green)"],
+    [100, 80, "color-mix(in oklch, var(--c-red) 0.0%, var(--c-yellow))"],
+    [100, 89.9, "color-mix(in oklch, var(--c-red) 99.0%, var(--c-yellow))"],
+    [100, 90, "var(--c-red)"],
+  ])("at T=%i maps %i percent to %s", (t, pct, want) => {
+    expect(contextStroke(pct, t)).toBe(want);
+  });
+});
+
+describe("contextStroke at the default T=80, today's 50/70", () => {
   it("is continuous across nearby percentages", () => {
-    const a = contextStroke(55);
-    const b = contextStroke(55.01);
+    const a = contextStroke(55, 80);
+    const b = contextStroke(55.01, 80);
     expect(a).toBe("color-mix(in oklch, var(--c-yellow) 50.0%, var(--c-green))");
     expect(b).toBe("color-mix(in oklch, var(--c-yellow) 50.1%, var(--c-green))");
     expect(a).not.toBe(b);
   });
 
-  // THE POINT OF THE WHOLE RAMP. One percentage is one colour: the window's size
-  // is not an input, so the ring cannot disagree with the number beside it.
+  // One percentage is one colour: the window size is not an input, so the ring matches the number beside it.
   it("resolves one percentage to one colour whatever the window", () => {
-    expect(contextStroke(25)).toBe("var(--c-green)");
-    expect(contextStroke(75)).toBe("var(--c-red)");
+    expect(contextStroke(25, 80)).toBe("var(--c-green)");
+    expect(contextStroke(75, 80)).toBe("var(--c-red)");
   });
 
   it.each([
-    // pct, expected — every segment boundary and each segment's midpoint.
     [0, "var(--c-green)"],
     [25, "var(--c-green)"],
     [50, "var(--c-green)"],
@@ -115,45 +118,41 @@ describe("contextStroke", () => {
     [80, "var(--c-red)"],
     [100, "var(--c-red)"],
   ])("maps %i percent to %s", (pct, want) => {
-    expect(contextStroke(pct)).toBe(want);
+    expect(contextStroke(pct, 80)).toBe(want);
   });
 
-  // Green HOLDS through the first band rather than warming across it — the whole
-  // reason the thresholds moved. A ramp starting at 0 shows a warm ring at 40%.
+  // Green holds through the first band; a ramp from 0 shows a warm ring at 40%.
   it("holds green across the whole first band", () => {
-    for (const pct of [0, 10, 20, 30, 40, 49.9, CONTEXT_GREEN_PCT]) {
-      expect(contextStroke(pct)).toBe("var(--c-green)");
+    for (const pct of [0, 10, 20, 30, 40, 49.9, 50]) {
+      expect(contextStroke(pct, 80)).toBe("var(--c-green)");
     }
   });
 
-  // Saturates rather than extrapolating: no mix percentage above 100 is ever
-  // emitted, and 100% looks exactly like the red threshold.
-  it.each([CONTEXT_RED_PCT, 75, 90, 100])("saturates at red for %i percent", (pct) => {
-    expect(contextStroke(pct)).toBe("var(--c-red)");
+  it.each([70, 75, 90, 100])("saturates at red for %i percent", (pct) => {
+    expect(contextStroke(pct, 80)).toBe("var(--c-red)");
   });
 
   it("hands the yellow midpoint to the second segment, not the first", () => {
-    // Exactly at the midpoint the mix names --c-red, so the boundary belongs to
-    // segment 2 — the same rule the green threshold follows the other way.
-    expect(contextStroke(60)).toBe("color-mix(in oklch, var(--c-red) 0.0%, var(--c-yellow))");
+    // At the midpoint the mix names --c-red, so the boundary belongs to segment 2.
+    expect(contextStroke(60, 80)).toBe("color-mix(in oklch, var(--c-red) 0.0%, var(--c-yellow))");
   });
 
   it("produces no NaN or Infinity anywhere on the ramp", () => {
     for (const pct of [0, 25, 50, 55, 60, 65, 70, 100]) {
-      const got = contextStroke(pct);
+      const got = contextStroke(pct, 80);
       expect(got).not.toContain("NaN");
       expect(got).not.toContain("Infinity");
     }
   });
 
   it("clamps an out-of-range percentage at both ends", () => {
-    expect(contextStroke(-20)).toBe(contextStroke(0));
-    expect(contextStroke(140)).toBe(contextStroke(100));
+    expect(contextStroke(-20, 80)).toBe(contextStroke(0, 80));
+    expect(contextStroke(140, 80)).toBe(contextStroke(100, 80));
   });
 
-  // Tokens only: a literal here would fork the palette and be wrong in one theme.
+  // Tokens only: a literal would fork the palette and be wrong in one theme.
   it.each([0, 50, 55, 65, 100])("names only design tokens at %i percent", (pct) => {
-    expect(contextStroke(pct)).toMatch(/^(var\(--c-[a-z]+\)|color-mix\(in oklch, .+\))$/);
-    expect(contextStroke(pct)).not.toMatch(/#|rgb|oklch\(\d/);
+    expect(contextStroke(pct, 80)).toMatch(/^(var\(--c-[a-z]+\)|color-mix\(in oklch, .+\))$/);
+    expect(contextStroke(pct, 80)).not.toMatch(/#|rgb|oklch\(\d/);
   });
 });

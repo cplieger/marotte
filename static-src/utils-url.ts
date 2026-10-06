@@ -6,14 +6,9 @@ import { isViewableImage } from "./file-extensions.js";
 import type { Route } from "./route-path.js";
 import { UPLOADS_DIR } from "./upload-policy.js";
 
-/** URL safety predicate for a rendered href/src: http, https and mailto are the
- *  only allowed absolute schemes, and a scheme-less value stays allowed because
- *  the browser resolves it against the document's own HTTP(S) location.
- *
- *  Strips every C0 control, then trims — at least what the WHATWG URL parser
- *  strips before it reads a scheme. Normalize less and `\x01javascript:` reaches
- *  the browser as a live scheme; run the trim first and a control between two
- *  spaces survives both passes. */
+/** URL safety predicate for a rendered href/src: http, https and mailto are the only absolute
+ *  schemes; scheme-less resolves against the document. Strips every C0 control THEN trims, at least
+ *  what the WHATWG URL parser strips before reading a scheme (else `\x01javascript:` stays live). */
 export function isSafeUrl(url: string): boolean {
   const cleaned = url
     // eslint-disable-next-line no-control-regex
@@ -24,32 +19,50 @@ export function isSafeUrl(url: string): boolean {
   return scheme === undefined || scheme === "http:" || scheme === "https:" || scheme === "mailto:";
 }
 
-/** The route that serves a workspace file's BYTES.
- *
- *  `/api/file` returns a JSON `{content}` envelope and refuses a binary with a
- *  415 (a NUL in the first 8 KiB), so it can never serve a picture. This one
- *  streams through the mount's confined `os.Root` with `Content-Disposition:
- *  attachment` — which is a SECURITY control, not a convenience: the response
- *  carries `Content-Type: image/svg+xml` for an `.svg`, and that is
- *  script-capable if it is ever NAVIGATED to rather than rendered in an `<img>`.
- *  Never hand this URL to an anchor the user is invited to open in a tab, an
- *  `<iframe>`, or `window.open`. */
+const EXFIL_QUERY_MIN_LEN = 200;
+const EXFIL_PERCENT_RE = /%[0-9A-Fa-f]{2}(?:%[0-9A-Fa-f]{2}){20,}/i;
+const EXFIL_CREDENTIAL_RE =
+  /(?:(?:AKIA|ASIA)[A-Z0-9]{16}|(?:ssh-rsa|ssh-ed25519)[\s+%]|BEGIN[\s+%](?:RSA|DSA|EC|OPENSSH)[\s+%]PRIVATE[\s+%]KEY|xox[bpas]-[0-9a-zA-Z-]+|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})/i;
+// `=` counts only as trailing padding, so `name=` plus a short id does not fuse into one run.
+const EXFIL_B64_RE = /[A-Za-z0-9+/]{40,}={0,2}|[A-Za-z0-9+/]{39}=|[A-Za-z0-9+/]{38}==/i;
+
+/** Whether a link that LEAVES the origin carries an encoded payload in its query or fragment: a
+ *  200+ char query, 21+ consecutive %XX escapes, a 40+ base64 run, or a credential marker. A
+ *  heuristic ceiling: no host or shape waiver, since a waived shape is an injected prompt's channel.
+ *  Path and subdomain are untested, a known hole. Normalizes as `isSafeUrl`. */
+export function exfilShaped(url: string): boolean {
+  const cleaned = url
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f]/g, "")
+    .trim();
+  const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(cleaned)?.[0].toLowerCase();
+  if (scheme === "mailto:" || (scheme === undefined && !/^[/\\]{2}/.test(cleaned))) {
+    return false;
+  }
+  const at = cleaned.search(/[?#]/);
+  if (at < 0) {
+    return false;
+  }
+  const query = cleaned.slice(at + 1);
+  return (
+    query.length >= EXFIL_QUERY_MIN_LEN ||
+    EXFIL_PERCENT_RE.test(query) ||
+    EXFIL_CREDENTIAL_RE.test(query) ||
+    EXFIL_B64_RE.test(query)
+  );
+}
+
+/** The route that serves a workspace file's BYTES (`/api/file` is JSON and 415s binaries), through
+ *  the mount's confined `os.Root` with `Content-Disposition: attachment`, a SECURITY control: an
+ *  `.svg` is served as `image/svg+xml`, script-capable if NAVIGATED to. Never hand this URL to an
+ *  anchor, an `<iframe>` or `window.open`. */
 export function fileDownloadURL(path: string): string {
   return `/api/file/download?path=${encodeURIComponent(path)}`;
 }
 
-/** The roots whose files the byte route above can serve, as path prefixes.
- *
- *  Both are granted browse mounts (`browseRoots` in
- *  internal/composition/config.go), so `/api/file/download` resolves either one
- *  against its confined os.Root. A path outside them is refused there and falls
- *  through to the SPA, which answers index.html — a broken image, which is the
- *  whole reason these prefixes are tested before a src is rewritten.
- *
- *  `/config` is the third granted mount and is deliberately absent: it holds the
- *  chat store, the MCP secrets and the tool state, and the server keeps its own
- *  sensitive-path list over them. Nothing the agent writes there belongs in a
- *  transcript, so widening this list to match the mounts would be wrong. */
+/** The roots the byte route can serve (granted browse mounts, `browseRoots` in
+ *  internal/composition/config.go); outside them the SPA answers index.html, a broken image.
+ *  `/config` is deliberately absent: it holds the chat store, MCP secrets and tool state. */
 const SERVED_ROOTS = ["/workspace/", `${UPLOADS_DIR}/`] as const;
 
 /** Is this an absolute path the byte route can serve? */
@@ -57,19 +70,9 @@ function isServedPath(path: string): boolean {
   return SERVED_ROOTS.some((root) => path.startsWith(root));
 }
 
-/** Rewrite an image `src` under a served root to the byte-serving file route.
- *
- *  The agent can already produce a PNG — it drives the Chromium sidecar — and
- *  writes `![shot](/workspace/out/shot.png)`. The markdown renderer emits that
- *  `src` verbatim, the browser asks the SPA for `/workspace/out/shot.png`, and
- *  the SPA fallback answers with index.html: a broken image every time. So the
- *  agent had better sight of its own artefacts than the operator did.
- *
- *  `/api/file/download` is the route that serves BYTES; `/api/file` returns JSON
- *  and would render nothing. Anything outside SERVED_ROOTS, or without an image
- *  extension, is returned untouched, so ordinary remote images and links are
- *  unaffected.
- */
+/** Rewrite an image `src` under a served root to the byte-serving route, so an agent's
+ *  `![shot](/workspace/out/shot.png)` renders instead of hitting the SPA fallback. Anything outside
+ *  SERVED_ROOTS, or without an image extension, is returned untouched. */
 export function rewriteServedImageSrc(src: string): string {
   const path = servedPath(src);
   if (path === null || !isViewableImage(path)) {
@@ -78,12 +81,8 @@ export function rewriteServedImageSrc(src: string): string {
   return fileDownloadURL(path);
 }
 
-/** The file path a markdown destination names under SERVED_ROOTS, else null.
- *
- *  Percent-decoded once, because the destination is a URL and every consumer
- *  re-encodes. A `.` or `..` segment answers null: `/workspace/../config/x`
- *  passes the prefix test and names a `/config` file, and `/workspace/./x`
- *  names `/workspace/x` under a second editor tab. */
+/** The file path a markdown destination names under SERVED_ROOTS, else null. Percent-decoded once.
+ *  A `.` or `..` segment answers null: `/workspace/../config/x` passes the prefix test. */
 export function servedPath(dest: string): string | null {
   const raw = dest.trim();
   let path = raw;

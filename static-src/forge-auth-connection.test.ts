@@ -1,5 +1,3 @@
-// A connection's row in Sources: its state, its controls and its owner scopes.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./api-client.js", async (importOriginal) => ({
@@ -34,8 +32,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-// The forge list is the shared store's; routed through the mocked client so each
-// case answers it with mockResolvedValueOnce, the forge list first.
+// Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
@@ -101,7 +98,6 @@ describe("forge-auth: the connection row", () => {
     )!;
   }
 
-  /** A fetch answering each call in turn, held until the test hands its answer over. */
   function queuedFetch(): {
     spy: ReturnType<typeof vi.fn<typeof fetch>>;
     answer: (call: number, r: Response) => void;

@@ -1,4 +1,3 @@
-// Unit tests for files-shared.ts — pure functions, no DOM dependency.
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import { formatSize, joinPath, parentPath, sortEntries } from "./files-shared.js";
@@ -26,11 +25,7 @@ describe("formatSize", () => {
   }
 });
 
-// These two used to assert the ROOTLESS space — `joinPath(".", "file.txt")` was
-// "file.txt" and `parentPath("src")` was "." — so the suite agreed with the
-// defect and could not see it. The space is container-absolute; the JOIN against
-// the git-status index, the normaliser and the route agreement live in
-// `files-path-space.test.ts`, which is the file that pins the contract itself.
+// The space is container-absolute, not rootless.
 describe("joinPath", () => {
   const cases: [string, string, string][] = [
     ["/", "workspace", "/workspace"],
@@ -185,10 +180,7 @@ describe("isSafeUrl property-based", () => {
     );
   });
 
-  // The WHATWG URL parser removes every leading C0 control or space before it
-  // reads a scheme, so the gate has to remove at least as much or the browser sees
-  // a scheme the gate did not. A decoder makes that lead spellable in printable
-  // ASCII (`&#1;`), which is how this arrives.
+  // The WHATWG URL parser strips every leading C0 control or space before the scheme, so the gate strips at least as much.
   it("no false negatives: a C0 control or space lead is stripped before the scheme", () => {
     const lead = fc
       .array(
@@ -205,9 +197,7 @@ describe("isSafeUrl property-based", () => {
     );
   });
 
-  // The allowlist is the contract, so an absolute scheme it does not name is
-  // refused whatever that scheme is; `vscode:`, `blob:` and `tel:` are the cases
-  // the table above names.
+  // The allowlist is the contract: any absolute scheme it does not name is refused.
   it("no false negatives: an absolute scheme outside the allowlist is rejected", () => {
     const alpha = fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz".split(""));
     const schemeChar = fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz0123456789+.-".split(""));
@@ -224,10 +214,7 @@ describe("isSafeUrl property-based", () => {
     );
   });
 
-  // The over-blocking bound: a value with no scheme is always allowed, because
-  // the browser resolves a relative path, an anchor or a `//host` URL against
-  // the document's own HTTP(S) location. The tail cannot spell a scheme — `:` is
-  // not in its alphabet — so a failure here is the gate demanding one.
+  // A scheme-less value resolves against the document's HTTP(S) location, so it is always allowed.
   it("no false positives: a scheme-less value is allowed", () => {
     const pathChar = fc.constantFrom(..."aZ0/._-~?&=%#".split(""));
     const tail = fc.array(pathChar, { maxLength: 20 }).map((chars) => chars.join(""));

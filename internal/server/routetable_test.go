@@ -8,16 +8,9 @@ import (
 	"testing"
 )
 
-// TestServeMuxMethodPatternCannotAnswer405UnderACatchAll is the measurement the
-// route table's shape rests on, and it is a fact about net/http rather than about
-// marotte: ServeMux synthesises its 405 + Allow only when NO pattern matched at
-// all, so a "/" mount — which marotte needs for History-API client routing —
-// absorbs every method mismatch before that path is reached.
-//
-// Written as an A/B over the same patterns because the claim is a DIFFERENCE, not
-// a status: with the catch-all a method mismatch is answered by the catch-all,
-// and without it the same request is a 405 naming Allow. Asserting only the first
-// half would pass equally if ServeMux had simply stopped emitting Allow.
+// TestServeMuxMethodPatternCannotAnswer405UnderACatchAll pins the net/http fact the route
+// table rests on: ServeMux's 405 + Allow fires only when NO pattern matched, so a "/" mount
+// absorbs every method mismatch. An A/B, because the claim is a difference.
 func TestServeMuxMethodPatternCannotAnswer405UnderACatchAll(t *testing.T) {
 	const catchAllStatus = 299 // a status no marotte handler produces
 
@@ -62,8 +55,7 @@ func TestServeMuxMethodPatternCannotAnswer405UnderACatchAll(t *testing.T) {
 		}
 	})
 
-	// The one method a GET pattern does serve, stated so the expectations above
-	// are not read as "no other method reaches the handler".
+	// HEAD is the one other method a GET pattern serves.
 	t.Run("HEAD_is_served_by_a_GET_pattern", func(t *testing.T) {
 		if rec := serve(build(true), http.MethodHead); rec.Code != http.StatusOK {
 			t.Errorf("HEAD status = %d, want 200", rec.Code)
@@ -71,16 +63,8 @@ func TestServeMuxMethodPatternCannotAnswer405UnderACatchAll(t *testing.T) {
 	})
 }
 
-// TestPlainPathRoutesRefuseTheWrongMethod pins the consequence for the five
-// routes that carried a ServeMux method pattern until the gate moved into the
-// handler. Each must answer 405 with the Allow header
-// httpreply.MethodNotAllowed renders; under the "/" SPA mount the pattern's own
-// refusal is unreachable (see the test above), so the request was previously
-// answered 200 with index.html.
-//
-// The two loopback-gated routes are exercised THROUGH loopbackOnly with an
-// in-container caller, because the gate order is part of the claim: a remote
-// caller must still get the 403 and learn nothing about the method set.
+// TestPlainPathRoutesRefuseTheWrongMethod pins 405 + Allow from the in-handler gate on
+// plain-path routes; the loopback-gated ones go through loopbackOnly.
 func TestPlainPathRoutesRefuseTheWrongMethod(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -123,10 +107,7 @@ func TestPlainPathRoutesRefuseTheWrongMethod(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A rescan reaching its body would call kiroRescan. The gate must
-			// refuse first, so recording the call is the red check for its
-			// placement — a gate written after the header write would still 405
-			// while having already spawned the subprocesses.
+			// Recording the call is the red check that the gate refuses before the subprocess spawns.
 			rescanned := false
 			s := &Server{
 				kiroDocs:   &docsCache{},
@@ -166,8 +147,7 @@ func TestLoopbackGateStillPrecedesTheMethodGate(t *testing.T) {
 		"pprof_index": pprofHandler(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			// GET is wrong for the rescan and right for pprof; either way the
-			// LAN peer must lose at the outer gate.
+			// Either way, the LAN peer must lose at the outer gate.
 			req := httptest.NewRequest(http.MethodGet, "http://localhost:9847/x", http.NoBody)
 			req.RemoteAddr = "192.168.1.20:54321"
 			req.Host = "localhost:9847"

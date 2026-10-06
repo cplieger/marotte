@@ -10,10 +10,8 @@ import (
 	"testing"
 )
 
-// stageCSS lays out the two manifest sources buildCSS reads and makes their
-// parent the process cwd, which is how buildCSS resolves srcDir and outDir. A
-// part is keyed "wtui/<file>" or "app/<file>" to say which manifest owns it.
-// t.Chdir is process-wide, so no caller may be parallel.
+// stageCSS lays out buildCSS's two manifest sources and chdirs to their parent. A part
+// key is "wtui/<file>" or "app/<file>". t.Chdir is process-wide: no caller may be parallel.
 func stageCSS(t *testing.T, wtuiManifest, appManifest string, parts map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -46,13 +44,7 @@ func stageCSS(t *testing.T, wtuiManifest, appManifest string, parts map[string]s
 	return dir
 }
 
-// TestBuildCSS_RefusesAnEmptyBundle: a manifest that EXISTS and lists nothing —
-// every line commented out, or a body lost to a bad merge — used to write a
-// zero-byte static/style.css and return nil. Nothing downstream catches that:
-// tsc does not see CSS, the image smoke test's healthcheck reads none, and the
-// CSS tests read the manifest SOURCES because the built bundle is gitignored. So
-// the one artifact whose emptiness is instantly visible to a user was the one no
-// gate measured.
+// TestBuildCSS_RefusesAnEmptyBundle: no other gate sees a zero-byte static/style.css.
 func TestBuildCSS_RefusesAnEmptyBundle(t *testing.T) {
 	dir := stageCSS(t, "# the library manifest, all comments\n", "\n#  and the app one\n\n", nil)
 	if err := buildCSS(); err == nil {
@@ -63,9 +55,7 @@ func TestBuildCSS_RefusesAnEmptyBundle(t *testing.T) {
 	}
 }
 
-// TestBuildCSS_ConcatenatesInManifestOrder is the green half, and it pins the
-// ordering the override mechanism depends on: the library's parts precede the
-// app's, because source order is what makes a later rule win.
+// TestBuildCSS_ConcatenatesInManifestOrder pins library parts before app parts.
 func TestBuildCSS_ConcatenatesInManifestOrder(t *testing.T) {
 	dir := stageCSS(t, "base.css\n", "# a comment, then a part\napp.css\n", map[string]string{
 		"wtui/base.css": "/*base*/\n",
@@ -83,9 +73,7 @@ func TestBuildCSS_ConcatenatesInManifestOrder(t *testing.T) {
 	}
 }
 
-// TestBuildCSS_ReportsAMissingPart: a manifest naming a stylesheet that is not
-// there stays a hard failure, so the new empty-bundle refusal cannot be reached
-// by a build that lost its parts one at a time.
+// TestBuildCSS_ReportsAMissingPart: a manifest naming an absent stylesheet is a hard failure.
 func TestBuildCSS_ReportsAMissingPart(t *testing.T) {
 	stageCSS(t, "base.css\n", "gone.css\n", map[string]string{"wtui/base.css": "/*base*/\n"})
 	err := buildCSS()
@@ -94,9 +82,7 @@ func TestBuildCSS_ReportsAMissingPart(t *testing.T) {
 	}
 }
 
-// stageOut lays out a static/ tree and makes its parent the process cwd, which
-// is how cleanOutputs resolves outDir. A key is a slash-separated path under
-// static/. t.Chdir is process-wide, so no caller may be parallel.
+// stageOut lays out a static/ tree and chdirs to its parent. t.Chdir is process-wide: no caller may be parallel.
 func stageOut(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -113,12 +99,7 @@ func stageOut(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// TestCleanOutputs_SweepsANestedModuleTree is the regression this file exists
-// for: the sweep enumerated the directories the bundler emitted at the time it
-// was written, so `static/exec-view/` — a module tree added later — survived
-// every rebuild, stayed gitignored and therefore invisible, and was embedded
-// into the binary and served. The rule is now the extension at any depth, so a
-// tree added next needs no maintenance here.
+// TestCleanOutputs_SweepsANestedModuleTree pins that output is owned by extension at any depth, so a new module tree is swept.
 func TestCleanOutputs_SweepsANestedModuleTree(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		"exec-view/status.js":   "stale\n",
@@ -136,8 +117,6 @@ func TestCleanOutputs_SweepsANestedModuleTree(t *testing.T) {
 			t.Errorf("static/%s still present, want it swept", gone)
 		}
 	}
-	// An emptied module directory is embedded too, so the shell goes with its
-	// contents.
 	for _, gone := range []string{"exec-view", "deeper"} {
 		if _, err := os.Stat(filepath.Join(dir, outDir, gone)); !os.IsNotExist(err) {
 			t.Errorf("static/%s/ still present, want the empty shell pruned", gone)
@@ -150,11 +129,7 @@ func TestCleanOutputs_SweepsANestedModuleTree(t *testing.T) {
 	}
 }
 
-// TestCleanOutputs_KeepsTheFetchedFontTree: static/vendor/ is filled by the
-// Dockerfile (and scripts/dev-fonts.sh) before the bundle runs and the bundler
-// writes nothing into it, so the sweep must leave it whole. It used to remove
-// the directory, and every image embedded a font-less tree: the browser fetched
-// WebTerminalGlyphs.woff2 and got the SPA's index.html.
+// TestCleanOutputs_KeepsTheFetchedFontTree: static/vendor/ is filled before the bundle runs and must survive the sweep.
 func TestCleanOutputs_KeepsTheFetchedFontTree(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		"vendor/fonts/WebTerminalGlyphs.woff2":       "wOF2",
@@ -175,9 +150,7 @@ func TestCleanOutputs_KeepsTheFetchedFontTree(t *testing.T) {
 	}
 }
 
-// TestCleanOutputs_KeepsADirectoryHoldingACommittedAsset: the prune may only
-// take a shell the sweep emptied. A directory holding a hand-authored file
-// stays, with that file, however much bundle output sat beside it.
+// TestCleanOutputs_KeepsADirectoryHoldingACommittedAsset: the prune only takes a shell the sweep emptied.
 func TestCleanOutputs_KeepsADirectoryHoldingACommittedAsset(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		"icons/logo.svg": "<svg/>\n",
@@ -194,8 +167,7 @@ func TestCleanOutputs_KeepsADirectoryHoldingACommittedAsset(t *testing.T) {
 	}
 }
 
-// stampOf stages an output tree, writes the manifest over it and returns the
-// decoded document. t.Chdir is process-wide, so no caller may be parallel.
+// stampOf stages a tree, writes the manifest and decodes it. t.Chdir is process-wide: no caller may be parallel.
 func stampOf(t *testing.T, files map[string]string) precacheManifest {
 	t.Helper()
 	dir := stageOut(t, files)
@@ -213,13 +185,7 @@ func stampOf(t *testing.T, files map[string]string) precacheManifest {
 	return got
 }
 
-// TestWritePrecacheManifest_ListsOnlyTheHashedChunks: the worker cannot guess the
-// hashed chunk names, so the list has to be built from what landed — and it holds
-// NOTHING ELSE. app.js and style.css are served `no-cache` because a release
-// replaces their bytes under those names, so a cache that answered them would pair
-// a fresh index.html with the previous build's bundle; sw.js is excluded for its
-// own reason (a worker that caches itself makes a broken worker permanent), and
-// index.html stays out because it is `no-store`.
+// TestWritePrecacheManifest_ListsOnlyTheHashedChunks: app.js, style.css, sw.js and index.html stay out.
 func TestWritePrecacheManifest_ListsOnlyTheHashedChunks(t *testing.T) {
 	got := stampOf(t, map[string]string{
 		"app.js":                        "entry\n",
@@ -241,11 +207,8 @@ func TestWritePrecacheManifest_ListsOnlyTheHashedChunks(t *testing.T) {
 	}
 }
 
-// TestWritePrecacheManifest_StampTracksTheChunkSet: a deploy frequently leaves
-// sw.js byte-identical, in which case the browser runs no worker update at all and
-// the manifest's stamp is the ONLY thing that can tell the cache the build moved.
-// Any change to what the list holds has to move it, and a chunk carries its
-// content hash in its own name, so a rename IS a content change.
+// TestWritePrecacheManifest_StampTracksTheChunkSet: when sw.js is byte-identical the stamp
+// is the only signal that the build moved.
 func TestWritePrecacheManifest_StampTracksTheChunkSet(t *testing.T) {
 	before := stampOf(t, map[string]string{
 		"app.js":                    "entry\n",
@@ -268,10 +231,7 @@ func TestWritePrecacheManifest_StampTracksTheChunkSet(t *testing.T) {
 	}
 }
 
-// TestWritePrecacheManifest_StampIgnoresAStableName: the other half of the same
-// contract. Nothing the worker caches changed when only app.js did, so the stamp
-// must not move and make the worker re-fetch and re-prune a cache that is already
-// correct.
+// TestWritePrecacheManifest_StampIgnoresAStableName: an app.js-only change must not move the stamp.
 func TestWritePrecacheManifest_StampIgnoresAStableName(t *testing.T) {
 	before := stampOf(t, map[string]string{
 		"app.js":                    "entry v1\n",
@@ -286,9 +246,7 @@ func TestWritePrecacheManifest_StampIgnoresAStableName(t *testing.T) {
 	}
 }
 
-// TestWritePrecacheManifest_NoChunksDirectory: a build that split nothing is not
-// an error, and the manifest is still valid — an EMPTY list rather than a JSON
-// null, which is what parseManifest reads as an unusable document.
+// TestWritePrecacheManifest_NoChunksDirectory: no chunks yields an empty list, not JSON null.
 func TestWritePrecacheManifest_NoChunksDirectory(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		"app.js":    "entry\n",
@@ -306,10 +264,7 @@ func TestWritePrecacheManifest_NoChunksDirectory(t *testing.T) {
 	}
 }
 
-// TestCleanOutputs_SweepsThePrecacheManifest: it is build output, so a rebuild
-// must not leave the previous build's list beside the new assets. manifest.json
-// is hand-authored and sits in the same directory, which is why bundleOwns names
-// this file rather than matching ".json".
+// TestCleanOutputs_SweepsThePrecacheManifest: precache.json is build output; manifest.json beside it is not.
 func TestCleanOutputs_SweepsThePrecacheManifest(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		precacheName:    `{"stamp":"stale","assets":[]}`,
@@ -326,10 +281,8 @@ func TestCleanOutputs_SweepsThePrecacheManifest(t *testing.T) {
 	}
 }
 
-// stageScripts lays out a static-src/ holding the two script entries bundleScripts
-// builds, with the worker body given, and makes the parent the process cwd. The page
-// entry reads __SSE_WORKER_URL__ so the injected literal reaches app.js. t.Chdir is
-// process-wide, so no caller may be parallel.
+// stageScripts lays out the two script entries bundleScripts builds and chdirs to their
+// parent. t.Chdir is process-wide: no caller may be parallel.
 func stageScripts(t *testing.T, workerBody string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -371,11 +324,8 @@ func workerChunks(t *testing.T, dir string) []string {
 	return out
 }
 
-// TestBundleScripts_InjectsTheHashedWorkerURL: the worker lands under /chunks/ at a
-// content-hashed name, exactly one of them, and app.js names it — the page constructs
-// the worker from that literal, so a mismatch is a worker that never spawns. A change
-// to the worker's source moves the name and the rebuild removes the old one, which is
-// what makes the URL the worker's identity across a deploy.
+// TestBundleScripts_InjectsTheHashedWorkerURL: exactly one hashed worker under /chunks/,
+// named by app.js; a source change moves the name and removes the old one.
 func TestBundleScripts_InjectsTheHashedWorkerURL(t *testing.T) {
 	dir := stageScripts(t, "self.onconnect = () => { console.log('one'); };\n")
 	build := func() {
@@ -421,10 +371,7 @@ func TestBundleScripts_InjectsTheHashedWorkerURL(t *testing.T) {
 	}
 }
 
-// TestBundlePrepaint_EmitsAClassicScript: index.html loads /prepaint.js as a
-// blocking classic <script src> in <head>, so the build must be ONE self-contained
-// IIFE at that fixed name. A module format, an unbundled import or a hashed chunk
-// name each leave the page with no pre-paint state, and nothing else reports it.
+// TestBundlePrepaint_EmitsAClassicScript: /prepaint.js must be one self-contained IIFE at a fixed name.
 func TestBundlePrepaint_EmitsAClassicScript(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, srcDir)
@@ -467,8 +414,7 @@ func TestBundlePrepaint_EmitsAClassicScript(t *testing.T) {
 	}
 }
 
-// TestEmittedEntry_RefusesAnAmbiguousMetafile: the page needs ONE worker URL, so a
-// metafile naming two entry scripts (or none) is refused rather than picked from.
+// TestEmittedEntry_RefusesAnAmbiguousMetafile: two entry scripts, or none, are refused.
 func TestEmittedEntry_RefusesAnAmbiguousMetafile(t *testing.T) {
 	cases := map[string]string{
 		"none": `{"outputs":{"static/chunks/x.js.map":{}}}`,
@@ -489,9 +435,7 @@ func TestEmittedEntry_RefusesAnAmbiguousMetafile(t *testing.T) {
 	}
 }
 
-// fontBundleCSS is the shape css/00-fonts.css produces: the overlay named four times
-// for its four descriptor sets, one text face, and mixed quoting because the bundle
-// concatenates the published UI's CSS beside marotte's own.
+// fontBundleCSS is the shape css/00-fonts.css produces, mixed quoting included.
 const fontBundleCSS = `@font-face{font-family:"Monaspace Neon NF";src:url("/vendor/fonts/MonaspaceNeonNF-Regular.woff2") format("woff2")}
 @font-face{font-family:"Web Terminal Glyphs";src:url('/vendor/fonts/WebTerminalGlyphs.woff2');font-weight:400}
 @font-face{font-family:"Web Terminal Glyphs";src:url('/vendor/fonts/WebTerminalGlyphs.woff2');font-weight:700}
@@ -506,10 +450,8 @@ func readBundle(t *testing.T, dir string) string {
 	return string(body)
 }
 
-// TestFingerprintFonts_StampsEachFaceOnceAndRewritesTheBundle covers the whole contract
-// in one pass: a face named twice is renamed once, the licence file beside it keeps its
-// name (assetCachePolicy would otherwise promise a year on bytes nothing pins), and no
-// upstream spelling survives in the bundle — one left behind would 404 at runtime.
+// TestFingerprintFonts_StampsEachFaceOnceAndRewritesTheBundle pins that a face named
+// twice is renamed once, the licence file keeps its name, and no upstream spelling survives.
 func TestFingerprintFonts_StampsEachFaceOnceAndRewritesTheBundle(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		"style.css": fontBundleCSS,
@@ -552,9 +494,7 @@ func TestFingerprintFonts_StampsEachFaceOnceAndRewritesTheBundle(t *testing.T) {
 	}
 }
 
-// TestFingerprintFonts_IsANoOpOnASecondRun pins the idempotence the dev loop needs:
-// buildCSS regenerates the bundle naming the upstream face while the tree holds the
-// stamped one, so a repeat must re-hash what it stamped rather than report it missing.
+// TestFingerprintFonts_IsANoOpOnASecondRun pins that a repeat re-hashes the stamped face rather than reporting it missing.
 func TestFingerprintFonts_IsANoOpOnASecondRun(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		"style.css":                                  fontBundleCSS,
@@ -565,7 +505,6 @@ func TestFingerprintFonts_IsANoOpOnASecondRun(t *testing.T) {
 		t.Fatalf("first fingerprintFonts() = %v", err)
 	}
 	first := readBundle(t, dir)
-	// buildCSS runs before every fingerprint pass, so the bundle is back to upstream names.
 	if err := os.WriteFile(filepath.Join(dir, outDir, "style.css"), []byte(fontBundleCSS), 0o600); err != nil {
 		t.Fatalf("Setup: rewrite bundle: %v", err)
 	}
@@ -577,9 +516,7 @@ func TestFingerprintFonts_IsANoOpOnASecondRun(t *testing.T) {
 	}
 }
 
-// TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne pins the asymmetry:
-// `go run ./cmd/bundle` must work before scripts/dev-fonts.sh has ever run, while a tree
-// that exists and lacks a named face is a fetch that half-failed.
+// TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne pins the asymmetry.
 func TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne(t *testing.T) {
 	t.Run("no font tree", func(t *testing.T) {
 		dir := stageOut(t, map[string]string{"style.css": fontBundleCSS})
@@ -595,8 +532,7 @@ func TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne(t *testi
 			"style.css":                            fontBundleCSS,
 			"vendor/fonts/WebTerminalGlyphs.woff2": "wOF2-overlay",
 		})
-		// The message is asserted, not merely the error: hashFile refuses an absent
-		// path too, so an outcome-only check passes with this refusal deleted.
+		// The message is asserted: hashFile also refuses an absent path, so an outcome-only check passes without this refusal.
 		err := fingerprintFonts()
 		if err == nil || !strings.Contains(err.Error(), "MonaspaceNeonNF-Regular.woff2, which the font tree does not hold") {
 			t.Errorf("fingerprintFonts() = %v, want a refusal naming the absent face", err)
@@ -608,9 +544,7 @@ func TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne(t *testi
 			t.Error("fingerprintFonts() = nil, want a refusal: a bundle naming no face is a broken CSS assembly")
 		}
 	})
-	// 00-fonts.css's own header names the path in prose, and a scan matching it read a
-	// face out of the comment, which then failed the build on an asset nothing fetched.
-	// Both shapes are here: the path followed by prose, and a retired face still named.
+	// 00-fonts.css names the path in prose; a scan matching it fails the build.
 	t.Run("a prose mention is not a face", func(t *testing.T) {
 		stageOut(t, map[string]string{
 			"style.css": "/* Paths match what the Dockerfile writes into static/vendor/fonts/ and what\n" +
@@ -622,8 +556,7 @@ func TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne(t *testi
 			t.Errorf("fingerprintFonts() = %v, want the prose mentions ignored", err)
 		}
 	})
-	// An unquoted url() with whitespace inside it is legal CSS, so the name is bounded on
-	// both sides: without that the space is read into the name and the face reads absent.
+	// An unquoted url() may contain whitespace, so the name is bounded on both sides.
 	t.Run("an unquoted url with whitespace", func(t *testing.T) {
 		dir := stageOut(t, map[string]string{
 			"style.css":                            "@font-face{src:url( /vendor/fonts/WebTerminalGlyphs.woff2 ) format(\"woff2\")}",

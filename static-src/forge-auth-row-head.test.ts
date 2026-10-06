@@ -1,6 +1,5 @@
-// A connection row's top line on the Sources tab keeps the account it names readable
-// when its actions take most of a phone's column. A geometry property, so the row is
-// built by `renderForgesPanel` and measured under the app's own stylesheet.
+// The account a row names stays readable when its actions take most of a phone's column. A geometry property, so
+// the row is built by `renderForgesPanel` and measured under the app's stylesheet.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 

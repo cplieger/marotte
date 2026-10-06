@@ -2,14 +2,12 @@ package agent
 
 import "sync"
 
-// pumpBufPool is a pool of 4 KB byte slices reused by PTY/terminal
-// output pump goroutines to avoid per-goroutine allocations.
+// pumpBufPool reuses the 4 KB terminal output pump buffers.
 var pumpBufPool = sync.Pool{
 	New: func() any { return make([]byte, 4096) },
 }
 
-// getPumpBuf fetches a pooled 4 KB buffer. Falls back to a fresh slice if the
-// pool ever yields an unexpected type, so callers never get nil.
+// getPumpBuf returns a pooled 4 KB buffer, or a fresh one should the pool yield another type.
 func getPumpBuf() []byte {
 	buf, ok := pumpBufPool.Get().([]byte)
 	if !ok {

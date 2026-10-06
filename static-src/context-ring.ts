@@ -1,83 +1,105 @@
-// How the 16px context indicator is DRAWN, DOM-free. Two halves in ONE unit:
-// the wedge marks where KAS summarizes and the ramp warms toward it, both as a
-// percentage of the window, so one window size cannot read hotter than another
-// at the same percentage.
+// How the 16px context indicator is drawn, DOM-free. The band and the colour ramp share one compaction point T (a
+// percentage of the window); `compactionPoint` is its owner.
 
-/** The percentage at which KAS 2.21.1 summarizes the conversation. Reached only
- *  by a chat whose session has never been loaded, since the streaming usage
- *  channel carries no threshold. */
+import { signal } from "@cplieger/reactive";
+
+/**
+ * The percentage at which KAS summarizes. Used only for a chat whose session never loaded: session/new and the usage
+ * channel carry no threshold.
+ */
 export const KAS_SUMMARIZATION_PCT = 80;
 
-/** The percentage at which KAS 2.21.1 truncates it, for the same fresh-chat
- *  case. */
-export const KAS_TRUNCATION_PCT = 95;
+/** The slider value at which marotte adds nothing to KAS's own compaction. */
+export const DEFAULT_AUTO_COMPACT_PCT = 80;
 
-/** The percentage the fill holds green up to, and the percentage from which it
- *  is fully red. Both sit below KAS_SUMMARIZATION_PCT, so red arrives BEFORE the
- *  compaction band rather than with it. */
-export const CONTEXT_GREEN_PCT = 50;
-export const CONTEXT_RED_PCT = 70;
+/** How far below T the fill stops being green, and how far below T it is fully
+ *  red, so red always arrives BEFORE the band. */
+const GREEN_BELOW_T = 30;
+const RED_BELOW_T = 10;
 
-/** Where the ramp hands off from green->yellow to yellow->red. Derived from the
- *  two thresholds rather than declared, so it is not a third number to keep in
- *  step with them. */
-const CONTEXT_YELLOW_PCT = (CONTEXT_GREEN_PCT + CONTEXT_RED_PCT) / 2;
+/** The ramp's T when nothing compacts: the window's own end. */
+const NO_COMPACTION_T = 100;
 
-/** One decimal on an emitted mix: a hundredth of a point per step across a
- *  ten-point segment, so two nearby percentages resolve to different strokes. */
+/** The compaction settings the ring reads, mirrored from EffectiveSettings. */
+export interface CompactionPolicy {
+  readonly enabled: boolean;
+  readonly pct: number;
+}
+
+/** Compaction policy written by settings.ts on every payload and local change; a leaf so no reader imports settings.ts. */
+export const compactionPolicy = signal<CompactionPolicy>({
+  enabled: true,
+  pct: DEFAULT_AUTO_COMPACT_PCT,
+});
+
+/** Where the ring draws its band (null: nothing compacts automatically, so no
+ *  band) and the T its colour ramp is keyed on. */
+export interface CompactionPoint {
+  readonly band: number | null;
+  readonly t: number;
+}
+
+/**
+ * The effective compaction point: at the default slider value KAS's reported threshold decides, otherwise marotte's
+ * value. Switched off: no band, and the ramp keys on the window's end.
+ */
+export function compactionPoint(
+  policy: CompactionPolicy,
+  reportedPct: number | undefined,
+): CompactionPoint {
+  if (!policy.enabled) {
+    return { band: null, t: NO_COMPACTION_T };
+  }
+  const t =
+    policy.pct === DEFAULT_AUTO_COMPACT_PCT ? (reportedPct ?? KAS_SUMMARIZATION_PCT) : policy.pct;
+  return { band: t, t };
+}
+
+/** One decimal: two nearby percentages resolve to different strokes. */
 const MIX_DECIMALS = 1;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
-/** `color-mix()` in oklch, the house idiom for a derived colour. Both operands
- *  are token names, never literals, so the ramp is theme-correct for free. */
+/** Token operands only, so the ramp is theme-correct. */
 function mix(toToken: string, fromToken: string, ratio: number): string {
   const pct = (clamp(ratio, 0, 1) * 100).toFixed(MIX_DECIMALS);
   return `color-mix(in oklch, var(${toToken}) ${pct}%, var(${fromToken}))`;
 }
 
-/** The dash pattern for the band running from `thresholdPct` round to 100%.
- *
- *  The pattern period is exactly 100, so it cannot repeat inside the path: the
- *  leading dash falls off the start, the gap covers 0..T and the second dash
- *  covers T..100. */
+/** Dash pattern for the band from `thresholdPct` to 100%. The period is exactly 100, so it cannot repeat on the path. */
 export function wedgeDash(thresholdPct: number): { dasharray: string; dashoffset: string } {
   const band = 100 - clamp(thresholdPct, 0, 100);
   return { dasharray: `${String(band)} ${String(100 - band)}`, dashoffset: String(band) };
 }
 
-/** Tokens used at `pct` of a `contextSize`-token window: the expanded card's
- *  readout, and no longer an input to any colour. `contextSize` is 0 on every
- *  chat the wire has spoken for, so the card falls back to the percentage. */
+/**
+ * Tokens used at `pct` of the window, for the card's readout. `contextSize` is 0 when the wire is silent, so the card
+ * falls back to the percentage.
+ */
 export function tokensUsed(pct: number, contextSize: number): number {
   return (contextSize * clamp(pct, 0, 100)) / 100;
 }
 
-/** The fill's stroke at `pct` of the window: green up to `CONTEXT_GREEN_PCT`,
- *  then a continuous ramp through `--c-yellow`, saturating at `--c-red` from
- *  `CONTEXT_RED_PCT` rather than extrapolating.
- *
- *  Keyed on the percentage alone, so one number on screen resolves to one colour
- *  whatever the model's window is. */
-export function contextStroke(pct: number): string {
+/**
+ * Stroke at `pct` for compaction point `t`: green to `t - 30`, a continuous ramp through `--c-yellow`, saturating at
+ * `--c-red` from `t - 10`. Percentages only, so one number is one colour whatever the window.
+ */
+export function contextStroke(pct: number, t: number): string {
+  const green = t - GREEN_BELOW_T;
+  const red = t - RED_BELOW_T;
+  // Derived rather than declared, so the hand-off is not a third number to keep
+  // in step with the two thresholds.
+  const yellow = (green + red) / 2;
   const clamped = clamp(pct, 0, 100);
-  if (clamped <= CONTEXT_GREEN_PCT) {
+  if (clamped <= green) {
     return "var(--c-green)";
   }
-  if (clamped >= CONTEXT_RED_PCT) {
+  if (clamped >= red) {
     return "var(--c-red)";
   }
-  return clamped < CONTEXT_YELLOW_PCT
-    ? mix(
-        "--c-yellow",
-        "--c-green",
-        (clamped - CONTEXT_GREEN_PCT) / (CONTEXT_YELLOW_PCT - CONTEXT_GREEN_PCT),
-      )
-    : mix(
-        "--c-red",
-        "--c-yellow",
-        (clamped - CONTEXT_YELLOW_PCT) / (CONTEXT_RED_PCT - CONTEXT_YELLOW_PCT),
-      );
+  return clamped < yellow
+    ? mix("--c-yellow", "--c-green", (clamped - green) / (yellow - green))
+    : mix("--c-red", "--c-yellow", (clamped - yellow) / (red - yellow));
 }

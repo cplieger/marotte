@@ -1,7 +1,4 @@
-// ---------------------------------------------------------------------------
-// Tiny string utilities. Lives in a leaf module so any file can import them
-// without pulling in modals.ts's modal machinery.
-// ---------------------------------------------------------------------------
+// Tiny string utilities, in a leaf module so importers avoid modals.ts.
 
 // Type-only, so it is erased at compile time and this module keeps no runtime
 // edge. The alternative was restating TextSpan's five fields inline, twice —
@@ -32,15 +29,9 @@ export function truncate(s: string, max = 40): string {
   return s.length > max ? s.slice(0, max - 3) + "\u2026" : s;
 }
 
-/** A model's credit multiplier as `Nx`, or "" when the catalog carried none.
- *
- *  ABSENT IS A REAL ANSWER, and coercing it to 1 is what made every model read
- *  `1x`: `rate_multiplier` is `omitempty` on the wire, so a catalog that dropped
- *  the field is indistinguishable from one reporting parity — and the picker's
- *  whole credit readout was then wrong for every model at once, silently. No
- *  readout beats a wrong one. Non-positive is folded in for free: `omitempty`
- *  means 0 never travels, so any value at or below it is a payload nobody
- *  produces rather than a rate to render. */
+/** A model's credit multiplier as `Nx`, or "" when the catalog carried none. `rate_multiplier` is
+ *  `omitempty`, so absent is not parity (coercing to 1 made every model read `1x`), and a
+ *  non-positive value is a payload nobody produces. */
 export function rateLabel(rate: number | undefined): string {
   return rate === undefined || !Number.isFinite(rate) || rate <= 0 ? "" : `${String(rate)}x`;
 }
@@ -66,15 +57,9 @@ export interface OutputWindow {
   kept: KeptRange[];
 }
 
-/** Window a command's output to its first and last N lines with a marker
- *  between, which is where the information is: a build's first lines say what it
- *  did and its last say how it ended. The middle is one click further (depth 2).
- *
- *  Returns the windowed text, how many lines it elided (0 when it all fit) so
- *  the caller can decide whether a depth 2 exists at all, and the source ranges
- *  it kept. The ranges exist because the result is two slices joined rather than
- *  one contiguous cut, so a style span cannot be carried across by subtracting a
- *  single offset. */
+/** Window a command's output to its first and last N lines with a marker between. Returns the
+ *  text, the elided line count (0 = all fit), and the kept source ranges, since two joined slices
+ *  cannot carry a style span by one offset. */
 export function windowOutput(text: string, n = OUTPUT_WINDOW_LINES): OutputWindow {
   // Track each line's start offset while splitting, so the kept ranges are read
   // off the source rather than reconstructed by arithmetic over joined strings.
@@ -142,18 +127,8 @@ export function windowSpans(spans: readonly TextSpan[], kept: readonly KeptRange
   return out;
 }
 
-/** A wall-clock span, for a reader rather than a machine.
- *
- *  One tenth of a second below a minute, because a turn or a step that took 0.4s
- *  and one that took 4s read differently and the difference is the point; whole
- *  seconds above it, because nobody reads a tenth off "2m 31.4s". Zero returns
- *  "0.0s" rather than an empty string — a caller decides whether a zero span is
- *  worth showing, and every current one checks first.
- *
- *  Lives here rather than in the turn footer that used to own it because the run
- *  card states the same kind of value in three places (the run's clock, a step's
- *  duration, the ledger) and a second copy of the thresholds would drift. Pure
- *  text, so it is testable without a DOM. */
+/** A wall-clock span for a reader: tenths below a minute, whole seconds above, "0.0s" for zero
+ *  (callers check first). Shared by the turn footer and the run card. */
 export function formatElapsed(ms: number): string {
   if (ms >= 3_600_000) {
     const h = Math.floor(ms / 3_600_000);
@@ -168,21 +143,9 @@ export function formatElapsed(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** The same span as an ISO 8601 duration, for a `<time datetime>`.
- *
- *  Beside `formatElapsed` rather than in the rail that renders it, because the two
- *  are the machine and human spellings of ONE value and a `<time>` element is wrong
- *  unless they agree: `datetime` must be a machine-readable form of the element's
- *  own CONTENTS, not of some more precise value behind them.
- *
- *  So every component follows `formatElapsed`'s split exactly — a tenth of a second
- *  below a minute, whole seconds below an hour, and NO seconds at or above one,
- *  where the text reads `1h 1m`. Keeping the seconds up there made the attribute
- *  more precise than the words beside it (`PT1H1M1S` against `1h 1m`), which is the
- *  one thing this pairing exists to prevent.
- *
- *  `PT0.0S` for zero, which is a valid duration; a caller that does not want to
- *  show a zero span checks before asking. */
+/** The same span as an ISO 8601 duration for `<time datetime>`, following `formatElapsed`'s split
+ *  exactly (no seconds at or above an hour), since `datetime` must match the element's CONTENTS.
+ *  `PT0.0S` for zero. */
 export function isoDuration(ms: number): string {
   const total = Math.max(0, ms);
   const hours = Math.floor(total / 3_600_000);

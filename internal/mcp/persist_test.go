@@ -8,7 +8,7 @@ import (
 // TestUnmarshalJSON_PreservesTransport verifies the parse-boundary
 // invariant: every accepted transport (stdio/http/sse) round-trips to
 // its own Server.Transport value. "sse" is preserved as TransportSSE
-// (no longer folded into "http") — KAS accepts a distinct {type:"sse"}
+// (not folded into "http") — KAS accepts a distinct {type:"sse"}
 // mcpServers entry on the v3 wire, and UnmarshalJSON assigns
 // ParseTransport's return value so the parsed record passes Validate()
 // on first read.

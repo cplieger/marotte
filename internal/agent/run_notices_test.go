@@ -13,9 +13,7 @@ func runComplete(workflowID, status string) *marotte.RPCResponse {
 	return runNotif(methodWFRunComplete, map[string]any{"workflowId": workflowID, "status": status})
 }
 
-// KAS queues a completion notice only into a BUSY parent's buffer (an idle one is
-// prompted), so the queue mirrors that: a live launching chat records, an idle chat
-// and a run's own synthetic chat do not, and the notices pair in finish order.
+// KAS queues a notice only into a busy parent's buffer, so only a live launching chat records, in finish order.
 func TestObserveComplete_QueuesANoticeForABusyLaunchingChatOnly(t *testing.T) {
 	h, _, _ := newTestHub()
 	defer shutdownHub(t, h)
@@ -59,10 +57,7 @@ func awaitCall(t *testing.T, br *fakeBridge, method string) bool {
 	return true
 }
 
-// ADDENDUM 8 (b): KAS skips its own turn-end clear when a turn ends abnormally, so a
-// notice queued during that turn ambushes the reader's next prompt. When the chat's
-// turn closes with a finished run still held, marotte clears the buffer itself, on
-// the chat's own session; while the turn is live nothing is cleared.
+// KAS skips its turn-end clear on an abnormal end, so marotte clears a settled chat's buffer itself while a notice is held.
 func TestTurnClosed_ClearsTheBufferOfASettledChatHoldingANotice(t *testing.T) {
 	h, _, br := newTestHub()
 	defer shutdownHub(t, h)
@@ -90,8 +85,7 @@ func TestTurnClosed_ClearsTheBufferOfASettledChatHoldingANotice(t *testing.T) {
 	}
 }
 
-// The clear is gated on a held notice, not on the close: a chat whose turn ended
-// with nothing queued is left to KAS's own boundary rule.
+// No held notice, no clear.
 func TestTurnClosed_LeavesAChatHoldingNoNoticeAlone(t *testing.T) {
 	h, _, br := newTestHub()
 	defer shutdownHub(t, h)

@@ -1,8 +1,5 @@
 package agent
 
-// Tests for the runtime side of a run lease: what a launch records, what a terminal
-// frame releases, and what survives a restart.
-
 import (
 	"context"
 	"encoding/json"
@@ -17,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// launchableRecipe is the fake-bridge reply set a launch needs: one recipe, an
-// empty run list (so admission passes), and ids for new/invoke.
+// launchableRecipe is the reply set a launch needs: one recipe, an empty run list, ids for new and invoke.
 func launchableRecipe(br *fakeBridge, workflowID string) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(
@@ -30,10 +26,8 @@ func launchableRecipe(br *fakeBridge, workflowID string) {
 	}
 }
 
-// TestLaunchRun_GrantsTheRunsEnvelope pins what a launch records, per origin. All four
-// facts are on ONE record because they are read together: the recipe (the single-run rule's
-// key), the origin and schedule id (attribution), the slot (an input to the deadline), and
-// the unattended mark (the permission floor's authority to answer for an absent user).
+// TestLaunchRun_GrantsTheRunsEnvelope pins what a launch records per origin, on one record because they
+// are read together: recipe, origin and schedule id, slot, unattended mark.
 func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 	slot := time.Now().Add(30 * time.Minute)
 
@@ -94,12 +88,8 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 	})
 }
 
-// TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot: a manual Run of a recipe
-// that also has a schedule must yield to that recipe's next slot. It did not — manualLaunch
-// carried a zero slot, so the run took the universal ceiling and held the recipe while the
-// single-run rule refused up to eleven slots underneath it. Driven through Launch because
-// that is where the defect lived, with the slot derived through schedule.NextRunFrom so the
-// assertion cannot drift from the derivation the runner and the REST row use.
+// TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot pins that a manual run must yield to its recipe's
+// next slot, derived through schedule.NextRunFrom so it cannot drift from the runner and REST row.
 func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_manual")
@@ -108,8 +98,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	if err != nil {
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
-	// Every 5 minutes, the schedule floor: the tightest repeat the form accepts and
-	// the interval the manual run used to refuse eleven of.
+	// Every 5 minutes, the schedule floor.
 	spec := schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5}
 	anchor := time.Now().Add(-time.Hour)
 	entry := schedule.Entry{
@@ -137,14 +126,11 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 		t.Fatal("the manual run carried NO slot, so it is bounded by the hour-long ceiling and " +
 			"will refuse every scheduled slot underneath it — the bug this change exists to close")
 	}
-	// Within a tick of the derivation: the launch reads its own clock, and a 5-minute
-	// grid means anything further out is a different slot entirely.
+	// Within a tick: on a 5-minute grid anything further is another slot.
 	if l.SlotAt.Sub(wantSlot).Abs() > time.Minute {
 		t.Errorf("SlotAt = %v, want the schedule's own next slot %v", l.SlotAt, wantSlot)
 	}
-	// The bound is the SCHEDULE's, not the idle window: on a 5-minute grid the next slot
-	// is always inside the window, floored up to minRunBudget. BackstopAt is zero because
-	// the launch is this run's first arm, so it cannot be the tightest input.
+	// The slot bounds it, floored to minRunBudget; BackstopAt is zero on a first arm.
 	want := runlease.NextDeadline(before, runlease.Bounds{
 		SlotAt: l.SlotAt, Idle: runIdleWindow, Floor: minRunBudget,
 	})
@@ -157,8 +143,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 			"the recipe for the whole %v idle window and refuse the slots underneath it",
 			budget.Round(time.Second), runIdleWindow)
 	}
-	// Still a MANUAL run in every other respect: the slot bounds it, and nothing else
-	// about it changed.
+	// Still manual in every other respect.
 	if l.Origin != runlease.OriginManual {
 		t.Errorf("origin = %q, want manual", l.Origin)
 	}
@@ -172,8 +157,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	}
 }
 
-// TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun pins the negative half, so
-// the slot lookup cannot quietly bound a run by somebody else's schedule.
+// TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun pins that another recipe's schedule must not bound this run.
 func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	for name, entry := range map[string]schedule.Entry{
 		"a DISABLED schedule for this very recipe": {
@@ -221,9 +205,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	})
 }
 
-// TestLaunchRun_ReleasesTheLeaseWhenInvokeFails: the run was created but never
-// started, so nothing is executing. A lease left behind would make the recipe
-// look busy to the admission backstop and hand a deadline to a run that has none.
+// TestLaunchRun_ReleasesTheLeaseWhenInvokeFails pins that a leftover lease makes the recipe look busy and arms an idle run.
 func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_1")
@@ -238,10 +220,8 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	}
 }
 
-// TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun pins where the lease's
-// life ends, and why it is here rather than beside the bridge teardown: this is
-// the one site every origin reaches. An agent-parented run has no bridge of its
-// own to close, and its lease must be released all the same.
+// TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun pins that the one site every origin reaches, including an
+// agent run with no bridge of its own.
 func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 	for name, tc := range map[string]struct {
 		status    string
@@ -250,8 +230,7 @@ func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 		"completed": {"completed", false},
 		"failed":    {"failed", false},
 		"aborted":   {"aborted", false},
-		// A policy pause reports through the same frame, and that run is still
-		// this process's to resume — so its envelope must survive.
+		// A policy pause is still resumable, so its envelope survives.
 		"a policy pause": {"paused", true},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -271,8 +250,7 @@ func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 	}
 }
 
-// heldRun hosts a run under run:<id> on the fake bridge with a disk-backed lease, so a
-// cancel lands on br and the lease is what CancelRun waits on.
+// heldRun hosts a run under run:<id> with a disk-backed lease, so a cancel lands on br and CancelRun waits on the lease.
 func heldRun(t *testing.T, id, recipe string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
@@ -304,9 +282,7 @@ func cancelsIssued(br *fakeBridge) int {
 	return n
 }
 
-// The terminal transition a rewind waits for is the lease RELEASE: a run's own
-// run_complete (or the reconcile a landed cancel runs) arriving while CancelRun polls
-// answers nil, with the cancel issued once.
+// A lease release during CancelRun's polling answers nil, with one cancel issued.
 func TestCancelRun_ReturnsOnceTheLeaseIsReleasedInsideTheWait(t *testing.T) {
 	rewindCancelWaitOf(t, 5*time.Second)
 	h, br := heldRun(t, "wf_1", "code-review")
@@ -318,7 +294,7 @@ func TestCancelRun_ReturnsOnceTheLeaseIsReleasedInsideTheWait(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		// The node boundary KAS stops at, a few polls after the cancel landed.
+		// The node boundary, a few polls after the cancel.
 		time.Sleep(6 * rewindCancelPoll)
 		h.runs.releaseLease(t.Context(), "wf_1")
 	}()
@@ -358,8 +334,7 @@ func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 	}
 }
 
-// LiveRuns answers the runs still holding a lease, labelled by recipe; a released or
-// unknown id is not live.
+// LiveRuns answers leased runs by recipe; released or unknown ids are not live.
 func TestLiveRuns_NamesTheHeldLeasesByRecipe(t *testing.T) {
 	h, _ := heldRun(t, "wf_held", "code-review")
 	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch())
@@ -372,9 +347,7 @@ func TestLiveRuns_NamesTheHeldLeasesByRecipe(t *testing.T) {
 	}
 }
 
-// TestLeaseStore_FallsBackToMemory pins the accommodation every unit test relies
-// on: a Runtime built without the durable store still has a lease registry, because a
-// lease carries the run's wall clock. There is no "leases off" mode.
+// TestLeaseStore_FallsBackToMemory pins that a lease carries the run's clock, so there is no leases-off mode.
 func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
@@ -384,11 +357,8 @@ func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	}
 }
 
-// TestGrantLease_ReportsAnEnvelopeItCouldNotPersist pins the compensation for not failing a
-// launch over a bookkeeping error: the run is on the wire and only THIS process bounds it,
-// so a restart finds a run with no deadline, recipe or origin that the orphan sweep cannot
-// recognise and nothing ends. That line is the only warning anyone gets, and a guard flipped
-// here emits it on every successful launch instead, which is the same as not having it.
+// TestGrantLease_ReportsAnEnvelopeItCouldNotPersist pins that a restart would find an unrecognisable, unbounded run,
+// so the line is the only warning, and must not fire on success.
 func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 	const wantLine = "run lease not persisted; this run's envelope will not survive a restart"
 
@@ -424,10 +394,7 @@ func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 	})
 }
 
-// TestReleaseLease_ReportsAReleaseItCouldNotWrite is the release's half of the
-// same durability split, and the failure runs the other way: the envelope stays on
-// disk for a run that is over, so a restart resurrects a stale lease and the run
-// reads as still executing to the single-run rule.
+// TestReleaseLease_ReportsAReleaseItCouldNotWrite pins that a stale lease would resurrect at restart.
 func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 	const wantLine = "run lease not released on disk"
 

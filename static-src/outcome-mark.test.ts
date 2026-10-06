@@ -1,17 +1,3 @@
-// The outcome marks and the tab dot report the same thing on two surfaces, so one
-// geometry is pinned across both: a settled row's mark takes the dot's footprint,
-// and a failure takes the dot's own silhouette.
-//
-// Two defects this catches, neither visible to a type check. A mark drawn to fill
-// the `ic-ui` BOX rather than the dot's footprint, which is what shipped — a solid
-// 13.33px disc beside an 8px dot reporting the same state, and about three times
-// the ink of the stroked glyph it replaces in that slot. And a second failure
-// silhouette: `icons.ts` drew an apex-up triangle while `12-tabs.css` drew a
-// diamond, so one reader learned two marks for one outcome.
-//
-// Every number is READ out of the stylesheets, so a token change either moves both
-// surfaces or fails here.
-
 import { describe, it, expect } from "vitest";
 import { outcomeIcon } from "./icons.js";
 import { allRules, loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -23,7 +9,6 @@ const PX_PER_REM = 16;
 const tokens = loadCSS("01-tokens.css");
 const tabs = loadCSS("12-tabs.css");
 
-/** A `--name: <n>rem` token, in rem. */
 function remToken(name: string): number {
   const hit = new RegExp(`${name}:\\s*([\\d.]+)rem`).exec(tokens);
   if (hit?.[1] === undefined) {
@@ -76,7 +61,6 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
 
   it("draws a failure as the tab strip's diamond, by the same construction", () => {
     const failed = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
-    // The strip's own three facts: the small token, a corner, and the 45 degrees.
     expect(failed.body).toContain("var(--dot-size-sm)");
     expect(failed.body).toContain("transform: rotate(45deg)");
     const cornerPx = Number(/border-radius:\s*([\d.]+)px/.exec(failed.body)?.[1]);
@@ -106,20 +90,14 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
     const halfChord = Math.sqrt(r ** 2 - (thickness / 2) ** 2);
     expect(halfChord, "the stop's bar leaves the outline unbroken").toBeGreaterThan(length / 2);
 
-    // `declined` is the SAME rectangle VERTICAL — a tool that ran and refused —
-    // so the h/v pair is the stop's TRANSPOSED and the same regex reads its 3rd
-    // and 4th groups back swapped. Length and thickness are the whole assertion:
-    // a bar drawn to its own numbers would make the angle the weaker of two
-    // channels, which is the defect the 45-degree one below already carries.
+    // `declined` is the same rectangle transposed, so the regex's 3rd and 4th groups swap.
     const refusal = HV.exec(barSubpath(outcomeIcon("declined")));
     expect(refusal, "the refusal's bar is one h/v rectangle").not.toBeNull();
     expect(Number(refusal?.[3]), "vertical: the h leg is the thickness").toBeCloseTo(thickness, 6);
     expect(Number(refusal?.[4]), "vertical: the v leg is the length").toBeCloseTo(length, 6);
     expect(Number(refusal?.[5]), "the bar closes on itself").toBeCloseTo(thickness, 6);
 
-    // And its four corners clear the rim. The transposition alone does not say
-    // that: an h/v bar carries its own origin, so one placed off-centre measures
-    // the same sides and still breaks the outline.
+    // The transposition alone does not prove the bar is centred; its corners must clear the rim.
     const rx = Number(refusal?.[1]);
     const ry = Number(refusal?.[2]);
     for (const c of [
@@ -131,9 +109,7 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
       expect(dist(c, centre), "the refusal's bar leaves the outline unbroken").toBeLessThan(r);
     }
 
-    // `denied` is the SAME rectangle at 45 degrees, so its sides measure the same
-    // and only its angle differs. The pair used to differ in length as well, which
-    // made the angle the weaker of two channels.
+    // `denied` is the same rectangle at 45 degrees, so only its angle differs.
     const corners = points(barSubpath(outcomeIcon("denied")));
     expect(corners, "the refusal's bar is four corners").toHaveLength(4);
     const sides = corners.map((p, i) => dist(p, corners[(i + 1) % 4] ?? p));
@@ -148,20 +124,9 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
   });
 });
 
-// The mark's INK and its SIZE, on the two surfaces that render the shared set
-// beside their own state rings. Both were forks rather than decisions: the exec
-// view took green from the status palette and red and yellow from the
-// destructive-action one, so `ok` agreed with a tool card and `fail` and `warn`
-// did not; and its in-flight rings measured 11px against the marks' 8, which made
-// the state a reader is waiting on the largest thing in the pane.
 describe("the mark reads one ink and one size wherever it renders", () => {
   const tools = loadCSS("14-tools.css");
   const exec = loadCSS("31-exec-view.css");
-  // The composer band's run bar USED to be the third surface reading this
-  // vocabulary, and it is not one any more: its subject is a RUN rather than a step,
-  // so its glyph shares the workflow mark's rules (12-tabs.css) and carries no ink,
-  // no size and no ring of its own. Its stylesheet is still read here, to hold that
-  // withdrawal — a re-added local ring or ink would be the copy coming back.
   const dock = loadCSS("26-dock.css");
   const tabs = loadCSS("12-tabs.css");
 
@@ -190,20 +155,13 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     expect(inkOf(exec, evState("warn"))).toBe("--c-yellow");
     expect(inkOf(exec, evState("input"))).toBe("--c-yellow");
 
-    // The run bar names none of the trio, and that is the point rather than a gap:
-    // it renders FOUR states and no more (`rows()` keeps a run only while its state
-    // is unfetched or live), so a settled ink would be unreachable CSS there — and
-    // its one wants-you state takes the workflow mark's `--c-dot-input` through the
-    // shared rule rather than this vocabulary's `--c-yellow`.
+    // The run bar renders only unsettled states, so a settled ink there would be unreachable CSS.
     expect(inkOf(tabs, '.tab-run-dot[data-status="input"]')).toBe("--c-dot-input");
     expect(dock).not.toContain(".run-bar-glyph {");
   });
 
   it("keeps the three amber states on ONE declaration", () => {
-    // The three read the same token because they SHARE a rule. A per-state copy is
-    // where a family drifts apart, and three separate reads of one token cannot
-    // tell a shared rule from three that happen to agree today — so the assertion
-    // is the selector list, which `inkOf` above has already read a colour from.
+    // One shared rule, not three that agree today: a per-state copy is where a family drifts.
     const amber = ruleContaining(tools, ".tool-icon.is-declined", "top");
     for (const member of [".tool-icon.is-warn", ".tool-icon.is-declined", ".tool-icon.is-denied"]) {
       expect(amber.selector, "one rule tints every amber state").toContain(member);
@@ -211,10 +169,6 @@ describe("the mark reads one ink and one size wherever it renders", () => {
   });
 
   it("keeps the destructive-action palette out of the exec view entirely", () => {
-    // Not just off the mark: the header glyph, the detail word, the timeline bar,
-    // the alert accent and the failure box are all keyed on the same `data-state`,
-    // so one of them left behind is the fork surviving somewhere a reader still
-    // sees it. Comments are stripped, or this file's own explanation matches.
     const declarations = exec.replace(/\/\*[\s\S]*?\*\//g, " ");
     expect(declarations).not.toContain("--c-danger");
     expect(declarations).not.toContain("--c-warning");
@@ -233,9 +187,7 @@ describe("the mark reads one ink and one size wherever it renders", () => {
   });
 
   it("draws the run bar's mark from the workflow mark's rule, not its own", () => {
-    // The bar sizes NOTHING locally now: no rule in its stylesheet may draw that
-    // glyph, or the copy this share removed is back. What the shared rule sizes it
-    // off is the same token every other state column reads.
+    // No local rule may draw the glyph: the shared rule sizes it.
     const local = allRules(dock).filter((r) => r.selector.includes(".run-bar-glyph"));
     expect(local, "the bar draws no mark of its own").toEqual([]);
 

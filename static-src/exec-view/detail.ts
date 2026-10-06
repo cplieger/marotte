@@ -1,7 +1,5 @@
-// The exec view's detail pane: one node at full width — identity facts, failure,
-// and the live transcript host it hands OUT (`bodyFor`), so it knows nothing about
-// where content comes from. It renders no capture: the page's own results region is
-// per-step and does that.
+// The exec view's detail pane: one node's facts, failure, and the transcript host it hands OUT
+// (`bodyFor`). No capture: the page's per-step results region renders that.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
@@ -12,27 +10,18 @@ export interface ExecDetailView {
   readonly root: HTMLElement;
   /** Show one node. `undefined` renders the empty state. */
   render(node: ExecNode | undefined): void;
-  /** The element this node's live transcript renders into, created on demand.
-   *
-   *  Per PATH and kept for the pane's life, so a reader who selects another node
-   *  and comes back finds the content still there — frames are live-only and
-   *  cannot be replayed. */
+  /** The element this node's live transcript renders into, created on demand and kept per PATH for
+   *  the pane's life: frames are live-only and cannot be replayed. */
   bodyFor(path: string): HTMLElement;
   /** Advance the duration of a node still running. */
   tick(): void;
 }
 
-/** What a node with no transcript host says; distinguishes three cases a blank
- *  region cannot. Injected so the CONSUMER owns the wording: a workflow run's
- *  reasons are not a subagent tab's. */
+/** What a node with no transcript host says; injected so the consumer owns the wording. */
 export type EmptyNote = (node: ExecNode) => string;
 
-/** An affordance to render BESIDE that note, or null when there is none.
- *
- *  Injected for the same reason the wording is, and separate from it because a
- *  note is a claim while this is a door: a workflow run whose steps are in the
- *  launching chat can offer to open it, and a delegate's page — reached FROM the
- *  conversation already — has nowhere new to send anyone. */
+/** An affordance BESIDE that note, or null: a run whose steps are in the launching chat can offer
+ *  to open it; a delegate's page has nowhere new to send anyone. */
 export type EmptyAction = (node: ExecNode) => HTMLElement | null;
 
 export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction): ExecDetailView {
@@ -117,10 +106,8 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
     }
 
     const action = hostable ? (emptyAction?.(node) ?? null) : null;
-    // IDENTITY-guarded, not signature-guarded: `render` runs on every store
-    // invalidation, and re-seating a node BLURS it — so a reader who tabbed to the
-    // link would lose focus several times a minute on a live run. The consumer
-    // returns a CACHED element, so the guard holds.
+    // IDENTITY-guarded: `render` runs on every invalidation and re-seating BLURS the link; the
+    // consumer returns a cached element.
     if (action !== emptyAct.firstElementChild) {
       emptyAct.replaceChildren(...(action === null ? [] : [action]));
     }
@@ -138,9 +125,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
         hosts.set(path, host);
         bodies.appendChild(host);
       }
-      // A first frame arriving for the node on screen retires the empty note in
-      // the same pass — and its action with it, since that action's whole subject
-      // is content that is NOT here.
+      // A first frame for the shown node retires the note and its action in the same pass.
       if (shown?.path === path) {
         empty.hidden = true;
         emptyAct.hidden = true;

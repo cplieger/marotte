@@ -1,30 +1,16 @@
-// ---------------------------------------------------------------------------
-// paint() branches on the DECLARED render cause: the store says what a bump was
-// FOR, and the renderer skips exactly the work that cause makes unnecessary.
-//
-//   chunk — a MOUNTED entry's own signal painted the text, or the entry is in a
-//           delegate's lane and renders at no position at all.
-//   tool  — one call's update: the owning TURN's keyed refresh, never a mount.
-//   fact  — a fact flipped with the log unchanged, which no inference over the
-//           array can see; the store's declaration is the only signal.
-// ---------------------------------------------------------------------------
-// A skip is asserted as a spy delta on the seams paint drives, plus element
-// identity over the view's children, because a reconcile that rebuilt a card
-// would mint new nodes even for equal markup.
-// ---------------------------------------------------------------------------
+// paint() skips the work the declared render cause makes unnecessary: `chunk` (a mounted entry's signal painted
+// it, or a laned entry renders nowhere), `tool` (the owning turn's keyed refresh), `fact` (a flip the log cannot
+// show). A skip is asserted as spy deltas plus element identity, since a rebuild mints new nodes for equal markup.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { SessionOverrides } from "./__test-helpers__/model.js";
-// The two streaming describes wait on REAL frames (a delta reaches a bubble
-// through the reveal cursor, which spreads growth across frames), so both
-// declare their bound in the unit that harness charges.
+// The streaming describes wait on real frames (the reveal cursor spreads growth), so they declare frame bounds.
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import type { Session } from "./types.js";
 import type { Entry, OpenEntry } from "./wire/types.gen.js";
 
-// The renderer's graph reads the shared DOM registry at module scope, and `byId`
-// throws on a missing element, so the hosts exist before any import resolves.
+// The graph reads the DOM registry at module scope and `byId` throws on a missing element.
 for (const id of [
   "chat-view",
   "messages-wrap-outer",
@@ -48,13 +34,9 @@ for (const id of [
   }
 }
 
-// The scroller is mocked through the shared helper so its surface stays total;
-// the paint path only needs its calls inert. Everything else is REAL, spied
-// where a skip has to be proven.
+// Scroll is inert through the shared helper; everything else is real, spied where a skip must be proven.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
-// The rail is SPIED, not replaced: `setResidentTurns` is one of the seams a skipped pass
-// must not reach, and the count is the only thing this file reads off it. `{ spy: true }`
-// keeps the real module, so the rail this suite paints through is the shipped one.
+// Spied, not replaced: `setResidentTurns` is a seam a skipped pass must not reach.
 vi.mock("./turn-rail.js", { spy: true });
 vi.mock("./turns.js", { spy: true });
 vi.mock("./reconcile.js", { spy: true });
@@ -142,8 +124,7 @@ function settledChat(
   return s;
 }
 
-/** Mount chats and activate the first, announcing the window as a REPLAY (the cause a
- *  fetched page carries), so no case inherits an arrival tail from its own seed. */
+/** Mount chats and activate the first, announcing a replay so no case inherits an arrival tail from its seed. */
 function seed(...sessions: Session[]): void {
   store.setSessions(sessions);
   const first = sessions[0];
@@ -179,8 +160,7 @@ function seamCounts(): Record<string, number> {
 
 function sameNodes(after: readonly HTMLElement[], before: readonly HTMLElement[]): void {
   expect(after).toHaveLength(before.length);
-  // Per element, because `toEqual` over nodes compares them STRUCTURALLY and so passes for
-  // a rebuilt element holding the same markup — the one thing this assertion is for.
+  // Per element: `toEqual` compares nodes structurally and would pass a rebuilt element.
   for (const [i, el] of after.entries()) {
     expect(el).toBe(before[i]);
   }
@@ -191,16 +171,14 @@ async function flushed(): Promise<void> {
   await Promise.resolve();
 }
 
-/** Two frames, for the cold body build the window drains per frame and for a
- *  `content-visibility: auto` row's first relevance pass. */
+/** Two frames: the cold body build drains per frame, and a `content-visibility: auto` row needs a relevance pass. */
 async function settledFrames(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
 beforeEach(() => {
-  // The multiplexer's registry persists at module scope, so an earlier case's parked view
-  // would otherwise count against the LRU budget of a later one.
+  // The multiplexer's registry persists at module scope; an earlier case's parked view would count against the LRU.
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
@@ -219,8 +197,7 @@ describe(
       s.turn_count = 1;
       seed(s);
       store.openEntry(a, open(t, "say-1", "hello"));
-      // The precondition, asserted rather than assumed: the delta below is only a `chunk`
-      // because a MOUNTED bubble's own signal carries it.
+      // The precondition: the delta is a `chunk` only because a mounted bubble's signal carries it.
       await vi.waitFor(() => {
         expect(viewOf(a).querySelector(".message.assistant")).not.toBeNull();
       });
@@ -234,8 +211,7 @@ describe(
       expect(seamCounts()).toEqual(before);
       sameNodes([...viewOf(a).children] as HTMLElement[], kids);
 
-      // The skip lost nothing: the entry's signal puts the text on screen. The reveal holds
-      // the live edge's tail back, so CLOSE the turn — the pass that finalizes drains it.
+      // The reveal holds the live edge's tail back, so close the turn to drain it.
       store.appendEntry(a, turnClose(t, 1));
       await vi.waitFor(
         () => {
@@ -246,9 +222,7 @@ describe(
     });
 
     it("a delta with no signal cell classifies shape, so the full pass paints it", async () => {
-      // The open tail of a page GET: seated with the window rather than by a live
-      // `entry_opened`, so no signal cell exists and nothing is subscribed to it. The
-      // classification is the subject, so the chat is deliberately not the active one.
+      // A page GET's open tail has no signal cell; the chat is deliberately not the active one.
       const bg = freshID("c-nosig");
       const t = `${bg}-t1`;
       const s = session(bg);
@@ -271,9 +245,7 @@ describe(
       const a = freshID("c-tool");
       const t1 = `${a}-t1`;
       const t2 = `${a}-t2`;
-      // The tool call is in the NEWEST turn: the fold policy wants that turn open, so its
-      // body is mounted and its per-call signal exists — which is what makes the cause
-      // `tool` rather than the signal-absent fallback.
+      // The newest turn's body is mounted, so its per-call signal exists and the cause is `tool`.
       seed(
         settledChat(a, [
           [turnOpen(t1, 1), textEntry(t1, 1, "done"), turnClose(t1, 2)],
@@ -294,8 +266,7 @@ describe(
       const refresh = vi.mocked(blocksMod.refreshMessageCard).mock;
       expect(refresh.calls.length).toBe(refreshBefore + 1);
       expect(refresh.calls.at(-1)?.[0]?.id).toBe(t2);
-      // It found its render, which is what lets paint return: an absent one falls through
-      // to the full pass instead, because only the full pass mounts.
+      // An absent render falls through to the full pass, because only the full pass mounts.
       expect(refresh.results.at(-1)?.value).toBe(true);
       expect(seamCounts()).toEqual(before);
       sameNodes([...viewOf(a).children] as HTMLElement[], kids);
@@ -323,8 +294,7 @@ describe(
       expect(store.renderCauseOf(a).cause).toBe("chunk");
       expect(seamCounts()).toEqual(before);
       sameNodes([...viewOf(a).children] as HTMLElement[], kids);
-      // And nothing of it is on screen, which is what makes the skip free: a laned entry
-      // renders at no position in the transcript's own lane.
+      // A laned entry renders at no position in the transcript's own lane, which makes the skip free.
       expect(viewOf(a).textContent).not.toContain("delegate prose");
     });
 
@@ -336,8 +306,7 @@ describe(
       const kids = cardsOf(a);
       const before = seamCounts();
 
-      // A transcript fact the ARRAY cannot state: no entry was appended, no entry changed
-      // length, so nothing about the log's shape says a repaint is owed.
+      // A fact the log's shape cannot state.
       store.setThinking(a, true);
       await flushed();
 
@@ -350,12 +319,8 @@ describe(
   },
 );
 
-// ---------------------------------------------------------------------------
-// `.is-bodyless` on the turn card mirrors "the card ends with an empty body" for
-// CSS (29-turns.css keys the header's bottom edge on it). It is stamped after
-// every build and update pass, so it must track both facts it encodes: the
-// body's children AND whether a footer follows.
-// ---------------------------------------------------------------------------
+// `.is-bodyless` mirrors "the card ends with an empty body" for CSS, so it tracks both the body's children and
+// whether a footer follows, after every build and update pass.
 
 describe("the bodyless turn card is marked .is-bodyless", () => {
   it("marks a prompt-only turn and clears it when the reply lands", async () => {
@@ -378,11 +343,8 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
   });
 
   it("paints a reserved slot as a marked row, end to end", async () => {
-    // The msg-row half of the same CSS contract, through the REAL block callbacks: a text
-    // entry carrying no text paints a `.msg-row.is-empty` the stylesheet hides. The turn is
-    // SETTLED because blank is `!live && nothing rendered` — a live bubble stays visible
-    // for its caret, so a reserved slot is only ever marked on a bubble that is not
-    // streaming (`fundamentals/text-bubble.ts`).
+    // The msg-row half: an empty settled text entry paints a hidden `.msg-row.is-empty`; a live bubble stays visible
+    // for its caret.
     const a = freshID("c-blrow");
     const t = `${a}-t1`;
     seed(settledChat(a, [[turnOpen(t, 1, "go"), textEntry(t, 1, ""), turnClose(t, 2)]]));
@@ -393,9 +355,7 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
   });
 
   it("clears it when a FOOTER arrives under a still-empty body", async () => {
-    // A closed turn with nothing in its body earns a footer of its own (an outcome to
-    // state, and the next turn's prompt as a rewind target), so the body is no longer the
-    // card's last child: marking here would erase the only line between the two bands.
+    // A closed empty turn earns its own footer, so the body is no longer the card's last child.
     const a = freshID("c-blfoot");
     const t1 = `${a}-t1`;
     const t2 = `${a}-t2`;
@@ -417,13 +377,7 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A turn's liveness is the LOG's statement now: `turn_close` absence IS
-// `outcome: "running"`, so nothing composes a client flag against a server one
-// and the defect the composition existed for is unreachable rather than
-// guarded. What survives is the rendering consequence, which is what the reader
-// saw: a turn the log leaves open carries no settled mark.
-// ---------------------------------------------------------------------------
+// `turn_close` absence is `outcome: "running"`, so a turn the log leaves open carries no settled mark.
 
 describe("a turn's outcome mark follows turn_close, not a liveness flag", () => {
   it("paints NO settled mark for a turn the log leaves open", async () => {
@@ -438,14 +392,11 @@ describe("a turn's outcome mark follows turn_close, not a liveness flag", () => 
 
     const card = cardsOf(a)[0];
     expect(card, "the turn painted").not.toBeUndefined();
-    // `running`'s treatment already is "no settled mark", which is why the fix was the
-    // derivation rather than a suppression rule in the renderer.
     expect(card?.querySelector(":scope > .turn-footer .turn-ledger-glyph")).toBeNull();
   });
 
   it("paints the neutral mark when the log closed the turn with no readable outcome", async () => {
-    // The direction the derivation must not erase: after a restart nothing closed the turn
-    // readably, so `unknown` is honest and states itself.
+    // After a restart nothing closed the turn readably, so `unknown` states itself.
     const a = freshID("c-closed");
     const t = `${a}-t1`;
     seed(settledChat(a, [[turnOpen(t, 1, "do the thing"), turnClose(t, 1, "unknown")]]));

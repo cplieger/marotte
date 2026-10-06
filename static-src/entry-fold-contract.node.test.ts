@@ -1,17 +1,4 @@
-// The client half of the shared FOLD oracle: testdata/entry_fold.json is the contract
-// and TestEntryFoldContract is the other reader. That one builds a real entry log of two
-// INTERLEAVED turns, derives the grouping from export_md.go's own groupTurns and the
-// per-entry decision from the export writer itself; this one partitions the same entries
-// the way the store does and asks block-window.ts's entryRenders. An export and a
-// transcript that describe one turn differently is what the fixture exists to catch, and
-// nothing else in the app would.
-//
-// Node placement because the fixture is a disk read.
-//
-// Two declared edges live in the fixture's own `_comment` and are carried here as
-// `compared: false` rows with their reason: turn_open and turn_close render at CARD level
-// on this side (header and footer, siblings of .turn-body) while the export renders both
-// in the flow.
+// Client half of the shared fold oracle: testdata/entry_fold.json is the contract, TestEntryFoldContract the Go reader.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
@@ -48,9 +35,7 @@ function loadFixture(): FoldFixture {
   return JSON.parse(raw) as FoldFixture;
 }
 
-/** The store's own partition: one TurnState per turn id, entries in seq order, ordered by
- *  `turn_open.n` — never by first appearance, which is the EXPORT's rule and the thing
- *  being compared against. */
+/** The store's partition, ordered by `turn_open.n`, never by first appearance (the export's rule being compared). */
 function storeTurns(entries: readonly Entry[]): {
   turns: Map<string, TurnState>;
   turn_order: string[];
@@ -81,15 +66,13 @@ describe("the fold contract shared with the Go implementation", () => {
 
   it("reads a fixture that carries the shape it exists for", () => {
     expect(fx.turns.length).toBeGreaterThanOrEqual(2);
-    // INTERLEAVED: at least one turn's entries are not a contiguous run of the file, or
-    // the grouping assertion below is satisfied by file order alone and pins nothing.
+    // Interleaved, or file order alone would satisfy the grouping assertion.
     const owners = fx.entries.map((e) => e.turn);
     const spread = fx.turns.map(
       (t) => owners.lastIndexOf(t.turn) - owners.indexOf(t.turn) + 1 - t.entries.length,
     );
     expect(Math.max(...spread)).toBeGreaterThan(0);
-    // Both verdicts occur among the compared rows, or a half agreeing with a fixture that
-    // asserts one answer would read as agreement.
+    // Both verdicts occur, or a one-answer fixture would read as agreement.
     const compared = fx.turns.flatMap((t) => t.entries).filter((r) => r.compared);
     expect(new Set(compared.map((r) => r.renders))).toEqual(new Set([true, false]));
   });

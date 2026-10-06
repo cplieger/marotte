@@ -57,8 +57,7 @@ func newIsolatedStore(t *testing.T) (*Store, string) {
 // so without this nothing would notice if the default silently changed (or if a
 // refactor left it empty and started writing to the process's cwd).
 //
-// It is also the regression test for a real incident: before the option existed,
-// `New` resolved the default eagerly and the package's own tests wrote the
+// A default resolved eagerly in `New` would make the package's own tests write the
 // developer's own ~/.kiro/settings/mcp.json.
 func TestNew_DefaultKASPathIsUnderKiroHome(t *testing.T) {
 	home := t.TempDir()
@@ -125,7 +124,6 @@ func TestWriteKASConfig_RemoteCarriesOAuth(t *testing.T) {
 		Transport: TransportHTTP, Name: "slack", Enabled: true,
 		URL: "https://slack.example/mcp", OAuthClientID: "cid-123",
 	}
-	srv.OAuthClientSecret = "shh"
 	if _, err := s.Create(t.Context(), srv); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -135,11 +133,54 @@ func TestWriteKASConfig_RemoteCarriesOAuth(t *testing.T) {
 	if !ok {
 		t.Fatalf("oauth = %T, want an object — the field the inline path dropped", entry["oauth"])
 	}
-	if oauth["clientId"] != "cid-123" || oauth["clientSecret"] != "shh" {
-		t.Errorf("oauth = %v, want clientId=cid-123 clientSecret=shh", oauth)
+	if len(oauth) != 1 || oauth["clientId"] != "cid-123" {
+		t.Errorf("oauth = %v, want exactly clientId=cid-123", oauth)
 	}
 	if entry["url"] != "https://slack.example/mcp" {
 		t.Errorf("url = %v", entry["url"])
+	}
+}
+
+// A server with only the metadata URL and the redirect set has no clientId,
+// so the render must not gate the oauth block on the client id.
+func TestWriteKASConfig_RemoteCarriesClientMetadataAndRedirect(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	srv := &Server{
+		Transport: TransportHTTP, Name: "cimd", Enabled: true,
+		URL:                    "https://mcp.example/mcp",
+		OAuthClientMetadataURL: "https://example.com/c.json",
+		OAuthRedirectURI:       "localhost:7778",
+	}
+	if _, err := s.Create(t.Context(), srv); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	oauth, ok := readKASServers(t, kas)["cimd"]["oauth"].(map[string]any)
+	if !ok {
+		t.Fatalf("no oauth block rendered for a CIMD-only server")
+	}
+	want := map[string]any{"clientMetadataUrl": "https://example.com/c.json", "redirectUri": "localhost:7778"}
+	if len(oauth) != len(want) || oauth["clientMetadataUrl"] != want["clientMetadataUrl"] || oauth["redirectUri"] != want["redirectUri"] {
+		t.Errorf("oauth = %v, want %v", oauth, want)
+	}
+}
+
+// The boot render rebuilds KAS's file from marotte's record, so a field the
+// record does not carry is destroyed on every boot.
+func TestNew_BootRenderKeepsClientMetadataURL(t *testing.T) {
+	dir := t.TempDir()
+	rec := `{"version":1,"servers":[{"id":"abcdefghij","name":"cimd","transport":"http","url":"https://mcp.example/mcp",` +
+		`"oauth_client_metadata_url":"https://example.com/c.json","oauth_redirect_uri":":7778",` +
+		`"enabled":true,"created_at":1,"updated_at":1}]}`
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(rec), 0o600); err != nil {
+		t.Fatalf("seed mcp.json: %v", err)
+	}
+	kas := filepath.Join(dir, "kas", "mcp.json")
+	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(kas)); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	oauth, _ := readKASServers(t, kas)["cimd"]["oauth"].(map[string]any)
+	if oauth["clientMetadataUrl"] != "https://example.com/c.json" || oauth["redirectUri"] != ":7778" {
+		t.Errorf("boot render oauth = %v, want both fields kept", oauth)
 	}
 }
 
@@ -252,7 +293,7 @@ func TestRenderKASServers_SkipsUnknownTransport(t *testing.T) {
 		{Name: "fine", Transport: TransportStdio, Command: "npx", Enabled: true},
 		nil,
 		{Name: "", Transport: TransportStdio, Command: "npx", Enabled: true},
-	}, true)
+	}, kasRenderPolicy{})
 	if _, ok := got["weird"]; ok {
 		t.Errorf("unknown transport was rendered: %v", got["weird"])
 	}

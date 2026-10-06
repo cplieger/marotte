@@ -1,25 +1,9 @@
-// ---------------------------------------------------------------------------
 // Tests for the Workflows sub-tab. Two halves.
-//
-// The Run ⇄ Cancel row logic. Each case pins a piece of the single-run contract:
-//   - the button names the recipe's ONE possible live run (Run ⇄ Cancel flips
-//     on the run list, not on who launched it)
-//   - paused is NOT terminal: a paused run still blocks a relaunch, so its row
-//     must offer Cancel or the recipe wedges with no way out
-//   - launching with declared inputs collects them inline (no modal)
-//   - a launch opens the run tab that OWNS the run
-//
-// The row's SHAPE: a recipe row is the shared `.entry` builder's output like
-// every other row on the page, and its input form is the `.entry-detail` region
-// under it rather than a block inside it.
-// ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
-/** Every authored client source file plus the shipped page, inlined as text.
- *  `import.meta.glob` replaces the directory walk this used to do with `readdir`:
- *  the corpus is the same set of files, resolved at transform time instead. */
+/** Every authored client source file plus the shipped page, inlined as text at transform time. */
 const authoredSource = import.meta.glob<string>(
   ["./*.ts", "./actions/*.ts", "./handlers/*.ts", "./fundamentals/*.ts", "../static/index.html"],
   { query: "?raw", import: "default", eager: true },
@@ -60,14 +44,13 @@ vi.mock("./actions/runs.js", () => ({
   },
 }));
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
-// The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove
-// reaches /api/settings through the actions transport (which the api-client mock
-// does not cover), fire-and-forget, so the request was still open when the window
-// tore down and printed an unhandled AbortError.
+// The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove reaches /api/settings
+// through the actions transport (which the api-client mock does not cover), fire-and-forget, so the
+// request was still open when the window tore down and printed an unhandled AbortError.
 vi.mock("./persist.js", () => ({ loadSettings: vi.fn(async () => ({})) }));
 
-// The Schedule button's actions: unmocked they reach the network, and a row's
-// summary line is decoration this suite does not assert on.
+// The Schedule button's actions: unmocked they reach the network, and a row's summary line is
+// decoration this suite does not assert on.
 vi.mock("./actions/schedules.js", () => ({
   loadSchedules: { dispatch: vi.fn(async () => ({ schedules: [] })) },
   saveSchedule: { dispatch: vi.fn(async () => null) },
@@ -75,6 +58,7 @@ vi.mock("./actions/schedules.js", () => ({
 }));
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
+import { dispatch } from "./bus.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
 import type { RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
@@ -91,9 +75,9 @@ function recipe(name: string, inputs?: Record<string, string>): RecipesResponse[
   return inputs === undefined ? base : { ...base, inputs };
 }
 
-// `status` is a bare string, not `RunStatus`: one case spells a word an engine ahead
-// of this build would send, which is exactly what the live/terminal read has to
-// survive. The cast is the wire lie being modelled.
+// `status` is a bare string, not `RunStatus`: one case spells a word an engine ahead of this build
+// would send, which is exactly what the live/terminal read has to survive. The cast is the wire lie
+// being modelled.
 function run(name: string, id: string, status: string): WorkflowRun {
   return { workflow_id: id, name, status: status as RunStatus, updated_at: 0 };
 }
@@ -205,6 +189,32 @@ describe("the Run ⇄ Cancel row", () => {
   });
 });
 
+describe("a recipes_changed invalidation", () => {
+  it("re-reads the catalog while the list is on screen", async () => {
+    recipesReply = { recipes: [recipe("goal")] };
+    const panel = await render();
+    expect(names(panel)).toEqual(["goal"]);
+
+    recipesReply = { recipes: [recipe("goal"), recipe("review")] };
+    dispatch({ type: "recipes_changed", chat_id: "" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(names(panel)).toEqual(["goal", "review"]);
+  });
+
+  it("does not re-read the catalog while the list is hidden", async () => {
+    recipesReply = { recipes: [recipe("goal")] };
+    const panel = await render();
+    panel.classList.add("hidden");
+
+    recipesReply = { recipes: [recipe("goal"), recipe("review")] };
+    dispatch({ type: "recipes_changed", chat_id: "" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(names(panel)).toEqual(["goal"]);
+  });
+});
+
 describe("the recipe row on the shared builder", () => {
   function rowFor(panel: HTMLElement, source: string): HTMLElement {
     const row = panel.querySelector<HTMLElement>(`[data-recipe="${source}"]`);
@@ -214,15 +224,11 @@ describe("the recipe row on the shared builder", () => {
     return row;
   }
 
-  // Each case names its own recipe. The module keeps the last fetched list, and
-  // `reconcile` keys rows by source and runs only `update()` on a key it already
-  // has — so reusing one name across cases would let a row MOUNTED from the
-  // previous case's recipe survive into this one and be asserted against the new
-  // one's fields. A unique key per case is what forces a fresh mount.
+  // Each case names its own recipe.
 
   it("is an inert entry whose two lines are the description and the schedule", async () => {
-    // Not a door: a recipe row's one destination is the run its button launches,
-    // and that run opens its own tab.
+    // Not a door: a recipe row's one destination is the run its button launches, and that run opens
+    // its own tab.
     recipesReply = { recipes: [{ ...recipe("shape", { prompt: "prompt" }), built_in: true }] };
     const panel = await render();
     const row = rowFor(panel, "bundled://shape");
@@ -262,8 +268,8 @@ describe("the recipe row on the shared builder", () => {
   });
 
   it("mounts the input form as a detail region UNDER the row, never inside it", async () => {
-    // The row's height is the list's tier and never grows; the only thing that
-    // may grow is a sibling region below it.
+    // The row's height is the list's tier and never grows; the only thing that may grow is a
+    // sibling region below it.
     recipesReply = {
       recipes: [recipe("form-host", { prompt: "prompt", max_iterations: "string" })],
     };
@@ -284,8 +290,8 @@ describe("the recipe row on the shared builder", () => {
   });
 
   it("keeps what the reader typed across a repaint", async () => {
-    // The panel repaints on its own schedule — the run poll, the schedules
-    // fetch — so a form that was rebuilt on each one would lose its values.
+    // The panel repaints on its own schedule — the run poll, the schedules fetch — so a form that
+    // was rebuilt on each one would lose its values.
     recipesReply = { recipes: [recipe("typing", { prompt: "prompt" })] };
     const panel = await render();
     buttonFor(panel, "bundled://typing")?.click();
@@ -316,14 +322,9 @@ describe("the recipe row on the shared builder", () => {
 });
 
 describe("the muted classes are gone rather than defined", () => {
-  // `.text-muted` and `.text-sm` were on seven elements across four files and
-  // declared in no stylesheet, so "Not scheduled" rendered at full primary ink
-  // and outshouted the `.is-scheduled` accent meant to distinguish it. They were
-  // REPLACED rather than defined: the utilities layer ranks below every
-  // unlayered feature slice, so a `.text-muted` there would have lost to the
-  // component rules at some of those very sites and won at others — a class that
-  // works in some places is worse than one that works nowhere. Each site takes
-  // its ink from its own component rule instead.
+  // `.text-muted` and `.text-sm` were on seven elements across four files and declared in no
+  // stylesheet, so "Not scheduled" rendered at full primary ink and outshouted the `.is-scheduled`
+  // accent meant to distinguish it. Each site takes its ink from its own component rule instead.
 
   it("names neither class anywhere in authored source", () => {
     const offenders: string[] = [];
@@ -340,8 +341,8 @@ describe("the muted classes are gone rather than defined", () => {
   });
 
   it("lets a live schedule take the accent on the shared subtitle line", () => {
-    // The dormant line is the builder's own `.entry-sub` and carries no rule of
-    // its own here; only the live state earns one.
+    // The dormant line is the builder's own `.entry-sub` and carries no rule of its own here; only
+    // the live state earns one.
     const docs = loadCSS("28-docs.css");
     expect(
       /color:\s*var\(--c-accent\)/.test(ruleBody(docs, ".docs-panel .entry-sub.is-scheduled")),
@@ -350,26 +351,22 @@ describe("the muted classes are gone rather than defined", () => {
   });
 
   it("gives every former use site a component rule that carries its ink", () => {
-    // `.run-id` and `.run-output-empty` were this page's own; the page renders the
-    // run CARD now, so their equivalents live with the component. Both are still
-    // tertiary ink — that is what the muted-class sweep is checking — they are just
-    // in the stylesheet that owns the element.
+    // `.run-id` and `.run-output-empty` were this page's own; the page renders the run CARD now, so
+    // their equivalents live with the component. Both are still tertiary ink — that is what the
+    // muted-class sweep is checking — they are just in the stylesheet that owns the element.
     expect(
       /color:\s*var\(--c-text-tertiary\)/.test(
         ruleBody(loadCSS("27-run-card.css"), ".run-output-val-empty"),
       ),
     ).toBe(true);
-    // The run PAGE's own note moved to the exec view, which is a different component
-    // with its own vocabulary — the page renders a delegated-execution view now rather
-    // than a variant of the transcript's card.
+    // The run PAGE's own note moved to the exec view, which is a different component with its own
+    // vocabulary — the page renders a delegated-execution view now rather than a variant of the
+    // transcript's card.
     expect(
       /color:\s*var\(--c-text-tertiary\)/.test(
         ruleBody(loadCSS("31-exec-view.css"), ".ev-d-empty"),
       ),
     ).toBe(true);
-    // The History search note moved with its box: the page search boxes are one
-    // popup now (24-find.css `.page-find`), so `.hist-search-note` is gone and
-    // `.page-find-note` carries the ink for all four of them.
     expect(
       /color:\s*var\(--c-text-tertiary\)/.test(ruleBody(loadCSS("24-find.css"), ".page-find-note")),
     ).toBe(true);
@@ -381,15 +378,7 @@ describe("the muted classes are gone rather than defined", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The filter, which this tab did not have.
-//
-// The configuration browser's box was HIDDEN on this tab, on the reasoning that
-// Workflows is RPC-sourced and escapes here before any docs logic runs — true
-// about where the rows come from, and not the same claim as "nothing to filter".
-// A recipe has a name, a description, a source and declared inputs, so the box
-// reaches this panel now instead of hiding from it.
-// ---------------------------------------------------------------------------
 
 describe("the filter", () => {
   it("narrows by name, case-insensitively", async () => {
@@ -412,8 +401,7 @@ describe("the filter", () => {
   });
 
   it("matches the badge a bundled row DISPLAYS", async () => {
-    // Same rule docs.ts applies to its own badges: a reader types at what they can
-    // see.
+    // Same rule docs.ts applies to its own badges: a reader types at what they can see.
     recipesReply = {
       recipes: [
         { name: "one", source: "bundled://one", built_in: true },
@@ -424,8 +412,8 @@ describe("the filter", () => {
   });
 
   it("cannot reach the node PLAN, which is raw JSON nobody types at", async () => {
-    // Folding it in would match on punctuation and internal key names, so the box
-    // would be answering a different question than it appears to ask.
+    // Folding it in would match on punctuation and internal key names, so the box would be
+    // answering a different question than it appears to ask.
     recipesReply = {
       recipes: [
         {
@@ -440,8 +428,8 @@ describe("the filter", () => {
   });
 
   it("says NO MATCHES rather than claiming there are no workflows", async () => {
-    // "No workflows available." under an active filter is the same lie docs.ts
-    // records for its category text: they exist, they are one keystroke away.
+    // "No workflows available." under an active filter is the same lie docs.ts records for its
+    // category text: they exist, they are one keystroke away.
     recipesReply = { recipes: [recipe("goal")] };
     const filtered = await render("zzzz");
     expect(filtered.textContent).toContain("No workflows match the filter");
@@ -451,8 +439,8 @@ describe("the filter", () => {
   });
 
   it("reports its counts on every repaint, not only on the fetch", async () => {
-    // The note describes what is on screen, so whichever caller changed what is on
-    // screen owes the update — the run poll and the schedules fetch repaint too.
+    // The note describes what is on screen, so whichever caller changed what is on screen owes the
+    // update — the run poll and the schedules fetch repaint too.
     const seen: { total: number; shown: number }[] = [];
     setRecipeCountsListener((c) => {
       seen.push(c);
@@ -464,8 +452,8 @@ describe("the filter", () => {
   });
 
   it("keeps a row's click bound to the recipe it names, not to the filtered index", async () => {
-    // recipeRow resolves at CLICK time against the UNFILTERED list, which is what
-    // survives reconcile keeping a row across a keystroke.
+    // recipeRow resolves at CLICK time against the UNFILTERED list, which is what survives
+    // reconcile keeping a row across a keystroke.
     recipesReply = { recipes: [recipe("goal"), recipe("triage")] };
     const panel = await render("triage");
     buttonFor(panel, "bundled://triage")?.click();

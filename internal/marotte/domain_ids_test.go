@@ -1,20 +1,7 @@
 package marotte_test
 
-// NewChatID is the identity half of stage 1b: the id a create RETURNS, replacing
-// one the client minted in its own memory. Two things have to hold, and each has a
-// consequence that is invisible until production.
-//
-// The shape must satisfy ids.ValidChatID, because that validator is the gate on
-// the chat's own filename and on every command envelope. A mint its own boundary
-// rejects would 400 every create.
-//
-// The bytes must be unguessable. The id addresses a conversation in a URL and in
-// the ACP session chain, so a predictable one is an id a stranger can name.
-//
-// The external test package is deliberate: it lets the test import internal/ids,
-// which internal/marotte itself must not (that package imports no other marotte
-// package, which is what keeps the wire types acyclic). Importing it here is what
-// makes the conformance claim a fact rather than a restatement of the regexp.
+// NewChatID must satisfy ids.ValidChatID (the filename and envelope gate) and be unguessable. An
+// external test package, so it can import internal/ids, which internal/marotte must not.
 
 import (
 	"strings"
@@ -61,8 +48,7 @@ func TestNewChatID_HexOnly(t *testing.T) {
 }
 
 // TestNewChatID_Unique is the crypto/rand claim reduced to something a test can
-// assert: a timestamp-plus-6-random-characters mint (what the client used to do)
-// collides at this volume, and a counter would collide immediately.
+// assert: a timestamp-plus-6-random-characters mint collides at this volume, and a counter would collide immediately.
 func TestNewChatID_Unique(t *testing.T) {
 	const n = 4096
 	seen := make(map[marotte.ChatID]struct{}, n)
@@ -75,10 +61,9 @@ func TestNewChatID_Unique(t *testing.T) {
 	}
 }
 
-// TestNewChatID_LegacyShapeStillValid is the migration claim the design makes:
-// "existing chat ids stay valid under ValidChatID, so no chat data moves". If this
-// ever fails, every chat file on the volume is unreachable and the answer is a
-// migration, not a tweak to the mint.
+// TestNewChatID_LegacyShapeStillValid — existing chat ids stay valid under
+// ValidChatID, so no chat data moves. If this fails, every chat file on the volume
+// is unreachable.
 func TestNewChatID_LegacyShapeStillValid(t *testing.T) {
 	cases := []struct {
 		desc string

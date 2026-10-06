@@ -10,22 +10,9 @@ import (
 	"github.com/cplieger/runesafe/v2"
 )
 
-// A DECISION SURFACE is a payload a human reads to make an approval choice:
-// the permission card, the agent's question card, an MCP elicitation form. The
-// threat these tests pin is decision integrity rather than display fidelity —
-// an agent that reaches a poisoned file can compose a tool-call title, and a
-// Bidi override in it renders one command while a different one is what
-// pressing Allow approves.
-//
-// deceptiveTitle is that attack, written the way it would arrive. U+202E
-// RIGHT-TO-LEFT OVERRIDE forces the following text to render right-to-left, so
-// the reversed span below reads, on screen, as
-//
-//	Run rm -rf /workspace -Name-found
-//
-// backwards — i.e. an innocuous `find` — while the bytes an approving user
-// authorizes are the rm. U+202C POP DIRECTIONAL FORMATTING closes the span so
-// the deception is invisible at the edges.
+// A DECISION SURFACE is a payload a human reads to make an approval choice (permission card,
+// question card, elicitation form). U+202E reverses the span below so it renders as an
+// innocuous `find` while the bytes Allow approves are the rm; U+202C closes the span.
 const (
 	rlo             = "\u202e"
 	pdf             = "\u202c"
@@ -33,19 +20,15 @@ const (
 	deceptiveOption = "Reject" + rlo + "wollA" + pdf
 )
 
-// assertNeutralizedOnTheWire is the assertion that matters: not "the Go string
-// changed" but "the JSON the browser receives carries no direction override".
-// It marshals the payload exactly as the SSE writer does, so a field that was
-// sanitized into a copy the payload does not hold would still fail here.
+// assertNeutralizedOnTheWire asserts that the JSON the browser receives carries no direction
+// override, marshalled as the SSE writer does.
 func assertNeutralizedOnTheWire(t *testing.T, what string, payload any) {
 	t.Helper()
 	wire, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("%s: marshal payload: %v", what, err)
 	}
-	// json.Marshal emits the Bidi controls as \u202e escapes rather than raw
-	// bytes, so decode back to text before counting runes — an escape is still
-	// an override once the browser parses it.
+	// json.Marshal escapes the controls as \u202e: decode before counting runes.
 	var decoded any
 	if err := json.Unmarshal(wire, &decoded); err != nil {
 		t.Fatalf("%s: unmarshal payload: %v", what, err)
@@ -60,9 +43,7 @@ func assertNeutralizedOnTheWire(t *testing.T, what string, payload any) {
 	}
 }
 
-// flatten walks a decoded JSON value and returns every rune in every string it
-// contains, keys included. Recursive rather than a regexp over the raw bytes
-// because a nested option or sub-option is exactly where a partial fix hides.
+// flatten returns every rune of every string in a decoded JSON value, keys included.
 func flatten(v any) []rune {
 	var out []rune
 	switch t := v.(type) {
@@ -81,11 +62,8 @@ func flatten(v any) []rune {
 	return out
 }
 
-// TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire is the primary proof.
-// The title reaching the client must no longer be able to reorder itself, and
-// the reversed span must still be PRESENT — the fix replaces each control with a
-// space rather than deleting it, so the deception becomes visible instead of
-// vanishing along with the evidence of it.
+// TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire pins that the title cannot
+// reorder itself and the reversed span is still PRESENT (controls become spaces).
 func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -127,16 +105,14 @@ func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 	if strings.Contains(got.Options[1].Name, rlo) {
 		t.Errorf("Options[1].Name = %q still carries U+202E", got.Options[1].Name)
 	}
-	// The identifiers the answer is keyed on are NOT display text and must
-	// arrive byte-identical, or the approval means something else.
+	// The answer's identifiers are not display text and must arrive byte-identical.
 	if got.Options[1].OptionID != "deny" || got.Options[1].Kind != "reject_once" {
 		t.Errorf("Options[1] identifiers changed: %+v", got.Options[1])
 	}
 }
 
-// TestPermissionCard_LeavesLegitimateTitlesByteIdentical bounds the bidi neutralisation:
-// the cost is paid only by text that could also be the attack. Pure RTL survives
-// because the Unicode bidi algorithm derives direction from strong characters alone.
+// TestPermissionCard_LeavesLegitimateTitlesByteIdentical pins that pure RTL and unmarked
+// mixed text pass untouched (runesafe v1.4.2).
 func TestPermissionCard_LeavesLegitimateTitlesByteIdentical(t *testing.T) {
 	for _, title := range []string{
 		"Write config.tf",
@@ -171,11 +147,8 @@ func TestPermissionCard_LeavesLegitimateTitlesByteIdentical(t *testing.T) {
 	}
 }
 
-// TestPermissionCard_MixedScriptWithExplicitMarksIsTheWholeCost states the one
-// loss, so it is a recorded decision rather than a surprise: a label that MIXES
-// scripts AND relies on explicit direction marks loses those marks to spaces.
-// A tool-call title cannot need them without also being the shape the attack
-// takes, which is why the trade is accepted.
+// TestPermissionCard_MixedScriptWithExplicitMarksIsTheWholeCost pins the one accepted loss:
+// mixed-script text relying on explicit marks loses them to spaces.
 func TestPermissionCard_MixedScriptWithExplicitMarksIsTheWholeCost(t *testing.T) {
 	const lrm = "\u200e"
 	title := "Write " + lrm + "שלום" + lrm + " now"
@@ -197,10 +170,8 @@ func TestPermissionCard_MixedScriptWithExplicitMarksIsTheWholeCost(t *testing.T)
 	}
 }
 
-// TestUserInputCard_NeutralizesEveryLabelOnTheWire covers the second decision
-// surface at both nesting levels. The question, each option's title and
-// description, the sub-options label, and each sub-option's title and
-// description are all agent-composed and all rendered.
+// TestUserInputCard_NeutralizesEveryLabelOnTheWire covers every agent-composed label at both
+// nesting levels.
 func TestUserInputCard_NeutralizesEveryLabelOnTheWire(t *testing.T) {
 	base, events := newEventCaptureDeps()
 	deps := &pendingCaptureDeps{baseDeps: base}
@@ -237,16 +208,8 @@ func TestUserInputCard_NeutralizesEveryLabelOnTheWire(t *testing.T) {
 	}
 }
 
-// TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules pins the ORDER,
-// which is load-bearing twice.
-//
-// A title of nothing but a direction override sanitizes to a single space, so
-// trimming AFTER empties it and the drop rule removes it. Trimming first would
-// leave " " — a card rendering as blank space whose answer, since the reply
-// carries the title, is the raw override. And two titles differing only in
-// invisible controls collapse to one only when the dedup keys on the sanitized
-// form; keyed on the raw text both survive as visually identical cards, which is
-// the ambiguity the dedup exists to prevent.
+// TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules pins the ORDER: sanitize, then
+// trim (an override-only title becomes empty and is dropped), then dedup on the sanitized form.
 func TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules(t *testing.T) {
 	base, events := newEventCaptureDeps()
 	deps := &pendingCaptureDeps{baseDeps: base}
@@ -257,8 +220,8 @@ func TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules(t *testing.T) 
 		"sessionId": "s",
 		"question":  "Pick one",
 		"options": []map[string]any{
-			{"title": rlo},               // invisible-only: must be DROPPED
-			{"title": "Proceed"},         //
+			{"title": rlo}, // invisible-only: must be DROPPED
+			{"title": "Proceed"},
 			{"title": "Pro\u200eceed"},   // same rendered text: must be DEDUPED away
 			{"title": "\u202dProceed 2"}, // distinct once sanitized: kept
 		},
@@ -278,8 +241,7 @@ func TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules(t *testing.T) 
 	for i, o := range got.Options {
 		titles[i] = o.Title
 	}
-	// "Pro ceed" is what "Pro<LRM>ceed" sanitizes to, so it is NOT a duplicate
-	// of "Proceed" — the dedup catches identical rendered text, not similar.
+	// "Pro ceed" (the LRM's sanitized form) is not "Proceed": the dedup catches identical text only.
 	want := []string{"Proceed", "Pro ceed", "Proceed 2"}
 	if len(titles) != len(want) {
 		t.Fatalf("titles = %q, want %q", titles, want)
@@ -331,9 +293,7 @@ func TestElicitationForm_NeutralizesItsMessageOnTheWire(t *testing.T) {
 	assertNeutralizedOnTheWire(t, "elicitation_needed", *got)
 }
 
-// TestDisplayText_BoundsAnUnboundedUpstreamString pins the second half of the
-// treatment. Nothing on the wire bounds a title, a question or a provider
-// message, and each lands in an SSE payload the server also logs.
+// TestDisplayText_BoundsAnUnboundedUpstreamString pins the cap on upstream text.
 func TestDisplayText_BoundsAnUnboundedUpstreamString(t *testing.T) {
 	// A 3-byte rune repeated, so a naive byte cut would split one.
 	long := strings.Repeat("設", 400)
@@ -353,24 +313,13 @@ func TestDisplayText_BoundsAnUnboundedUpstreamString(t *testing.T) {
 	}
 }
 
-// upstreamConsentReason stands in for KAS's own
-// `_meta.kiro.consent.persistableConsentReason` (kiro-cli 2.19.1). Shape rather
-// than verbatim text: what the assertion below turns on is the three properties
-// that made the string unfit to forward — it is long, it names a file the
-// marotte user never hand-edits, and it carries a cmd.exe/PowerShell tail that
-// is unreachable inside this Linux container.
+// upstreamConsentReason stands in for KAS's persistableConsentReason (kiro-cli 2.19.1): long,
+// naming a file the user never hand-edits, with a Windows shell tail.
 const upstreamConsentReason = "Cannot save a rule for this command: the shell pattern would not match. " +
 	"Edit ~/.kiro/settings/permissions.yaml by hand, or on Windows run the equivalent from cmd.exe or PowerShell."
 
-// TestPermissionCard_DropsTheUpstreamConsentReason pins the DO-NOT-FORWARD half
-// of the persistability decision. KAS owns the verdict; marotte owns the copy,
-// so the reason string is read at the seam and dropped there — never persisted,
-// never broadcast, not even as an unused field the client could start rendering.
-//
-// Without this test the field looks helpful and someone re-adds it, at which
-// point the card starts telling a marotte user to hand-edit a permissions file
-// the Settings pane owns, with a Windows postscript for a shell this container
-// does not have.
+// TestPermissionCard_DropsTheUpstreamConsentReason pins that the reason string is dropped at
+// the seam: KAS owns the verdict, marotte owns the copy.
 func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -401,8 +350,7 @@ func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
 	if !ok {
 		t.Fatal("no permission_needed event broadcast")
 	}
-	// The verdict must have ARRIVED, or every assertion below passes vacuously:
-	// a broken consent decode drops the reason too, for the wrong reason.
+	// The verdict must have ARRIVED, or the assertions pass vacuously.
 	if got.AlwaysAllowBlocked != marotte.AlwaysAllowBlockUnparseable {
 		t.Fatalf("AlwaysAllowBlocked = %q, want %q: the verdict did not decode, so the "+
 			"reason-is-absent checks below would prove nothing",
@@ -417,9 +365,7 @@ func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
 	if err := json.Unmarshal(wire, &decoded); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	// Every string in the payload, keys included, concatenated — the same walk
-	// assertNeutralizedOnTheWire uses, so a fragment hidden in a nested option
-	// or a field added later is still in scope.
+	// Every string in the payload, keys included, as assertNeutralizedOnTheWire walks it.
 	all := string(flatten(decoded))
 	for _, fragment := range []string{
 		upstreamConsentReason,

@@ -1,19 +1,7 @@
-//
-// Behavior of the theme controller wiring (theme.ts). The controller itself is
-// @cplieger/ui-primitives' createTheme; these tests cover marotte's contract on
-// top of it: the toggle CYCLES three states (light -> dark -> system), an unset
-// value resolves the OS preference without persisting anything, and the label
-// names what "system" resolved to.
-//
-// The storage adapter is a PARAMETER now (settings.ts supplies the real one, and
-// the authority is a config.json key), so these cases hand it the paint-cache
-// adapter — device-view.ts's own read-modify-write of the `theme` field. That is
-// deliberate rather than convenient: the cache is what prepaint.js reads, so the blob assertions below still pin the one storage behaviour a
-// reader would notice breaking, siblings preserved and all.
-//
-// The third state is the point: with a 2-state toggle, "follow the OS" was only
-// ever the value of an unset field, so one click made it unreachable without
-// clearing localStorage.
+// marotte's contract over ui-primitives' createTheme: the toggle CYCLES light -> dark -> system, an
+// unset value resolves the OS preference without persisting, and the label names what "system"
+// resolved to. The adapter is the paint cache prepaint.js reads, so the blob assertions pin the
+// storage behaviour a reader would notice, siblings preserved.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { initThemeToggle } from "./theme.js";
@@ -104,9 +92,8 @@ describe("initThemeToggle", () => {
     expect(blob["shell_open"]).toBe(true);
   });
 
-  // The regression this group fixed: "system" must survive a reload. It used to
-  // round-trip to null through ui-state's coercion, which put the user back in
-  // the two concrete states with no way to ask for the OS preference again.
+  // "system" must survive a reload through ui-state's coercion, or the user is left
+  // with the two concrete states and no way to ask for the OS preference again.
   it("a stored system choice survives a reload and still follows the OS", () => {
     stubMatchMedia(true); // OS = dark
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ theme: "system" }));

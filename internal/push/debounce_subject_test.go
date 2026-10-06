@@ -1,19 +1,7 @@
 package push
 
-// The debounce window belongs to a KIND AND A SUBJECT, asserted at the level where
-// the defect lived: the integrated Send path, not the poller's fake notifier.
-//
-// The poller's own subject test could not see this. Its notifier records every call
-// and never runs the real preflight gate, so the refactor that gave each pull
-// request a distinct subject looked complete while push.Service still keyed the
-// window on kind alone — dropping the second PR of a poll inside five seconds, after
-// the poller had already advanced `seen` for it, so nothing ever retried it.
-//
-// "Reaches delivery" is asserted by counting the HTTP requests the service actually
-// issues. The transport is swapped for a counter rather than pointed at an
-// httptest server because the real one is ssrf.SafeTransport, which refuses a
-// loopback address by design — so an httptest endpoint would measure the SSRF guard
-// instead of the debounce.
+// The debounce window belongs to a KIND AND A SUBJECT, asserted on the integrated Send path, where
+// the defect lived, rather than through the poller's fake notifier.
 
 import (
 	"bytes"
@@ -66,8 +54,7 @@ func newCountingService(t *testing.T) (*Service, *countingTransport) {
 	return s, rt
 }
 
-// TestSend_TwoSubjectsInOneWindowBothDeliver is the finding. Two pull requests
-// settling in one poll are two notifications; the second must not be swallowed by
+// TestSend_TwoSubjectsInOneWindowBothDeliver — two pull requests settling in one poll are two notifications; the second must not be swallowed by
 // the first's window, because the poller will never offer it again.
 func TestSend_TwoSubjectsInOneWindowBothDeliver(t *testing.T) {
 	s, rt := newCountingService(t)
@@ -75,8 +62,8 @@ func TestSend_TwoSubjectsInOneWindowBothDeliver(t *testing.T) {
 	first := marotte.PRSubject("github:github.com", "cplieger/marotte", 1)
 	second := marotte.PRSubject("github:github.com", "cplieger/marotte", 2)
 
-	s.Send(t.Context(), DefaultTitle, "#1 checks passed", marotte.PushKindPRStatus, first)
-	s.Send(t.Context(), DefaultTitle, "#2 checks failed", marotte.PushKindPRStatus, second)
+	s.Send(t.Context(), DefaultTitle, "#1 checks passed", marotte.PushKindPRStatus, first, "")
+	s.Send(t.Context(), DefaultTitle, "#2 checks failed", marotte.PushKindPRStatus, second, "")
 
 	if got := rt.count(); got != 2 {
 		t.Errorf("deliveries = %d, want 2: a second pull request settling inside the "+
@@ -92,7 +79,7 @@ func TestSend_RepeatsOfOneSubjectStillCoalesce(t *testing.T) {
 	subject := marotte.PRSubject("github:github.com", "cplieger/marotte", 7)
 
 	for range 3 {
-		s.Send(t.Context(), DefaultTitle, "#7 checks passed", marotte.PushKindPRStatus, subject)
+		s.Send(t.Context(), DefaultTitle, "#7 checks passed", marotte.PushKindPRStatus, subject, "")
 	}
 
 	if got := rt.count(); got != 1 {
@@ -107,8 +94,8 @@ func TestSend_SubjectWindowsAreKindScoped(t *testing.T) {
 	s, rt := newCountingService(t)
 	chat := marotte.ChatSubject("c-abc")
 
-	s.Send(t.Context(), DefaultTitle, "finished", marotte.PushKindAgentFinished, chat)
-	s.Send(t.Context(), DefaultTitle, "may I", marotte.PushKindPermission, chat)
+	s.Send(t.Context(), DefaultTitle, "finished", marotte.PushKindAgentFinished, chat, "")
+	s.Send(t.Context(), DefaultTitle, "may I", marotte.PushKindPermission, chat, "")
 
 	if got := rt.count(); got != 2 {
 		t.Errorf("deliveries = %d, want 2: one kind's window suppressed another's on the same chat", got)

@@ -25,9 +25,8 @@ import (
 
 const port = "9847"
 
-// listenPort is the port the listener binds. The release binary always binds `port`;
-// a binary built with -tags marotte_test may point it elsewhere (testhooks_marottetest.go)
-// so the browser-mode suite can start one beside a serving instance.
+// listenPort is the port the listener binds; a -tags marotte_test binary may move it
+// (testhooks_marottetest.go).
 var listenPort = port
 
 // Server holds shared state and registers all HTTP handlers.
@@ -45,13 +44,13 @@ type Server struct {
 	accountUsage  AccountUsageProvider
 	policy        policyProvider
 	policyReload  policyReloader
-	mcpRender     mcpRenderer
-	agent         chatEngine
-	steering      SteeringGenerator
-	mcpRegistry   routeHandler
-	staticFS      fs.FS
-	// kiroDocs memoizes the .kiro inventory; a pointer so the zero Server needs no init.
-	kiroDocs *docsCache
+	// governance answers the administrator's lock map; nil means nothing is locked.
+	governance  governanceLocks
+	mcpRender   mcpRenderer
+	agent       chatEngine
+	steering    SteeringGenerator
+	mcpRegistry routeHandler
+	staticFS    fs.FS
 	// tabs is the open-tab set; nil (no config dir) answers an empty collection at version 0.
 	tabs tabReader
 	// preview serves /preview/ and its grant and stamp endpoints; nil leaves them unmounted.
@@ -60,26 +59,30 @@ type Server struct {
 	// the spec GET carries no approvals.
 	specApprovals specApprovalReader
 	cliRunner     CLIRunner
-	tools         *toolbelt.Engine
+	// kiroDocs memoizes the .kiro inventory; a pointer so the zero Server needs no init.
+	kiroDocs *docsCache
+	tools    *toolbelt.Engine
 	// kiroReady is the install manager's readiness verdict, re-read per /api/health.
 	kiroReady func() (bool, pinstall.Reason)
 	// kiroRescan re-derives the active version from disk; nil leaves the repair route unmounted.
 	kiroRescan func(context.Context) (bool, error)
 	// authUnavailable reads a latch, never a probe (see WithAuthUnavailable).
 	authUnavailable func() bool
-	configDir       string
-	workDir         string
-	// sensitive is the file browser's deny list; the zero value is the one rooted at /config.
-	sensitive filebrowse.Sensitive
-	// trustedProxies feeds webhttp.WithClientIP; nil logs the unspoofable socket peer.
-	trustedProxies []*net.IPNet
 	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
 	hostPolicy *webhttp.HostPolicy
-	// onListen fires once per successful bind, before serving: it is what tells the rest
-	// of the app this process is the one serving its config dir.
-	onListen    func()
-	acctUsage   acctUsageCache
-	cliTimeouts cliTimeouts
+	// onListen fires once per successful bind, before serving: the evidence that this process
+	// serves its config dir.
+	onListen  func()
+	configDir string
+	workDir   string
+	// sensitive is the file browser's deny list; the zero value is the one rooted at /config.
+	sensitive filebrowse.Sensitive
+	// heldKiroPrefs keeps the user's value of each kiro-cli setting a lock pins.
+	heldKiroPrefs heldKiroPrefs
+	// trustedProxies feeds webhttp.WithClientIP; nil logs the unspoofable socket peer.
+	trustedProxies []*net.IPNet
+	acctUsage      acctUsageCache
+	cliTimeouts    cliTimeouts
 	// ready is true between listener bind and the shutdown signal.
 	ready atomic.Bool
 }
@@ -145,18 +148,20 @@ func WithPolicy(p policyProvider) Option {
 	return func(s *Server) { s.policy = p }
 }
 
-// WithPolicyReload wires the recycle a security-profile change needs. Optional:
-// unwired, a saved profile still reaches every session started afterwards and
+// WithGovernanceLocks sets the lock map a write to a locked kiro-cli setting is
+// checked against.
+func WithGovernanceLocks(g governanceLocks) Option {
+	return func(s *Server) { s.governance = g }
+}
+
+// WithPolicyReload wires the recycle a security-profile change needs. Optional: unwired,
 // only the policy view lags until the utility session is next recycled.
 func WithPolicyReload(p policyReloader) Option {
 	return func(s *Server) { s.policyReload = p }
 }
 
-// WithMCPRenderer wires the KAS-config re-render a security-profile change needs,
-// so the rung's auto-approve posture reaches the file KAS is already watching.
-// Optional: unwired, a saved profile still applies at the next render — the next
-// MCP config mutation, or the boot reconcile after a restart — and until then the
-// previous rung's posture stands on every live chat.
+// WithMCPRenderer wires the KAS-config re-render an MCP wait setting change needs.
+// Optional: unwired, the setting applies at the next render.
 func WithMCPRenderer(r mcpRenderer) Option {
 	return func(s *Server) { s.mcpRender = r }
 }
@@ -166,11 +171,8 @@ func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
 }
 
-// WithKiroCLI sets the resolvers for the kiro-cli binary and its environment.
-// Resolvers rather than values: the install manager selects the active version
-// AFTER the listener binds and can switch it later. The environment matters as
-// much as the path, because `settings` re-execs a sibling binary through PATH
-// and the overlay is what makes that search land inside the verified install.
+// WithKiroCLI sets the resolvers for the kiro-cli binary and its environment: resolvers
+// because the install manager selects (and can switch) the active version after the bind.
 func WithKiroCLI(resolvePath func() string, resolveEnv func() []string) Option {
 	return func(s *Server) {
 		s.cliRunner = &execCLIRunner{cliPath: resolvePath, env: resolveEnv}
@@ -183,10 +185,8 @@ func WithKiroReady(ready func() (bool, pinstall.Reason)) Option {
 	return func(s *Server) { s.kiroReady = ready }
 }
 
-// WithAuthUnavailable sets the sign-in leg /api/health reports. It must be a
-// LATCH read, not a probe: the handler runs per request, so vending a token here
-// would spawn kiro-cli on every monitor poll and could block on an SSO-OIDC
-// refresh. Unset leaves readiness with no auth leg.
+// WithAuthUnavailable sets the sign-in leg /api/health reports. It must be a LATCH read,
+// not a probe: the handler runs per request. Unset leaves readiness with no auth leg.
 func WithAuthUnavailable(unavailable func() bool) Option {
 	return func(s *Server) { s.authUnavailable = unavailable }
 }
@@ -206,10 +206,8 @@ func WithSensitive(sensitive filebrowse.Sensitive) Option {
 	return func(s *Server) { s.sensitive = sensitive }
 }
 
-// WithTabs wires the open-tab set that GET /api/tabs reads. A nil store stays a
-// nil INTERFACE rather than an interface holding a nil pointer, or the handler's
-// unwired branch would never be taken and the endpoint would nil-deref instead
-// of answering the empty collection.
+// WithTabs wires the open-tab set GET /api/tabs reads. A nil store stays a nil INTERFACE
+// (not a typed nil), so the handler's unwired branch is taken.
 func WithTabs(st *tabs.Store) Option {
 	return func(s *Server) {
 		if st == nil {
@@ -219,10 +217,8 @@ func WithTabs(st *tabs.Store) Option {
 	}
 }
 
-// WithSpecApprovals wires the spec-phase approval record the spec GET reads. A
-// nil store stays a nil INTERFACE rather than an interface holding a nil pointer,
-// or the handler's unwired branch would never be taken and it would nil-deref
-// instead of serving a spec with no approvals.
+// WithSpecApprovals wires the spec-phase approval record the spec GET reads. A nil store
+// stays a nil INTERFACE (not a typed nil), so the handler's unwired branch is taken.
 func WithSpecApprovals(st *specapproval.Store) Option {
 	return func(s *Server) {
 		if st == nil {
@@ -248,13 +244,8 @@ func WithHostPolicy(p *webhttp.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
 }
 
-// WithOnListen registers a callback fired once the listener has SUCCESSFULLY
-// bound, which is this app's evidence that this process — rather than another one
-// already on the port — is serving its config dir.
-//
-// A bind failure returns before it, so a boot that could not bind never fires it.
-// It runs on the bind goroutine ahead of serving, so it must not block; the one
-// caller closes a channel (see composition, the session-sweep gate).
+// WithOnListen registers a callback fired once the listener has SUCCESSFULLY bound (a bind
+// failure never fires it). It runs on the bind goroutine ahead of serving, so it must not block.
 func WithOnListen(fn func()) Option {
 	return func(s *Server) { s.onListen = fn }
 }
@@ -271,14 +262,11 @@ func New(opts ...Option) *Server {
 	return s
 }
 
-// ListenAndServe registers all routes and starts the HTTP server. Blocks until
-// SIGTERM/SIGINT, then shuts down gracefully.
+// ListenAndServe registers all routes and starts the HTTP server, blocking until SIGTERM/SIGINT.
 //
-// EVERY ROUTE HERE IS A PLAIN PATH AND THE METHOD IS GATED IN THE HANDLER. ServeMux
-// synthesises its 405 + Allow only when NO pattern matched at all, and the "/" SPA mount
-// matches every path and method, so a method-mismatched request lands there and is answered
-// 200 with index.html. That fallback is not optional, so httpreply.RequireMethod is the
-// whole of marotte's 405 surface: do not put a method back on a pattern here.
+// Every route is a PLAIN PATH with the method gated in the handler: ServeMux's 405 fires only
+// when no pattern matched, and the "/" SPA mount matches everything. Do not put a method
+// back on a pattern here.
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
@@ -289,20 +277,15 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
 	s.chats.RegisterRoutes(mux)
 	mux.HandleFunc("/api/health", s.handleHealth)
-	// Only when this server owns the install: with no pins there is nothing to rescan, so
-	// the route is absent rather than answering a misleading 503.
+	// Only when this server owns the install, so the route is absent rather than a misleading 503.
 	if s.kiroRescan != nil {
 		mux.Handle(kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
 	}
-	// Runtime profiles, same loopback gate, but unconditional: a goroutine dump is a
-	// property of the process and is always answerable.
 	mux.Handle(pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
-	// The toolbelt httpapi projection, at the exact prefix and the subtree.
-	// /api/tools/status and /api/tools/reconcile stay app-owned, and each exact pattern
-	// winning over the subtree for EVERY method is what keeps it out of toolbelt's
-	// {name} handlers as name="status" / name="reconcile".
+	// Each exact app-owned pattern wins over toolbelt's subtree for EVERY method, keeping
+	// "status" and "reconcile" out of its {name} handlers.
 	if s.tools != nil {
 		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
 		mux.Handle("/api/tools", toolsAPI)
@@ -339,30 +322,23 @@ func (s *Server) ListenAndServe() error {
 	}
 	s.registerTestHooks(mux)
 
-	// Computed from the embedded index.html so the inline importmap's sha256 stays in sync
-	// with what the browser sees, with no literal to hand-update per importmap edit.
 	cspPolicy, err := buildCSPPolicy(s.staticFS)
 	if err != nil {
 		return fmt.Errorf("build CSP: %w", err)
 	}
 
-	// Inside securityMiddleware, so only same-origin CSRF-checked requests are deduped,
-	// and inside the access logger, so a replay is still logged.
+	// Inside securityMiddleware (only CSRF-checked requests are deduped) and inside the access
+	// logger (a replay is still logged).
 	idem := newIdempotencyCache(idempotencyTTL)
 	defer idem.stop()
 
-	// webhttp.NewServer's defaults are what this app wants: ReadHeaderTimeout 10s,
-	// IdleTimeout 120s, MaxHeaderBytes 1 MiB, and Read/WriteTimeout unset for the SSE,
-	// WebSocket and streaming-zip responses. Server.MaxHeaderValueCount is deliberately
-	// left at its default, and this is the one place that could set it: a 431 is answered
-	// BELOW the middleware chain, so a cap tuned under a future proxy's header count
-	// refuses requests with no access-log line, no request id and no client_ip.
+	// MaxHeaderValueCount is left at its default: a 431 is answered BELOW the middleware chain,
+	// with no access-log line, request id or client_ip.
 	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := webhttp.NewServer(handler)
 	srv.Addr = ":" + listenPort
 
-	// Bound up front so port-in-use surfaces synchronously, and so /api/health reports
-	// unready until the listener can genuinely accept.
+	// Bound up front so port-in-use surfaces synchronously.
 	lc := listenConfig()
 	ln, err := lc.Listen(context.Background(), "tcp", srv.Addr)
 	if err != nil {
@@ -373,28 +349,25 @@ func (s *Server) ListenAndServe() error {
 	defer stop()
 
 	s.ready.Store(true)
-	// AFTER the bind, so nothing downstream can read a failed bind as ownership.
+	// AFTER the bind, so nothing can read a failed bind as ownership.
 	if s.onListen != nil {
 		s.onListen()
 	}
 	// The bound ADDRESS, not the port constant: a misdirected boot's own output then says
 	// which listener it got.
 	slog.Info("Kiro Web UI listening", "addr", ln.Addr().String())
-	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback
-	// bind, and this HTTP surface carries no auth of its own.
+	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback bind.
 	if !s.hostPolicy.Active() {
 		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
 			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,marotte.example.com)")
 	}
 
-	// webhttp.Run owns the serve/shutdown sequence. The pre-drain hook is what keeps the
-	// agent-before-server ordering: readiness flips, the runtime stops bridges and cancels
-	// the SSE/WebSocket streams, and only then does the HTTP drain run.
+	// The pre-drain hook keeps the agent-before-server order: readiness flips, the runtime stops
+	// bridges and streams, and only then does the HTTP drain run.
 	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
-		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown, so an unbounded teardown
-		// here would consume the whole grace: drainCtx is passed on, never discarded.
+		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown: drainCtx is passed on, never discarded.
 		if err := s.agent.Shutdown(drainCtx); err != nil {
 			slog.Error("agent runtime shutdown did not finish within the grace period", "error", err)
 		}
@@ -406,14 +379,8 @@ func (s *Server) ListenAndServe() error {
 // msgUnknownAPIEndpoint is what an /api/ path no route claims answers with.
 const msgUnknownAPIEndpoint = "unknown endpoint"
 
-// registerAPIFallback puts a 404 under the whole /api/ subtree, so an unmatched API
-// path is no longer absorbed by the "/" mount and answered 200 with index.html —
-// which the machine senders requestpath.go names read as success.
-//
-// BOTH spellings, because with only the subtree pattern ServeMux answers GET /api
-// with a 301, the other silent success for those senders. Every real route sits at
-// least two segments deep, so each matches a strict subset of /api/ and wins under
-// ServeMux's precedence rule.
+// registerAPIFallback puts a 404 under the /api/ subtree, so an unmatched API path is not
+// answered 200 with index.html by "/". Both spellings, or GET /api draws a 301.
 func registerAPIFallback(mux *http.ServeMux) {
 	fallback := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		httpreply.NotFound(w, msgUnknownAPIEndpoint)
@@ -422,22 +389,15 @@ func registerAPIFallback(mux *http.ServeMux) {
 	mux.Handle(apiPathPrefix, fallback)
 }
 
-// middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST
-// (webhttp.Chain's order): access logging, panic recovery, the security layer (dynamic CSP
-// + ALLOWED_HOSTS + stdlib CSRF), the Fetch Metadata gate, the canonical-path gate, the REST idempotency dedup.
-//
-// A method rather than an inline literal so the ORDER is assertable without binding a
-// port: that order is a security property, and a test hand-assembling the same list would
-// only assert agreement with itself.
+// middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
+// recovery, security (CSP + ALLOWED_HOSTS + CSRF), Fetch Metadata, canonical path, dedup,
+// compression. A method so the ORDER, a security property, is assertable without a port.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
 	return []webhttp.Middleware{
 		webhttp.Logging(
 			// Skipped by path, or the long-lived stream logs one open-forever line.
 			webhttp.WithSkipPaths("/api/events"),
-			// The shell PTY is silenced by RESPONSE rather than by path: the record is
-			// dropped only once the response left HTTP framing, so every handshake
-			// REFUSAL keeps its line — which is what a reader needs when a browser
-			// cannot attach a shell, and what the path skip deleted along with the noise.
+			// The shell PTY is silenced by RESPONSE, not path, so every handshake refusal keeps its line.
 			webhttp.WithSkipUpgrades(true),
 			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
 			// a failing one is surfaced.
@@ -449,22 +409,16 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 		webhttp.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
 		fetchMetadataGate,
-		// INSIDE the host allowlist and the CSRF check, so their 403 is never shadowed by
-		// a 400 about spelling; OUTSIDE the mux, because ServeMux canonicalizes before it
-		// selects a pattern and no handler can be reached to refuse for itself; outside
-		// the dedup cache, so a refused spelling mints no entry a retry would replay.
+		// INSIDE the host and CSRF gates (their 403 is not shadowed), OUTSIDE the mux (ServeMux
+		// canonicalizes before routing) and the dedup cache (a refusal mints no replay entry).
 		canonicalAPIPath,
 		idem.middleware,
-		// INNERMOST, so it sees exactly what a handler wrote: the idempotency
-		// cache stores identity bytes and a replay re-negotiates against the
-		// replaying client's own Accept-Encoding, while the outermost access
-		// logger counts on-the-wire bytes.
+		// INNERMOST: the cache stores identity bytes and a replay re-negotiates encoding.
 		compressJSON,
 	}
 }
 
 // requirePOST returns true if r.Method is POST, and otherwise writes 405 and returns false.
-// Every command endpoint here is POST-only, so this saves an identical argument per site.
 func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return httpreply.RequireMethod(w, r, http.MethodPost)
 }
@@ -475,28 +429,19 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// healthBody is the readiness envelope handleHealth and handleKiroRescan both answer with,
-// so an operator reads one shape from either surface. A struct, not a map, so the key order
-// matches webhttp.ReadinessHandler's byte for byte — encoding/json sorts map keys, which is
-// what made the shared-envelope claim false. This handler cannot BE ReadinessHandler: its
-// verdict is composite where the library's ReadinessChecker is Ready() bool.
+// healthBody is the readiness envelope handleHealth and handleKiroRescan both answer with. A
+// struct, not a map, so the key order matches webhttp.ReadinessHandler's byte for byte.
 type healthBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
 }
 
-// handleHealth returns the liveness+readiness status in webhttp.ReadinessHandler's
-// envelope: 200 {"status":"ok"} when the listener is bound and serving, 503
-// {"status":"unready",...} during startup, drain, or an unavailable kiro-cli.
-//
-// The kiro-cli verdict is the install manager's and is VERSION-AWARE, so a binary drifted
-// from the pin reads unready rather than healthy. Reading it is a lock and two field reads,
-// never a spawn, and it re-evaluates per request, so a completing install heals the signal
-// with no restart. A READINESS signal: nothing restarts on the unhealthy state.
+// handleHealth returns 200 {"status":"ok"} when the listener is bound and serving, or 503
+// {"status":"unready",...} during startup, drain, or an unavailable kiro-cli. The kiro-cli
+// verdict is version-aware and read per request without a spawn.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	// Never cached: under RFC 9111 a 200 with no explicit freshness is heuristically
-	// cacheable, and a cached "ok" outliving the readiness it reported keeps traffic
-	// arriving at an instance that has begun draining. (503 is not, so unready is safe.)
+	// Never cached: a 200 with no freshness is heuristically cacheable (RFC 9111), and a cached
+	// "ok" would outlive a drain.
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
@@ -514,8 +459,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 	}
-	// The kiro-cli leg stays FIRST: with no binary there is nothing to vend a token, so it
-	// is the superset failure and the envelope carries one reason.
+	// The kiro-cli leg stays FIRST: it is the superset failure.
 	if s.authUnavailable != nil && s.authUnavailable() {
 		unready(reasonSignIn)
 		return

@@ -1,8 +1,5 @@
-// ---------------------------------------------------------------------------
-// What a range of a turn's entries is worth in PIXELS: the height unmounted space holds, so
-// the document's height cannot depend on the window. Measured at the DROP, which suffices:
-// everything ABOVE the reader has been mounted and dropped once.
-// ---------------------------------------------------------------------------
+// What a range of a turn's entries is worth in PIXELS, so the document's height does not
+// depend on the window. Measured at the DROP: everything above the reader mounted once.
 
 import {
   effectiveRunID,
@@ -24,14 +21,12 @@ import { payloadOf, type Turn } from "./turns.js";
 // attribute rather than calling `pointer-tier.ts`, and this is only the vocabulary.
 import type { PointerTier } from "./device-view.js";
 
-/** What one entry is worth before it has ever been measured, keyed on what it MOUNTS AS
- *  rather than on its kind, because one kind mounts four shapes. A PROSE RUN is one row
- *  whatever its entry count, so `text` prices the run's first entry and the rest nothing.
- *
- *  EACH VALUE IS THE RENDERED BORDER BOX, never the declared `contain-intrinsic-size`,
- *  which states the CONTENT box alone: an estimate and a measurement are summed
- *  interchangeably. The rule each value shadows is named at it, and the two with no reserve
- *  to shadow are heights measured on the assembled stylesheet at both tiers. */
+/**
+ * What one entry is worth before it is measured, keyed on what it MOUNTS AS (one kind
+ * mounts four shapes); a prose run is one row priced at its first entry. Each value is the
+ * rendered BORDER box, so estimates and measurements sum interchangeably. Each shadows a
+ * named rule; the two with none are measured heights at both tiers.
+ */
 export const ENTRY_ESTIMATE_PX: Readonly<Record<PointerTier, EntryEstimates>> = {
   fine: {
     text: 48, // 13-messages.css `.msg-row` — `auto 3rem`, no padding or border
@@ -75,23 +70,18 @@ export interface EntryEstimates {
   readonly row: number;
 }
 
-/** The flex `gap` (`--sp-3`) `.turn-body` puts between the entries it holds
- *  (css/29-turns.css `.turn-body`), which is itself an assertion about that rule.
- *  Tier-invariant: `--sp-3` reads no pointer query.
- *
- *  The PARENT adds it and no child's own height includes it, so K replaced children
- *  carry K−1 of them between themselves. The spacer standing in for them is a SIBLING
- *  of `.turn-body` under `.turn`, which declares no `gap`, so it carries the boundary
- *  one too — `spacerHeight` adds both terms. */
+/**
+ * The flex `gap` (`--sp-3`) `.turn-body` puts between entries (css/29-turns.css),
+ * tier-invariant. K replaced children carry K−1 gaps; the spacer is a sibling under the
+ * gapless `.turn`, so it carries the boundary gap too (`spacerHeight`).
+ */
 export const ROW_GAP_PX = 12;
 
-/** Which tier the document is laid out for, READ off the attribute rather than through
- *  `pointer-tier.ts`, whose import chain reaches `device-view.ts` and `localStorage` where
- *  this module has to keep answering with no DOM at all.
- *
- *  The absent-attribute arm MIRRORS THE CASCADE rather than guessing: `01-tokens.css`
- *  carries a no-JS fallback under `@media (width <= 48rem)`, so an unset attribute takes
- *  the coarse values exactly when that query matches. */
+/**
+ * The document's tier, READ off the attribute (`pointer-tier.ts` reaches `localStorage`;
+ * this module runs with no DOM). An unset attribute mirrors `01-tokens.css`'s no-JS
+ * fallback under `@media (width <= 48rem)`.
+ */
 function tierNow(): PointerTier {
   // A NULLABLE view of the global, not the DOM lib's: read through that type,
   // `no-unnecessary-condition` proves these guards dead and offers to cut them.
@@ -109,19 +99,17 @@ function tierNow(): PointerTier {
 /** turn id → `seq` → the height that entry's element measured. */
 const entryHeights = new Map<string, Map<number, number>>();
 
-/** turn id → a prose run's first `seq` → the range that row measured and what it
- *  measured. Range-keyed because a row dropped under a PARTIAL window measured that
- *  slice only, and answering the whole run with it prices the rest at zero. */
+/**
+ * turn id → a prose run's first `seq` → the range that row measured and its height.
+ * Range-keyed: a row dropped under a PARTIAL window measured that slice only.
+ */
 const rowHeights = new Map<string, Map<number, { range: EntryRange; px: number }>>();
 
-/** The tool call that OPENS a subagent-orchestration pipeline, whose entry mounts the
- *  pipeline's BOX rather than a tool row. Deliberately absent from `isSubagentInvocation`:
- *  one title with two owners makes a classification unpredictable.
- *
- *  LOCAL rather than imported, and MEASURED: `messages-blocks.ts` owns the twin and imports
- *  from here, and its graph reaches `router.ts`, which registers a `window` listener at
- *  module load while both of this module's suites run in the node project. The shape that
- *  removes all three copies is the predicate living in `tool-schema.ts`. */
+/**
+ * The tool call that OPENS a subagent pipeline, mounting the pipeline's BOX. Kept out of
+ * `isSubagentInvocation`. Local: `messages-blocks.ts` owns the twin and its graph reaches
+ * `router.ts`, which needs `window`; the fix is the predicate living in `tool-schema.ts`.
+ */
 function isPipelineDriver(call: EntryToolCall): boolean {
   return call.title === "Orchestrate Sub-agent";
 }
@@ -139,10 +127,8 @@ function callEstimate(
   if (effectiveRunID(e, results) !== "") {
     return est.runCard;
   }
-  // A PIPELINE IS WORTH ONE CARD however many stages it has, priced at its DRIVER's entry: a
-  // collapsed `.subagent-body` is `content-visibility: hidden` at inline height 0, so a stage
-  // inside contributes nothing. A PROMOTED single stage swaps the two prices, which costs one
-  // card only when a window edge falls between them.
+  // A pipeline is worth ONE card at its DRIVER's entry: stages inside a collapsed body add
+  // nothing. A promoted single stage swaps the two prices.
   if (isPipelineDriver(call)) {
     return est.subagentCard;
   }
@@ -182,9 +168,10 @@ function estimateOf(e: Entry, est: EntryEstimates, results: RunResults): number 
   }
 }
 
-/** The gaps a run of `n` boxes carries. Zero-height ones are excluded by the caller:
- *  a blank row is `display: none` (css/13-messages.css), and `gap` counts an item
- *  rather than a height. */
+/**
+ * The gaps a run of `n` boxes carries. The caller excludes zero-height ones: a blank row
+ * is `display: none`, and `gap` counts items.
+ */
 function gapsBetween(n: number): number {
   return Math.max(0, n - 1) * ROW_GAP_PX;
 }
@@ -199,9 +186,10 @@ export function recordEntryHeight(turnID: string, seq: number, px: number): void
   per.set(seq, px);
 }
 
-/** Record what one prose RUN's row measured, at the moment it is dropped, against the run's
- *  first `seq`. `range` is what the row HELD: its height answers for those entries and no
- *  others. */
+/**
+ * Record what one prose RUN's row measured when dropped, against the run's first `seq`;
+ * `range` is what the row held.
+ */
 export function recordRowHeight(turnID: string, range: EntryRange, px: number): void {
   let per = rowHeights.get(turnID);
   if (per === undefined) {
@@ -211,13 +199,11 @@ export function recordRowHeight(turnID: string, range: EntryRange, px: number): 
   per.set(range.from, { range, px });
 }
 
-/** The pixel height of the entries one spacer stands in for: everything on `side` of
- *  `range` — the turn's MOUNTED range — plus the gaps the rows it replaces contributed.
- *  Measured where measured, the per-outcome estimate where not.
- *
- *  `lane` is the VIEW's root and carries NO default: the price and the budget have to answer
- *  `entryRenders` identically, and a silent `""` here is that divergence. A prose run is one
- *  box, its first entry carrying the row, which is why the walk tracks the previous kind. */
+/**
+ * The pixel height of the entries one spacer stands for: everything on `side` of the
+ * mounted `range`, plus the gaps they carried, measured or estimated. `lane` has NO
+ * default: price and budget must answer `entryRenders` identically.
+ */
 export function spacerHeight(
   t: Turn,
   range: EntryRange,
@@ -232,9 +218,7 @@ export function spacerHeight(
   if (stood.from >= stood.to) {
     return 0;
   }
-  // Both resolved ONCE per call, not per entry: neither answer can change inside one
-  // spacer's arithmetic, and a per-entry read would put an attribute lookup and a walk
-  // over the turn's body in a loop.
+  // Resolved ONCE per call: neither can change within one spacer's arithmetic.
   const est = ENTRY_ESTIMATE_PX[tierNow()];
   const results = runResults(t);
   const firstPlan = firstPlanSeq(t, lane);
@@ -272,10 +256,8 @@ export function spacerHeight(
       boxes++;
     }
   }
-  // TWO gap terms, and the boundary one is what the parent no longer supplies: the spacer
-  // sits under `.turn`, which declares no `gap`, where the boxes it replaces sat inside
-  // `.turn-body`'s gapped column — so the gap between the last replaced box and the first
-  // mounted row has to come from here. A spacer standing for no box replaces no gap either.
+  // The boundary gap: the spacer sits under the gapless `.turn`, so the gap between the last
+  // replaced box and the first mounted row comes from here. No boxes, no gap.
   return boxes === 0 ? px : px + gapsBetween(boxes) + ROW_GAP_PX;
 }
 

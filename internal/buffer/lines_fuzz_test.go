@@ -8,14 +8,14 @@ import (
 )
 
 func FuzzLineTrackerRecord(f *testing.F) {
-	// Seed: sequence that triggers eviction (>500 files)
+	// Seed: triggers eviction (>500 files).
 	f.Add([]byte{0, 0, 1, 10, 1, 0})
 	f.Fuzz(func(t *testing.T, data []byte) {
 		lt := NewLineTracker()
 		chats := []marotte.ChatID{"chat-0", "chat-1", "chat-2"}
 		kinds := []string{"edit", "create", "delete"}
 
-		// Each record needs 6 bytes: chatIdx, fileIdx(2), startLine, endLine, turn
+		// Six bytes per record: chatIdx, fileIdx(2), startLine, endLine, turn.
 		for i := 0; i+5 < len(data); i += 6 {
 			chatIdx := int(data[i]) % len(chats)
 			fileIdx := int(data[i+1])<<8 | int(data[i+2])
@@ -28,7 +28,6 @@ func FuzzLineTrackerRecord(f *testing.F) {
 			lt.Record(chats[chatIdx], filePath, LineRange{StartLine: startLine, EndLine: endLine, Turn: turn, Kind: kinds[kindIdx]})
 		}
 
-		// Verify invariants
 		lt.mu.RLock()
 		defer lt.mu.RUnlock()
 		for _, state := range lt.data {

@@ -2,13 +2,9 @@ package agent
 
 import "testing"
 
-// TestReplayDrain_Complete is the shared condition on its own, away from either
-// route's maps and effects. Both routes read this type, so a case here is a case
-// for the chat twin AND the step registry — which is the whole reason the
-// condition is one type rather than two copies of a comparison.
+// TestReplayDrain_Complete covers the shared condition for both routes.
 func TestReplayDrain_Complete(t *testing.T) {
-	// note is what the owner reports before asking; the two spellings are the two
-	// facts a drain accepts.
+	// The two facts a drain accepts.
 	consumed := func(gen, seq uint64) func(*replayDrain) {
 		return func(d *replayDrain) { d.noteConsumed(drainPoint{gen: gen, seq: seq}) }
 	}
@@ -39,16 +35,12 @@ func TestReplayDrain_Complete(t *testing.T) {
 			gen:   1, want: true,
 		},
 		"the load alone completes when it arrived at a position already reached": {
-			// Defect (a): the frames drained before the RPC returned, so the
-			// condition holds the instant the load is recorded and no later frame
-			// is coming to notice.
+			// Drained before the RPC returned: the condition holds the instant the load is recorded.
 			notes: []func(*replayDrain){consumed(1, 4), loadedAt(1, 4)},
 			gen:   1, want: true,
 		},
 		"a load at position ZERO completes on its own": {
-			// 0 is a legal position, not a sentinel: the sequence is stamped by a
-			// pre-increment, so a response that arrived before any frame is at 0 and
-			// there is nothing left to wait for.
+			// 0 is a legal position: nothing to wait for.
 			notes: []func(*replayDrain){loadedAt(1, 0)},
 			gen:   1, want: true,
 		},
@@ -65,9 +57,7 @@ func TestReplayDrain_Complete(t *testing.T) {
 			gen:   2, want: false,
 		},
 		"a HIGHER attachment invalidates the load": {
-			// The frames that load bounded are queued on a channel nobody will
-			// drain further, so its position means nothing on the new attachment —
-			// not even to a seal.
+			// The old attachment's load position means nothing on the new one, not even to a seal.
 			notes: []func(*replayDrain){loadedAt(1, 4), consumed(2, 9)},
 			gen:   2, sealed: true, want: false,
 		},
@@ -100,11 +90,7 @@ func TestReplayDrain_Complete(t *testing.T) {
 	}
 }
 
-// TestReplayDrain_ObservedNeverGoesBACKWARD: the consumer reports the position of
-// each frame it folds, and a frame can only ever be folded in order — but a
-// same-attachment report carrying a lower number must not undo the high-water mark
-// either, because the settle is a "have we reached" question and an unnoticed
-// regression would park a completed replay forever.
+// A same-attachment report with a lower number must not undo the high-water mark.
 func TestReplayDrain_ObservedNeverGoesBackward(t *testing.T) {
 	var d replayDrain
 	d.markLoadedAt(drainPoint{gen: 1, seq: 5})

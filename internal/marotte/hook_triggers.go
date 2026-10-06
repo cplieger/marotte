@@ -5,16 +5,9 @@ import (
 	"strings"
 )
 
-// The hook trigger vocabulary: which trigger names KAS loads, and what each
-// one's matcher is tested AGAINST.
-//
-// It lives here rather than beside either consumer because BOTH sides of the hook
-// surface need it and they are in different packages. internal/command validates
-// a create_hook payload against it; internal/agent computes a diagnostic for a
-// hook KAS reports back. A copy in each would be two tables that can disagree
-// about a trigger's subject, and the subject is the whole basis of the diagnostic.
-// It is pure data with no dependency of its own, which is what makes this package
-// the right home — same reason the rest of the wire vocabulary is here.
+// The hook trigger vocabulary (which trigger names KAS loads and what each matcher tests), shared
+// by internal/command's create_hook validation and internal/agent's diagnostic, so the two tables
+// cannot disagree.
 
 // HookMatcherSubject is what a trigger's matcher is tested against, and it is
 // the fact that decides whether a matcher means anything for that trigger.
@@ -46,16 +39,20 @@ type HookTrigger struct {
 	Name string
 	// Subject is what this trigger's matcher is tested against.
 	Subject HookMatcherSubject
+	// CommandOnly means KAS runs only command actions for this trigger, so an
+	// agent action loads and never fires.
+	CommandOnly bool
 }
 
-// The eleven canonical trigger names, as KAS's hook loader spells them.
+// The twelve canonical trigger names, as KAS's hook loader spells them.
 //
 // Constants rather than repeated literals because the alias table below points
 // many spellings at ONE canonical name, and that is the file's invariant: a typo
-// in an alias would otherwise mint a silent twelfth trigger that KAS then drops.
+// in an alias would otherwise mint a silent thirteenth trigger that KAS then drops.
 // Unexported — nothing outside this package names a trigger, it normalizes one.
 const (
 	triggerSessionStart     = "SessionStart"
+	triggerSessionEnd       = "SessionEnd"
 	triggerStop             = "Stop"
 	triggerPreToolUse       = "PreToolUse"
 	triggerPostToolUse      = "PostToolUse"
@@ -68,18 +65,15 @@ const (
 	triggerManual           = "Manual"
 )
 
-// hookTriggers maps event-type payload values (marotte's own vocabulary plus v2
-// / Kiro-IDE camelCase aliases) to the canonical trigger. Keys are lowercased
-// for case-insensitive lookup, and every alias points at the SAME meta as its
-// canonical name, so an alias can never disagree about a subject.
-//
-// The set is CLOSED and the partition over subjects is MECE: all 11 canonical
-// triggers appear exactly once and each has exactly one subject, which is what
-// makes the pairing check below total. Adding a trigger means adding its subject
-// in the same edit — TestEveryCanonicalTriggerHasASubject fails otherwise.
+// hookTriggers maps event-type payload values (marotte's own vocabulary plus v2 /
+// Kiro-IDE camelCase aliases), lowercased for lookup, to the canonical trigger; an
+// alias shares its canonical name's meta, so it cannot disagree about a subject.
+// The set is CLOSED and each of the 12 canonical triggers has exactly one subject,
+// which makes the pairing check total (TestEveryCanonicalTriggerHasASubject).
 var hookTriggers = map[string]HookTrigger{
 	// Canonical PascalCase names (self-map via their lowercase key).
 	"sessionstart":     {Name: triggerSessionStart, Subject: HookMatcherSubjectNone},
+	"sessionend":       {Name: triggerSessionEnd, Subject: HookMatcherSubjectNone, CommandOnly: true},
 	"stop":             {Name: triggerStop, Subject: HookMatcherSubjectNone},
 	"pretooluse":       {Name: triggerPreToolUse, Subject: HookMatcherSubjectToolName},
 	"posttooluse":      {Name: triggerPostToolUse, Subject: HookMatcherSubjectToolName},
@@ -105,27 +99,15 @@ var hookTriggers = map[string]HookTrigger{
 	"filedelete":        {Name: triggerPostFileDelete, Subject: HookMatcherSubjectFilePath},
 	"filedeleted":       {Name: triggerPostFileDelete, Subject: HookMatcherSubjectFilePath},
 	"usertriggered":     {Name: triggerManual, Subject: HookMatcherSubjectNone},
-	// Three more spellings KAS itself accepts. Their absence meant a payload
-	// using any of them produced a hook file KAS then discarded.
+	// Two more spellings KAS itself accepts. Their absence meant a payload
+	// using either produced a hook file KAS then discarded.
 	"agentspawn":    {Name: triggerSessionStart, Subject: HookMatcherSubjectNone},
-	"sessionend":    {Name: triggerStop, Subject: HookMatcherSubjectNone},
 	"afterfileedit": {Name: triggerPostFileSave, Subject: HookMatcherSubjectFilePath},
 }
 
-// NormalizeHookTrigger maps a client event-type value (or a canonical name KAS
-// reported back) to its canonical trigger, reporting whether the value is one KAS
-// will actually load.
-//
-// It used to pass an unrecognised value through trimmed, on the reasoning that
-// marotte should not block a trigger its map does not yet know. That reasoning
-// inverts here, because the permissive branch is not lenient, it is silent:
-// KAS's parseHookDocument DROPS a hook whose trigger it does not recognise, so
-// create_hook answered 200 with a file path for a hook that loads nowhere, never
-// fires, and never appears in /api/hooks. The user is told a hook exists and
-// there is no signal anywhere that it does not.
-//
-// Refusing costs nothing by comparison: the closed set lives in this map, and a
-// trigger KAS adds later is one map entry away. Silence was the expensive choice.
+// NormalizeHookTrigger maps a client event-type value, or a canonical name KAS reported, to its
+// canonical trigger and reports whether KAS will load it. An unknown trigger is refused: KAS's
+// parseHookDocument silently drops such a hook, so it would never load or fire.
 func NormalizeHookTrigger(eventType string) (HookTrigger, bool) {
 	t, ok := hookTriggers[strings.ToLower(strings.TrimSpace(eventType))]
 	return t, ok
@@ -165,20 +147,10 @@ const (
 	HookMatcherMissingToolName HookMatcherDefect = "missing_tool_matcher"
 )
 
-// ClassifyHookMatcher reports what is wrong with a trigger-and-matcher pairing,
-// and it is ONE function so the write side and the read side cannot disagree.
-//
-// Both defects mirror a diagnostic KAS already computes and then keeps to
-// itself: reportMatcherDiagnostics logs a warning and counts
-// hooks.ineffectiveMatcher / hooks.missingToolMatcher into its own telemetry,
-// with nothing on the wire, so a client is told nothing either way. Both
-// conditions are one comparison away from data marotte already holds, which is
-// why they are computed here rather than requested upstream.
-//
-// An unknown trigger returns HookMatcherOK, deliberately: it is a different and
-// larger defect, and the boundary that can refuse it (NormalizeHookTrigger's
-// second return) has already done so. Reporting a matcher complaint about a
-// trigger that will never load would name the wrong problem.
+// ClassifyHookMatcher reports what is wrong with a trigger-and-matcher pairing, one function for
+// the write and read sides. Both defects mirror diagnostics KAS keeps to itself
+// (reportMatcherDiagnostics). An unknown trigger returns HookMatcherOK: NormalizeHookTrigger
+// already refused it.
 func ClassifyHookMatcher(trigger, matcher string) HookMatcherDefect {
 	t, ok := NormalizeHookTrigger(trigger)
 	if !ok {

@@ -1,40 +1,15 @@
-// ---------------------------------------------------------------------------
-// The transcript multiplexer: parked chat views with a pause/resume lifecycle.
-//
-// One `.transcript-view` per resident chat under `#messages`; exactly one is
-// `.is-active`. A parked view keeps its DOM and render state with every writer
-// paused — that is the contract this suite pins, from both sides: nothing may
-// move a parked view (the freeze), and unparking must be equivalent to a cold
-// rebuild (nothing missed while frozen).
-//
-// The park is a VIEW-level lifecycle and it survived the entry cutover; what did
-// not is the per-MESSAGE half (`pauseMessage`, `messageStates`, `viewMessages`),
-// so every fixture here is a turn of ENTRIES and every writer is one of the five
-// store operations. `disposeTurnBody` is the per-card dispose the eviction and
-// teardown cases observe.
-//
-// REAL store, REAL renderer, REAL scroll controller — the observers detaching
-// at park is half the freeze claim, so the scroll module is deliberately not
-// mocked here. Layout is real too (Browser Mode): the bottom-alignment and
-// reading-state cases assert against actual boxes.
-// ---------------------------------------------------------------------------
+// One `.transcript-view` per resident chat, exactly one `.is-active`. A parked view keeps its DOM with every
+// writer paused: nothing may move it, and unparking must equal a cold rebuild. Real store, renderer, scroll
+// controller and layout, since observers detaching at park is half the freeze.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-// Every describe below whose tests wait on a REAL FRAME declares its bound in the
-// unit this harness charges — two of them through `settledFrames`, two through a
-// `vi.waitFor` on frame-driven output. Why a frame here is not 16ms, and why the
-// per-test timeout has to be lifted above the poll's own budget rather than the
-// poll tightened, is in `__test-helpers__/frame-budget.ts`.
+// Describes that wait on real frames declare their bound in the harness's unit.
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry, OpenEntry } from "./wire/types.gen.js";
 
-// messages.ts's graph reads the shared DOM registry at module scope / mount,
-// and `byId` throws on a missing element — so the hosts exist before any import
-// resolves. The transcript chain gets REAL geometry: the outer wrapper is given
-// a fixed height, the scroller is absolutely positioned inside it (the shipped
-// rule), so percentage chains and overflow behave as in production.
+// The graph reads the DOM registry at module scope; the transcript chain gets real, shipped geometry.
 for (const id of [
   "chat-view",
   "messages-wrap-outer",
@@ -60,12 +35,8 @@ for (const id of [
 
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 
-// The shipped transcript stylesheet, so the geometry under test is the
-// production geometry (the multiplexer's height chain, the view's flex-end
-// column, the parked view's zeroed box). Design tokens are absent, which only
-// costs the token-driven paddings — every load-bearing declaration here is a
-// literal. The harness block pins the wrapper's height, which production gets
-// from the app shell's flex column.
+// The shipped transcript stylesheet, so the geometry is production's; every load-bearing declaration is a
+// literal, and the harness pins the wrapper height the app shell provides.
 const style = document.createElement("style");
 style.textContent =
   loadCSS("13-messages.css") +
@@ -202,33 +173,22 @@ async function flushed(): Promise<void> {
   await Promise.resolve();
 }
 
-/** Two frames, for work the browser PACES rather than a race to outrun: the
- *  entry window's cold build drains per frame, a `content-visibility: auto` row
- *  stays SKIPPED until the first rendering pass resolves its relevance, and a
- *  park's own queued callbacks land before the freeze spies are armed. Every wait
- *  here costs a real frame, so a case whose subject is none of those three does
- *  not take one. */
+/**
+ * Two frames, for paced work: the cold build drains per frame, `content-visibility: auto` rows await relevance,
+ * and a park's queued callbacks land before the spies arm.
+ */
 async function settledFrames(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
 beforeEach(() => {
-  // The real teardown between cases: the multiplexer's registry persists at
-  // module scope, and earlier tests' parked views would otherwise count
-  // against the LRU budget of later ones.
+  // The multiplexer's registry persists at module scope; earlier parked views would count against the LRU.
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
-  // Put the DOCUMENT back at its origin, which is where production keeps it:
-  // the app shell is `#app { position: fixed; inset: 0 }`, so the page itself
-  // never scrolls. This harness appends its hosts in normal flow, so it CAN —
-  // and `.focus()` scrolls its target into view, so the focus case left the
-  // page at scrollY 1010. The transcript then sat at top -1010 in a 720px
-  // viewport, which puts `.msg-row`'s `content-visibility: auto` subtrees out
-  // of relevance; the find walker prunes a skipped subtree, so the very next
-  // case could not see its own active view's text and read 0 hits. It passed
-  // alone and failed in file order, which is the signature.
+  // Production never scrolls the document (`#app` is fixed); `.focus()` here would, pushing rows out of
+  // `content-visibility` relevance so the find walker misses them in the next case.
   window.scrollTo(0, 0);
 });
 
@@ -243,29 +203,21 @@ describe("a parked view is frozen", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }
     const t = `${a}-t1`;
     const bt = `${b}-t1`;
     const s = session(a, { thinking: true });
-    // The tool call FIRST and the open text last: the open entry of lane `""` is the
-    // streaming tail, and the live binding effect on it is what the park must disarm
-    // for the freeze to hold.
+    // The open text last: the streaming tail's live binding is what the park must disarm.
     s.turns.set(t, {
       entries: [turnOpen(t, 1), toolCall(t, 1, "t-frz", { terminal_id: "term-frz" })],
       openEntries: new Map(),
     });
     s.turn_order.push(t);
     s.turn_count = 1;
-    // B is a STREAMING chat too, and that is this case's control rather than scenery:
-    // the freeze is an assertion about a wait being long enough for an armed writer to
-    // reach the DOM, and only a writer that DOES reach it can bound that wait.
+    // B streams too: only a writer that does reach the DOM can bound the freeze's wait.
     const other = session(b, { thinking: true });
     other.turns.set(bt, { entries: [turnOpen(bt, 1)], openEntries: new Map() });
     other.turn_order.push(bt);
     other.turn_count = 1;
     seed(s, other);
     store.openEntry(a, open(t, "say-1", "hello"));
-    // THE PRECONDITION, asserted rather than assumed, and it is what makes this case
-    // falsifiable: A's view has to hold a LIVE streaming bubble bound to the open entry,
-    // so there is a writer for the park to disarm. Without it the freeze passes for a
-    // chat that was never streaming — measured, by planting a park that stops pausing
-    // each mounted body and watching all twelve cases stay green.
+    // The precondition: A holds a live bubble bound to the open entry, so there is a writer to disarm.
     await vi.waitFor(() => {
       expect(viewOf(a).querySelector(".message.assistant.streaming")).not.toBeNull();
     });
@@ -275,17 +227,14 @@ describe("a parked view is frozen", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }
     await settledFrames();
     const parked = viewOf(a);
     expect(parked.classList.contains("is-active")).toBe(false);
-    // The control's own precondition: B is ACTIVE and holds a live tail of its own, so
-    // the writer driven into it below is armed by construction.
+    // B is active with its own live tail, so the writer driven below is armed.
     store.openEntry(b, open(bt, "say-b", "hello"));
     await vi.waitFor(() => {
       expect(viewOf(b).querySelector(".message.assistant.streaming")).not.toBeNull();
     });
 
-    // Armed after the park settled, and COUNTED IN THE CALLBACK rather than read back
-    // with `takeRecords`, which is the trap that made this case unfalsifiable for two
-    // boxes: that call returns only records not yet DELIVERED, and any awaited microtask
-    // is a delivery checkpoint, so it answers zero whatever was written.
+    // Counted in the callback, not via `takeRecords`, which returns only undelivered records and answers zero after
+    // any awaited microtask.
     let controlWrites = 0;
     const control = new MutationObserver((records) => {
       controlWrites += records.length;
@@ -299,31 +248,21 @@ describe("a parked view is frozen", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }
     const card = (): HTMLElement | null =>
       parked.querySelector<HTMLElement>('[data-tool-id="t-frz"]');
     expect(card()).not.toBeNull();
-    // The card's own pre-state, asserted so the freeze assertion below is a statement
-    // about what the `tool_result` did NOT do rather than about a slot that was empty
-    // all along: an in-flight call renders `data-outcome="running"` and a settled one
-    // rewrites it.
+    // The pre-state, so the freeze assertion says what the `tool_result` did not do.
     expect(card()?.dataset["outcome"]).toBe("running");
 
-    // ONE delta for both chats, long enough that an armed reveal emits inside a frame:
-    // the buffer holds growth under `MIN_EMIT_CHARS` (`reveal.ts`), so a six-character
-    // delta writes nothing for several frames.
+    // Long enough to emit inside a frame: the reveal holds growth under `MIN_EMIT_CHARS`.
     const delta = "world ".repeat(40);
-    // Every writer that could reach the parked DOM fires once: a delta into the live
-    // tail, a seal, a sealed append, a tool_result folding into the card, terminal
-    // output.
+    // Every writer that could reach the parked DOM fires once.
     store.applyDelta(a, t, "say-1", "", 2, delta);
     store.sealEntry(a, t, "say-1", "", 2, 3, 2);
     store.appendEntry(a, textEntry(t, 3, "appended while parked", "say-2"));
     store.appendEntry(a, toolResult(t, 4, "t-frz"));
     appendTerminalChunk("term-frz", "chunk while parked\n", [], 0);
-    // The SAME delta into the active chat's own live tail, which is what bounds the wait
-    // below on the product's own output rather than on a frame count.
+    // The same delta into the active chat bounds the wait on the product's own output.
     store.applyDelta(b, bt, "say-b", "", 2, delta);
     await flushed();
-    // The control landing IS the wait, read off the RENDERED TEXT rather than a record
-    // count: the active view repaints for reasons of its own, so any record satisfies a
-    // counter with no reveal write having landed.
+    // Read off rendered text: the active view repaints for its own reasons, so a record count proves nothing.
     await vi.waitFor(() => {
       expect(viewOf(b).querySelector(".message.assistant.streaming")?.textContent ?? "").toContain(
         "world world",
@@ -331,22 +270,13 @@ describe("a parked view is frozen", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }
     });
     expect(controlWrites).toBeGreaterThan(0);
 
-    // The freeze, per WRITER, on the three channels the park does hold — read off the
-    // parked DOM rather than off a record count, in a window a write demonstrably fits
-    // in. A sealed append mounts no row (the paint is scoped to the ACTIVE session), the
-    // `tool_result` does not settle the card, and the terminal chunk does not reach it
-    // (both of those are `suspendToolEffectsFor`'s).
+    // The freeze per writer on the channels the park holds: a sealed append mounts no row, the `tool_result` does not
+    // settle the card, and the terminal chunk does not reach it.
     expect(parked.textContent ?? "").not.toContain("appended while parked");
     expect(card()?.dataset["outcome"]).toBe("running");
     expect(parked.textContent ?? "").not.toContain("chunk while parked");
-    // HANDED OFF, NOT ASSERTED: the DELTA channel is not frozen. `mountOpenProse` keeps
-    // its `watchOpenText` subscription in `st.openTail.stop`, which no park path reaches,
-    // so a parked bubble grew from `hello` to `helloworld world world wo` here. Pinning
-    // that would make the defect the contract.
-    // DROPPED OUT LOUD, twice: the zero-`requestAnimationFrame` oracle (the harness
-    // awaits frames itself, so a spy cannot tell them apart) and this case's
-    // `scroll.onTranscriptMutate` one, which observes the ATTACHED view and so could
-    // never fire for A whatever the park did.
+    // Not asserted: `mountOpenProse`'s `watchOpenText` subscription is not stopped by any park path, so the delta
+    // channel still grows a parked bubble; pinning it would make the defect the contract.
     control.disconnect();
   });
 });
@@ -374,8 +304,7 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
     switchTo(b);
     await flushed();
 
-    // Many deltas while parked: no subscriber sees them (the freeze case
-    // above), the store accumulates them.
+    // Many deltas while parked; the store accumulates them.
     let n = 2;
     for (const delta of [" wor", "ld", ", from", " the", " parked", " chat"]) {
       n += 1;
@@ -386,16 +315,12 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
     switchTo(a);
     await flushed();
     const bubble = (): string => viewOf(a).querySelector(".message.assistant")?.textContent ?? "";
-    // The rebuilt live bubble holds the store's full text (the incremental
-    // markdown parser may withhold a trailing character until the stream moves
-    // or ends, so the EXACT assertion waits for the seal below).
+    // The incremental parser may withhold a trailing character until the seal, so this waits for containment.
     await vi.waitFor(() => {
       expect(bubble()).toContain("Hello world, from the parked");
     });
 
-    // Grow again on the live view, then seal and close: exactly ONE binding effect
-    // exists per entry, so the delta lands exactly once. A duplicated effect would
-    // append the delta twice — the exact text IS the effect count.
+    // Exactly one binding effect per entry, so the exact text is the effect count.
     n += 1;
     store.applyDelta(a, t, "say-1", "", n, " — and more");
     await flushed();
@@ -406,8 +331,7 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
     await vi.waitFor(() => {
       expect(bubble()).toBe("Hello world, from the parked chat — and more");
     });
-    // One bubble, one row: the rebuild replaced the old body rather than
-    // stacking a second copy beside it.
+    // The rebuild replaced the old body rather than stacking a copy.
     expect(viewOf(a).querySelectorAll(".message.assistant")).toHaveLength(1);
   });
 
@@ -444,8 +368,7 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
     await flushed();
     const unparked = snapshot(viewOf(a));
 
-    // The cold control: dispose the view outright and repaint from the same
-    // store state.
+    // The cold control: dispose and repaint from the same store state.
     messages.disposeChatView(a);
     store.bumpMessages(a, "load");
     await flushed();
@@ -475,18 +398,16 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
     const row = view.querySelector(".message.assistant");
     expect(row).not.toBeNull();
 
-    // The last-tab window: no active chat, while the session stays in the
-    // store. The paint must hide, never dispose.
+    // No active chat while the session stays in the store: the paint must hide, never dispose.
     store.setActive("");
     await flushed();
     expect(view.isConnected).toBe(true);
     expect(view.classList.contains("is-active")).toBe(false);
     expect(view.inert).toBe(true);
-    // A settled replay minted no streaming signal: only `openEntry` mints one.
+    // Only `openEntry` mints a streaming signal.
     expect(sigs.entryTextSigs.get(sigs.entryKey(`${a}-t1`, `${a}-t1-e1`))).toBeUndefined();
 
-    // Reopening restores the SAME nodes: identity is the proof nothing was
-    // disposed and rebuilt.
+    // Node identity proves nothing was disposed and rebuilt.
     switchTo(a);
     await flushed();
     expect(viewOf(a)).toBe(view);
@@ -501,11 +422,7 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
 // ---------------------------------------------------------------------------
 
 describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
-  /** Enough turns to overflow the 400px scroller with the older ones folded to
-   *  header stubs, which is the precondition each case below asserts for itself.
-   *  TEN, measured on the message model: 2196px of content against the 550 the
-   *  assertion needs. The paint is superlinear in turn count, so the count is the
-   *  test's own cost and is kept at the minimum that overflows. */
+  /** Ten turns overflow the 400px scroller with older ones folded; the paint is superlinear, so it is the minimum. */
   function longChat(id: string): Session {
     const turns: Entry[][] = [];
     for (let i = 0; i < 10; i++) {
@@ -526,22 +443,11 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     seed(longChat(a), longChat(b), oneTurn(c, "x"));
     await flushed();
 
-    // NO frame wait before the gesture, and its absence is the assertion's other
-    // half. Every step below is synchronous or a microtask, so this case's verdict
-    // no longer depends on how fast the compositor is producing frames — which is
-    // what made it the file's one load-dependent failure: it waited SIX frames
-    // (three pairs), and a frame is 16ms with an idle compositor and hundreds of ms
-    // under a full suite, so the accumulated waits alone crossed the 5s timeout.
-    // Those waits were there to let the mount's queued follow write land before the
-    // gesture, i.e. to outrun `scroll.ts`'s own race rather than to observe
-    // anything; the write re-reads its licence now, so the gesture wins whichever
-    // frame it falls in ("the streaming follow write's licence" in scroll.test.ts).
+    // No frame wait before the gesture: every step is synchronous, and the follow write re-reads its licence, so the
+    // verdict does not depend on compositor speed.
 
-    // Chat A: the reader scrolls UP — Reading. Three parts, all load-bearing. The
-    // wheel is what makes it the READER's (the controller reads intent from input,
-    // not from the position). `scroll-behavior: smooth` is on the scroller, so a bare
-    // scrollTop assignment would only START an animation; the instant scrollTo is the
-    // synchronous gesture. And the event is what the listener acts on.
+    // Reading needs all three: the wheel marks it the reader's, the instant scrollTo beats `scroll-behavior: smooth`,
+    // and the event is what the listener acts on.
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
@@ -570,19 +476,12 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
   });
 
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {
-    // What the case pins is the DEFERRAL, and the name used to claim the window move it
-    // rules out: the reader is Reading, so `deferWhileReading` holds the unpark paint and
-    // no window pass runs while this measures. A re-derived window at unpark is therefore
-    // unreachable by design here — the assertions below read the window the park left,
-    // over a turn the store has since grown, which is the half that can go wrong.
+    // The reader is Reading, so `deferWhileReading` holds the unpark paint; this reads the window the park left over a
+    // grown turn.
     const a = freshID("c-win");
     const b = freshID("c-win");
     const t = `${a}-t1`;
-    // Over the entry budget, so the body holds a RANGE rather than the whole turn and
-    // the unpark paint has a window to re-derive rather than a row list to replay.
-    // Every entry RENDERS at its own position (a tool card, not prose): a run of `text`
-    // entries would coalesce into one prose run and one row, so the window would have
-    // nothing to cut.
+    // Over the entry budget so the body holds a range; tool cards, since `text` entries would coalesce into one row.
     const heavy = (upTo: number): Entry[] => {
       const entries: Entry[] = [turnOpen(t, 1)];
       for (let i = 1; i <= upTo; i++) {
@@ -608,8 +507,7 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
 
     switchTo(b);
     await flushed();
-    // The turn GROWS while A is parked, so the unpark paint has to re-derive a window
-    // over a LONGER turn rather than replay the row list it froze.
+    // The turn grows while A is parked.
     for (let i = 501; i <= 700; i++) {
       store.appendEntry(a, toolCall(t, i, `t-w${String(i)}`, { status: "completed" }));
     }
@@ -618,9 +516,7 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     switchTo(a);
     await flushed();
 
-    // The body that came back is still the WINDOW the park froze, over a turn 200
-    // ordinals longer: nothing grew it to cover the new tail, and nothing replayed the
-    // whole 700-entry row list either.
+    // Still the window the park froze: nothing grew it and nothing replayed the 700-entry list.
     expect(seqs().length).toBeLessThan(500);
     expect(viewOf(a).querySelector('[data-entry-seq="700"]')).toBeNull();
     // And the reader is exactly where they were.
@@ -643,8 +539,7 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
       return wrap.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom;
     };
     const before = bottomGap();
-    // flex-end on a min-height:100% column: the card hugs the viewport bottom.
-    // Tokens are absent here so the padding is 0; the gap is the alignment.
+    // flex-end on a min-height:100% column hugs the bottom; tokens are absent, so the gap is the alignment.
     expect(before).toBeLessThan(50);
 
     switchTo(b);
@@ -677,10 +572,7 @@ describe("focus and reachability", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     );
     await flushed();
 
-    // A real focusable inside the view: a FOOTER action, which is rendered and
-    // focusable unconditionally. The fold toggle is excluded because it is hidden
-    // on the newest turn (data-no-fold) and a `display: none` element refuses
-    // focus.
+    // A footer action is focusable unconditionally; the fold toggle is `display: none` on the newest turn.
     const toggle = viewOf(a).querySelector<HTMLElement>(
       ".turn-footer .turn-action-btn, [tabindex], button:not(.turn-fold-toggle)",
     );
@@ -692,8 +584,7 @@ describe("focus and reachability", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     await flushed();
     expect(document.activeElement).toBe(promptInput);
 
-    // The parked view is inert: focus cannot land inside it (real Chromium
-    // focus semantics — an inert subtree refuses programmatic focus too).
+    // The parked view is inert, which refuses programmatic focus too.
     const parked = viewOf(a);
     expect(parked.inert).toBe(true);
     toggle?.focus();
@@ -707,15 +598,10 @@ describe("focus and reachability", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     await flushed();
     switchTo(b);
     await flushed();
-    // `.msg-row` runs content-visibility:auto, and rows start SKIPPED until
-    // the browser's first rendering pass resolves their relevance — the find
-    // walker prunes skipped subtrees, so give it that frame (production find
-    // opens on a user gesture, long after paint).
+    // `content-visibility: auto` rows start skipped and the find walker prunes them, so give it a frame.
     await settledFrames();
 
-    // The find walker roots at the ACTIVE view (find-in-chat resolves
-    // `.transcript-view.is-active`), so A's text is unreachable while parked; the
-    // subject here is the WALK SCOPE.
+    // The find walker roots at the active view, so A's text is unreachable while parked.
     const { FindEngine } = await import("./find-engine.js");
     const active = messagesEl.querySelector<HTMLElement>(":scope > .transcript-view.is-active");
     expect(active).toBe(viewOf(b));
@@ -762,8 +648,7 @@ describe("disposal", () => {
       await flushed();
     }
 
-    // Five chats visited: the first is past the parked budget of three and ran
-    // the real dispose — its container is gone, not hidden.
+    // Five chats visited: the first is past the parked budget of three and its container is gone.
     expect(messages.transcriptViewFor(first)).toBeNull();
     expect(messagesEl.querySelectorAll(":scope > .transcript-view")).toHaveLength(
       messages.PARKED_VIEWS + 1,
@@ -809,28 +694,15 @@ describe("disposal", () => {
     expect(sigs.toolCallSigs.get(sigs.toolCallSigKey(a, "t-td"))).toBeUndefined();
     // ...scroll reset (Following, no stale reading state)...
     expect(scroll.readingState()).toBe("following");
-    // ...and a repaint after teardown starts from scratch rather than finding
-    // stale registries: the next bump re-creates the active chat's view whole.
+    // ...and the next bump re-creates the active chat's view whole.
     store.bumpMessages(b, "load");
     await flushed();
     expect(viewOf(b).querySelectorAll(".turn").length).toBeGreaterThan(0);
   });
 });
 
-// ---------------------------------------------------------------------------
-// A NEW VIEW'S RESET MAY NOT REACH THE OUTGOING ONE.
-//
-// `activateView` resets the scroll controller for a view it CREATED, and that
-// reset ends in `setLoadMore(null, false)` — which removes the attached view's
-// "Load older messages" button. Run BEFORE the attach, the attached view was still
-// the OUTGOING one, so switching to a never-seen chat stripped the button off the
-// chat being parked, and that view came back with its pagination affordance gone
-// and no gesture to restore it (the reset also nulls the callback, so the reader
-// had to switch away and back to have `setupLoadMore` re-wire it).
-//
-// REAL scroll controller, for that file's reason: the property is which element a
-// lookup reaches, and a mocked `setLoadMore` cannot have it.
-// ---------------------------------------------------------------------------
+// `activateView` resets the scroll controller for a view it created, and that reset removes the attached view's
+// "Load older messages" button, so it must run after the attach or it strips the outgoing chat's pagination.
 describe("activating a new view", () => {
   it("leaves the outgoing view's pagination button in place", async () => {
     const a = freshID("c");

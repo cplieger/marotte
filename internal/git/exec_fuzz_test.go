@@ -92,20 +92,17 @@ func FuzzFirstSubcommand(f *testing.F) {
 	f.Add("-c\x00val")
 
 	f.Fuzz(func(t *testing.T, joined string) {
-		// Split on NUL to simulate an arg list.
 		var args []string
 		if joined != "" {
 			args = strings.Split(joined, "\x00")
 		}
 		result := firstSubcommand(args)
 		if result == "" {
-			return // "" is the "not found" sentinel, always valid
+			return
 		}
-		// Invariant: result must not start with '-'.
 		if strings.HasPrefix(result, "-") {
 			t.Fatalf("firstSubcommand returned flag-like value: %q", result)
 		}
-		// Invariant: result must appear in args.
 		if !slices.Contains(args, result) {
 			t.Fatalf("firstSubcommand returned %q which is not in args", result)
 		}

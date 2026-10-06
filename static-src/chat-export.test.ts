@@ -1,15 +1,13 @@
-// ---------------------------------------------------------------------------
-// chat-export tests: the Export affordance triggers a same-origin anchor
-// download with the right endpoint URL, format, and filename, and never
-// leaves the transient anchor attached to the document.
-// ---------------------------------------------------------------------------
+// The Export affordance downloads through a same-origin anchor with the right URL, format
+// and filename, never leaving the anchor attached.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { downloadChatExport } from "./chat-export.js";
 
-/** Runs fn with element.click() stubbed (click lives on HTMLElement.prototype),
- *  returning the element that was clicked (or null if none). The stub prevents
- *  the browser from attempting a real navigation. */
+/**
+ * Runs fn with element.click() stubbed, returning the clicked element (or null); the stub
+ * prevents a real navigation.
+ */
 function captureDownloadAnchor(fn: () => void): HTMLElement | null {
   let clicked: HTMLElement | null = null;
   // Capture the appended anchor from the DOM during the click (it is appended

@@ -14,31 +14,24 @@ import (
 // shellContentType is what the SPA shell is served as.
 const shellContentType = "text/html; charset=utf-8"
 
-// Each policy is a claim about the NAME, not the bytes: immutableAsset on a name
-// whose content can change serves a stale asset for a year with no request that
-// could discover it.
+// Each policy is a claim about the NAME: immutableAsset on a name whose content can change
+// serves a stale asset for a year.
 const (
 	immutableAsset  = "public, max-age=31536000, immutable"
 	revalidateAsset = "no-cache"
 	noStoreHTML     = "no-store"
 )
 
-// fontAssetPrefix is where the Dockerfile writes the two web faces. The trailing
-// slash is load-bearing: without it the prefix also matches a sibling directory
-// whose name merely starts with it, which would hand that directory a policy
-// nothing here decided to give it.
+// fontAssetPrefix is where the Dockerfile writes the web faces; the trailing slash keeps a
+// sibling directory sharing the prefix out.
 const fontAssetPrefix = "vendor/fonts/"
 
-// stampedFont matches the `<stem>.<8 lowercase hex><ext>` name cmd/bundle's
-// fingerprintFonts stamps. Reading the verdict off the NAME is what makes dropping
-// that step degrade to revalidation rather than to a stale face, and it keeps the
-// unhashed licence texts beside the fonts out of a year-long promise.
+// stampedFont matches the `<stem>.<8 lowercase hex><ext>` name cmd/bundle stamps; without the
+// stamp a face revalidates rather than going stale.
 var stampedFont = regexp.MustCompile(`\.[0-9a-f]{8}\.[^./]+$`)
 
-// contentHashedAsset matches the one naming shape whose bytes its name pins:
-// cmd/bundle's `chunks/[name]-[hash]`, the hash 8 uppercase base32 characters.
-// Anchored and pinned to the chunk directory so a hand-authored asset can never
-// match and get cached for a year; it degrades to revalidating if ChunkNames moves.
+// contentHashedAsset matches cmd/bundle's `chunks/[name]-[hash]` (8 uppercase base32),
+// anchored so a hand-authored asset never gets a year-long cache.
 var contentHashedAsset = regexp.MustCompile(`^chunks/[^/]+-[A-Z0-9]{8}\.js(\.map)?$`)
 
 // assetCachePolicy is the per-asset Cache-Control policy webhttp.StaticHandler asks
@@ -60,14 +53,8 @@ func assetCachePolicy(assetPath string) string {
 // browser fetches and the one whose absence makes push unreachable.
 const serviceWorkerPath = "sw.js"
 
-// reportMissingServiceWorker states at boot that this build cannot be subscribed
-// to for push notifications. `static/**/*.js` is gitignored and /sw.js is emitted
-// only by `go run ./cmd/bundle`, so a plain `go build` of a fresh clone embeds a
-// tree without it; the SPA fallback then answers /sw.js with index.html, which
-// fails registration in one tab's console and nowhere else. Without this line
-// "push is broken" and "built without the bundle" produce identical server logs.
-//
-// spaHandler is built once per ListenAndServe, so this is one line per boot.
+// reportMissingServiceWorker logs at boot that /sw.js is absent (a `go build` without
+// `go run ./cmd/bundle`): the SPA fallback would otherwise hide it from the server log.
 func reportMissingServiceWorker(staticFS fs.FS) {
 	if _, err := fs.Stat(staticFS, serviceWorkerPath); err == nil {
 		return
@@ -76,18 +63,12 @@ func reportMissingServiceWorker(staticFS fs.FS) {
 		"path", serviceWorkerPath, "remedy", "go run ./cmd/bundle, then rebuild")
 }
 
-// terminalFontGlob names one of the faces css/00-fonts.css declares, so no match means
-// the whole vendor/fonts tree is missing. A glob rather than a path because cmd/bundle
-// stamps a content hash before the extension.
+// terminalFontGlob names one face css/00-fonts.css declares; a glob because cmd/bundle stamps
+// a content hash before the extension.
 const terminalFontGlob = fontAssetPrefix + "WebTerminalGlyphs*.woff2"
 
-// reportMissingTerminalFonts states at boot that the shell terminal will render on the
-// platform monospace. `//go:embed static` fails SOFT on a missing subdirectory and
-// static/vendor is gitignored, so a clone that never ran scripts/dev-fonts.sh embeds no
-// faces — and the SPA fallback answers each .woff2 with index.html, so the fault has no
-// server-side symptom at all.
-//
-// spaHandler is built once per ListenAndServe, so this is one line per boot.
+// reportMissingTerminalFonts logs at boot that the terminal faces are absent: `//go:embed`
+// fails soft on a missing gitignored vendor/ dir, and the SPA fallback hides it.
 func reportMissingTerminalFonts(staticFS fs.FS) {
 	if matches, err := fs.Glob(staticFS, terminalFontGlob); err == nil && len(matches) > 0 {
 		return
@@ -96,13 +77,10 @@ func reportMissingTerminalFonts(staticFS fs.FS) {
 		"path", terminalFontGlob, "remedy", "bash scripts/dev-fonts.sh, then rebuild")
 }
 
-// spaHandler serves the embedded FS, falling back to index.html for any path
-// that is not a real file (History-API client routing). Assets get their ETag,
-// gzip and cache policy from webhttp.StaticHandler; HTML is no-store so a
-// release takes effect on the next load. The fallback WRITES the shell rather
-// than calling http.ServeFileFS: net/http's serveFile applies index-page
-// canonicalization to r.URL.Path unconditionally (fs.go:686-689, go1.27.0), so
-// every path ending in "/index.html" answered a bodyless 301 to "./".
+// spaHandler serves the embedded FS, falling back to index.html for any non-file path
+// (History-API routing); HTML is no-store. The fallback WRITES the shell rather than
+// calling http.ServeFileFS, whose serveFile 301s every path ending "/index.html" to "./"
+// (net/http fs.go:686-689, go1.27.0).
 func spaHandler(staticFS fs.FS) http.Handler {
 	static, err := webhttp.StaticHandler(staticFS, webhttp.WithStaticCacheControl(assetCachePolicy))
 	if err != nil {

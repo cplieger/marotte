@@ -25,10 +25,8 @@ var chmodInRoot = (*os.Root).Chmod
 // writeBody is the PUT /api/file payload.
 type writeBody struct {
 	Content string `json:"content"`
-	// ExpectedHash is the content_hash the client received when it LOADED the
-	// file. Optional: a caller that omits it gets the previous
-	// write-unconditionally behaviour, which keeps every non-editor writer
-	// (and any older client) working.
+	// ExpectedHash is the content_hash the client received when it loaded the file. Optional:
+	// omitting it writes unconditionally, for non-editor writers.
 	ExpectedHash string `json:"expected_hash"`
 }
 
@@ -46,9 +44,8 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		httpreply.BadRequest(w, "invalid json")
 		return
 	}
-	// Pre-stat so the user sees a clean 400 for "can't write onto a
-	// directory" rather than a generic 500 with the raw EISDIR text
-	// (which would leak the resolved filesystem path).
+	// A clean 400 for a directory target rather than a 500 whose EISDIR text leaks the resolved
+	// path.
 	if info, err := l.m.root.Stat(l.rel()); err == nil && info.IsDir() {
 		httpreply.BadRequest(w, "path is a directory")
 		return
@@ -64,19 +61,10 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	if info, err := l.m.root.Lstat(l.rel()); err == nil && info.Mode().IsRegular() {
 		opts, restore = filemode.RewriteOptions(info.Mode().Perm())
 	}
-	// One confined atomic write, the same primitive the upload path uses.
-	//
-	// The open this replaced carried syscall.O_NOFOLLOW, but that flag was
-	// INERT: os.Root.OpenFile ORs O_NOFOLLOW in itself and re-resolves the
-	// link on the resulting ELOOP (go1.27.0, src/os/root_unix.go:85-101), so
-	// a caller-supplied one is silently ignored — and every sensitive path
-	// this handler protects lives INSIDE the /config mount, so an in-mount
-	// symlink is exactly what the root permits.
-	//
-	// A temp-then-rename closes it without needing a flag the root will not
-	// honour: atomicfile refuses a symlink at the target up front, and even
-	// a lost race only replaces the LINK (rename(2) does not follow a final
-	// component). It also adds the fsync this write never had.
+	// One confined atomic write. O_NOFOLLOW would be inert here (os.Root.OpenFile adds it and
+	// re-resolves on ELOOP, go1.27.0 src/os/root_unix.go:85-101), and the sensitive paths live
+	// inside the /config mount. Temp-then-rename refuses a symlink target up front, and a lost race
+	// replaces only the link.
 	if _, err := atomicfile.WriteFileInRoot(r.Context(), l.m.root, l.rel(),
 		[]byte(body.Content), opts...); err != nil {
 		writeFileError(w, l, err)
@@ -92,13 +80,8 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	webhttp.Ok(w)
 }
 
-// writeFileError maps a confined-write failure onto the HTTP status the client
-// needs. atomicfile's sentinels and the syscall errno underneath them
-// distinguish the cases without inspecting error text; a full volume is the one
-// failure with a remedy the user can act on, so it gets its own status and
-// message instead of the generic 500. Unlike readFileError it carries no
-// context-cancellation branch, so a cancelled write still answers 500 — the
-// behaviour of the inline code this extraction replaced.
+// writeFileError maps a confined-write failure onto the HTTP status the client needs, off
+// atomicfile's sentinels and the errno beneath; a full volume gets its own status and message.
 func writeFileError(w http.ResponseWriter, l loc, err error) {
 	switch {
 	case errors.Is(err, atomicfile.ErrSymlinkTarget), errors.Is(err, atomicfile.ErrNotRegular):
@@ -117,18 +100,10 @@ func writeFileError(w http.ResponseWriter, l loc, err error) {
 	}
 }
 
-// staleWriteAllowed is the stale-write guard: it reports whether the write may
-// proceed, having written the 409 (or a 500) itself when it may not. The
-// editor's file and the agent's file are the same file, so "changed since
-// you loaded it" is the normal case here, not an edge.
-//
-// Deliberately NOT locked: a read-hash-compare-then-write is racy against a
-// write landing in the microseconds between, but closing that would need
-// cross-process locking, which this repo declined (the single server owns
-// the directory and persists atomically).
-//
-// An absent file is not stale: a caller may legitimately be re-creating
-// something deleted since it loaded.
+// staleWriteAllowed is the stale-write guard: it reports whether the write may proceed, having
+// written the 409 (or 500) itself when not. Not locked: the compare-then-write race needs
+// cross-process locking, which the single atomic writer does not warrant. An absent file is not
+// stale.
 func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, body writeBody) bool {
 	if body.ExpectedHash == "" {
 		return true

@@ -50,12 +50,8 @@ func getStatusAll(t *testing.T, h *Handler, query string) statusAllResp {
 	return resp
 }
 
-// The poll answers from the snapshot and does not run the scan.
-//
-// This is the whole point of the holder, and the seeded row is what makes it
-// falsifiable: "seeded" exists in no workspace, so an answer carrying it can only
-// have come from the snapshot, and an answer carrying the real repository can only
-// have come from a scan the request waited for.
+// TestHandleStatusAll_PollAnswersFromTheSnapshot: the poll answers from the seeded snapshot and
+// does not run the scan.
 func TestHandleStatusAll_PollAnswersFromTheSnapshot(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
@@ -102,9 +98,8 @@ func TestHandleStatusAll_StaleSnapshotRefreshesBehindTheAnswer(t *testing.T) {
 		t.Fatalf("repos = %+v, want the stale snapshot answered immediately", got.Repos)
 	}
 
-	// The refresh is detached, so wait for it to publish rather than sleeping past
-	// it: the assertion is that the snapshot MOVED, which is the half a bare sleep
-	// would let pass for the wrong reason.
+	// The refresh is detached, so wait for it to publish; a sleep would pass whether or not the
+	// snapshot moved.
 	waitForFreshSnapshot(t, h, statusKeyPoll, "myrepo")
 	if next := getStatusAll(t, h, ""); len(next.Repos) != 1 || next.Repos[0].Repo != "myrepo" {
 		t.Errorf("repos after the refresh = %+v, want the real workspace", next.Repos)
@@ -169,12 +164,8 @@ func TestHandleStatusAll_TheFetchVariantHasItsOwnSnapshot(t *testing.T) {
 	}
 }
 
-// While a scan is in flight the answer says so, which is what lets a client show a
-// spinner over data it is already rendering.
-//
-// The slot is claimed by the TEST, so the handler joins a refresh that never
-// completes and the flag cannot flicker: a fixture that started a real scan would
-// be racing it.
+// TestHandleStatusAll_ReportsAScanInFlight: while a scan runs the answer says so, so the client can
+// show a spinner over its data.
 func TestHandleStatusAll_ReportsAScanInFlight(t *testing.T) {
 	h := NewHandler(t.TempDir())
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{}, time.Now().Add(-statusMaxAge-time.Second))
@@ -188,9 +179,6 @@ func TestHandleStatusAll_ReportsAScanInFlight(t *testing.T) {
 		t.Error("scanning = false while a refresh is in flight")
 	}
 
-	// Waking the joiners is the other half: a caller that waited on this channel
-	// must be released, or a cold read holds its whole budget for a scan that
-	// already finished.
 	if _, running := h.statusCache.read(statusKeyPoll); running == nil {
 		t.Fatal("the slot reported no refresh in flight while the test held it")
 	}
@@ -202,7 +190,7 @@ func TestHandleStatusAll_ReportsAScanInFlight(t *testing.T) {
 }
 
 // One refresh at a time per variant: N concurrent pollers cost one scan, which is
-// what the singleflight used to provide and the reason a poll is cheap at all.
+// the reason a poll is cheap at all.
 func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 	var c statusCache
 
@@ -217,7 +205,6 @@ func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 	if second != first {
 		t.Error("the second caller got a different channel; it would wait for a refresh nobody runs")
 	}
-	// A different variant is not blocked by it.
 	if _, startedFetch := c.claim(statusKeyFetch, nil); !startedFetch {
 		t.Error("the fetch variant could not claim while the poll variant was in flight")
 	}
@@ -236,7 +223,6 @@ func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 	if running != nil {
 		t.Error("the slot is still marked in flight after publish")
 	}
-	// And the slot is claimable again, or the variant would never refresh once more.
 	if _, again := c.claim(statusKeyPoll, nil); !again {
 		t.Error("the slot stayed claimed after publish")
 	}

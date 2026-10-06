@@ -10,10 +10,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The list endpoint carries the outcome the closer WROTE on the header, spelled the
-// way the generated TypeScript reads it, and a chat whose newest turn has not closed
-// carries no key rather than an empty one: the client's latch reads an absent field
-// as "latch nothing", so `omitempty` is part of the contract.
+// TestHandleList_CarriesLastTurnOutcomeOnTheWire: the outcome the closer wrote rides the list, and
+// an unclosed newest turn carries no key, because the client reads an absent field as "latch
+// nothing" (`omitempty` is the contract).
 func TestHandleList_CarriesLastTurnOutcomeOnTheWire(t *testing.T) {
 	s, _ := newTestStore(t)
 	seed := []struct {

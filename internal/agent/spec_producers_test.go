@@ -10,9 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/spec"
 )
 
-// specRecorder swaps the runtime's Notifier for one with a zero window whose
-// emit hands each directory to a channel, so a test waits on the mark itself
-// rather than on a clock.
+// specRecorder swaps the Notifier for a zero-window one that hands each directory to a channel, so tests wait on the mark.
 func specRecorder(h *Runtime) <-chan string {
 	dirs := make(chan string, 8)
 	n := spec.NewNotifier(0, func(dir string) { dirs <- dir })
@@ -51,9 +49,7 @@ func checkpointMsg(t *testing.T, artifactPath string) *marotte.RPCResponse {
 	}
 }
 
-// Every case runs the non-marking operation FIRST and the marking one second,
-// then waits for the one mark: a directory the first operation should not have
-// marked can never be in the channel, because Mark was never called for it.
+// The non-marking operation runs first, so a wrong mark could only come from it.
 func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
 	cases := []struct {
 		name string
@@ -121,9 +117,7 @@ func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
 	}
 }
 
-// The handler that produces the write marks it only after the write landed: a
-// refused write (here, a path escaping the workspace) marks nothing, and the
-// later good write is the one mark observed.
+// A refused write (a path escaping the workspace) marks nothing; the later good write is the one mark.
 func TestSpecProducers_ARefusedWriteMarksNothing(t *testing.T) {
 	work := t.TempDir()
 	h, _ := hubForFSTest(t, work)

@@ -1,18 +1,4 @@
 // The recurrence picker behind the Schedule button on /docs/workflows.
-//
-// Shape is the settled convention every calendar tool uses: ONE frequency
-// select drives ONE conditional row, and a plain-English summary with the
-// resolved next run sits underneath. Progressive disclosure with a single
-// control as the switch — nothing else is ever on screen.
-//
-// The summary is the load-bearing part. It is the only way a user can confirm
-// that what they built means what they intended, and it comes from the SERVER's
-// resolved next_run_at rather than a second implementation here, so the line
-// cannot disagree with what will actually fire.
-//
-// It carries the LAST outcome too, from the same record: an unattended schedule
-// is exactly the thing nobody watches, so a row that only ever promises a next
-// run can repeat the same failure nightly with nothing on screen saying so.
 
 import { el } from "@cplieger/reactive";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
@@ -39,22 +25,14 @@ function two(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** The active frequency's interval bounds, or undefined for a frequency with no
- *  step. Exported for its own unit test: the minute floor is a rule the user
- *  meets here, so it is worth pinning independently of the DOM. */
+/** The active frequency's interval bounds, or undefined for a frequency with no step. Exported
+ *  for its own unit test: the minute floor is a rule the user meets here, so it is worth pinning
+ *  independently of the DOM. */
 export function intervalBounds(freq: ScheduleFreq): { min: number; max: number } | undefined {
   return freq === "minutely" || freq === "hourly" ? INTERVAL_BOUNDS[freq] : undefined;
 }
 
-/**
- * clampInterval re-bounds the working spec's step for its current frequency.
- *
- * `interval` is ONE field serving two units, which is the decision's own shape: a
- * minute-level frequency is the same rule one unit down, not a second scheme. So
- * switching frequency has to re-bound the value, or "every 45 minutes" becomes a
- * request for every 45 HOURS and the server rejects the save with nothing on the
- * form having said so.
- */
+/** clampInterval re-bounds the working spec's step for its current frequency. */
 export function clampInterval(spec: ScheduleSpec): void {
   const b = intervalBounds(spec.freq);
   if (b === undefined) {
@@ -64,10 +42,9 @@ export function clampInterval(spec: ScheduleSpec): void {
 }
 
 /** The unattended approval budget, in minutes, mirroring internal/hub's
- *  `unattendedApprovalBudget` (180 seconds). Stated to the user because the
- *  question a schedule form has to answer is what happens when the job asks for
- *  something and nobody is there. Go's TestUnattendedBudget_MatchesTheDisclaimer
- *  fails if the two drift; change both together. */
+ *  `unattendedApprovalBudget` (180 seconds). Stated to the user because the question a schedule
+ *  form has to answer is what happens when the job asks for something and nobody is there. Go's
+ *  TestUnattendedBudget_MatchesTheDisclaimer fails if the two drift; change both together. */
 const UNATTENDED_BUDGET_MINUTES = 3;
 
 /** ordinal renders a month day the way a person says it. */
@@ -91,20 +68,16 @@ function ordinal(n: number): string {
   }
 }
 
-/**
- * describeSpec renders a spec as a sentence. Exported for its own unit test:
- * this is the text the user reads to decide whether the rule is right, so it is
- * worth pinning independently of the DOM.
- */
+/** describeSpec renders a spec as a sentence. Exported for its own unit test: this is the text
+ *  the user reads to decide whether the rule is right, so it is worth pinning independently of
+ *  the DOM. */
 export function describeSpec(spec: ScheduleSpec): string {
   const clock = `${two(spec.hour)}:${two(spec.minute)}`;
   switch (spec.freq) {
     case "minutely": {
       const n = spec.interval ?? INTERVAL_BOUNDS.minutely.min;
-      // The phase, not the raw minute: a step of 15 chosen at :37 fires at
-      // 07,22,37,52, so naming :37 alone would describe a different rule. Stated
-      // as "from" rather than "at ... past" because a step that does not divide
-      // 60 walks the whole day and does not repeat within the hour.
+      // The phase, not the raw minute: a step of 15 chosen at :37 fires at 07,22,37,52, so naming
+      // :37 alone would describe a different rule.
       const phase = n > 0 ? spec.minute % n : spec.minute;
       const step = `Every ${n} minutes`;
       return phase === 0 ? step : `${step} from :${two(phase)}`;
@@ -134,11 +107,9 @@ export function describeSpec(spec: ScheduleSpec): string {
   }
 }
 
-/**
- * formatStamp renders one of the server's resolved timestamps in local time. One
- * format for both the next run and the last one, so the two halves of the row
- * read as the same kind of time.
- */
+/** formatStamp renders one of the server's resolved timestamps in local time. One format for
+ *  both the next run and the last one, so the two halves of the row read as the same kind of
+ *  time. */
 export function formatStamp(iso: string | undefined): string {
   if (iso === undefined || iso === "") {
     return "";
@@ -156,12 +127,10 @@ export function formatStamp(iso: string | undefined): string {
   });
 }
 
-/**
- * describeOutcome renders the row's last-run segment from `last_status`,
- * `last_reason` and `last_run_at`. It is what makes a schedule failing the same
- * way every night visible, so the reason is kept whole: it names the fix. A
- * status this client does not know still shows its reason.
- */
+/** describeOutcome renders the row's last-run segment from `last_status`, `last_reason` and
+ *  `last_run_at`. It is what makes a schedule failing the same way every night visible, so the
+ *  reason is kept whole: it names the fix. A status this client does not know still shows its
+ *  reason. */
 export function describeOutcome(view: ScheduleView): string {
   const status = view.last_status;
   if (status === undefined) {
@@ -193,29 +162,17 @@ export function summaryLine(view: ScheduleView | undefined): string {
   if (next !== "") {
     line += `, next ${next}`;
   }
-  // The outcome trails the rule and the next run, separated by the app's own
-  // middot: what will happen reads first, what happened last reads second, and a
-  // schedule that has never fired shows nothing rather than an empty segment.
+  // The outcome trails the rule and the next run, separated by the app's own middot: what will
+  // happen reads first, what happened last reads second, and a schedule that has never fired shows
+  // nothing rather than an empty segment.
   const last = describeOutcome(view);
   return last === "" ? line : `${line} · ${last}`;
 }
 
-/**
- * buildUnattendedNote is the form's statement of what running unattended means.
- *
- * A STATIC statement of policy, never a prediction. An earlier draft had the form
- * say what this job would be permitted to do; that is withdrawn, because the
- * agent chooses its tool calls at runtime and any enumeration here would be a
- * guess presented as fact.
- *
- * The one thing it reads live is the auto-approve setting, because that value
- * decides which of the two outcomes actually happens and the client already holds
- * it. Boilerplate ("this may be approved automatically") would be the useless
- * version of the same sentence.
- *
- * The setting is GLOBAL, and the wording says so: it governs every scheduled run,
- * and there is no per-schedule grant. Saying "this job" would invent one.
- */
+/** buildUnattendedNote is the form's statement of what running unattended means. A STATIC
+ *  statement of policy, never a prediction. The one thing it reads live is the auto-approve
+ *  setting, because that value decides which of the two outcomes actually happens and the client
+ *  already holds it. */
 export function buildUnattendedNote(
   autoApprove: boolean,
   onOpenPermissions: () => void,
@@ -252,17 +209,17 @@ export function buildUnattendedNote(
 
 interface PickerOptions {
   spec: ScheduleSpec;
-  /** Whether the stored schedule is currently running, and so the initial state
-   *  of the Run-on-this-schedule box. A recipe with no schedule yet opens the
-   *  form checked: the user came here to create one. */
+  /** Whether the stored schedule is currently running, and so the initial state of the
+   *  Run-on-this-schedule box. A recipe with no schedule yet opens the form checked: the user
+   *  came here to create one. */
   enabled: boolean;
-  /** Whether a schedule RECORD exists, which is what Remove needs to know.
-   *  Distinct from `enabled` since a schedule can be saved paused: keying Remove
-   *  on `enabled` would leave a paused schedule with no way to delete it. */
+  /** Whether a schedule RECORD exists, which is what Remove needs to know. Distinct from
+   *  `enabled` since a schedule can be saved paused: keying Remove on `enabled` would leave a
+   *  paused schedule with no way to delete it. */
   exists: boolean;
-  /** The auto-approve setting's CURRENT value, for the unattended note's live
-   *  read-out. Passed in rather than fetched here so this module stays a pure
-   *  form over the data its caller already holds. */
+  /** The auto-approve setting's CURRENT value, for the unattended note's live read-out. Passed
+   *  in rather than fetched here so this module stays a pure form over the data its caller
+   *  already holds. */
   autoApprove: boolean;
   onSave: (spec: ScheduleSpec, enabled: boolean) => void;
   onRemove: () => void;
@@ -273,15 +230,11 @@ interface PickerOptions {
   onOpenPermissions: () => void;
 }
 
-/**
- * buildSchedulePicker returns the picker body. The caller anchors it (a popup on
- * the Schedule button) and owns dismissal; this function owns only the form and
- * its live summary.
- */
+/** buildSchedulePicker returns the picker body. The caller anchors it (a popup on the Schedule
+ *  button) and owns dismissal; this function owns only the form and its live summary. */
 export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
-  // A working copy: nothing is committed until Save, so Cancel is a no-op
-  // rather than an undo. The enabled flag is part of that copy for the same
-  // reason.
+  // A working copy: nothing is committed until Save, so Cancel is a no-op rather than an undo. The
+  // enabled flag is part of that copy for the same reason.
   const spec: ScheduleSpec = { ...opts.spec };
   let enabled = opts.exists ? opts.enabled : true;
 
@@ -310,8 +263,8 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
       const [h, m] = i.value.split(":");
       const hn = Number(h);
       const mn = Number(m);
-      // An empty time input reports "", which would become NaN and silently
-      // send an invalid spec the server would reject.
+      // An empty time input reports "", which would become NaN and silently send an invalid spec
+      // the server would reject.
       if (Number.isFinite(hn) && Number.isFinite(mn)) {
         spec.hour = hn;
         spec.minute = mn;
@@ -321,10 +274,10 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     return i;
   };
 
-  /** A bounded integer field. Out-of-range input leaves the spec alone, the same
-   *  silent-ignore the time field uses, and the min/max attributes are where the
-   *  user meets the rule. Integers only: a fractional value cannot unmarshal into
-   *  the Go int field, so accepting 6.5 would guarantee a rejected save. */
+  /** A bounded integer field. Out-of-range input leaves the spec alone, the same silent-ignore
+   *  the time field uses, and the min/max attributes are where the user meets the rule. Integers
+   *  only: a fractional value cannot unmarshal into the Go int field, so accepting 6.5 would
+   *  guarantee a rejected save. */
   const numberField = (
     value: number,
     min: number,
@@ -351,8 +304,8 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
   function renderDetail(): void {
     detail.replaceChildren();
     if (spec.freq === "minutely") {
-      // "At this minute, every X": the offset reads first because it is what the
-      // step is phased from, and the step is what repeats.
+      // "At this minute, every X": the offset reads first because it is what the step is phased
+      // from, and the step is what repeats.
       const b = INTERVAL_BOUNDS.minutely;
       detail.append(
         el("span", { className: "sched-label" }, "at minute"),
@@ -410,9 +363,9 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
       for (let d = 1; d <= 31; d++) {
         daySel.appendChild(el("option", { value: String(d) }, ordinal(d)));
       }
-      // "Last day" is offered explicitly because months differ in length: a
-      // day past the month's end CLAMPS server-side rather than skipping the
-      // month, and this is the honest way to ask for the end of February.
+      // "Last day" is offered explicitly because months differ in length: a day past the month's
+      // end CLAMPS server-side rather than skipping the month, and this is the honest way to ask
+      // for the end of February.
       daySel.appendChild(el("option", { value: String(LAST_DAY) }, "the last day"));
       daySel.value = String(spec.month_day ?? 1);
       daySel.addEventListener("change", () => {
@@ -431,34 +384,23 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
   }
 
   function paint(): void {
-    // The picker's own preview has no next_run_at yet (the server resolves that
-    // on save), so it shows the rule alone; the ROW shows the rule plus the
-    // resolved next run once saved.
-    //
-    // A paused rule is still shown, marked: it is the rule Save is about to
-    // store, and the alternative (blanking it) hides the thing being edited.
+    // The picker's own preview has no next_run_at yet (the server resolves that on save), so it
+    // shows the rule alone; the ROW shows the rule plus the resolved next run once saved.
     const rule = describeSpec(spec);
     summary.textContent = enabled ? rule : `${rule} (paused)`;
   }
 
   freqSel.addEventListener("change", () => {
     spec.freq = freqSel.value as ScheduleFreq;
-    // Before the re-render, so the field paints the clamped value rather than
-    // showing one number while the spec holds another.
+    // Before the re-render, so the field paints the clamped value rather than showing one number
+    // while the spec holds another.
     clampInterval(spec);
     renderDetail();
     paint();
   });
 
-  // Pause is a state Save can produce, so a user who wants a schedule back next
-  // week does not have to re-author the rule to keep it. Remove was the only
-  // off-switch, which made deletion the price of a pause; the store, the row's
-  // summary line and the runner's own skip already modelled the disabled state,
-  // so this is the half that was missing rather than a new capability.
-  //
-  // The input is nested in its label rather than paired by id: the picker is
-  // rebuilt on every open, and a fixed id would collide with a picker still in
-  // the DOM on another row.
+  // Pause is a state Save can produce, so a user who wants a schedule back next week does not have
+  // to re-author the rule to keep it.
   const enabledBox = el("input", { type: "checkbox" }) as HTMLInputElement;
   enabledBox.checked = enabled;
   enabledBox.addEventListener("change", () => {
@@ -495,8 +437,8 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     el("div", { className: "sched-row" }, detail),
     summary,
     enabledRow,
-    // Below the rule and above the actions: it is what the user should have read
-    // before pressing Save, not a footnote after it.
+    // Below the rule and above the actions: it is what the user should have read before pressing
+    // Save, not a footnote after it.
     buildUnattendedNote(opts.autoApprove, opts.onOpenPermissions),
     actions,
   );

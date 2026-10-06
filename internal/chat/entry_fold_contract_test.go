@@ -10,15 +10,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// entryFoldFixture is the envelope of testdata/entry_fold.json: one real log of two
-// INTERLEAVED turns, the grouping the export derives from it, and per entry whether the
-// export renders anything AT THAT ENTRY'S OWN POSITION.
-//
-// The Go side PRODUCES it (golden, regenerated behind UPDATE_GOLDEN=1) from the
-// production writer rather than from a second switch, so no vocabulary is enumerated
-// twice here; entry-fold-contract.node.test.ts DECODES it, partitions the same entries
-// the way the store does, and asks block-window.ts's entryRenders. An export and a
-// transcript that describe one turn differently is what this catches.
+// entryFoldFixture is testdata/entry_fold.json: one log of two interleaved turns, the export's grouping, and per
+// entry whether the export renders at that entry's position. Go produces it from the production writer
+// (UPDATE_GOLDEN=1); entry-fold-contract.node.test.ts decodes it and asks block-window.ts's entryRenders.
 type entryFoldFixture struct {
 	Comment []string        `json:"_comment"`
 	Entries []marotte.Entry `json:"entries"`
@@ -32,8 +26,8 @@ type entryFoldTurn struct {
 	Entries []entryFoldRow `json:"entries"`
 }
 
-// entryFoldRow is one entry's answer. Compared is false for an entry the two halves
-// deliberately disagree about or render at different SCOPES; Edge says which.
+// entryFoldRow is one entry's answer. Compared is false where the halves deliberately disagree or render at
+// different scopes; Edge says which.
 type entryFoldRow struct {
 	ID       string            `json:"id"`
 	Seq      uint64            `json:"seq"`
@@ -78,19 +72,14 @@ var entryFoldFixtureComment = []string{
 	"then re-run the TS half: npx vitest --run entry-fold-contract (from static-src/).",
 }
 
-// entryFoldEdges is the declared-edge table: the kinds this fixture does NOT compare,
-// with the reason each carries into the golden. One table, so a kind cannot be excluded
-// silently at one site and compared at another.
+// entryFoldEdges is the declared-edge table: the kinds not compared, each with its reason in the golden.
 var entryFoldEdges = map[marotte.EntryKind]string{
 	marotte.EntryKindTurnOpen:  "card-level on the client: the header band, not a body row",
 	marotte.EntryKindTurnClose: "card-level on the client: the footer, a sibling of .turn-body",
 }
 
-// entryFoldLog writes one log of two interleaved turns and answers its entries with the
-// server-minted turn ids normalised to t-1, t-2 in order of first appearance and every ts
-// zeroed. Two turns open together is the shape the log must hold (nothing may assume a
-// turn is a contiguous byte range), and it is what makes the grouping worth
-// pinning at all — with one turn per run, file order IS the grouping.
+// entryFoldLog writes one log of two interleaved turns and returns its entries with turn ids normalised to t-1, t-2
+// and timestamps zeroed. Nothing may assume a turn is contiguous, and with one turn file order is the grouping.
 func entryFoldLog(t *testing.T) []marotte.Entry {
 	t.Helper()
 	f := newLogFixture(t)
@@ -123,8 +112,7 @@ func entryFoldLog(t *testing.T) []marotte.Entry {
 		marotte.EntrySteerAck{SteerID: "s-1", Text: "reading your note"})
 	f.append(two, "", marotte.ToolResultID("tc-2"), marotte.EntryKindToolResult,
 		marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "ok"})
-	// The turn's SECOND plan: it folds into the first plan's card on both sides, which is
-	// the one fold that is a position rule rather than a kind rule.
+	// The second plan folds into the first plan's card on both sides: a position rule, not a kind rule.
 	f.append(one, "", "plan-2", marotte.EntryKindPlan, marotte.EntryPlan{Entries: []marotte.PlanEntry{
 		{Content: "Read the retry path", Status: marotte.PlanCompleted},
 		{Content: "Cap the retry count", Status: marotte.PlanInProgress},
@@ -134,12 +122,8 @@ func entryFoldLog(t *testing.T) []marotte.Entry {
 	f.closeTurn(two, marotte.TurnOutcomeCompleted)
 	f.closeTurn(one, marotte.TurnOutcomeCompleted)
 
-	// The revert row, over a THROWAWAY turn: a revert takes every turn from its target
-	// to the newest in FILE order, so reverting either turn above would take the other
-	// with it and leave the interleaving this fixture exists for with nothing in it. The
-	// record lands in the newest SURVIVOR rather than in the turn it names, so the
-	// boundary renders inside a turn that survives while the range it states is gone
-	// from every read surface — which is why the fixture still groups two turns.
+	// The revert is over a throwaway turn: reverting takes every turn from its target to the newest in file order. The
+	// record lands in the newest survivor, so the boundary renders in a surviving turn.
 	gone := f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameEvent})
 	f.closeTurn(gone, marotte.TurnOutcomeCompleted)
 	_, opened, err := f.log.Revert(t.Context(), gone, marotte.TurnRevertCauseRewind, "kas-revert")
@@ -158,25 +142,13 @@ func entryFoldLog(t *testing.T) []marotte.Entry {
 	return normalizeFoldEntries(entries)
 }
 
-// mintedTurnID matches a server-minted turn id, which is the one value in this log that
-// cannot be in a byte-pinned golden. OpenTurn mints "t-" plus ids.New(16, ids.StdLower),
-// which is lowercase RFC 4648 base32 of 16 random bytes and therefore 26 characters
-// (ceil(16*8/5)); the lower bound of 8 is what keeps a normalised name (t-1, t-2) out of
-// the match, so this pattern can never rewrite its own output. A tighter quantifier
-// matches a PREFIX of a real id and leaves its tail attached, which is a golden that
-// regenerates to different bytes every run rather than a red test.
+// mintedTurnID matches a server-minted turn id: "t-" plus 26 base32 characters (ids.New(16, ids.StdLower)). The
+// lower bound of 8 keeps normalised names out; a tighter quantifier would match a prefix and leave the tail.
 var mintedTurnID = regexp.MustCompile(`t-[0-9a-z]{8,32}`)
 
-// normalizeFoldEntries renames each turn to t-<first appearance> and zeroes every ts, so
-// the golden's bytes are the log's SHAPE rather than one run's random ids and clock.
-//
-// A minted id reaches THREE places and every one of them has to leave: the envelope's
-// Turn; an id derived from a turn, which is not always its OWN turn (a turn_open's id IS
-// the turn, a closer's is <turn>:close, and a revert record's is <reverted turn>:revert,
-// filed in the surviving carrier); and a turn_revert payload's From and Through, which
-// name a turn no read surface holds any more. One substitution over the bytes covers the
-// last two, so no payload type is enumerated here and a later payload that names a turn
-// is normalised by construction.
+// normalizeFoldEntries renames each turn to t-<first appearance> and zeroes every ts, so the golden pins shape. A
+// minted id reaches the envelope's Turn, derived ids (<turn>:close, <turn>:revert) and turn_revert's From and
+// Through; one byte-level substitution covers the last two for any payload.
 func normalizeFoldEntries(entries []marotte.Entry) []marotte.Entry {
 	name := make(map[string]string)
 	rename := func(id string) string {
@@ -201,9 +173,8 @@ func normalizeFoldEntries(entries []marotte.Entry) []marotte.Entry {
 	return out
 }
 
-// foldRows derives one turn's rows from the production export path: writeEntry on a fresh
-// builder per entry, with ONE turnRender per turn so the plan-once fold is the writer's
-// own rather than a second rule stated here.
+// foldRows derives one turn's rows from the export path: writeEntry per entry with one turnRender per turn, so the
+// plan-once fold is the writer's own.
 func foldRows(turn []marotte.Entry) []entryFoldRow {
 	results, calls := indexResults(turn)
 	r := turnRender{results: results, calls: calls, plan: newestPlan(turn)}
@@ -240,12 +211,11 @@ func TestEntryFoldContract(t *testing.T) {
 	if len(fx.Turns) != 2 {
 		t.Fatalf("grouped %d turns, want 2: the interleaving is the fixture's subject", len(fx.Turns))
 	}
-	// The log INTERLEAVES, or the grouping the fixture pins is file order under another
-	// name and the TS half's own partition cannot disagree with it.
+	// Interleaved, or the grouping is just file order.
 	if !foldInterleaved(entries) {
 		t.Fatal("every turn's entries are contiguous in file order; the fixture pins nothing")
 	}
-	// Every declared edge OCCURS, or an exclusion table entry is a rule nothing exercises.
+	// Every declared edge occurs.
 	seen := make(map[marotte.EntryKind]int)
 	verdicts := make(map[bool]int)
 	for _, turn := range fx.Turns {
@@ -269,8 +239,7 @@ func TestEntryFoldContract(t *testing.T) {
 		t.Errorf("compared rows carry %d render and %d no-render verdicts; both must occur",
 			verdicts[true], verdicts[false])
 	}
-	// Every tool_result is PAIRED, which is what keeps the fixture off the one shape the
-	// two sides genuinely disagree about (see the comment block).
+	// Every tool_result is paired, avoiding the one shape the sides genuinely disagree on.
 	for _, turn := range groupTurns(entries) {
 		_, calls := indexResults(turn)
 		for i := range turn {
@@ -286,8 +255,7 @@ func TestEntryFoldContract(t *testing.T) {
 	pinGolden(t, "testdata/entry_fold.json", fx, "TestEntryFoldContract", "entry-fold-contract.node.test.ts")
 }
 
-// foldInterleaved answers whether any turn's entries are split by another turn's in file
-// order.
+// foldInterleaved reports whether any turn's entries are split by another's in file order.
 func foldInterleaved(entries []marotte.Entry) bool {
 	for i := 1; i < len(entries); i++ {
 		if entries[i].Turn != entries[i-1].Turn {
@@ -301,10 +269,8 @@ func foldInterleaved(entries []marotte.Entry) bool {
 	return false
 }
 
-// TestEntryFoldContract_PayloadsDecode is the fixture's other half of honesty: a writer
-// that could not decode its payload emits nothing, which would read as a no-render
-// verdict. Every payload here decodes, so every `renders: false` is the rule rather than
-// a marshalling accident.
+// TestEntryFoldContract_PayloadsDecode pins that an undecodable payload renders nothing, so every `renders: false` must be the
+// rule, not a decode failure.
 func TestEntryFoldContract_PayloadsDecode(t *testing.T) {
 	for _, e := range entryFoldLog(t) {
 		var into map[string]any

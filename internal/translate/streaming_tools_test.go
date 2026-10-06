@@ -2,6 +2,7 @@ package translate
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"maps"
 	"reflect"
@@ -12,14 +13,11 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-// lineRec is a recording LineRecorder capturing RecordFromDiffs
-// invocations so the diff gates in HandleToolCall / HandleToolCallUpdate
-// are observable.
+// lineRec is a recording LineRecorder so the diff gates are observable.
 type lineRec struct {
 	lastDiffs []marotte.ToolDiff
 	calls     int
-	// lastRecency is the eviction key the tracker was handed, a wall-clock stamp
-	// that orders a chat's touched files oldest-first.
+	// lastRecency is the eviction key the tracker was handed.
 	lastRecency int
 }
 
@@ -33,9 +31,8 @@ func (r *lineRec) RecordFromDiffs(_ marotte.ChatID, diffs []marotte.ToolDiff, re
 type lineDeps struct {
 	*baseDeps
 	rec *lineRec
-	// primed is the tool call primeToolCall created, kept because it clears the
-	// event stream afterwards: the delta oracle needs the value the deltas fold
-	// ONTO, and the tool_call entry frame that carried it is gone by then.
+	// primed is the tool call primeToolCall created: the delta oracle needs the value the
+	// deltas fold ONTO, and its tool_call entry frame was cleared from the stream.
 	primed marotte.ToolCall
 }
 
@@ -51,8 +48,8 @@ type workDirDeps struct {
 
 func (d *workDirDeps) WorkDir() string { return d.workDir }
 
-// hookStatusDeps wraps baseDeps and overrides IsHookStatusEnabled so the
-// hooks.showStatus gate is exercisable in both states (baseDeps hard-codes false).
+// hookStatusDeps overrides IsHookStatusEnabled so the hooks.showStatus gate is
+// exercisable in both states (baseDeps hard-codes false).
 type hookStatusDeps struct {
 	*baseDeps
 	enabled bool
@@ -95,26 +92,22 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]marotte.S
 	return tr, rec, deps, events, chatID
 }
 
-// stashCreatedThenClear records the tool call the create frames built and then
-// empties the stream, so a following update is observed in isolation while the
-// delta oracle still knows the value those deltas fold onto.
+// stashCreatedThenClear records the tool call the create frames built, then empties the
+// stream so a following update is observed in isolation.
 func stashCreatedThenClear(t *testing.T, deps *lineDeps, events *[]marotte.ServerEvent) {
 	t.Helper()
 	deps.primed, _ = foldToolCallUpdates(t, marotte.ToolCall{}, events)
 	*events = nil
 }
 
-// lastToolCallUpdate folds every tool_progress DELTA onto the call its tool_call
-// entry carried, then the tool_result entry's settled value once the call settled,
-// and returns the reconstructed whole, because no single frame carries it. While
-// the call is open the fold is the ORACLE for the delta shape — toolProgress's
-// inverse, cross-checked against the turn's own in-flight value so it is not the
-// emitter's rules agreeing with themselves. A settled call has left the turn, and
-// its tool_result entry is the whole.
+// lastToolCallUpdate folds every tool_progress DELTA onto the call its tool_call entry
+// carried, then the tool_result's settled value, and returns the whole. While the call is
+// open the fold is cross-checked against the turn's in-flight value, so it is not the
+// emitter's rules agreeing with themselves.
 func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]marotte.ServerEvent) (marotte.ToolCall, bool) {
 	t.Helper()
-	// Seeded from the create primeToolCall consumed. A tool_call entry still in the
-	// stream overrides it, so a test that primes its own call needs no seed.
+	// Seeded from the create primeToolCall consumed; a tool_call entry still in the stream
+	// overrides it.
 	folded, ok := foldToolCallUpdates(t, deps.primed, events)
 	if !ok {
 		return marotte.ToolCall{}, false
@@ -175,8 +168,7 @@ func decodePayload[T any](t *testing.T, e *marotte.Entry) T {
 	return v
 }
 
-// applyToolResult is the client's settle, in Go: the result carries every field the
-// progress frames folded as it stands at the settle, so each one is replaced.
+// applyToolResult is the client's settle, in Go: every field is replaced.
 func applyToolResult(tc *marotte.ToolCall, r marotte.EntryToolResult) {
 	tc.Title = r.Title
 	tc.Kind = r.Kind
@@ -191,6 +183,7 @@ func applyToolResult(tc *marotte.ToolCall, r marotte.EntryToolResult) {
 	tc.Checkpoint = r.Checkpoint
 	tc.Disclosed = r.Disclosed
 	tc.Denial = r.Denial
+	tc.Offload = r.Offload
 	tc.Truncated = r.Truncated
 	tc.OutputBytes = r.OutputBytes
 	tc.HasFull = r.HasFull
@@ -246,6 +239,9 @@ func applyToolCallDelta(tc *marotte.ToolCall, d marotte.ToolProgressPayload) {
 	if d.Denial != nil {
 		tc.Denial = d.Denial
 	}
+	if d.Offload != nil {
+		tc.Offload = d.Offload
+	}
 	if d.Declined {
 		tc.Declined = true
 	}
@@ -274,11 +270,9 @@ func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map
 	return turnCloseOf(t, deps.chatEntries(chatID)).ChangedFiles
 }
 
-// TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting: a pre-tool-use hook's
-// ask-permission gate arrives as a kind:"other" call tagged _meta.kiro.hookAsk, because
-// v3's zToolKind has no "hook". Its card is NOT gated on hooks.showStatus: suppressing
-// it also dropped the follow-up carrying the user's answer, so a hook needing approval
-// always reaches the transcript.
+// TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting pins that a hook's
+// ask-permission card (kind "other", _meta.kiro.hookAsk) is NOT gated on hooks.showStatus:
+// suppressing it also drops the follow-up carrying the user's answer.
 func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 	hookAsk := map[string]any{
 		"toolCallId": "hook-ask-1",
@@ -330,9 +324,8 @@ func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 	})
 }
 
-// TestHandleToolCall_DiffGate pins that HandleToolCall records line
-// changes through the LineTracker only when the call carries at least
-// one diff; a diff-free call never touches the tracker.
+// TestHandleToolCall_DiffGate pins that HandleToolCall records line changes only when the
+// call carries at least one diff.
 func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithDiffRecordsLineChanges", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
@@ -349,14 +342,12 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 		if rec.calls != 1 {
 			t.Errorf("with diff: RecordFromDiffs calls = %d, want 1", rec.calls)
 		}
-		// The recency is the tracker's eviction key, so a zero files every range
-		// under one bucket the tracker evicts first.
+		// A zero recency would file every range under the bucket evicted first.
 		first := rec.lastRecency
 		if first <= 0 {
 			t.Errorf("with diff: RecordFromDiffs recency = %d, want a positive wall-clock stamp", first)
 		}
-		// A second diffed call in the same chat never records behind the first,
-		// which is what makes the key an ordering rather than a constant.
+		// A second diffed call never records behind the first: the key is an ordering.
 		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff-2",
 			"title":      "writeFile",
@@ -402,9 +393,8 @@ func TestToolCallUpdate_StatusApplied(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_TerminalStatusEmitsWorkingLabel pins that reaching
-// a terminal status (completed or failed) broadcasts a working_label
-// (Thinking) event.
+// TestToolCallUpdate_TerminalStatusEmitsWorkingLabel pins that a terminal status
+// broadcasts a working_label (Thinking) event.
 func TestToolCallUpdate_TerminalStatusEmitsWorkingLabel(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -427,9 +417,8 @@ func TestToolCallUpdate_TerminalStatusEmitsWorkingLabel(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_OutputAppendedWhenContentPresent pins that content
-// text in an update is sanitized, newline-terminated, and appended to
-// the tool call's Output.
+// TestToolCallUpdate_OutputAppendedWhenContentPresent pins that update content text is
+// sanitized, newline-terminated and appended to Output.
 func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -448,9 +437,7 @@ func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_LocationsGate pins that Locations are replaced only
-// when the update carries a non-empty list; an empty list leaves the
-// existing Locations (nil here) untouched.
+// TestToolCallUpdate_LocationsGate pins that Locations are replaced only by a non-empty list.
 func TestToolCallUpdate_LocationsGate(t *testing.T) {
 	t.Run("LocationsSetWhenPresent", func(t *testing.T) {
 		tr, _, deps, events, chatID := primeToolCall(t)
@@ -500,10 +487,8 @@ func TestToolCallUpdate_NoDiffSkipsLineTracker(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_DiffPresentRecordsAndAppends pins the ledger gate: a diff
-// always lands on the card, and only a `completed` tool feeds the changed-file
-// aggregate and the line tracker. Dropping the status check makes the in-progress
-// case record, which is what counted a streaming write's partial diffs.
+// TestToolCallUpdate_DiffPresentRecordsAndAppends pins the ledger gate: a diff always lands
+// on the card, and only a `completed` tool feeds the changed-file aggregate and tracker.
 func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 	t.Run("InProgressAppendsWithoutRecording", func(t *testing.T) {
 		tr, rec, deps, _, chatID := primeToolCall(t)
@@ -562,8 +547,8 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 		}
 	})
 	t.Run("FailedDoesNotEnterTheLedger", func(t *testing.T) {
-		// The write tool's catch emits a diff with a real path and the text it meant
-		// to write, so a failed write claimed a file changed when nothing did.
+		// The write tool's catch emits a diff with a real path and the intended text, so a failed
+		// write must not claim a change.
 		tr, rec, deps, _, chatID := primeToolCall(t)
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -588,9 +573,8 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 	})
 }
 
-// TestRelPath pins relPath's workspace-root stripping: paths inside the
-// workdir become workdir-relative slash paths, while an empty workdir or
-// a path that escapes the root returns the absolute path unchanged.
+// TestRelPath pins relPath's workspace-root stripping: inside paths become relative slash
+// paths; an empty workdir or an escaping path returns the input unchanged.
 func TestRelPath(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -601,31 +585,21 @@ func TestRelPath(t *testing.T) {
 		{name: "StripsRootPrefix", workDir: "/work", abs: "/work/sub/file.go", want: "sub/file.go"},
 		{name: "OutsideWorkDirReturnsAbs", workDir: "/work", abs: "/elsewhere/x.go", want: "/elsewhere/x.go"},
 		{name: "EmptyWorkDirReturnsAbs", workDir: "", abs: "/a/b.go", want: "/a/b.go"},
-		// A first component that merely BEGINS with two dots is a directory
-		// name, not a traversal: the escape test is separator-precise
-		// (pathinside.RelEscapes), so this stays relative instead of leaking
-		// the absolute path to the client.
+		// A first component that merely BEGINS with two dots is a name, not a traversal.
 		{name: "DotDotPrefixedDirIsRelative", workDir: "/work", abs: "/work/..drafts/x.go", want: "..drafts/x.go"},
 		{name: "ParentEscapeReturnsAbs", workDir: "/work", abs: "/x.go", want: "/x.go"},
-		// KAS sends some tool-call paths as file:// URIs, and every consumer treats
-		// the value as a path, so the URI must be gone by the time it leaves here.
-		// filepath.Clean turns "file:///work/x.go" into the RELATIVE "file:/work/x.go",
-		// which makes filepath.Rel error and passes the raw URI through to consumers.
+		// filepath.Clean turns "file:///work/x.go" into the relative "file:/work/x.go", which
+		// makes filepath.Rel error and leaks the raw URI.
 		{name: "FileURIBecomesRelative", workDir: "/work", abs: "file:///work/sub/file.go", want: "sub/file.go"},
 		{name: "FileURIIsPercentDecoded", workDir: "/work", abs: "file:///work/hello%20world.sh", want: "hello world.sh"},
-		// Normalising FIRST is what keeps the outside-the-workspace branch from
-		// returning the spelling this function exists to remove.
+		// Normalising FIRST keeps the outside branch from returning the URI spelling.
 		{name: "FileURIOutsideWorkDirIsStillAPath", workDir: "/work", abs: "file:///elsewhere/x.go", want: "/elsewhere/x.go"},
 		{name: "FileURIWithEmptyWorkDirIsStillAPath", workDir: "", abs: "file:///a/b.go", want: "/a/b.go"},
 		{name: "LocalhostAuthorityIsAccepted", workDir: "/work", abs: "file://localhost/work/x.go", want: "x.go"},
-		// A remote authority names a file this process cannot open, so it is
-		// left alone rather than rewritten into a local path that would then be
-		// resolved against the local filesystem.
+		// A remote authority names a file this process cannot open, so it is left alone.
 		{name: "RemoteAuthorityIsLeftAlone", workDir: "/work", abs: "file://host/share/x.go", want: "file://host/share/x.go"},
 		{name: "NonFileSchemeIsLeftAlone", workDir: "/work", abs: "https://example.com/x.go", want: "https://example.com/x.go"},
-		// A filename may legitimately contain "://", which trips the cheap gate but
-		// parses to NO scheme, so it comes back through as a path; the duplicate
-		// slashes collapse because filepath.Clean does that to every path here.
+		// "://" trips the cheap gate but parses to no scheme; Clean collapses the slashes.
 		{name: "PathContainingSchemeSeparator", workDir: "/work", abs: "/work/weird:///name.go", want: "weird:/name.go"},
 		// An unparseable reference is returned as-is rather than mangled.
 		{name: "MalformedURIIsLeftAlone", workDir: "/work", abs: "file://%zz/x.go", want: "file://%zz/x.go"},
@@ -641,9 +615,8 @@ func TestRelPath(t *testing.T) {
 	}
 }
 
-// TestHandleToolCall_IsNewFileFlag pins the isNew computation feeding TrackFileChanges:
-// a call counts as a new-file creation only when it is BOTH an edit kind AND pending,
-// observable on buf.ChangedFiles[path].IsNewFile.
+// TestHandleToolCall_IsNewFileFlag pins that a call counts as a new-file creation only when
+// it is BOTH an edit kind AND pending.
 func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	t.Run("PendingEditMarksNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
@@ -689,13 +662,9 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	})
 }
 
-// --- _meta.kiro.checkpoint: KAS's snapshot mapping ---
-
-// TestToolCallUpdate_CheckpointFromWire drives two shapes a real kiro-cli emits through
-// the actual JSON decode, so the `_meta.kiro.checkpoint` NESTING is pinned and not just
-// the merge logic: a misplaced struct tag compiles cleanly, yields nothing, and the
-// symptom is "Rewind shows no diff" with nothing in any log. The create case is why the
-// table exists — KAS sends NO `original` for a file it just created.
+// TestToolCallUpdate_CheckpointFromWire drives two real kiro-cli shapes through the JSON
+// decode, pinning the `_meta.kiro.checkpoint` nesting: a misplaced tag fails silently as
+// "Rewind shows no diff". KAS sends NO `original` for a file it just created.
 func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	const (
 		origURI = "kiro-snapshot-v2://sess_51d58124:5c1bae6d/?originalPath%3Dexisting.txt"
@@ -740,10 +709,8 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_CheckpointMergeIsPerField pins that a later frame with a narrower
-// key set cannot erase a value an earlier one supplied. The key set genuinely varies
-// frame to frame for one tool call, so a wholesale struct replacement drops `original`
-// and takes the pre-image — the only thing a diff needs — with it.
+// TestToolCallUpdate_CheckpointMergeIsPerField pins that a later frame with a narrower key
+// set cannot erase `original`, the pre-image a diff needs.
 func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	send := func(cp map[string]any) {
@@ -765,10 +732,8 @@ func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_CheckpointAbsentStaysNil pins that a tool call which
-// touched no file grows no checkpoint. ~95% of tool calls are in this case,
-// so allocating an empty struct here would put a useless `"checkpoint":{}`
-// on almost every tool call in every chat file on disk.
+// TestToolCallUpdate_CheckpointAbsentStaysNil pins that a call touching no file grows no
+// checkpoint, so most chat-file tool calls carry no `"checkpoint":{}`.
 func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
 	tests := []struct {
 		name string
@@ -797,10 +762,8 @@ func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
 	}
 }
 
-// A mid-flight update may refine the card's title and kind, and KAS sends both
-// nullish on most updates. So a value the update carries is applied and a value
-// it omits keeps what the initial tool_call set — treating absence as an
-// instruction blanks the label of a card the user is watching.
+// An update's title and kind are applied when present; an omitted one keeps what the
+// initial tool_call set (KAS sends both nullish on most updates).
 func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -843,11 +806,8 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 	}
 }
 
-// A call's lane is fixed at the create (the invocation rule): an id arriving on an
-// UPDATE is never adopted, because re-laning a call mid-flight re-parents its card,
-// and a step's work reaches the run's log by attribution rather than by an id on
-// a frame. A disagreeing update is folded where the call is and logged, so the
-// wire drift is visible without moving anything.
+// A call's lane is fixed at the create: an id arriving on an UPDATE is never adopted,
+// because re-laning re-parents the card. A disagreeing update is folded in place and logged.
 func TestToolCallUpdate_ALaneOnAnUpdateIsNeverAdopted(t *testing.T) {
 	const msg = "tool_call_update lane disagrees with its call's lane; folding where the call is"
 
@@ -907,11 +867,9 @@ func TestToolCallUpdate_ALaneOnAnUpdateIsNeverAdopted(t *testing.T) {
 	})
 }
 
-// TestToolCallUpdate_WorkflowIDFromRawOutput pins the one field this client reads out of
-// `rawOutput`, which KAS types as `unknown`. `run_workflow` reports the id of the run it
-// created there, and it is the ONLY structural link from the invocation to its run, so
-// without it the transcript cannot render a run's steps inside the call that launched
-// them. Every case is a shape KAS really sends, and none may panic or contaminate it.
+// TestToolCallUpdate_WorkflowIDFromRawOutput pins the one field read out of `rawOutput`:
+// the run id `run_workflow` reports, the only link from the invocation to its run. Every
+// case is a shape KAS really sends; none may panic or contaminate it.
 func TestToolCallUpdate_WorkflowIDFromRawOutput(t *testing.T) {
 	t.Parallel()
 
@@ -952,9 +910,8 @@ func TestToolCallUpdate_WorkflowIDFromRawOutput(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_WorkflowIDIsAdoptedOnce mirrors the late-adoption rule the
-// subtask id follows: KAS reports the run on the terminal update, and no later
-// frame for the same call can name a different run.
+// TestToolCallUpdate_WorkflowIDIsAdoptedOnce pins that a later frame cannot name a
+// different run.
 func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 	t.Parallel()
 	tr, _, deps, events, chatID := primeToolCall(t)
@@ -976,10 +933,8 @@ func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined pins the fifth card outcome.
-// `update_workflow` concludes Success while its own payload reports the refusal, so the
-// status alone reads the refusal as a clean completion — the one field that carries the
-// fact is `updated`, and this is the stated exception to reading outcome from a status.
+// TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined pins the fifth card outcome:
+// `update_workflow` concludes Success while its `updated` field reports the refusal.
 func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 	t.Parallel()
 
@@ -990,15 +945,11 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 		wantDeclined bool
 	}{
 		{"a refused update", map[string]any{"updated": false, "message": reason}, true},
-		// The applied case is what makes the field a verdict rather than a marker: it
-		// travels on every update_workflow reply, so reading its PRESENCE would mark
-		// every successful plan edit as a refusal.
+		// `updated` travels on every reply, so reading its PRESENCE would mark every edit refused.
 		{"an applied update", map[string]any{"updated": true, "message": "Plan updated."}, false},
-		// A queued update is TAKEN — its signal lands at the current turn's end — so it
-		// is not a refusal either.
+		// A queued update is taken (its signal lands at the turn's end).
 		{"a queued update", map[string]any{"updated": true, "queued": true}, false},
-		// Absent means the tool made no claim, which reads as taken. This is the arm
-		// that keeps every OTHER tool untouched: none of them carries the key.
+		// Absent reads as taken, which keeps every OTHER tool untouched.
 		{"an absent verdict", map[string]any{"workflowId": "wf_9", "status": "running"}, false},
 		{"a bare string, which most tools send", "some output", false},
 		{"null", nil, false},
@@ -1020,8 +971,8 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 			if got.Declined != c.wantDeclined {
 				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v", c.raw, got.Declined, c.wantDeclined)
 			}
-			// The mark is a SECOND axis, never a status: `failed` would offer the reader
-			// an "Explain this error" button over a tool that ran correctly.
+			// A second axis, never a status: `failed` would offer "Explain this error" for a tool
+			// that ran correctly.
 			if got.Status != marotte.ToolCompleted {
 				t.Errorf("ToolCall.Status = %q, want %q (a refusal is still a completion)", got.Status, marotte.ToolCompleted)
 			}
@@ -1029,9 +980,8 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_DeclinedOnlyGradesASettledCall pins the status gate. A refusal is
-// something the tool REPORTED, so an in-flight frame carrying the field has not reported
-// anything yet, and marking one would put the refusal outcome on a running card.
+// TestToolCallUpdate_DeclinedOnlyGradesASettledCall pins the status gate: an in-flight
+// frame has reported nothing yet.
 func TestToolCallUpdate_DeclinedOnlyGradesASettledCall(t *testing.T) {
 	t.Parallel()
 	tr, _, deps, events, chatID := primeToolCall(t)
@@ -1050,9 +1000,8 @@ func TestToolCallUpdate_DeclinedOnlyGradesASettledCall(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_DeclinedIsNeverCleared pins the one-way rule. A later frame for the
-// same call carries no verdict, and reading its absence as "taken" would erase the
-// refusal the terminal frame reported.
+// TestToolCallUpdate_DeclinedIsNeverCleared pins the one-way rule: a later frame carries
+// no verdict, and reading its absence as "taken" would erase the refusal.
 func TestToolCallUpdate_DeclinedIsNeverCleared(t *testing.T) {
 	t.Parallel()
 	tr, _, deps, events, chatID := primeToolCall(t)
@@ -1076,11 +1025,9 @@ func TestToolCallUpdate_DeclinedIsNeverCleared(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID is the D1 server half.
-// `update_workflow` echoes the run's own `workflowId` while starting nothing, so
-// adopting it makes the transcript read that call as the one that STARTED the run: its
-// block is seated on the run's card and its refusal renders nowhere at all. The `updated`
-// key is the only thing on the wire that tells the two calls apart.
+// TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID pins that an `update_workflow`
+// call, which echoes the run's `workflowId` while starting nothing, is not seated on the
+// run's card, where its refusal would render nowhere. `updated` tells the two apart.
 func TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID(t *testing.T) {
 	t.Parallel()
 
@@ -1100,8 +1047,7 @@ func TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID(t *testing.T) {
 			"",
 		},
 		{
-			// The launch's own rawOutput carries no `updated`, so the one call that
-			// SHOULD own the card is untouched by the exclusion.
+			// The launch carries no `updated`, so the call that owns the card is untouched.
 			"the launch, whose payload carries no verdict",
 			map[string]any{"workflowId": "wf_9", "status": "running"},
 			"wf_9",
@@ -1128,16 +1074,14 @@ func TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID(t *testing.T) {
 	}
 }
 
-// The message KAS's write tool throws when a remote-$schema JSON write is refused
-// outside Autopilot. Verbatim from the 2.20.1 bundle, because the reason reaching
-// the card unaltered is the property under test.
+// remoteJSONSchemaReason is verbatim from the 2.20.1 bundle: the reason reaching the card
+// unaltered is the property under test.
 const remoteJSONSchemaReason = "Cannot use this tool to write a Remote JSON Schema in Supervised mode. " +
 	"Switch to Autopilot mode to allow this write."
 
-// TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput drives the frame the guard
-// really produces: status failed, the reason as a bare JSON string in rawOutput, and a
-// diff block with an empty path because the throw beat resolveFile. KAS's edit arm puts
-// the reason in no content block, so rawOutput is the only channel it travels on.
+// TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput drives the guard's real frame:
+// status failed, the reason as a bare string in rawOutput, and an empty-path diff. KAS's
+// edit arm puts the reason in no content block.
 func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -1156,8 +1100,7 @@ func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 	if got.Output != remoteJSONSchemaReason {
 		t.Errorf("ToolCall.Output on a failed edit = %q, want the reason %q", got.Output, remoteJSONSchemaReason)
 	}
-	// The same frame pins that a path-less diff still contributes nothing: it is
-	// the whole content set here, so if it rendered the card would claim a change.
+	// A path-less diff contributes nothing, or the card would claim a change.
 	if len(got.Diffs) != 0 {
 		t.Errorf("ToolCall.Diffs = %+v, want none (a diff with no path names no file)", got.Diffs)
 	}
@@ -1166,10 +1109,8 @@ func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 	}
 }
 
-// TestHandleToolCallUpdate_FailedKeepsExistingOutput pins the `Output == ""` half
-// of the gate. A failed execute tool has printed its own output, and that is what
-// the reader needs; dropping the guard would append KAS's error text to it or
-// overwrite it.
+// TestHandleToolCallUpdate_FailedKeepsExistingOutput pins the `Output == ""` half of the
+// gate: a failed execute tool's own output is what the reader needs.
 func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -1238,6 +1179,89 @@ func TestHandleToolCallUpdate_CompletedTakesMessageFromStringifiedObjectOutput(t
 	}
 }
 
+// The sanitizer deletes U+202E from the content copy only, so the match must be
+// made on the unsanitized text and the extracted message sanitized after.
+func TestHandleToolCallUpdate_StringifiedObjectMatchSurvivesSanitizing(t *testing.T) {
+	output := map[string]any{"message": "started\u202e run", "workflowId": "wf_9"}
+	tr, _, deps, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "completed",
+		"rawOutput":  output,
+		"content": []map[string]any{
+			{"type": "content", "content": map[string]any{"type": "text", "text": string(mustJSON(t, output))}},
+		},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_progress or tool_result frame emitted")
+	}
+	if got.Output != "started run\n" {
+		t.Errorf("ToolCall.Output = %q, want %q", got.Output, "started run\n")
+	}
+}
+
+// KAS's MCP wrapper returns {response, imageBase64Urls} and stringifies it into
+// the content block, so the card must show the tool's text, not the envelope.
+func TestHandleToolCallUpdate_UnwrapsTheMCPResponseEnvelope(t *testing.T) {
+	const text = "3 issues found:\n- a\n- b"
+	cases := map[string]struct {
+		rawOutput map[string]any
+		content   string // "" sends the stringified rawOutput
+		status    string
+		want      string
+	}{
+		"a different content block stays canonical": {
+			rawOutput: map[string]any{"response": "envelope text"},
+			content:   `{"response":"what the content says"}`, status: "completed",
+			want: `{"response":"what the content says"}` + "\n",
+		},
+		"success envelope": {
+			rawOutput: map[string]any{"response": text, "imageBase64Urls": []any{}},
+			status:    "completed", want: text + "\n",
+		},
+		"error envelope": {
+			rawOutput: map[string]any{"response": "server said no"},
+			status:    "failed", want: "server said no\n",
+		},
+		"another tool's response-bearing object stays as sent": {
+			rawOutput: map[string]any{"response": "x", "succeeded": true},
+			status:    "completed", want: `{"response":"x","succeeded":true}` + "\n",
+		},
+		"the response is trimmed": {
+			rawOutput: map[string]any{"response": "  padded \n"},
+			status:    "completed", want: "padded\n",
+		},
+		// The match must hold on the unsanitized text.
+		"an envelope whose text the sanitizer changes": {
+			rawOutput: map[string]any{"response": "left\u202eright", "imageBase64Urls": []any{}},
+			status:    "completed", want: "leftright\n",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr, _, deps, events, chatID := primeToolCall(t)
+			stringified := cmp.Or(tc.content, string(mustJSON(t, tc.rawOutput)))
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     tc.status,
+				"rawOutput":  tc.rawOutput,
+				"content": []map[string]any{
+					{"type": "content", "content": map[string]any{"type": "text", "text": stringified}},
+				},
+			}), FrameAttribution{})
+			got, ok := lastToolCallUpdate(t, deps, events)
+			if !ok {
+				t.Fatal("no tool_progress or tool_result frame emitted")
+			}
+			if got.Output != tc.want {
+				t.Errorf("ToolCall.Output for rawOutput %s = %q, want %q", stringified, got.Output, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandleToolCallUpdate_CompletedKeepsDifferentContentOverObjectMessage(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -1261,10 +1285,8 @@ func TestHandleToolCallUpdate_CompletedKeepsDifferentContentOverObjectMessage(t 
 	}
 }
 
-// TestRawOutputFailureText is the decode on its own: a bare string, then an
-// object's error or message, and "" for everything else. The negative rows are
-// what keep the read narrow — each is a shape KAS really sends on some tool, and
-// none of them may become a card's output.
+// TestRawOutputFailureText pins the decode: a bare string, an object's error or message,
+// else "". Each negative row is a shape KAS sends that must never become output.
 func TestRawOutputFailureText(t *testing.T) {
 	t.Parallel()
 
@@ -1296,10 +1318,8 @@ func TestRawOutputFailureText(t *testing.T) {
 	}
 }
 
-// A disclosure and a policy denial are both decided when the call is ATTEMPTED,
-// so either can arrive on an update rather than the create. Each is adopted
-// into an empty slot only: overwriting would let a later frame replace the
-// refusal a user is reading with a narrower one.
+// A disclosure and a policy denial can arrive on an update. Each fills an empty slot only,
+// so a later frame cannot replace the refusal a user is reading.
 func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 	t.Run("a_disclosure_on_the_update_is_adopted", func(t *testing.T) {
 		tr, _, deps, events, chatID := primeToolCall(t)
@@ -1391,11 +1411,8 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 	})
 }
 
-// TestParseToolUpdateContent_UnmodelledType pins the BEHAVIOUR for a content block
-// marotte does not decode — nothing rendered — and the two Debug lines that make the
-// drop findable, since the symptom is otherwise a claim-only card with an empty details
-// region and no signal anywhere. This is the surface kiro-cli's structuredContent lands
-// on, deliberately not adopted while there is no renderer behind it.
+// TestParseToolUpdateContent_UnmodelledType pins that an undecoded content block renders
+// nothing and logs the two Debug lines that make the drop findable.
 // Serial (no t.Parallel): captureSlog swaps the process-wide slog default.
 func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
@@ -1409,8 +1426,6 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 			{Type: "structuredContent"},
 		})
 
-		// Behaviour first: the block is dropped, which is what it did before the
-		// logging and what this test would catch a silent adoption of.
 		if got.output != "" || got.diffs != nil || got.terminalID != "" {
 			t.Errorf("an unmodelled block produced output: %#v", got)
 		}
@@ -1420,16 +1435,14 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 				t.Errorf("log %q missing %q", line, want)
 			}
 		}
-		// The second line is the observable SYMPTOM rather than the cause, and it
-		// is what a reader searches for after seeing an empty card.
+		// The second line is the observable symptom a reader searches for.
 		if !strings.Contains(line, "produced nothing to render") {
 			t.Errorf("log %q missing the empty-render line", line)
 		}
 	})
 
 	t.Run("a claim-only tool logs nothing", func(t *testing.T) {
-		// No content blocks at all is the ~95% case (read, delete, think). Logging
-		// here would put a line on almost every tool call and bury the real one.
+		// No content blocks is the common case; logging here would bury the real line.
 		var logs bytes.Buffer
 		t.Cleanup(captureSlog(&logs))
 		tr.parseToolUpdateContent("tc-2", nil)
@@ -1439,10 +1452,8 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	})
 
 	t.Run("a known type with an unmatched payload is not called unmodelled", func(t *testing.T) {
-		// An empty-text content block and a diff with no path are NORMAL frames,
-		// not gaps in what marotte decodes. A bare `default` arm would report both
-		// as unmodelled types, which is the noise that would make the real line
-		// unfindable — so the guard is on the TYPE, not on whether an arm matched.
+		// An empty-text block and a path-less diff are NORMAL frames, so the guard is on the TYPE
+		// rather than on whether an arm matched.
 		var logs bytes.Buffer
 		t.Cleanup(captureSlog(&logs))
 		tr.parseToolUpdateContent("tc-3", []ACPToolCallContentBlock{
@@ -1454,9 +1465,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 		if strings.Contains(line, "unmodelled type") {
 			t.Errorf("log %q calls a known type unmodelled", line)
 		}
-		// The empty-render line DOES fire, and should: content arrived and none of
-		// it reached the card, which is the state worth knowing about however the
-		// blocks were shaped.
+		// Content arrived and none of it reached the card: worth logging.
 		if !strings.Contains(line, "produced nothing to render") {
 			t.Errorf("log %q missing the empty-render line", line)
 		}
@@ -1465,9 +1474,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	t.Run("a block that renders logs nothing", func(t *testing.T) {
 		var logs bytes.Buffer
 		t.Cleanup(captureSlog(&logs))
-		// Field assignment rather than a composite literal: ACPToolCallContentBlock
-		// declares Content as an ANONYMOUS struct, so a literal would have to
-		// restate its type inline.
+		// ACPToolCallContentBlock.Content is an anonymous struct, so a literal would restate it.
 		blk := ACPToolCallContentBlock{Type: ContentTypeContent}
 		blk.Content.Text = "hello"
 		got := tr.parseToolUpdateContent("tc-4", []ACPToolCallContentBlock{blk})
@@ -1480,9 +1487,8 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	})
 }
 
-// TestKnownToolContentType is the closed set the diagnostic above keys on, listed
-// rather than derived: a derived expectation would agree with any switch,
-// including one that had quietly stopped covering a member.
+// TestKnownToolContentType lists the closed set rather than deriving it, which would agree
+// with any switch.
 func TestKnownToolContentType(t *testing.T) {
 	for _, known := range []string{ContentTypeContent, ContentTypeDiff, ContentTypeTerminal} {
 		if !knownToolContentType(known) {
@@ -1496,23 +1502,9 @@ func TestKnownToolContentType(t *testing.T) {
 	}
 }
 
-// TestToolCallTitle_IsTreatedAtTheDecodeDoor pins the treatment where the title
-// ENTERS, so all four of its sinks are covered by one call: the persisted chat
-// file, the client's tool card, WorkingLabelForKind's prompt-bar working pill,
-// and the connect snapshot (which caps blocks and tool outputs and has no Title
-// cap of its own).
-//
-// At the door rather than at each emit site, for the reason the focus DESCRIPTION
-// already establishes: nothing parses or compares this value for anything but
-// display, so there is no raw-for-compute need, and four emit sites are four
-// places to forget. It also makes the tool card agree with the permission card,
-// which has treated its own copy of the same string all along — that asymmetry
-// inside one package is what marked this as a gap rather than a policy.
-//
-// The two ASCII titles the CLIENT classifies on ("Orchestrate Sub-agent", the
-// "Sub-agent:" prefix) are byte-identical under this treatment, which is what
-// makes it safe: the preset only rewrites the rune classes those titles cannot
-// contain.
+// TestToolCallTitle_IsTreatedAtTheDecodeDoor pins the treatment where the title ENTERS, so
+// its four sinks (chat file, tool card, working pill, connect snapshot) are covered once.
+// The ASCII titles the client classifies on are byte-identical under the treatment.
 func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 	cases := map[string]struct {
 		in   string
@@ -1556,18 +1548,49 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 	}
 }
 
-// TestToolCallTitle_IsBounded pins the other half. An unbounded title pushes the
-// working pill and the tool card off their layout, and rides the connect snapshot
-// where nothing else caps it.
+// TestToolCallTitle_IsBounded pins the cap: nothing else bounds the title on the connect
+// snapshot or the working pill.
 func TestToolCallTitle_IsBounded(t *testing.T) {
 	long := strings.Repeat("x", 4096)
 	got := toolCallFromWire(&ACPToolCallWire{ToolCallID: "tc", Title: long}, "", toolUpdateContent{}, 0)
-	// The preset carries its "..." marker OUTSIDE the cap, so a truncated value is
-	// maxDisplayTextBytes+3 bytes.
+	// The preset's "..." sits OUTSIDE the cap.
 	if maxLen := maxDisplayTextBytes + len("..."); len(got.Title) > maxLen {
 		t.Errorf("title length = %d, want at most %d bytes", len(got.Title), maxLen)
 	}
 	if !strings.HasSuffix(got.Title, "...") {
 		t.Errorf("a truncated title must say so; got %q", got.Title[max(0, len(got.Title)-16):])
+	}
+}
+
+func TestToolCallUpdate_OffloadAdoptedFromTheSettlingFrame(t *testing.T) {
+	tr, _, deps, events, chatID := primeToolCall(t)
+	path := "/config/home/.kiro/sessions/ab12/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt"
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "completed",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"outputTransformation": map[string]any{"kind": "offloaded", "absFilePath": path, "totalChars": 48213},
+		}},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_progress or tool_result frame emitted")
+	}
+	if got.Offload == nil || got.Offload.Path != path || got.Offload.TotalChars != 48213 {
+		t.Errorf("ToolCall.Offload = %+v, want path %q and 48213 chars", got.Offload, path)
+	}
+}
+
+func TestOffloadFrom_RefusesWhatIsNotAnOffloadedFile(t *testing.T) {
+	for name, in := range map[string]*ACPOutputTransformation{
+		"absent":        nil,
+		"other_kind":    {Kind: "clipped", AbsFilePath: "/a/b.txt", TotalChars: 1},
+		"relative_path": {Kind: "offloaded", AbsFilePath: "b.txt", TotalChars: 1},
+		"negative_size": {Kind: "offloaded", AbsFilePath: "/a/b.txt", TotalChars: -1},
+	} {
+		if got := offloadFrom(in); got != nil {
+			t.Errorf("offloadFrom(%s) = %+v, want nil", name, got)
+		}
 	}
 }

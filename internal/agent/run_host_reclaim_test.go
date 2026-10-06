@@ -26,8 +26,7 @@ func ownedElsewhereRefusal() *marotte.RPCError {
 	}
 }
 
-// claimedCarrier is a run carrier whose KAS refuses `method` while the run is still
-// stamped by another process, and answers normally once it is not.
+// claimedCarrier refuses `method` while the run is stamped by another process.
 type claimedCarrier struct {
 	*fakeBridge
 	held    func() bool
@@ -45,7 +44,7 @@ func (c *claimedCarrier) Call(ctx context.Context, method string, params any) (*
 	c.answers = append(c.answers, refused)
 	c.mu.Unlock()
 	if refused {
-		// The real bridge's shape: the reply AND an error wrapping its RPCError.
+		// The real bridge's shape: the reply and an error wrapping its RPCError.
 		rpcErr := ownedElsewhereRefusal()
 		return &marotte.RPCResponse{Error: rpcErr}, fmt.Errorf("ACP error %d: %w", rpcErr.Code, rpcErr)
 	}
@@ -58,9 +57,8 @@ func (c *claimedCarrier) sent() []bool {
 	return append([]bool(nil), c.answers...)
 }
 
-// restartSweptRun builds a run killed mid-step whose carrier is live here and whose
-// ownership stamp names the utility session, started first by the warming read. The
-// fake refuses the verb until that session is stopped.
+// restartSweptRun builds a run killed mid-step, its carrier live here and its stamp naming the utility
+// session; the fake refuses until that session stops.
 func restartSweptRun(t *testing.T, method string) (*Runtime, *fakeBridge, *claimedCarrier) {
 	t.Helper()
 	h, _, br := newTestHub()
@@ -74,8 +72,7 @@ func restartSweptRun(t *testing.T, method string) (*Runtime, *fakeBridge, *claim
 	return h, br, carrier
 }
 
-// A run the utility session's startup sweep stamped is driven anyway: every verb that
-// loads it stops that session, which drives no run, and is sent again.
+// A run the utility session's startup sweep stamped is still driven: the verb stops that session and resends.
 func TestRunVerbs_AStampTheUtilitySessionHoldsIsReleased(t *testing.T) {
 	cases := []struct {
 		verb   func(t *testing.T, h *Runtime, utility *fakeBridge) error
@@ -119,8 +116,7 @@ func TestRunVerbs_AStampTheUtilitySessionHoldsIsReleased(t *testing.T) {
 	}
 }
 
-// A concurrent verb may already have stopped the utility session: this one still
-// resends, because the stamp it was refused on can be that session's.
+// The utility may already be stopped by a concurrent verb; this one still resends.
 func TestResume_AUtilitySessionAnotherVerbStoppedStillResends(t *testing.T) {
 	h, _, carrier := restartSweptRun(t, methodKiroWorkflowResume)
 	h.runs.utility().session.Stop()
@@ -139,8 +135,7 @@ func TestResume_AUtilitySessionAnotherVerbStoppedStillResends(t *testing.T) {
 	}
 }
 
-// The stopped session's KAS leaves the process table a moment after Stop returns, and
-// until it does KAS still reads its stamp as live: the verb is resent until it lands.
+// KAS reads the stamp as live until the stopped process leaves the table, so the verb is resent until it lands.
 func TestResume_AStampThatOutlivesTheStopBrieflyIsReleased(t *testing.T) {
 	h, _, carrier := restartSweptRun(t, methodKiroWorkflowResume)
 	lingering := 2
@@ -160,8 +155,7 @@ func TestResume_AStampThatOutlivesTheStopBrieflyIsReleased(t *testing.T) {
 	}
 }
 
-// A stamp that never clears is still bounded: the resends stop at the grace and the
-// reader gets KAS's refusal.
+// A stamp that never clears ends at the grace with KAS's refusal.
 func TestResume_AStampThatNeverClearsEndsInTheRefusal(t *testing.T) {
 	grace := reclaimGrace
 	reclaimGrace = 3 * reclaimPoll
@@ -179,8 +173,7 @@ func TestResume_AStampThatNeverClearsEndsInTheRefusal(t *testing.T) {
 	}
 }
 
-// The chat-open heal racing a Resume of the same run loses KAS's claim to it: that is
-// the run being resumed, not a failed heal, so it is not reported as one.
+// A chat-open heal losing KAS's claim to a concurrent Resume is not a failed heal.
 func TestResumeIfInterrupted_LosingTheClaimToAnotherResumeIsNotAFailure(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, utility := newTestHub()

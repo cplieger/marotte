@@ -1,6 +1,4 @@
-// ---------------------------------------------------------------------------
-// MCP key/value pair editor — reusable sub-module for env vars and headers.
-// ---------------------------------------------------------------------------
+// Key/value pair editor for env vars and headers.
 
 import { el } from "@cplieger/reactive";
 import { type KeyPair, SECRET_MASK } from "./mcp-state.js";
@@ -8,15 +6,10 @@ import { ICON_CLOSE } from "./icons.js";
 
 export type PairKind = "env" | "header";
 
-/** What the publisher declared about one field: why it exists, whether the
- *  server needs a value, whether that value is a credential.
- *
- *  It arrives with a registry hit (`environmentVariables` / `headers` on the
- *  upstream record) and it is the fix for the most common MCP setup failure: a
- *  server that installs cleanly, does nothing, and sends the user off to read
- *  the publisher's docs to find out it needed a token. Disclosure only — an
- *  unfilled required field is still saveable, because the value may legitimately
- *  come later and a gate here would be a nanny. */
+/**
+ * What the publisher declared about a field (why it exists, required, credential), from a registry hit. Disclosure
+ * only: an unfilled required field still saves, since the value may come later.
+ */
 interface DeclaredField {
   description?: string | undefined;
   required?: boolean | undefined;
@@ -42,11 +35,10 @@ export function renderKeyPairList(
   }
 }
 
-// Tracks secret inputs the user actively typed into (via input event).
+// Secret inputs the user typed into.
 const touchedInputs = new WeakSet<HTMLInputElement>();
 
-// Per-row id source for the aria-describedby link between a value input and its
-// declared-field line. Module-scoped so two lists in one modal can't collide.
+// Module-scoped id source for aria-describedby, so two lists in one modal cannot collide.
 let pairMetaSeq = 0;
 
 export function appendKeyPair(host: HTMLDivElement, kv: EditablePair, kind: PairKind): void {
@@ -115,9 +107,7 @@ export function appendKeyPair(host: HTMLDivElement, kv: EditablePair, kind: Pair
   host.appendChild(row);
 }
 
-/** The publisher's own words about a field, with its required / secret markers.
- *  Returns null when the registry told us nothing, so a hand-typed row keeps
- *  exactly the shape it had. */
+/** Null when the registry said nothing, so a hand-typed row keeps its shape. */
 function buildDeclaredLine(declared: DeclaredField | undefined): HTMLElement | null {
   if (declared === undefined) {
     return null;
@@ -140,9 +130,7 @@ function buildDeclaredLine(declared: DeclaredField | undefined): HTMLElement | n
   return line;
 }
 
-/** Placeholder text for a value input. A declared secret says so, because the
- *  field otherwise looks like any other and the user has no cue that what they
- *  paste is stored masked and never read back. */
+/** A declared secret says so: the field gives no other cue that a paste is stored masked. */
 function placeholderFor(kind: PairKind, declared: DeclaredField | undefined): string {
   if (declared?.secret === true) {
     return kind === "env" ? "token, stored masked" : "value, stored masked";

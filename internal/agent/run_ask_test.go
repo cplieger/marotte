@@ -1,12 +1,7 @@
 package agent
 
-// Tests for the pending-run-ask registry and the two doors a workflow step's
-// question arrives through.
-//
-// What is pinned here is marotte's own bookkeeping, not KAS's behaviour: which
-// frames become an answerable ask, that exactly one surface can answer one, that
-// a failed send hands the ask back, and that nothing ends up holding a card for a
-// run whose wait is over.
+// This pins marotte's bookkeeping: which frames become asks, one answering surface, a failed send
+// handing the ask back, and no card left for a finished wait.
 
 import (
 	"encoding/json"
@@ -26,6 +21,7 @@ func notifyAsk(workflowID, nodeID, message, notifyID string) *marotte.RPCRespons
 		"callerSessionId": "sess_step",
 		"message":         message,
 		"severity":        "warning",
+		"sender":          "step",
 		"workflowId":      workflowID,
 		"nodeId":          nodeID,
 		"agentName":       "reviewer",
@@ -33,10 +29,7 @@ func notifyAsk(workflowID, nodeID, message, notifyID string) *marotte.RPCRespons
 	})
 }
 
-// askOf builds a recorded ask directly, for the registry's own table tests.
-//
-// By POINTER, matching the registry: an entry is immutable after Add and every
-// method that hands one back has already deleted it, so nothing shares one.
+// askOf builds a recorded ask directly, by pointer like the registry.
 func askOf(chatID marotte.ChatID, workflowID, askID, nodeID string) *runAsk {
 	return &runAsk{
 		chatID: chatID,
@@ -54,12 +47,11 @@ func TestPendingRunAsks_AddReportsNewOnly(t *testing.T) {
 	if !r.Add(askOf("c1", "wf_1", "a1", "review")) {
 		t.Error("Add(a fresh ask) = false, want true")
 	}
-	// A redelivered frame must not re-broadcast: the dock would de-duplicate it,
-	// but the log line and the wire traffic are both avoidable.
+	// A redelivered frame must not re-broadcast.
 	if r.Add(askOf("c1", "wf_1", "a1", "review")) {
 		t.Error("Add(the same ask twice) = true, want false")
 	}
-	// Missing identity is not an ask: it could never be answered or retired.
+	// Missing identity is not an ask.
 	if r.Add(askOf("c1", "", "a1", "review")) {
 		t.Error("Add(no workflow id) = true, want false")
 	}
@@ -80,9 +72,7 @@ func TestPendingRunAsks_TakeIsOncePerAsk(t *testing.T) {
 	if got.payload.NodeID != "review" {
 		t.Errorf("the claimed ask's node = %q, want review", got.payload.NodeID)
 	}
-	// The take-once claim: KAS accepts exactly one answer, and the loser's
-	// session/prompt would fall through to an ORDINARY prompt on the step's
-	// session — a message injected into a step nobody asked to steer.
+	// KAS accepts one answer; a loser's session/prompt would become an ordinary prompt.
 	if _, second := r.TakeIfPresent("wf_1", "a1"); second {
 		t.Error("TakeIfPresent twice ok = true, want false on the second claim")
 	}
@@ -91,10 +81,7 @@ func TestPendingRunAsks_TakeIsOncePerAsk(t *testing.T) {
 func TestPendingRunAsks_TakeIsKeyedOnThePair(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
-	// A synthesised ask id is derived from a node path, which two concurrent runs
-	// of one recipe SHARE. Keyed on the ask id alone, one run's reconcile would
-	// overwrite the other's ask and an answer to either would retire whichever
-	// survived.
+	// Two runs of one recipe share a synthesised ask id, so the key must include the run.
 	r.Add(askOf("c1", "wf_1", "reconciled:root/review", "review"))
 	r.Add(askOf("c2", "wf_2", "reconciled:root/review", "review"))
 
@@ -117,8 +104,7 @@ func TestPendingRunAsks_RestorePutsAClaimBack(t *testing.T) {
 	r.Add(a)
 	claimed, _ := r.TakeIfPresent("wf_1", "a1")
 	r.Restore(claimed)
-	// Without the restore, a transport failure on the answer leaves the run
-	// parked with its card gone from every surface and nothing to bring it back.
+	// Without the restore, a failed answer leaves the run parked with its card gone everywhere.
 	if _, ok := r.TakeIfPresent("wf_1", "a1"); !ok {
 		t.Error("Restore then TakeIfPresent ok = false, want the ask answerable again")
 	}
@@ -129,15 +115,14 @@ func TestPendingRunAsks_TakeNodeIsNodeScoped(t *testing.T) {
 	r := &pendingRunAsks{}
 	r.Add(askOf("c1", "wf_1", "a1", "review"))
 	r.Add(askOf("c1", "wf_1", "a2", "build"))
-	// An ask carrying no node cannot be matched, and the terminal clear collects it.
+	// An ask with no node is collected by the terminal clear.
 	r.Add(askOf("c1", "wf_1", "a3", ""))
 
 	got := r.TakeNode("wf_1", "review")
 	if len(got) != 1 || got[0].payload.AskID != "a1" {
 		t.Fatalf("TakeNode(review) = %+v, want just a1", got)
 	}
-	// A PARALLEL branch's node can complete while a sibling branch's step is
-	// still parked, so a run-scoped clear here would take a live ask with it.
+	// A parallel branch's node can complete while a sibling's step is parked.
 	if _, ok := r.TakeIfPresent("wf_1", "a2"); !ok {
 		t.Error("the sibling node's ask was dropped, want it left in place")
 	}
@@ -153,8 +138,7 @@ func TestPendingRunAsks_TakeRunAndClearChat(t *testing.T) {
 	r.Add(askOf("c1", "wf_1", "a2", "build"))
 	r.Add(askOf("c2", "wf_2", "a3", "review"))
 
-	// It RETURNS the claims rather than dropping them, because the caller has to
-	// announce each one: dropping an entry takes no card off any screen.
+	// Returned rather than dropped: the caller announces each.
 	got := r.TakeRun("wf_1")
 	if len(got) != 2 {
 		t.Fatalf("TakeRun(wf_1) returned %d asks, want 2", len(got))
@@ -165,8 +149,7 @@ func TestPendingRunAsks_TakeRunAndClearChat(t *testing.T) {
 	if !r.HasRun("wf_2") {
 		t.Error("TakeRun(wf_1) also dropped wf_2's ask")
 	}
-	// Idempotent, which is load-bearing: the answer path claims its own entry and
-	// the lifecycle path clears the rest, so both run for one ask.
+	// Idempotent: the answer and lifecycle paths both run for one ask.
 	if again := r.TakeRun("wf_1"); len(again) != 0 {
 		t.Errorf("TakeRun(wf_1) a second time returned %d asks, want 0", len(again))
 	}
@@ -184,13 +167,12 @@ func TestPendingRunAsks_ListFiltersByChatButKeepsRunKeyedAsks(t *testing.T) {
 	r.Add(askOf("run:wf_2", "wf_2", "a2", "review"))
 	r.Add(askOf("", "wf_3", "a3", "review"))
 
-	// A chat-filtered SSE stream sees only its own chat's ask. `run:<id>` is not a
-	// chat, so a parentless run's ask does not leak onto a chat's stream.
+	// `run:<id>` is not a chat, so a parentless run's ask stays off chat streams.
 	got := r.List("c1")
 	if len(got) != 2 {
 		t.Fatalf("List(c1) returned %d events, want 2 (c1's ask and the topicless one)", len(got))
 	}
-	// An unfiltered connection gets everything: that is the run tab's stream.
+	// An unfiltered connection (the run tab) gets everything.
 	if all := r.List(""); len(all) != 3 {
 		t.Errorf("List(\"\") returned %d events, want 3", len(all))
 	}
@@ -201,13 +183,8 @@ func TestPendingRunAsks_ListFiltersByChatButKeepsRunKeyedAsks(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_SessionNotifyBecomesAnAsk pins the RUN bridge's door.
-//
-// It sits BEFORE the `_kiro/workflow/` prefix test, because this method is not
-// under that prefix and would otherwise reach the Debug tail — which is exactly
-// where it used to go. It keeps the run bridge's OWN chat id rather than being
-// flattened to workspace-global like the lifecycle frames: an ask is answerable,
-// so it has to land on a surface.
+// TestRunDispatch_SessionNotifyBecomesAnAsk pins the run bridge's door, ahead of the `_kiro/workflow/`
+// prefix test, keeping the run bridge's own chat id: an ask must land on a surface.
 func TestRunDispatch_SessionNotifyBecomesAnAsk(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -230,17 +207,14 @@ func TestRunDispatch_SessionNotifyBecomesAnAsk(t *testing.T) {
 	if p["question"] != "which branch?" {
 		t.Errorf("question = %q, want the message verbatim", p["question"])
 	}
-	// The registry holds it too, or a client connecting a moment later gets
-	// nothing: the event does not re-fire.
+	// The registry holds it too: the event does not re-fire for a later connect.
 	if !h.runs.asks.HasRun("wf_1") {
 		t.Error("the ask was broadcast but not recorded, so a reconnect would lose it")
 	}
 }
 
-// TestTranslateACPEvent_SessionNotifyBecomesAnAsk pins the CHAT bridge's door,
-// which is where an AGENT-launched run's step asks: KAS parents such a run on
-// the calling chat's session, so the frame arrives on that chat's connection and
-// the ask belongs in that chat's own dock.
+// TestTranslateACPEvent_SessionNotifyBecomesAnAsk pins the chat bridge's door: KAS parents an
+// agent-launched run on the calling chat, so its asks arrive there.
 func TestTranslateACPEvent_SessionNotifyBecomesAnAsk(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", nil)
@@ -263,10 +237,7 @@ func TestTranslateACPEvent_SessionNotifyBecomesAnAsk(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_SessionNotifyDropsNonWarnings pins the gate, and it is the
-// half worth pinning: `info`, `success` and `error` change the step's lifecycle
-// without leaving anybody waiting, so a card for one asks the reader to answer a
-// step that has already moved on.
+// TestRunDispatch_SessionNotifyDropsNonWarnings pins that `info`, `success` and `error` leave nobody waiting.
 func TestRunDispatch_SessionNotifyDropsNonWarnings(t *testing.T) {
 	for _, severity := range []string{"info", "success", "error"} {
 		t.Run(severity, func(t *testing.T) {
@@ -287,7 +258,7 @@ func TestRunDispatch_SessionNotifyDropsNonWarnings(t *testing.T) {
 	}
 }
 
-// TestRunAskCleared pins that no ask outlives the wait it describes.
+// TestRunAskCleared pins that no ask outlives its wait.
 func TestRunAskCleared(t *testing.T) {
 	t.Run("a terminal run_complete clears the run", func(t *testing.T) {
 		h, _, _ := newTestHub()
@@ -308,16 +279,12 @@ func TestRunAskCleared(t *testing.T) {
 		h.dispatch(t.Context(), "run:wf_1", runNotif(methodWFRunComplete,
 			map[string]any{"workflowId": "wf_1", "status": "failed"}))
 
-		// Dropping the entry takes no card off any screen: every surface the ask was
-		// offered to still holds it, and while a stale run card sits at the head of a
-		// per-chat dock queue it also hides every later ask for that chat.
+		// Dropping the entry takes no card off any screen, and a stale head card hides the chat's later asks.
 		settled := settledPayloads(t, h)
 		if len(settled) != 1 {
 			t.Fatalf("run_input_settled events = %d, want 1", len(settled))
 		}
-		// NOBODY answered, so the reason must not claim anybody did — SettledByUser
-		// makes every other window read "answered in another window" for a question
-		// that was discarded.
+		// Nobody answered, so not SettledByUser.
 		if got := settled[0]["settled_by"]; got != string(marotte.SettledByMoot) {
 			t.Errorf("settled_by = %q, want %q", got, marotte.SettledByMoot)
 		}
@@ -326,8 +293,7 @@ func TestRunAskCleared(t *testing.T) {
 	t.Run("a non-terminal run_complete keeps it", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.dispatch(t.Context(), "run:wf_1", notifyAsk("wf_1", "review", "which branch?", "n1"))
-		// KAS reports an onMaxIterations policy stop through this same frame, and
-		// that run is still this process's to resume — so its ask is still live.
+		// An onMaxIterations stop arrives on this frame and is still resumable, so its ask is live.
 		h.dispatch(t.Context(), "run:wf_1", runNotif(methodWFRunComplete,
 			map[string]any{"workflowId": "wf_1", "status": "paused"}))
 		if !h.runs.asks.HasRun("wf_1") {
@@ -346,15 +312,12 @@ func TestRunAskCleared(t *testing.T) {
 		if h.runs.asks.HasRun("wf_1") {
 			t.Error("the asking node completed and its ask survived")
 		}
-		// The announcement is not optional: the card is on every surface the ask
-		// was offered to, and a registry deletion changes nothing anybody sees.
+		// The announcement is what takes the card down.
 		settled := settledPayloads(t, h)
 		if len(settled) != 1 {
 			t.Fatalf("run_input_settled events = %d, want 1", len(settled))
 		}
-		// MOOT, not user: marotte's own answer path settles the entry it claimed
-		// before it sends, so nothing reaching this door was answered here — and this
-		// frame fires for a failed and an aborted node just as readily.
+		// Moot: the answer path settles its own claim before sending, and this frame also fires for failed and aborted nodes.
 		if got := settled[0]["settled_by"]; got != string(marotte.SettledByMoot) {
 			t.Errorf("settled_by = %q, want %q", got, marotte.SettledByMoot)
 		}
@@ -401,11 +364,7 @@ func hasEventType(events []bufferedEvent, want string) bool {
 	return false
 }
 
-// settledPayloads decodes every `run_input_settled` payload a dispatch produced.
-//
-// The ATTRIBUTION is what these cases assert, not merely that a frame fired: the
-// three settle reasons read differently to the person whose card vanished, and one
-// of them asserts an answer nobody gave.
+// settledPayloads decodes every `run_input_settled` payload; the attribution is what the cases assert.
 func settledPayloads(t *testing.T, h *Runtime) []map[string]string {
 	t.Helper()
 	var out []map[string]string
@@ -417,8 +376,7 @@ func settledPayloads(t *testing.T, h *Runtime) []map[string]string {
 	return out
 }
 
-// pauseFixture mirrors testdata/need_input_pauses.json. See that file's _comment
-// for why the table is SHARED with the TypeScript side rather than written twice.
+// pauseFixture mirrors testdata/need_input_pauses.json, shared with the TypeScript side.
 type pauseFixture struct {
 	Cases []struct {
 		Name   string `json:"name"`
@@ -427,13 +385,8 @@ type pauseFixture struct {
 	} `json:"cases"`
 }
 
-// TestNeedInputPauseContract is one half of a cross-language pin:
-// run-store-pause.node.test.ts runs the same table against the TypeScript
-// implementation. A KAS wording change applied in only one language fails in the
-// other, which is the only thing keeping the two predicates in agreement.
-//
-// The table lives in the fixture rather than here so there is ONE statement of the
-// cases. An inline copy beside it would be the same duplication one level down.
+// TestNeedInputPauseContract is half of a cross-language pin with run-store-pause.node.test.ts:
+// a KAS wording change applied in one language fails the other.
 func TestNeedInputPauseContract(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile("testdata/need_input_pauses.json")
@@ -447,8 +400,7 @@ func TestNeedInputPauseContract(t *testing.T) {
 	if len(fx.Cases) == 0 {
 		t.Fatal("fixture carries no cases; a silently-empty table would pass forever")
 	}
-	// Both verdicts have to be represented, or half the rule is unpinned: a
-	// predicate returning a constant satisfies a single-verdict table.
+	// Both verdicts must appear, or a constant predicate passes.
 	var trues, falses int
 	for _, tc := range fx.Cases {
 		if tc.Want {
@@ -471,10 +423,7 @@ func TestNeedInputPauseContract(t *testing.T) {
 
 func TestPausedLeaf(t *testing.T) {
 	t.Parallel()
-	// A run reports `paused` at the ROOT while the step actually holding the
-	// question is somewhere below it, and that step's session id is the answer
-	// address — so the leaf, not the tree's own status, is what a reconciled ask
-	// has to be built from.
+	// The root reports `paused` while the step holding the question is below it; its session is the answer address.
 	root := &askNode{
 		NodeID: "root",
 		Status: "paused",
@@ -497,8 +446,7 @@ func TestPausedLeaf(t *testing.T) {
 	if leaf.SessionID != "sess_step" {
 		t.Errorf("leaf session = %q, want sess_step", leaf.SessionID)
 	}
-	// The PATH rather than the node id, because a repeat's iterations share an id
-	// and the synthesised ask id has to distinguish two passes of one loop body.
+	// The path, not the node id: a repeat's iterations share an id.
 	want := []string{"root", "loop", "iter"}
 	if len(path) != len(want) {
 		t.Fatalf("path = %v, want %v", path, want)
@@ -508,21 +456,14 @@ func TestPausedLeaf(t *testing.T) {
 			t.Fatalf("path = %v, want %v", path, want)
 		}
 	}
-	// A tree with nothing parked yields nothing, so a run paused for another
-	// reason cannot produce an ask.
+	// Nothing parked yields nothing.
 	if l, _ := pausedLeaf(&askNode{NodeID: "root", Status: "running"}, nil); l != nil {
 		t.Errorf("pausedLeaf(a running run) = %+v, want nil", l)
 	}
 }
 
-// parkedInspect builds a workflow/inspect reply for a run parked at one leaf:
-// paused at the root, paused at the `review` leaf, and that leaf carrying the
-// session id which IS the answer address.
-//
-// One builder for both readers of this shape — the reconcile, which varies the
-// status and the pause reason, and the answer path's resolve-from-inspect
-// fallback, which varies the session id — so the two cannot disagree about what a
-// parked run's state looks like.
+// parkedInspect builds an inspect reply for a run parked at its `review` leaf, whose session is the
+// answer address. One builder for the reconcile and the answer path's fallback.
 func parkedInspect(t *testing.T, status marotte.RunStatus, pauseReason, stepSession string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -545,9 +486,7 @@ func parkedInspect(t *testing.T, status marotte.RunStatus, pauseReason, stepSess
 	return raw
 }
 
-// eventOfType returns the first buffered event of a type, so a case that opens a
-// bridge asserts on the frame it means rather than on an index into whatever else
-// the setup broadcast.
+// eventOfType returns the first buffered event of a type.
 func eventOfType(t *testing.T, h *Runtime, want string) bufferedEvent {
 	t.Helper()
 	for _, e := range bufferedEvents(h) {
@@ -559,10 +498,8 @@ func eventOfType(t *testing.T, h *Runtime, want string) bufferedEvent {
 	return bufferedEvent{}
 }
 
-// TestReconcileNeedInput pins the container-restart path: the registry is in
-// memory while the run is not, so a restart leaves the run parked with the
-// question gone. Without a reconstructed ask the only recourse would be
-// cancelling work one sentence from finishing.
+// TestReconcileNeedInput pins the restart path: the in-memory registry lost the question, and only
+// a reconstructed ask avoids cancelling.
 func TestReconcileNeedInput(t *testing.T) {
 	inspect := func(status marotte.RunStatus, pauseReason string) json.RawMessage {
 		return parkedInspect(t, status, pauseReason, "sess_step")
@@ -580,8 +517,7 @@ func TestReconcileNeedInput(t *testing.T) {
 		if p["step_session_id"] != "sess_step" {
 			t.Errorf("step_session_id = %q, want sess_step (the answer address)", p["step_session_id"])
 		}
-		// Deliberately empty: the text was in the registry this process lost, and
-		// inventing a question would put words in the step's mouth.
+		// Empty: the text was in the lost registry.
 		if p["question"] != "" {
 			t.Errorf("question = %q, want empty on a reconstructed ask", p["question"])
 		}
@@ -590,8 +526,7 @@ func TestReconcileNeedInput(t *testing.T) {
 	t.Run("it is idempotent across reads", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		raw := inspect("paused", needInputPauseReason)
-		// The read path runs this on EVERY refetch, so a fresh id per read would
-		// stack duplicate cards on the dock.
+		// Run on every refetch, so a fresh id per read would stack duplicates.
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", raw)
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", raw)
 		if n := len(bufferedEvents(h)); n != 1 {
@@ -599,11 +534,8 @@ func TestReconcileNeedInput(t *testing.T) {
 		}
 	})
 
-	// The reader's requirement is the prompt in the PARENT tab, and the composer
-	// dock matches on chat id alone — a `run:` key can never match it, so keying
-	// every reconstructed ask there put the card on the one surface that cannot
-	// answer it (answering needs the launching chat's bridge). Keyed to the chat, it
-	// renders in BOTH: the run tab's dock matches the payload's run id as well.
+	// The composer dock matches the chat id alone, and answering needs the launching chat's bridge;
+	// keyed to the chat the card renders in both docks.
 	t.Run("it keys the ask to the launching chat when one still hosts the run", func(t *testing.T) {
 		h, cs, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -630,9 +562,7 @@ func TestReconcileNeedInput(t *testing.T) {
 		}
 	})
 
-	// The fallback, and it is the honest answer rather than a lesser one: after a
-	// restart every bridge died with the process, so no launching chat's dock exists
-	// to key to, and the run tab is how a person reaches such a run at all.
+	// After a restart no launching chat's dock exists, and the run tab is the way in.
 	t.Run("it keys the ask to the run when nothing hosts it", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", inspect("paused", needInputPauseReason))
@@ -643,11 +573,7 @@ func TestReconcileNeedInput(t *testing.T) {
 		}
 	})
 
-	// The window AnswerInput opens before it claims. Without the answering arm of
-	// the gate a refetch landing between the claim and the send passes it, mints a
-	// text-less twin, and the settle that follows names the ORIGINAL ask id — so
-	// nothing retires the twin and the reader is told the question was lost
-	// immediately after answering it.
+	// The window AnswerInput opens before it claims: without it a refetch mints a text-less twin nothing retires.
 	t.Run("an answer in flight gets no twin", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.asks.beginAnswer("wf_1")
@@ -676,17 +602,10 @@ func TestReconcileNeedInput(t *testing.T) {
 	})
 }
 
-// TestReconcileNeedInput_InsideAParallelBranch pins the arm no pause reason can reach:
-// a branch's own sentence is written to a throwaway state copy, so the run keeps only
-// a wrapper that KAS also emits for an interruption and a permanent failure, and what
-// survives is the branch NODE's completionSignal.
-//
-// Its own function rather than a case in the table above: the fixture is a different
-// tree shape, and the checking logic here is about which NODE was named.
+// TestReconcileNeedInput_InsideAParallelBranch pins that a branch's sentence goes to a state copy, so only the
+// branch node's completionSignal survives.
 func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
-	// branched builds a run parked at a parallel with TWO paused branches. The first
-	// in document order is the one pausedLeaf would name, so a case that expects the
-	// second is asserting the signal decided rather than the walk order.
+	// Two paused branches; the first is what pausedLeaf would name, so expecting the second proves the signal decided.
 	branched := func(t *testing.T, firstSignal, secondSignal string) json.RawMessage {
 		t.Helper()
 		raw, err := json.Marshal(map[string]any{
@@ -735,10 +654,7 @@ func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
 		}
 	})
 
-	// The signal NAMES the step, which pausedLeaf's first depth-first match cannot:
-	// with two branches parked for different causes only the signal says which one
-	// owes a person an answer, and addressing the other one prompts a step nobody
-	// asked to steer.
+	// Only the signal says which branch owes an answer; prompting the other steers a step nobody asked.
 	t.Run("it names the branch carrying the signal, not the first paused one", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", branched(t, "", needInputSignal))
@@ -751,10 +667,7 @@ func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
 		}
 	})
 
-	// The negative that keeps the arm honest. A branch parked on a TRANSIENT error is
-	// the shape that produced the identical wrapper sentence on the live instance, and
-	// nobody owes it an answer — so an arm keyed on the sentence would mint a card for
-	// a run that only needs a resume.
+	// A branch parked on a transient error produces the same wrapper sentence and needs only a resume.
 	t.Run("a branch parked on a transient error gets none", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", branched(t, "", ""))
@@ -763,12 +676,7 @@ func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
 		}
 	})
 
-	// The `paused` half of the signal test, and the shape that makes it load-bearing:
-	// KAS's QUEUED status update writes `need_input` onto a node that is still RUNNING
-	// (its turn has to end first), so a signal alone does not mean a step is parked.
-	// One parallel branch in that state beside another parked for its own cause gives a
-	// `paused` run whose only need-input signal sits on a running node — and an ask
-	// minted there addresses a step nothing is waiting at.
+	// KAS's queued status update writes `need_input` onto a still-running node, so a signal alone is not a park.
 	t.Run("a signal on a RUNNING node is not a park", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		raw, err := json.Marshal(map[string]any{
@@ -803,11 +711,9 @@ func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
 	})
 }
 
-// TestAnswerInput pins the answer verb: the RPC it sends, the take-once refusal,
-// and the restore on a failed send.
+// TestAnswerInput pins the answer RPC, the take-once refusal, and the restore on a failed send.
 func TestAnswerInput(t *testing.T) {
-	// setup wires a run bridge holding one recorded ask, which is the shape a
-	// parentless run has.
+	// setup wires a run bridge holding one recorded ask, a parentless run's shape.
 	setup := func(t *testing.T) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, _, br := newTestHub()
@@ -826,9 +732,7 @@ func TestAnswerInput(t *testing.T) {
 		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 			t.Fatalf("AnswerInput = %v, want nil", err)
 		}
-		// The answer verb is a plain session/prompt addressed to the STEP's own
-		// session, which KAS reroutes into the run (tryResumeStepWithMessage).
-		// Addressed anywhere else it would be an ordinary prompt on a chat.
+		// A plain session/prompt to the step's own session, which KAS reroutes into the run (tryResumeStepWithMessage).
 		params := br.paramsFor(marotte.MethodPrompt)
 		if params == nil {
 			t.Fatalf("no %s call, calls were %v", marotte.MethodPrompt, br.callLog())
@@ -854,9 +758,7 @@ func TestAnswerInput(t *testing.T) {
 		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 			t.Fatalf("Setup: the first answer failed: %v", err)
 		}
-		// KAS accepts one answer, and the loser's prompt would fall through to an
-		// ORDINARY prompt on the step's session — a message injected into a step
-		// nobody asked to steer. So the claim has to be decided here.
+		// KAS accepts one answer, so the claim is decided here.
 		err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "no, the release branch")
 		if !errors.Is(err, errAskAlreadySettled) {
 			t.Errorf("the second answer = %v, want errAskAlreadySettled", err)
@@ -869,16 +771,11 @@ func TestAnswerInput(t *testing.T) {
 		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
 			t.Fatal("AnswerInput = nil, want the transport error")
 		}
-		// Without the restore a blip leaves the run parked with its card gone from
-		// every surface and no way to bring it back short of another restart.
+		// Without the restore, a blip loses the card for good.
 		if !h.runs.asks.HasRun("wf_1") {
 			t.Error("the ask was lost on a failed send, want it restored")
 		}
-		// Restoring the ENTRY is only half of it: the click already spliced the card
-		// from every dock that held it, so an entry with no frame behind it is
-		// visible to nobody until the next SSE connect refills it from the replay —
-		// which is the outcome the restore exists to prevent, one layer up. And it
-		// must NOT be a settle: the question is still open.
+		// The entry and a re-offered frame both: the click already spliced the card from every dock. Not a settle: still open.
 		if !hasEventType(bufferedEvents(h), string(marotte.EventRunInputNeeded)) {
 			t.Error("no run_input_needed event, so the restored ask reaches no surface")
 		}
@@ -887,12 +784,7 @@ func TestAnswerInput(t *testing.T) {
 		}
 	})
 
-	// The SUCCESS arm of the resolve-from-inspect fallback, which is what makes an
-	// address-less ask answerable at all. Only a RECONCILED ask reaches it (a live
-	// notify frame carries its own callerSessionId), and until this case existed the
-	// arm had no test: a regression there would refuse every reconstructed ask
-	// forever, with a sentence about the step not being addressable, and nothing
-	// would have gone red.
+	// The fallback's success arm: only a reconciled ask (no callerSessionId) reaches it.
 	t.Run("an address-less ask resolves the step from a fresh inspect", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
@@ -916,8 +808,7 @@ func TestAnswerInput(t *testing.T) {
 		if params == nil {
 			t.Fatalf("no %s call, calls were %v", marotte.MethodPrompt, br.callLog())
 		}
-		// The paused LEAF's session, not the root's and not the chat's: KAS reroutes a
-		// prompt into the run only when it is addressed to the parked step itself.
+		// The paused leaf's session: KAS reroutes only a prompt addressed to the parked step.
 		if params["sessionId"] != "sess_from_inspect" {
 			t.Errorf("sessionId = %v, want sess_from_inspect (resolved from inspect)",
 				params["sessionId"])
@@ -928,8 +819,7 @@ func TestAnswerInput(t *testing.T) {
 	})
 
 	t.Run("an unaddressable step re-offers the ask too", func(t *testing.T) {
-		// Same restore, other refusal arm: the ask carries no step session and no
-		// fresh inspect can supply one, so the claim has to go back.
+		// No step session and no fresh inspect, so the claim goes back.
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 		h.runs.asks.Add(&runAsk{
@@ -949,9 +839,7 @@ func TestAnswerInput(t *testing.T) {
 
 	t.Run("an empty answer is refused", func(t *testing.T) {
 		h, _ := setup(t)
-		// Continuing without an answer is a DIFFERENT verb, because it drives the
-		// step with KAS's default continuation rather than the user's words. A
-		// reader must not reach it by submitting an empty box.
+		// Continue-without-answering is a different verb; an empty box must not reach it.
 		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "   "); err == nil {
 			t.Error("AnswerInput(whitespace) = nil, want a refusal")
 		}
@@ -960,10 +848,7 @@ func TestAnswerInput(t *testing.T) {
 		}
 	})
 
-	// A run nothing hosts is the ORDINARY case now that a park drops the bridge, so
-	// the answer path re-hosts instead of refusing. This test replaced one asserting
-	// the refusal: that refusal was reachable for every parked run, which made the
-	// card the reader was shown unanswerable by construction.
+	// A run nothing hosts is ordinary since a park drops the bridge, so the answer re-hosts.
 	t.Run("a run nothing hosts is re-hosted and the answer lands", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}

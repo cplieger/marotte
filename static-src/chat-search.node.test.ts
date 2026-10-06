@@ -1,16 +1,6 @@
-// ---------------------------------------------------------------------------
-// The cross-language pin for the in-chat search reply.
-//
-// chat.SearchResult and chat.Hit are wiregen-registered, so the TypeScript types
-// and decoders are GENERATED from the Go structs; what this pins is the ENCODER.
-// Go's TestSearchWireContract writes the fixture from a real scan, and every reply
-// in it is decoded here through the generated decodeSearchResult: a field the
-// server renames, drops or re-types fails the decode, and a value outside a
-// registered enum fails it too.
-//
-// Node placement because the fixture is a disk read; the decoder module is pure,
-// so nothing browser-shaped loads.
-// ---------------------------------------------------------------------------
+// The cross-language pin for the in-chat search reply: the TS decoders are generated from
+// the Go structs, so this pins the ENCODER. Go's TestSearchWireContract writes the fixture
+// from a real scan, decoded here through `decodeSearchResult`. Node: a disk read.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
@@ -35,12 +25,10 @@ function loadFixture(): SearchFixture {
   return JSON.parse(raw) as SearchFixture;
 }
 
-/** One declared constant, read out of a source file as TEXT.
- *
- *  Text rather than an import on both sides: the Go value is unexported, and the
- *  client's lives in a DOM module this node project cannot load. Which is also why
- *  the pair needs a test at all — there is no wire field carrying the radius and no
- *  codegen on either side, so nothing else holds the two numbers together. */
+/**
+ * One declared constant, read out of a source file as TEXT: the Go value is unexported and
+ * the client's lives in a DOM module. No wire field or codegen holds the pair together.
+ */
 function declaredNumber(rel: string, pattern: RegExp): number {
   const src = readFileSync(new URL(rel, import.meta.url), "utf8");
   const m = pattern.exec(src);
@@ -88,9 +76,7 @@ describe("the in-chat search reply shared with the Go implementation", () => {
   });
 
   it("keeps the entry-kind contract: offset 0, zero length, no lane", () => {
-    // The filter-only answer locates ENTRIES rather than spans in them, so its hits
-    // carry no position at all — which is what keeps the ranker's segment_len
-    // division unreachable for the kind (`landOnHit` routes it to the container).
+    // Entry hits locate ENTRIES, not spans, so they carry no position (`landOnHit` routes them).
     const entries = allHits().filter((h) => h.segment_kind === "entry");
     expect(entries.length).toBeGreaterThan(0);
     for (const h of entries) {
@@ -101,12 +87,8 @@ describe("the in-chat search reply shared with the Go implementation", () => {
   });
 
   it("keeps offsets RUNE-counted: a multibyte word before the match must not skew it", () => {
-    // The fixture's prompt reads "… The naïve loop calls retry twice." — the second
-    // occurrence sits behind "naïve", whose ï is two UTF-8 bytes, so a server
-    // regression to byte offsets would regenerate this as 57.
-    //
-    // Scoped to the PROMPT segment: the same `turn_open` entry also carries an
-    // attachment, whose own segment is a different span with its own offsets.
+    // The second occurrence sits behind "naïve" (ï is two bytes), so byte offsets would make
+    // this 57. Scoped to the PROMPT segment; the attachment has its own.
     const prompt = allHits().filter((h) => h.segment_kind === "prompt");
     expect(prompt.map((h) => h.offset)).toEqual([15, 56]);
     // And segment-relative rather than turn-relative: the tool output is one entry
@@ -117,9 +99,7 @@ describe("the in-chat search reply shared with the Go implementation", () => {
   });
 
   it("addresses entries: a result pairs to its call by id, the delegate names its lane", () => {
-    // A call and its settled value are TWO entries, paired by `<call>:result` — which
-    // is the identity both sides mint, so the client resolves the output's card from
-    // the call's own element with no join.
+    // A call and its value are TWO entries paired by `<call>:result`, minted on both sides.
     const hits = allHits();
     const title = hits.find((h) => h.segment_kind === "tool_title");
     const output = hits.find((h) => h.segment_kind === "tool_output");
@@ -137,13 +117,8 @@ describe("the in-chat search reply shared with the Go implementation", () => {
 
 describe("the excerpt radius the ranker compares against", () => {
   it("is the same number on both sides", () => {
-    // The server slices `searchExcerptRadius` runes either side of a hit into its
-    // excerpt; the client slices the same amount of RENDERED text around a candidate
-    // mark before scoring the two against each other (`contextAround`). A wider
-    // window on one side feeds tokens the other never saw into a Dice coefficient
-    // with a similarity FLOOR, so the two numbers drifting apart does not break a
-    // build — it quietly moves which occurrence a hit lands on, and pushes a thin
-    // match below the floor into the "not in rendered text" notice.
+    // Both sides slice the same radius around a hit before a Dice score with a similarity floor;
+    // drift silently moves which occurrence a hit lands on.
     const go = declaredNumber(GO_SEARCH_PATH, /^const searchExcerptRadius = (\d+)$/m);
     const client = declaredNumber(CLIENT_FIND_PATH, /^const EXCERPT_RADIUS = (\d+);$/m);
     expect(client, "find-in-chat.ts EXCERPT_RADIUS must equal chat.searchExcerptRadius").toBe(go);

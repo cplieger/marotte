@@ -1,18 +1,7 @@
 package command
 
-// The shape pin: a mechanical guard against an aggregate dependency interface
-// growing back in either of the two packages that had one.
-//
-// It lives in internal/command and reads ../translate as well, because the rule
-// is one rule over two packages and a second copy of it would be a second thing
-// to keep in step. Only production files are read: a test double stands in for
-// the whole host, so the doubles in this package and in translate DO name every
-// role at once, deliberately, and gating them would be gating the fixture rather
-// than the design.
-//
-// Two numbers, because either alone is escapable. Embed count catches the
-// composite spelled as embedding; transitive method count catches the same
-// surface spelled as a flat method list.
+// The shape pin: a mechanical guard against an aggregate dependency interface growing back in
+// internal/command or internal/translate.
 
 import (
 	"go/ast"
@@ -25,13 +14,11 @@ import (
 )
 
 const (
-	// maxEmbeds is the most other interfaces one interface may embed. The widest
-	// legitimate case is Bridge at 3, which composes the three seams of ONE
-	// concrete type (RPC, prompt slot, priming) rather than unrelated host roles.
+	// maxEmbeds is the most interfaces one interface may embed: Bridge's 3, the seams of one
+	// concrete type.
 	maxEmbeds = 3
-	// maxMethods is the widest transitive method surface any one interface here
-	// may declare. Bridge sets it at 12, the real method count of a per-chat ACP
-	// bridge. The deleted composites were 27 (command) and 17 (translate).
+	// maxMethods is the widest transitive method surface allowed: Bridge's 12, the real per-chat
+	// ACP bridge.
 	maxMethods = 12
 )
 
@@ -97,11 +84,8 @@ func collectInterfaces(t *testing.T, dirs ...string) []ifaceDecl {
 	var out []ifaceDecl
 	for _, dir := range dirs {
 		fset := token.NewFileSet()
-		// ReadDir + ParseFile rather than parser.ParseDir, which Go 1.25
-		// deprecated for ignoring build tags. The suggested replacement,
-		// go/packages, type-checks a whole program to answer a question about
-		// syntax; this walk never needed the package grouping ParseDir returned,
-		// only the files.
+		// ReadDir + ParseFile rather than the deprecated parser.ParseDir; go/packages would
+		// type-check a whole program for a syntax question.
 		ents, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("read %s: %v", dir, err)
@@ -148,7 +132,6 @@ func describe(dir, file, name string, it *ast.InterfaceType) ifaceDecl {
 			d.embeds = append(d.embeds, exprName(e))
 			d.external++
 		default:
-			// A type constraint element (union, ~T) is not a role.
 			d.direct++
 		}
 	}

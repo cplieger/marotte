@@ -1,11 +1,7 @@
-// Tests for the shared git-status store: the per-path lookup the docs page and
-// the file browser read, and the index rules behind it.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The store reads the tree for its FIRST SUBSCRIBER, and two tests below
-// subscribe. Replacing the actions layer keeps that read off the network: these
-// tests seed the store with `_setReposForTest` and assert on what the index
-// derives. Which triggers make it read is git-status-triggers.test.ts's subject.
+// Replacing the actions layer keeps the first subscriber's read off the network; tests seed with `_setReposForTest`.
+// Which triggers read is git-status-triggers.test.ts's subject.
 vi.mock("./actions/index.js", () => ({
   apiAction: () => ({ dispatch: () => Promise.resolve({ repos: [] }) }),
   defineAction: () => ({ dispatch: () => Promise.resolve({ repos: [] }) }),
@@ -98,24 +94,15 @@ describe("statusFor", () => {
   it("clears stale entries when a poll returns a cleaner tree", () => {
     _setReposForTest([repo("r", [{ path: "a.md", status: "M" }])]);
     expect(statusFor("r", "a.md")).toBe("M");
-    // The file was committed: the next poll no longer lists it.
+    // The file was committed: the next read no longer lists it.
     _setReposForTest([repo("r", [])]);
     expect(statusFor("r", "a.md")).toBe("");
   });
 });
 
-// The absolute-path lookups exist because the file browser holds real filesystem
-// paths and does not know which repo one belongs to.
-//
-// THE FIXTURE SHAPE IS THE POINT. /api/git/status-all reports each repo by a bare
-// directory NAME under the workspace ("." when the workspace root is itself a
-// repo), never by an absolute path — see discoverRepos in internal/git/repos.go.
-// These cases used to fabricate absolute names (`repo("/w/r", …)`), which made the
-// index keys look absolute and the assertions pass while the real product built
-// keys like "marotte/static-src/a.ts" and looked them up with
-// "/workspace/marotte/static-src/a.ts". No key ever matched, so the browser's
-// status letters and every directory rollup were silently empty for every file,
-// with a green suite. The join now goes through workspace.ts.
+// The fixture shape is the point: /api/git/status-all names each repo by a bare directory name under the workspace
+// ("." for the root), never an absolute path (discoverRepos in internal/git/repos.go). Absolute fixture names once
+// let a suite pass while every real key missed.
 describe("statusForPath", () => {
   beforeEach(() => {
     setWorkspaceRoot("/workspace");
@@ -128,8 +115,7 @@ describe("statusForPath", () => {
   });
 
   it("answers for a file in the workspace-root repo, reported as '.'", () => {
-    // The shape behind the original report: a file written straight into the
-    // workspace root, whose repo name is "." rather than a directory.
+    // A file written straight into the workspace root, whose repo name is ".".
     expect.assertions(1);
     _setReposForTest([repo(".", [{ path: "hello.sh", status: "?" }])]);
     expect(statusForPath("/workspace/hello.sh")).toBe("?");
@@ -155,8 +141,7 @@ describe("statusForPath", () => {
   });
 
   it("returns empty before the handshake states the workspace root", () => {
-    // Nothing can be keyed absolutely yet, so the honest answer is no letter
-    // rather than a letter derived from a guessed root.
+    // Nothing can be keyed absolutely yet, so the answer is no letter, not one from a guessed root.
     expect.assertions(1);
     resetWorkspace();
     _setReposForTest([repo("r", [{ path: "a.md", status: "M" }])]);
@@ -164,10 +149,8 @@ describe("statusForPath", () => {
   });
 
   it("builds no absolute key at all before the handshake, not a wrong one", () => {
-    // The distinction matters for the "." repo: joining a file onto an unknown
-    // root yields "/hello.sh", which LOOKS absolute and would answer for a real
-    // path at the filesystem root. Declining to index is what makes the previous
-    // case a property rather than an accident of keys that happen not to collide.
+    // For the "." repo, joining onto an unknown root yields "/hello.sh", which would answer for a real path at the
+    // filesystem root; declining to index makes the previous case a property.
     expect.assertions(2);
     resetWorkspace();
     _setReposForTest([repo(".", [{ path: "hello.sh", status: "M" }])]);
@@ -176,10 +159,7 @@ describe("statusForPath", () => {
   });
 });
 
-// The handshake and the first poll race with no ordering between them: pollAction
-// fires its first tick synchronously when the store starts, while the root arrives
-// on an SSE frame. A poll that won that race left the absolute indexes unbuildable
-// and the browser's letters blank until the next poll 15s later.
+// The handshake and the first read race with no ordering, so a read that won left the absolute indexes unbuildable.
 describe("the root landing after a poll", () => {
   it("rebuilds the absolute index against the root that just arrived", () => {
     expect.assertions(2);
@@ -198,9 +178,7 @@ describe("the root landing after a poll", () => {
   });
 
   it("republishes so rows painted with no letter get repainted", () => {
-    // The index changed while the data did not, and `repos` is the only thing
-    // consumers watch — without the republish the rows already on screen would
-    // keep their blank decoration until the next poll.
+    // The index changed while the data did not, and `repos` is all consumers watch, so it is republished.
     expect.assertions(1);
     _setReposForTest([repo("r", [{ path: "a.md", status: "M" }])]);
     let repaints = 0;
@@ -229,8 +207,7 @@ describe("the root landing after a poll", () => {
   });
 
   it("keeps the store subscribed to the root for the module's life", () => {
-    // The subscription is module wiring, so the test seam must not be able to
-    // switch it off — resetWorkspace() resets the root and nothing else.
+    // The subscription is module wiring, so the test seam cannot switch it off.
     expect.assertions(1);
     let subscribers = 0;
     const off = onWorkspaceRoot(() => {

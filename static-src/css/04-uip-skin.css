@@ -179,6 +179,22 @@
   color: var(--c-green);
 }
 
+/* A server NOTICE (`toast.ts` `notice`) carries its own level, so it is tinted where
+   an ordinary info toast is the neutral base: info blue, warning amber, the
+   `.banner-warning` wash. The library has no warning level; marotte adds the class. */
+
+/* stylelint-disable-next-line selector-class-pattern -- marotte modifier in the library's BEM vocabulary */
+.uip-toast--notice-info {
+  background: color-mix(in srgb, var(--c-blue) 8%, var(--c-bg-primary));
+  color: var(--c-blue);
+}
+
+/* stylelint-disable-next-line selector-class-pattern -- marotte modifier in the library's BEM vocabulary */
+.uip-toast--notice-warning {
+  background: color-mix(in srgb, var(--c-yellow) 8%, var(--c-bg-primary));
+  color: var(--c-yellow);
+}
+
 /* The message takes the row's slack, which is what pushes the action to the end.
    Deliberately NOT `.banner-msg`'s ellipsis: a banner states a condition in one
    line, while a toast's text carries the server's own reason, so it wraps rather

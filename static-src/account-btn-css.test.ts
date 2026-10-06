@@ -1,34 +1,10 @@
-// THE MERGED IDENTITY CONTROL: its box, its target, and its two state channels.
-//
-// The sidebar footer's connection mark and address are ONE `<button
-// id="account-btn">` — the status popup's trigger — so a reader presses a 240px row
-// rather than an 8px disc, which was the app's smallest target. This file pins the
-// three claims that restructure rests on, at every pointer tier:
-//
-//   THE BOX IS THE LOGOUT BUTTON'S, height and radius alike, centred in the band
-//   rather than filling it. Measured against the REAL sibling at every tier, never
-//   against `--footer-ctl-h`'s arithmetic: restating a derivation proves only that
-//   it is self-consistent.
-//
-//   THE HIT FLOOR is what the box clears, not what sizes it, and it is reachable
-//   only because chrome is stripped by named declarations rather than `all: unset`
-//   (that shorthand resets `min-*` at the declaring selector's own specificity,
-//   which is what made `.status-dot` invisible to the floor for a year).
-//
-//   NOTHING MOVED ON THE INLINE AXIS, verified against numbers READ OFF A REAL BUILD
-//   BEFORE the merge rather than against any arithmetic.
-//
-//   THE HOVER is `.icon-btn`'s VALUE by user instruction — the footer's two controls
-//   are a pair and must answer the pointer alike — but GATED on `any-hover`, which
-//   `.icon-btn`'s own is not. Both halves are read out of the sheet, because
-//   `getComputedStyle` on a forced `:hover` is unavailable here (a synthetic hover
-//   drives no recalc and `CSS.forcePseudoState` is a devtools call).
-//
-// Real layout in the page's own document at four tiers. The two pointer tiers are an
-// ATTRIBUTE (`pointer-tier.ts` writes `data-pointer` on `<html>`), so forcing the
-// attribute over `mountAppCSS()` is the honest way to reach them — and the
-// coarse-WIDE tier is the one width-keyed rules structurally cannot see, which is
-// the class of bug the deleted `width <= 48rem` block could hide.
+// The merged identity control: the sidebar footer's mark and address are ONE
+// `<button id="account-btn">`, the status popup's trigger. Pinned at every pointer tier:
+// its box matches the REAL logout button's (never `--footer-ctl-h`'s arithmetic), it
+// clears the hit floor because chrome is stripped by named declarations rather than
+// `all: unset`, nothing moved on the inline axis, and its hover is `.icon-btn`'s value
+// gated on `any-hover`. The pointer tiers are a `data-pointer` attribute, so forcing it
+// is how a case reaches them; coarse-wide is the tier width-keyed rules cannot see.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -97,9 +73,8 @@ function mountFooter(email = "someone@example.invalid"): Footer {
   logout.type = "button";
   logout.id = "logout-btn";
   logout.className = "icon-btn";
-  // The glyph is load-bearing: `.icon-btn` declares no height, so an empty one is
-  // the bare hit floor (24px fine) where production is glyph plus padding (32px),
-  // and every height comparison below would measure a box the app never renders.
+  // `.icon-btn` declares no height, so without a glyph the box is the bare hit floor and
+  // every height comparison would measure a box the app never renders.
   const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   glyph.setAttribute("class", "ic-ui");
   glyph.setAttribute("viewBox", "0 0 24 24");
@@ -123,9 +98,10 @@ function tokenPx(name: string): number {
   return v;
 }
 
-/** The four TIERS, and what only each one catches. `coarse-wide` is the important
- *  one: it is reachable ONLY through the attribute, so any rule that used to carry
- *  the touch treatment behind `width <= 48rem` was invisible to it. */
+/**
+ * The four tiers. `coarse-wide` is reachable ONLY through the attribute, so a
+ * width-keyed rule cannot see it.
+ */
 const TIERS: readonly (readonly [name: string, apply: () => void])[] = [
   ["fine", () => (document.documentElement.dataset["pointer"] = "fine")],
   ["coarse-wide", () => (document.documentElement.dataset["pointer"] = "coarse")],
@@ -174,11 +150,8 @@ describe("the merged control's box", () => {
   });
 
   it.each(TIERS)("answers a hit on all four of its own edges at the %s tier", (name, apply) => {
-    // A real `elementFromPoint`, never a style read: only a hit test sees a clip, an
-    // overlapping sibling or a zero-width box. Each probe off the CORNERS, because
-    // `border-radius` is honoured by hit testing. The band above and below this pill
-    // belongs to the footer, so the case above is what stops "its own edges" passing
-    // for a box of any height.
+    // A real `elementFromPoint`: only a hit test sees a clip, an overlapping sibling or a
+    // zero-width box. Probes sit off the corners, which hit testing rounds.
     apply();
     const { btn } = mountFooter();
     const b = btn.getBoundingClientRect();
@@ -200,9 +173,8 @@ describe("the merged control's box", () => {
   });
 
   it.each(TIERS)("clears the app-wide hit floor at the %s tier", (name, apply) => {
-    // `.account-btn`'s (0,1,0) `min-block-size` outranks the floor's zero-specificity
-    // rule, so the floor holds by VALUE (`--footer-ctl-h` is a `max()` over it) rather
-    // than by cascade. Read off the page, so one case covers every tier that moves it.
+    // `.account-btn`'s (0,1,0) `min-block-size` outranks the floor's zero-specificity rule,
+    // so the floor holds by VALUE (`--footer-ctl-h` is a `max()` over it).
     apply();
     const { btn } = mountFooter();
     const floor = tokenPx("--hit-floor");
@@ -221,17 +193,8 @@ describe("the merged control's box", () => {
   });
 
   it.each(TIERS)("renders the mark at --dot-size at the %s tier", (_name, apply) => {
-    // ONE mark rule at every tier, where the phone tier used to carry a second
-    // spelling (a transparent 44px grid with the mark on a `::before`).
-    //
-    // WHAT THIS CASE DOES NOT PIN, stated so nobody reads it as covering more than it
-    // does: `.status-dot`'s `display: block` is NOT observable here. The mark is a
-    // flex ITEM of `.account-btn`, so it is blockified regardless and planting
-    // `display: inline` leaves every case in this file green — verified. That
-    // declaration replaced an ACCIDENT (`all: unset` resets `display` to `inline`, on
-    // which width and height do not apply, so the old disc rendered only because its
-    // parent was a flex container), and the case that can see it is
-    // `status-dot-css.test.ts`'s, which mounts the mark unparented in `<body>`.
+    // ONE mark rule at every tier. Not pinned here: `.status-dot`'s `display: block` (a flex
+    // item is blockified anyway); `status-dot-css.test.ts` mounts the mark unparented.
     apply();
     const { dot } = mountFooter();
     const box = dot.getBoundingClientRect();
@@ -243,10 +206,8 @@ describe("the merged control's box", () => {
 });
 
 describe("nothing moved", () => {
-  // OBSERVED readings off a real build, not the derivation in `.account-btn`'s
-  // comment (encoding that would prove only that it is self-consistent): the mark's
-  // x and the logout button's right edge equal the footer's own content edges at
-  // 1280px with a 259px sidebar, 16 and 243.
+  // Readings off a real build before the merge, not the derivation in `.account-btn`'s
+  // comment: the footer's content edges at 1280px with a 259px sidebar, 16 and 243.
   const PRE_CHANGE = { dotLeft: 16, logoutRight: 243 } as const;
 
   it.each(["fine", "coarse"])("keeps the mark's x and the logout's right edge at %s", (tier) => {
@@ -263,9 +224,7 @@ describe("nothing moved", () => {
   });
 
   it("leaves the logout button real separation, not an ambiguity", () => {
-    // The trailing bleed leaves `--sp-2` less than the footer's 12px gap between the
-    // two boxes. Real separation: only one of the two can be hovered at a time, and
-    // both hover to the same token.
+    // The trailing bleed leaves `--sp-2` less than the 12px gap between the two boxes.
     const { btn, logout } = mountFooter();
     const gap = logout.getBoundingClientRect().left - btn.getBoundingClientRect().right;
     expect(gap, `the two controls are ${gap}px apart`).toBeGreaterThanOrEqual(4);
@@ -273,15 +232,12 @@ describe("nothing moved", () => {
 });
 
 describe("the state channels, read out of the sheet", () => {
-  // TWO SOURCE assertions rather than a computed read, because a forced `:hover` is
-  // unavailable in this project: a synthetic hover drives no style recalc and
-  // `CSS.forcePseudoState` is a devtools call. The subject is the CASCADE anyway —
-  // which value, and inside which at-rule.
+  // Source assertions, because a forced `:hover` drives no recalc here and
+  // `CSS.forcePseudoState` is a devtools call. The subject is the cascade anyway.
 
   it("hovers to the same value .icon-btn does", () => {
-    // The user's instruction: the footer's two controls are a PAIR. `.icon-btn`'s
-    // hover is a NESTED `&:hover` inside its own rule body, so the read has to reach
-    // into that body rather than looking for a top-level `.icon-btn:hover`.
+    // The footer's two controls are a PAIR. `.icon-btn`'s hover is a nested `&:hover`, so the
+    // read reaches into its rule body.
     const iconBody = ruleContaining(shell, ".icon-btn", "top").body;
     const iconHover = /&:hover\s*\{([^}]*)\}/u.exec(iconBody);
     expect(iconHover, ".icon-btn declares a nested &:hover").not.toBeNull();
@@ -302,12 +258,8 @@ describe("the state channels, read out of the sheet", () => {
   });
 
   it("gates its hover on any-hover while .icon-btn's is ungated", () => {
-    // The one DELIBERATE divergence, and stated as such at the rule: `.icon-btn`'s
-    // ungated hover latches under a finger until the next tap elsewhere, which is a
-    // pre-existing app-wide property of a shared class and not this change's to fix —
-    // while an ungated wash on a 240px row is far more visible than on a 32px glyph.
-    // `any-hover`, never `hover`: the latter reports only the PRIMARY input and drops
-    // the rule on every touch-primary device.
+    // The one deliberate divergence: an ungated wash latches under a finger, far more visible
+    // on a 240px row. `any-hover`, never `hover`, which drops touch-primary devices.
     const btnBody = ruleContaining(shell, ".account-btn", "top").body;
     expect(btnBody, "the hover sits inside an any-hover at-rule").toMatch(
       /@media\s*\(any-hover:\s*hover\)\s*\{\s*&:hover/u,
@@ -321,10 +273,8 @@ describe("the state channels, read out of the sheet", () => {
   });
 
   it("takes the app-wide press rather than declaring one, like the logout button", () => {
-    // 03-base.css's universal `:where(button, summary, [role="button"]):active` reaches
-    // both controls and paints `--c-press`, so a bespoke `:active` here would compound
-    // one step past it. `.sidebar-email:active { background: var(--c-press) }` was
-    // exactly that rule and is deleted.
+    // 03-base.css's universal `:active` already paints `--c-press` here, so a bespoke one
+    // would compound past it.
     const btnBody = ruleContaining(shell, ".account-btn", "top").body;
     expect(btnBody, "no bespoke press").not.toMatch(/&:active/u);
     expect(loadCSS("10-shell-app.css"), "and the address declares none either").not.toMatch(
@@ -336,21 +286,16 @@ describe("the state channels, read out of the sheet", () => {
   });
 
   it("declares no focus ring of its own, so the floor owns it", () => {
-    // 40-a11y.css rings every `button` at ZERO specificity, and its own comment says
-    // the hand-rolled rings are deletable. `.pill-account` is the one control in this
-    // change that needs an OFFSET override, and that lives in 40-a11y.css's
-    // inset-offset list rather than at the rule.
+    // 40-a11y.css rings every `button` at zero specificity; `.pill-account`'s offset lives in
+    // its inset-offset list.
     const btnBody = ruleContaining(shell, ".account-btn", "top").body;
     expect(btnBody).not.toMatch(/&:focus-visible/u);
     expect(btnBody, "and no outline of any kind").not.toMatch(/outline/u);
   });
 
   it("resets chrome by NAMED declarations, never all: unset", () => {
-    // The cascade fact the rule's comment rests on: `all: unset` resets
-    // `min-width`/`min-height` at this selector's own (0,1,0) against the app-wide
-    // floor's zero, so a control declaring it is not overriding the floor — it is
-    // INVISIBLE to it. That is what made `.status-dot` an 8px button at every tier.
-    // Naming the declarations keeps the floor reachable as a backstop.
+    // `all: unset` resets `min-*` at this selector's (0,1,0), making a control INVISIBLE to
+    // the app-wide floor. Naming the declarations keeps the floor as a backstop.
     const btnBody = ruleContaining(shell, ".account-btn", "top").body;
     expect(btnBody, "all: unset would make the floor unreachable").not.toMatch(/all:\s*unset/u);
     // Both sides, because a stretch left standing beside the `min-block-size` wins the
@@ -361,9 +306,8 @@ describe("the state channels, read out of the sheet", () => {
     expect(btnBody, "and nothing stretches it back into the band").not.toMatch(
       /align-self:\s*stretch/u,
     );
-    // `min-width: 0` opts out of the floor's INLINE axis deliberately (the box is the
-    // band's whole width, so a 44px inline floor describes nothing) while nothing
-    // opts out of the block axis.
+    // `min-width: 0` opts out of the inline floor (the box is the band's width); nothing opts
+    // out of the block axis.
     expect(btnBody).toMatch(/min-width:\s*0/u);
     expect(btnBody, "the block axis keeps the floor as its backstop").not.toMatch(
       /min-height:\s*0/u,

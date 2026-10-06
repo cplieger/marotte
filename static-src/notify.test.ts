@@ -58,9 +58,6 @@ describe("urlBase64ToUint8Array round-trip", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Adversarial-input property test (tarch-b15-c7-p2)
-// ---------------------------------------------------------------------------
 describe("urlBase64ToUint8Array adversarial inputs", () => {
   it("either returns a Uint8Array or throws — never hangs or produces non-Uint8Array", () => {
     expect.assertions(1);

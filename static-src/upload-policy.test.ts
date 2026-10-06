@@ -19,21 +19,16 @@ function sized(name: string, size: number): File {
 
 describe("UPLOADS_DIR", () => {
   it("is container-absolute, which is what both consumers need", () => {
-    // As an upload target the server resolves it against its granted mounts, and
-    // this directory is one of them. As an attachment path prefix the prompt
-    // builder tries an absolute path against the workspace root and the uploads
-    // root in turn, so a relative "uploads" would be refused by the first
-    // consumer and resolved under the workspace by the second.
+    // Absolute: the server resolves the target against its mounts, and the prompt builder resolves a
+    // relative attachment prefix under the workspace instead.
     expect(UPLOADS_DIR.startsWith("/")).toBe(true);
     expect(UPLOADS_DIR).toBe("/uploads");
   });
 });
 
 describe("the client budget against the server ceiling", () => {
-  // The server applies maxUploadSize to the whole multipart BODY, and framing
-  // is part of that body, so a client budget equal to it can never be met.
-  // Under-promising is the only honest direction for a limit a user reads
-  // before choosing a file.
+  // maxUploadSize covers the whole multipart BODY, framing included, so an equal client budget can
+  // never be met.
   it("is strictly below the server's whole-request ceiling", () => {
     expect(MAX_UPLOAD_BYTES).toBe(256 * 1024 * 1024);
     expect(MAX_UPLOAD_TOTAL_BYTES).toBeLessThan(MAX_UPLOAD_BYTES);
@@ -94,11 +89,8 @@ describe("preflightUploads", () => {
     expect(r.rejected).toEqual([{ name: "big.zip", reason: "over the 255 MB limit" }]);
   });
 
-  // The batch case the per-file-only check let through: two files each well
-  // under the limit whose combined request is over it. Both used to pass
-  // pre-flight and then fail together against the one limit the server applies.
-  // Sized from the const rather than a literal, so raising the cap cannot turn
-  // this into a batch that fits and stop exercising the total.
+  // Two files each under the limit whose request is over it. Sized from the const, so raising the cap
+  // keeps exercising the total.
   it("refuses the file that would take the batch over the total", () => {
     const each = Math.floor(MAX_UPLOAD_TOTAL_BYTES * 0.6);
     const r = preflightUploads([sized("a.bin", each), sized("b.bin", each)]);

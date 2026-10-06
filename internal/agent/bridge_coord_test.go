@@ -1,9 +1,5 @@
 package agent
 
-// Tests for bridge_coord.go: override application, the in-session model switch and
-// its record, registry teardown on the last bridge, the turn-close push, and the
-// silent successes.
-
 import (
 	"context"
 	"encoding/json"
@@ -17,15 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// --- helpers ---
-
-// recordingStartBridge records the StartOpts passed to Start, else a fakeBridge.
+// recordingStartBridge records the StartOpts passed to Start.
 type recordingStartBridge struct {
 	*fakeBridge
 	lastStart marotte.StartOpts
@@ -55,21 +50,19 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingSta
 	rb := newRecordingStartBridge()
 	h := New(t.Context(), "/tmp/rec-start", func() ACPBridge { return rb }, cs)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	return h, cs, rb
 }
 
-// recordingPush records the body of each Send on a channel, plus the subject of
-// the most recent one, read only after a body arrives so the field is ordered.
+// recordingPush records each Send's body on a channel, plus the latest subject and chat
+// name, read only after a body arrives.
 type recordingPush struct {
 	sends chan string
-	// reloads counts ReloadPreferences calls, for the SSE reconnect rule. Atomic
-	// because the handler that calls it may not be on the test's goroutine.
+	// reloads counts ReloadPreferences calls; atomic because the caller may be another goroutine.
 	reloads atomic.Int32
-	// noSubs flips HasSubscribers to false for the drop path. The zero value keeps a
-	// subscriber present, so every fixture that predates it is unchanged.
-	noSubs  atomic.Bool
-	subject marotte.PushSubject
+	// noSubs flips HasSubscribers to false; the zero value keeps a subscriber.
+	noSubs   atomic.Bool
+	subject  marotte.PushSubject
+	chatName string
 }
 
 func (p *recordingPush) RegisterRoutes(*http.ServeMux)            {}
@@ -80,18 +73,16 @@ func (p *recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
 func (p *recordingPush) ReloadPreferences(context.Context)        { p.reloads.Add(1) }
 func (p *recordingPush) Close()                                   {}
 func (p *recordingPush) Retract(marotte.PushSubject)              {}
-func (p *recordingPush) Send(_ context.Context, _, body string, _ marotte.PushKind, subject marotte.PushSubject) {
+func (p *recordingPush) Send(_ context.Context, _, body string, _ marotte.PushKind, subject marotte.PushSubject, chatName string) {
 	p.subject = subject
+	p.chatName = chatName
 	select {
 	case p.sends <- body:
 	default:
 	}
 }
 
-// --- OpenBridge overrides + persisted model ---
-
-// On a fresh session/new path the override model wins over the chat's stored value,
-// and the persisted model is copied from the started bridge's ModelID.
+// On session/new the override model wins over the stored value, and the persisted model comes from the started bridge.
 func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
@@ -116,14 +107,9 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	}
 }
 
-// A RESUME carries the chat's supervised choice on its own door. KAS's fork copies
-// no autopilot, so a supervised chat's tangent would otherwise load into autopilot
-// while its record still reads supervised — writes applied with nobody asked.
+// A resume carries the chat's supervised choice on its door: KAS's fork copies no autopilot.
 func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
-	// A fresh bridge per spawn, and the load's door is found by its session id: the
-	// rehydrate sweep this load fires starts the utility bridge on the same factory,
-	// and a shared recorder would report THAT door — no session, not supervised — as
-	// the load's.
+	// A fresh bridge per spawn, found by session id: the rehydrate sweep starts the utility bridge on the same factory.
 	var mu sync.Mutex
 	var spawned []*recordingStartBridge
 	cs := newTestChatStore()
@@ -135,7 +121,6 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 		return rb
 	}, cs)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 
 	ctx := t.Context()
 	const acpSession = "sess_forked"
@@ -162,8 +147,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 	}
 	mu.Unlock()
 	if !found {
-		// Without a Start naming the stored session there was no load to assert on,
-		// so every check below would pass or fail for an unrelated reason.
+		// Without a Start naming the stored session there is no load to assert on.
 		t.Fatalf("no bridge was started with SessionID %q, so the resume never happened", acpSession)
 	}
 	if !opts.Supervised {
@@ -172,12 +156,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 	}
 }
 
-// --- ApplyModelSwitch ---
-
-// A successful in-session SetModel returns true, and the chat's reasoning-effort
-// level is re-applied after the swap. The re-apply is the load-bearing half: KAS
-// reconciles the session's effortLevel against the NEW model's tier list, so a chat
-// at max dropped to the new default while the record and the pill still read max.
+// A successful SetModel returns true and re-applies the effort level, which KAS reconciles against the new model's tiers.
 func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
@@ -194,11 +173,7 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	}
 }
 
-// A switch never touches a turn: the session survives the swap, so a turn that was
-// going to finish still finishes with its accumulator intact and nothing closes it.
-// A busy chat's switch is parked on the header as pending_model and applied by the
-// closer instead, so reaching this path mid-turn (a second device, a client draining
-// its queue) must not displace the reply already on every screen.
+// A switch never touches a turn: the session survives, and the reply on every screen stays.
 func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -220,8 +195,7 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	}
 }
 
-// A chat that has chosen no level sends no effort call: there is nothing to
-// re-assert, and the service's own reconciliation is the right answer.
+// A chat with no chosen level sends no effort call.
 func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
@@ -238,12 +212,7 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 	}
 }
 
-// --- repairEffort: the level KAS changed on its own ---
-
-// A prompt on an ALREADY-OPEN bridge re-asserts the chat's level, the only
-// checkpoint that catches a level KAS moved without marotte asking:
-// pinSessionModelId settling an unset model on the first prompt, or a switch made
-// from the Kiro IDE or TUI on a shared session. Neither is a marotte action.
+// A prompt on an already-open bridge re-asserts the level KAS moved on its own.
 func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
@@ -255,7 +224,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// Stand in for KAS moving the level underneath marotte.
+	// Stand in for KAS moving the level.
 	br.mu.Lock()
 	br.effort = "high"
 	br.mu.Unlock()
@@ -269,8 +238,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	}
 }
 
-// A chat that has chosen no level, and has no seed to follow, asks for nothing: a
-// call would only re-impose a level nobody picked.
+// No choice and no seed asks for nothing.
 func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
@@ -291,8 +259,6 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	}
 }
 
-// --- effortFor ---
-
 // writeEffortSeed writes a config.json carrying only the per-model effort seed.
 func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
 	t.Helper()
@@ -305,11 +271,8 @@ func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
 	}
 }
 
-// effortFor prefers the chat's own choice, falls back to the level remembered for
-// the chat's OWN model, and refuses a level too malformed to be a tier id. Shape
-// only: the tier vocabulary is per model and KAS's to judge, so a well-formed
-// unknown seed flows. No catalog is loaded here, so the model-default rung
-// contributes nothing and every miss reads as "send none".
+// effortFor prefers the chat's choice, then the seed for its own model, and refuses a
+// malformed level; a well-formed unknown seed flows. No catalog is loaded here.
 func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 	tests := map[string]struct {
 		chatEffort string
@@ -345,9 +308,7 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 	}
 }
 
-// A pick on one model must not retract another model's remembered level. This is
-// the whole reason the seed is a map: with one slot for the app, resolving either
-// chat answered "" for the other, so no chat's drift could be repaired.
+// A pick on one model must not retract another model's remembered level.
 func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max", "m2": "low"})
@@ -364,9 +325,7 @@ func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 	}
 }
 
-// A chat that has chosen nothing and whose model has no remembered level resolves
-// that MODEL's catalog default, not "". Both repair paths return on an empty level,
-// so without this rung a drifted chat has no level to be corrected against.
+// With no choice and no seed, effortFor resolves the model's catalog default, not "".
 func TestEffortFor_FallsBackToTheModelsCatalogDefault(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.coord.lifecycle.configDir = t.TempDir()
@@ -379,8 +338,35 @@ func TestEffortFor_FallsBackToTheModelsCatalogDefault(t *testing.T) {
 	}
 }
 
-// EffortForSwitch resolves against the TARGET model: the level remembered for that
-// model, else the target's own default from the WORKSPACE catalog.
+// A default-off model with thinking never chosen has its session level capped as KAS caps it.
+func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
+	five := []marotte.SessionEffortLevel{{ID: "low"}, {ID: "medium"}, {ID: "high"}, {ID: "xhigh"}, {ID: "max"}}
+	tests := []struct {
+		name       string
+		thinking   string
+		defaultOff bool
+		want       string
+	}{
+		{name: "default-off model, no choice", defaultOff: true, want: "high"},
+		{name: "default-off model, thinking chosen on", thinking: marotte.ThinkingOn, defaultOff: true, want: "max"},
+		{name: "default-on model, no choice", want: "max"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := newTestHub()
+			h.coord.lifecycle.configDir = t.TempDir()
+			h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", ThinkingToggleable: true, ThinkingDefaultOff: tc.defaultOff}})
+			rec := &marotte.Chat{ID: "c1", Model: "m1", Effort: "max", Thinking: tc.thinking, EffortLevels: five}
+
+			if got := h.coord.sessionEffort(t.Context(), rec); got != tc.want {
+				t.Errorf("sessionEffort(Effort max, Thinking %q, defaultOff %v) = %q, want %q",
+					tc.thinking, tc.defaultOff, got, tc.want)
+			}
+		})
+	}
+}
+
+// EffortForSwitch resolves against the target model: its seed, else its workspace catalog default.
 func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 	catalog := []marotte.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high"},
@@ -416,8 +402,7 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 	}
 }
 
-// The seed is a fallback, never a write: resolving it must not stamp the level
-// onto the chat record, or that chat stops following the setting forever.
+// The seed is a fallback, never written onto the chat record.
 func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max"})
@@ -433,10 +418,7 @@ func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
 	}
 }
 
-// --- Forward clears the registry only when the last bridge exits ---
-
-// When the forwarded bridge is the last one, Forward clears the MCP
-// registry; when another bridge remains registered, it must not.
+// Forward clears the MCP registry only when its bridge is the last one.
 func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 	seed := func(h *Runtime) {
 		h.mcpRegistry.mu.Lock()
@@ -457,7 +439,7 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 	t.Run("keeps_when_a_bridge_remains", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		seed(h)
-		// A bridge that stays registered so count() stays >= 1.
+		// Stays registered so count() stays >= 1.
 		h.bridge.mgr.orInsert("keep")
 		other := newFakeBridge()
 		other.Stop()
@@ -468,15 +450,12 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 	})
 }
 
-// KAS reviews a whole turn at once, so there is no per-turn trust gate to test.
-
 // A non-cancelled turn fires the "Agent finished" push.
 func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(t.Context(), "/tmp/push", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 
 	id, log := h.stagePromptTurn(t, "c1")
@@ -494,11 +473,35 @@ func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 	}
 }
 
-// --- success paths must not emit an error log ---
+// The push names its chat from the record when raised: the toasting page may have dropped the row.
+func TestNotifyPush_CarriesTheChatsNameAndAnUnnamedSubjectNone(t *testing.T) {
+	cs := newTestChatStore()
+	fp := &recordingPush{sends: make(chan string, 4)}
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	cs.wire(h)
+	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "Fix the parser" })
 
-// A settled turn whose seal and close both land logs no error: the log is where an
-// operator looks for a failed persist, so a line there on every ordinary turn buries
-// the real one.
+	for _, tc := range []struct {
+		subj marotte.PushSubject
+		want string
+	}{
+		{marotte.ChatSubject("c1"), "Fix the parser"},
+		{marotte.ChatSubject("gone"), ""},
+		{marotte.PRSubject("gh", "o/r", 7), ""},
+	} {
+		h.coord.NotifyPushSubject(t.Context(), "Agent finished", marotte.PushKindAgentFinished, tc.subj)
+		select {
+		case <-fp.sends:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("no push sent for %+v", tc.subj)
+		}
+		if fp.chatName != tc.want {
+			t.Errorf("chat name for %+v = %q, want %q", tc.subj, fp.chatName, tc.want)
+		}
+	}
+}
+
+// A settled turn whose seal and close land logs no error.
 func TestSettleTurnOnResponse_NoErrorLogOnSuccess(t *testing.T) {
 	h, _, _ := newTestHub()
 	ctx := t.Context()
@@ -513,8 +516,7 @@ func TestSettleTurnOnResponse_NoErrorLogOnSuccess(t *testing.T) {
 	}
 }
 
-// PersistModelSwitch logs nothing when the entry append and the header write both
-// succeed.
+// PersistModelSwitch logs nothing when the entry append and header write both succeed.
 func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -527,10 +529,8 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	}
 }
 
-// A landed switch is one model_switched entry between turns plus a header that
-// takes the pick: pending_model cleared (or every later close re-applies the switch
-// and resets the counters again), the old model's tier dropped, usage reset to the
-// new context size.
+// A landed switch is one model_switched entry plus a header taking the pick: pending_model
+// cleared, old tier dropped, usage reset to the new context size.
 func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -548,8 +548,7 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 
 	entries := logOf(t, cs, "c1")
 	switches := switchesOf(t, entries)
-	// The tier travels on the entry: the banner names it, and the header clears its
-	// own copy two assertions below, so the entry is the only record of it.
+	// The tier travels on the entry, the only record of it once the header clears its copy.
 	if len(switches) != 1 || switches[0] != (marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}) {
 		t.Errorf("model_switched entries = %+v, want one {From: m-old, To: m-new, Effort: high}", switches)
 	}
@@ -570,10 +569,7 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	}
 }
 
-// --- PersistEffortChange: the effort-only banner ---
-
-// An effort change picked BETWEEN turns is appended on its own, and its From == To
-// is what tells the renderer it was not a model switch.
+// Picked between turns, the effort change is appended alone; From == To marks it as not a model switch.
 func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -588,8 +584,7 @@ func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 	}
 }
 
-// The same pick DURING a turn folds into that turn instead, so a tier changed
-// mid-reply lands at the point it happened rather than after the turn closes.
+// Picked during a turn, it folds into that turn.
 func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -611,10 +606,7 @@ func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 	}
 }
 
-// A chat with no model writes nothing: the renderer reads an empty To as
-// `Context reset`, which is neither true here nor recoverable, and CmdSetEffort
-// auto-creates a record so this is the ordinary state of a pick before the first
-// prompt.
+// A chat with no model writes nothing: an empty To renders as `Context reset`.
 func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -627,12 +619,7 @@ func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
 	}
 }
 
-// --- adoptKASTitle: the bottom of the chat-naming precedence ---
-
-// TestAdoptKASTitle pins all four arms of the guard. Every refusal here is a bug
-// that compiles cleanly: adopting KAS's "New Session" placeholder makes the chat
-// non-default-named, which then rejects the real title that arrives later, and
-// adopting over an existing name clobbers a label that outranks this channel.
+// TestAdoptKASTitle pins all four arms: adopting "New Session" or overwriting an existing name both compile cleanly.
 func TestAdoptKASTitle(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -683,14 +670,8 @@ func TestAdoptKASTitle(t *testing.T) {
 	}
 }
 
-// This rung reads what KAS STORED, so it gets the SAME door treatment the live focus
-// channel gets — sanitizer, bound, rune cap and shape rules — and the cases below are
-// one per part of it. A stored title is not the safer input: KAS keeps its own session
-// title independently of marotte's chat name, nothing bounded or sanitized it on the
-// way in, a session titled by a pre-gate build re-offers that string on every resume,
-// and a rename from the IDE or the TUI can put one there at any time. It is also the
-// worse door, because a resume names a chat whose record was recreated and is
-// therefore default-named, which is exactly the state this rung adopts into.
+// A stored KAS title gets the same door treatment as the live focus channel, one case per part:
+// it was never sanitized, and a resume names a default-named chat.
 func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -698,7 +679,7 @@ func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 		want  string
 	}{
 		{
-			// Verbatim from the live volume's poisoned chat record.
+			// Verbatim from a real poisoned chat record.
 			name:  "a_stored_model_refusal",
 			title: "I need more context to generate a title. Could you share the user's first mes...",
 			want:  marotte.DefaultChatName,
@@ -709,19 +690,14 @@ func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 			want:  marotte.DefaultChatName,
 		},
 		{
-			// Nothing on the wire bounds this field and a stored title is not
-			// Ete-capped, so the OUTCOME is what this pins: an arbitrarily long
-			// string never reaches Chat.Name. Two rules refuse it independently —
-			// the sanitizer's bound leaves a "..." marker the truncation rule
-			// catches, and 515 runes is over the cap either way — so retuning one
-			// of them cannot open it. The log test below is what pins the bound.
+			// Pins the outcome: an unbounded title never reaches Chat.Name. Two rules refuse it
+			// independently; the log test pins the bound.
 			name:  "an_unbounded_stored_title",
 			title: strings.Repeat("x", 700),
 			want:  marotte.DefaultChatName,
 		},
 		{
-			// The sanitizer, and the reason it runs before the rules rather than
-			// after them: the stored form is what gets compared and kept.
+			// The sanitizer runs before the rules: the stored form is what gets compared and kept.
 			name:  "a_stored_title_carrying_ansi_and_a_newline",
 			title: "\x1b[31mRelease\x1b[0m\ncheck",
 			want:  "Release check",
@@ -743,11 +719,8 @@ func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 	}
 }
 
-// The refusal line is the one place a title marotte did NOT adopt still reaches an
-// operator, and it is the same untrusted string: nothing on the wire bounds the field
-// and a stored title is not Ete-capped. So the line carries the SANITIZED form plus the
-// rule that fired. Logging the raw argument instead is a one-word edit that puts
-// unbounded control-bearing text into the log store, and nothing else would notice.
+// The refusal line carries the SANITIZED title plus the rule that fired; logging the raw
+// argument puts unbounded control text into the log.
 func TestAdoptKASTitle_LogsTheSanitizedTitleWithItsReason(t *testing.T) {
 	logs := captureLogs(t)
 	stored := "\x1b[31m" + strings.Repeat("x", 700) + "\nmore"
@@ -774,16 +747,11 @@ func TestAdoptKASTitle_LogsTheSanitizedTitleWithItsReason(t *testing.T) {
 	}
 }
 
-// --- sweepSessionsOnce: the keep-list is chat-referenced UNION live ---
-
-// testReaperWorkDir is the workspace root the reaper fixtures are built for: both
-// the runtime's workDir and the root every fixture session claims in its own
-// session.json, because the reaper reaps only for the workspace it was built with.
+// testReaperWorkDir is both the runtime's workDir and the root every fixture session claims:
+// the reaper reaps only for its own workspace.
 const testReaperWorkDir = "/tmp/work"
 
-// writeSessionRecord writes the session.json the reaper reads to decide whether a
-// session belongs to its workspace. A fixture without one is DOUBT, which the
-// reaper answers by retaining — correct in production and vacuous in a reap test.
+// writeSessionRecord writes the session.json the reaper reads; without one the reaper retains (doubt).
 func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
 	t.Helper()
 	body := `{"workspacePaths":["` + workspaceRoot + `"]}`
@@ -792,12 +760,9 @@ func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
 	}
 }
 
-// TestSweepSessionsOnce_KeepListCompleteness pins doubt-retains at the sweep boundary against
-// a real orphan on disk: a partial keep-list means some chat's sessions are missing from it,
-// so sweeping anyway deletes them, where not sweeping only postpones reclaiming disk. The
-// control arm proves the orphan really was reapable. Its keep-list names a session that EXISTS
-// on disk rather than being empty, because an empty keep-list is refused outright by the
-// reaper — using it as the control would make this test assert the opposite of that guard.
+// TestSweepSessionsOnce_KeepListCompleteness pins doubt-retains against a real orphan: a
+// partial keep-list must not sweep. The control's keep-list names an existing session,
+// since the reaper refuses an empty one outright.
 func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -811,28 +776,21 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sessionsDir := t.TempDir()
 			old := time.Now().Add(-24 * time.Hour)
-			// An orphan old enough to clear the reaper's create-race guard, plus
-			// a referenced sibling so the keep-list is non-empty and the sweep is
-			// discriminating rather than refusing.
+			// Old enough to clear the create-race guard, plus a referenced sibling so the keep-list is non-empty.
 			orphan := filepath.Join(sessionsDir, "hash01", "sess_orphan")
 			kept := filepath.Join(sessionsDir, "hash01", "sess_ref")
 			for _, p := range []string{orphan, kept} {
 				if err := os.MkdirAll(p, 0o700); err != nil {
 					t.Fatalf("mkdir %s: %v", p, err)
 				}
-				// The reaper reads each candidate's own workspacePaths and skips
-				// anything that does not name the workspace it was built for, so a
-				// fixture without this record is retained whatever the keep-list
-				// says — which would make the control arm pass for the wrong reason.
+				// Without this record the reaper retains whatever the keep-list says.
 				writeSessionRecord(t, p, testReaperWorkDir)
 				if err := os.Chtimes(p, old, old); err != nil {
 					t.Fatalf("chtimes %s: %v", p, err)
 				}
 			}
 
-			// Wire the reaper at CONSTRUCTION, not after: New starts
-			// sweepSessionsLoop, which reads these fields, so assigning them
-			// afterwards is a data race (caught by -race, not by plain go test).
+			// Wired at construction: New starts sweepSessionsLoop, so later assignment races (-race).
 			cs := newTestChatStore()
 			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
@@ -858,14 +816,10 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	}
 }
 
-// TestLiveSessionIDs_CoversEveryBridge pins that the exemption is general: any
-// bridge holding a session no chat references would otherwise have its on-disk
-// state deleted from under it once the session ages past the 10-minute guard,
-// which is a create-race cushion and not a liveness test.
+// TestLiveSessionIDs_CoversEveryBridge pins that every live bridge's session is exempt; the
+// 10-minute guard is a create-race cushion, not a liveness test.
 func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
-	// newTestHub's factory hands back ONE shared fake so tests can inspect it;
-	// this test needs bridges with distinct session ids, so build the runtime with
-	// a per-spawn factory instead.
+	// A per-spawn factory: newTestHub's shares one fake, and this needs distinct session ids.
 	cs := newTestChatStore()
 	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs)
 	cs.wire(h)
@@ -884,7 +838,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 
 	setSession("chatA", "sess_chatA")
 	setSession("chatB", "sess_chatB")
-	// A bridge that has not started a session yet contributes nothing.
+	// A bridge with no session yet contributes nothing.
 	setSession("chatC", "")
 
 	got := h.liveSessionIDs()
@@ -895,11 +849,8 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	}
 }
 
-// TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted pins the resume half of
-// the mode contract: a fact the load result did not carry must not be written. A
-// resumed bridge is freshly constructed, so it answers the zero value for anything
-// absent, and writing those zeros wiped what the chat file had carried since its
-// previous session. The CATALOGS are not written here — Catalog owns that rule.
+// TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted pins that a fact the load omitted is
+// not written: a fresh bridge answers zero values. Catalog owns the catalogs' rule.
 func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 	cases := map[string]struct {
 		mode     string
@@ -923,48 +874,33 @@ func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 	}
 }
 
-// TestApplyLoadedSessionFacts_KeepsContextThresholds pins the same keep-on-absent
-// contract one layer up: a resumed bridge is freshly constructed, so it answers 0 for a
-// threshold the load result omitted, and writing that zero would replace a pair the chat
-// file has carried since its previous session.
-func TestApplyLoadedSessionFacts_KeepsContextThresholds(t *testing.T) {
+// TestApplyLoadedSessionFacts_KeepsSummarizationThreshold pins the same keep-on-absent rule for the threshold.
+func TestApplyLoadedSessionFacts_KeepsSummarizationThreshold(t *testing.T) {
 	cases := map[string]struct {
-		summarization, truncation         float64
-		wantSummarization, wantTruncation float64
+		summarization, want float64
 	}{
-		"a silent result keeps both":         {wantSummarization: 80, wantTruncation: 95},
-		"what the result carries is written": {summarization: 85, truncation: 97, wantSummarization: 85, wantTruncation: 97},
-		"one carried member keeps the other": {summarization: 85, wantSummarization: 85, wantTruncation: 95},
+		"a silent result keeps the stored value": {want: 80},
+		"what the result carries is written":     {summarization: 85, want: 85},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			c := &marotte.Chat{Name: "A"}
 			c.Usage.SummarizationThresholdPct = 80
-			c.Usage.TruncationThresholdPct = 95
-			br := &fakeBridge{summarizationPct: tc.summarization, truncationPct: tc.truncation}
+			br := &fakeBridge{summarizationPct: tc.summarization}
 
 			applyLoadedSessionFacts(c, br, "")
 
-			if c.Usage.SummarizationThresholdPct != tc.wantSummarization {
+			if c.Usage.SummarizationThresholdPct != tc.want {
 				t.Errorf("SummarizationThresholdPct = %v, want %v",
-					c.Usage.SummarizationThresholdPct, tc.wantSummarization)
-			}
-			if c.Usage.TruncationThresholdPct != tc.wantTruncation {
-				t.Errorf("TruncationThresholdPct = %v, want %v",
-					c.Usage.TruncationThresholdPct, tc.wantTruncation)
+					c.Usage.SummarizationThresholdPct, tc.want)
 			}
 		})
 	}
 }
 
-// TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the visibility half of the
-// mode contract. applyInitialMode warns and continues when session/set_mode is refused, so the
-// session runs the engine's default, and persistNewSessionMetadata then writes the ACTUAL mode
-// onto the chat — right, because the pill must not claim a role the agent is not running under,
-// but also the only record of the request. So one transient refusal permanently converts a chat
-// pinned to "spec" into a default-mode chat: at the next spawn the ids match, so the guard
-// skips the retry and nothing says why.
+// TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the report: the record
+// takes the actual mode, so an unreported refusal silently converts a pinned chat.
 func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -1014,15 +950,8 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 	}
 }
 
-// TestSpawnBridge_ReportsSupervisedThatWasNotApplied pins the session door's half of the
-// supervised fail-open. applySupervised is best-effort inside Start — it logs at ERROR and
-// continues — so a session that refuses `autopilot: off` used to open the chat UNSUPERVISED
-// while the record, ChatHeader.supervised_mode and every client's checkbox still said
-// supervised. The mode path already reported its own divergence; this one reached the user
-// nowhere, on the one setting whose whole job is to stop a write landing unreviewed.
-//
-// The third case is why the report cannot key on the bridge's flag alone: false also means
-// nobody asked, so a chat in autopilot would report a refusal on every spawn.
+// TestSpawnBridge_ReportsSupervisedThatWasNotApplied pins that a refused `autopilot: off`
+// reaches the user. The third case is why the report cannot key on the bridge flag alone.
 func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1043,7 +972,6 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 			br.mu.Unlock()
 			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs)
 			cs.wire(h)
-			h.mcpRegistry.SignalReady()
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
 				c.SupervisedMode = tc.supervised
@@ -1055,10 +983,7 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
-			// The chat keeps the REQUEST, unlike the mode path, which resets the record
-			// to what the session took: supervised is the safer intent to remember, so
-			// the next spawn re-asserts and this event is a report rather than the only
-			// chance to act.
+			// The chat keeps the request: supervised is the safer intent, so the next spawn re-asserts.
 			c, _ := cs.Get(t.Context(), "c1")
 			if c.SupervisedMode != tc.supervised {
 				t.Errorf("chat.SupervisedMode = %v, want the request %v kept for the next spawn",
@@ -1079,11 +1004,8 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 	}
 }
 
-// Closing a chat must NOT reap its durable KAS session; deleting one must. Sharing the delete
-// path breaks the contract twice: the chat record survives with nothing left to
-// `session/load`, and the History page — which lists KAS's sessions, not marotte's chat files
-// — can only ever show chats that are still open. The delete arm is the control: without it, a
-// close-preserves assertion would also pass if the reaper were simply unwired.
+// TestChatTeardown_CloseKeepsSessionDeleteReapsIt pins that close keeps the KAS session and
+// delete reaps it; the delete arm proves the reaper is wired.
 func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1141,10 +1063,8 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	}
 }
 
-// TestChatTeardown_DeleteByChainReapsWithoutTheRecord is the close escalation's
-// grade: the record is already deleted when the teardown runs, so the reap is
-// driven from the chain captured before the commit. The record-reading grade is the
-// control — on a recordless chat it must leave the session.
+// TestChatTeardown_DeleteByChainReapsWithoutTheRecord pins a reap driven from the chain
+// captured before the commit; the record-reading grade must leave the session.
 func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1154,7 +1074,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 		{
 			name: "the captured chain reaps with the record gone",
 			teardown: func(h *Runtime, ctx context.Context, id marotte.ChatID) {
-				h.DeleteChatStateByChain(ctx, id, []string{"sess_owned"})
+				h.DeleteChatStateByChain(ctx, id, []string{"sess_owned"}, command.RunStopTabClosed)
 			},
 			wantSurvive: false,
 		},
@@ -1184,7 +1104,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 
-			// NO chat record: the escalation deleted it inside the close commit.
+			// No chat record: the escalation deleted it inside the close commit.
 			tc.teardown(h, t.Context(), "c-doomed")
 
 			_, err := os.Stat(sessDir)
@@ -1196,12 +1116,8 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	}
 }
 
-// TestSessionLoad_HealsTheChatsRestartPausedRuns is the recovery model for agent-launched
-// runs. A restart kills a chat's bridge, which KAS reconciles by PAUSING the runs that
-// bridge launched; the user's next message
-// respawns it and this sweep makes the run heal with the chat. The sweep runs OFF the spawn
-// path deliberately — the prompt must not wait behind a run-list round trip — so the resume is
-// awaited rather than assumed, and the wait fails closed.
+// TestSessionLoad_HealsTheChatsRestartPausedRuns pins that a resumed chat heals the runs KAS
+// paused when its bridge died. The sweep is off the spawn path, so it is awaited.
 func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -1234,18 +1150,15 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	}
 }
 
-// TurnFoldTarget reads the chat store only when it has to OPEN a turn, not on every
-// folded frame. The open reads the header for the model the turn_open records; a fold
-// is a registry lookup, and it runs per streamed delta and per tool frame on the only
-// consumer of a 256-slot channel, contending with every persist on the same chat. No
-// benchmark sees it: the translate benchmarks' fold target is a fake.
+// TurnFoldTarget reads the chat store only to open a turn: a fold runs per delta on a
+// 256-slot channel's only consumer. No benchmark sees it.
 func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// The first frame has no turn to fold into, so it opens one and pays for the facts.
+	// The first frame opens a turn and pays for the facts.
 	first := h.coord.TurnFoldTarget(ctx, chatID)
 	if first == nil {
 		t.Fatal("TurnFoldTarget opened no turn, so there is no fold path to measure")
@@ -1264,8 +1177,7 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	}
 }
 
-// OwnTurn is the fold for a frame that may join a turn but must never start one: on
-// an idle chat it answers nothing, opens nothing, and reads nothing.
+// OwnTurn on an idle chat answers, opens and reads nothing.
 func TestOwnTurn_DoesNotOpenATurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	before := cs.Gets.Load()
@@ -1300,5 +1212,105 @@ func TestApplyLoadedSessionFacts_RefreshesTheEntitlementSet(t *testing.T) {
 				t.Errorf("ServedModelIDs = %v, want %v", chat.ServedModelIDs, tc.want)
 			}
 		})
+	}
+}
+
+// A saved model is judged at load: absent from the catalogue it is neither sent nor kept; an empty catalogue decides nothing.
+func TestLoad_ASavedModelIsJudgedAgainstTheServedCatalogue(t *testing.T) {
+	cases := map[string]struct {
+		served    []string
+		catalog   []marotte.SessionModel
+		wantSent  string
+		wantModel string
+		wantEff   string
+	}{
+		"absent from a non-empty catalogue: cleared and not sent": {
+			served: []string{"m-other"}, catalog: []marotte.SessionModel{{ID: "m-other"}},
+		},
+		"present in the catalogue: sent and kept": {
+			served: []string{"m-saved"}, catalog: []marotte.SessionModel{{ID: "m-saved"}},
+			wantSent: "m-saved", wantModel: "m-saved", wantEff: "max",
+		},
+		"empty catalogue: kept and not cleared": {
+			wantSent: "m-saved", wantModel: "m-saved", wantEff: "max",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, _, _ := newTestHub()
+			rec := &marotte.Chat{Name: "A", Model: "m-saved", Effort: "max", ServedModelIDs: tc.served}
+
+			sent, _, _ := h.coord.sessionChoices(t.Context(), "c1", rec, "")
+			applyLoadedSessionFacts(rec, &fakeBridge{catalog: tc.catalog}, "")
+
+			if sent != tc.wantSent {
+				t.Errorf("sessionChoices model = %q, want %q", sent, tc.wantSent)
+			}
+			if rec.Model != tc.wantModel || rec.Effort != tc.wantEff {
+				t.Errorf("after load: model = %q, effort = %q; want %q, %q",
+					rec.Model, rec.Effort, tc.wantModel, tc.wantEff)
+			}
+		})
+	}
+}
+
+func TestReconcileUserName(t *testing.T) {
+	long := strings.Repeat("n", 100)
+	cases := []struct {
+		name       string
+		chat       marotte.Chat
+		stored     string
+		setByUser  bool
+		wantName   string
+		wantUser   bool
+		wantRename string
+	}{
+		{"unlatched successor gets the user's name", marotte.Chat{Name: "Mine", NameSetByUser: true}, "New Session", false, "Mine", true, "Mine"},
+		{"already latched sends nothing", marotte.Chat{Name: "Mine", NameSetByUser: true}, "Mine", true, "Mine", true, ""},
+		{"a long name compares against KAS's capped copy", marotte.Chat{Name: long, NameSetByUser: true}, marotte.KASStoredTitle(long), true, long, true, ""},
+		{"a different user title elsewhere loses to the record", marotte.Chat{Name: "Mine", NameSetByUser: true}, "From TUI", true, "Mine", true, "Mine"},
+		{"a TUI rename is adopted without the shape rules", marotte.Chat{Name: marotte.DefaultChatName}, "Fix Dr. Smith import", true, "Fix Dr. Smith import", true, ""},
+		{"an unlatched title of the same shape is still refused", marotte.Chat{Name: marotte.DefaultChatName}, "Fix Dr. Smith import", false, marotte.DefaultChatName, false, ""},
+		{"the placeholder is never adopted", marotte.Chat{Name: marotte.DefaultChatName}, "New Session", true, marotte.DefaultChatName, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := tc.chat
+			got := reconcileUserName(&c, tc.stored, tc.setByUser)
+			if got != tc.wantRename || c.Name != tc.wantName || c.NameSetByUser != tc.wantUser {
+				t.Errorf("reconcileUserName(%q, %v) = %q, chat {%q, %v}; want %q, {%q, %v}",
+					tc.stored, tc.setByUser, got, c.Name, c.NameSetByUser, tc.wantRename, tc.wantName, tc.wantUser)
+			}
+		})
+	}
+}
+
+// A successor session of a user-named chat starts unlatched, so the door renames it; an agent-named chat's is left alone.
+func TestPersistNewSessionMetadata_RenamesASuccessorOfAUserNamedChat(t *testing.T) {
+	for _, userNamed := range []bool{true, false} {
+		h, cs, br := newTestHub()
+		br.mu.Lock()
+		br.sessionTitle = "New Session"
+		br.mu.Unlock()
+		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+			c.Name = "Mine"
+			c.NameSetByUser = userNamed
+			return true
+		})
+
+		h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
+
+		br.mu.Lock()
+		params, renamed := br.lastParams[marotte.MethodSessionRename]
+		br.mu.Unlock()
+		if renamed != userNamed {
+			t.Errorf("user-named=%v: rename sent = %v, want %v", userNamed, renamed, userNamed)
+		}
+		if userNamed && params["title"] != "Mine" {
+			t.Errorf("rename title = %v, want Mine", params["title"])
+		}
+		if c, _ := cs.Get(t.Context(), "c1"); c.Name != "Mine" {
+			t.Errorf("user-named=%v: chat name = %q, want Mine", userNamed, c.Name)
+		}
 	}
 }

@@ -1,8 +1,6 @@
 package agent
 
-// The steer commands against the real record and the real turn registry, with the
-// fake bridge holding an RPC open at the instant another event lands: a second
-// delete, a turn's end, a bridge death, a teardown, a read that cannot fold.
+// The steer commands against the real record and turn registry, the fake holding an RPC open while another event lands.
 
 import (
 	"context"
@@ -81,12 +79,13 @@ func awaitLockWaiters(t *testing.T, q steerQueue, n int) {
 	}
 }
 
-// A read KAS emitted before its clear's reply that the read loop never folds leaves
-// the clear unsettled: nothing is deleted, and the read, folding later, is the
-// row's one entry.
+// A read emitted before the clear's reply that never folds leaves the clear unsettled: nothing is deleted,
+// and the late read is the row's one entry.
 func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	gen := s.h.coord.turns.attachForward("c1")
+	// No goroutine stands behind this generation, so close its exit as forward would.
+	t.Cleanup(s.h.coord.turns.exitFor("c1", gen))
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
@@ -113,9 +112,8 @@ func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *tes
 	}
 }
 
-// Two deletes in flight take the chat's lock in turn, and the second re-reads the
-// record on acquiring it: its target is now a member of the first one's probe, so
-// it clears again and resends what is left under a fresh probe.
+// Two deletes take the lock in turn; the second re-reads, finds its target in the first's probe, clears again
+// and resends the rest under a fresh probe.
 func TestCmdSteerRemove_TwoDeletesInFlightTakeTurns(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	s.bind()
@@ -215,13 +213,16 @@ func (b failingClear) CallAt(ctx context.Context, method string, params any) (*m
 	return b.fakeBridge.CallAt(ctx, method, params)
 }
 
-// A turn that ends while the delete's clear is in flight, by a cancel, naturally, or
-// by its bridge dying, skips the op's rows; the op deletes its target and sends the
-// rows it kept as the next prompt, which names them.
+// A turn ending during the delete's clear skips the op's rows; the op deletes its target and the close's
+// pipeline resends the kept rows as the next prompt.
 func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T) {
+	deathExit := make(chan struct{})
+	close(deathExit)
 	for _, tc := range []struct {
 		stage func(t *testing.T, s *steerHarness, br *fakeBridge)
-		name  string
+		// closed runs the close pipeline a staged end has no closer for.
+		closed func(t *testing.T, s *steerHarness)
+		name   string
 	}{
 		{name: "a cancel", stage: wireEndUnderTheClear("cancelled")},
 		{name: "a natural end", stage: wireEndUnderTheClear("end_turn")},
@@ -229,17 +230,17 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 			s.bind()
 			s.steer("steer-a", "a")
 			s.steer("steer-b", "b")
-			exit := make(chan struct{})
-			close(exit)
 			var once sync.Once
 			s.h.bridge.mgr.remove("c1")
 			s.h.bridge.mgr.insert("c1", &sharedBridge{bridge: failingClear{fakeBridge: br, before: func() {
 				once.Do(func() {
 					s.recs.TurnEnded("c1", command.SteerTurnEnd{
-						TurnID: s.turnID(), BridgeDeath: true, Exit: exit, Source: marotte.TurnSourcePrompt,
+						TurnID: s.turnID(), BridgeDeath: true, Exit: deathExit, Source: marotte.TurnSourcePrompt,
 					})
 				})
 			}}, state: bridgeIdle})
+		}, closed: func(t *testing.T, s *steerHarness) {
+			s.h.coord.afterTurnClose(t.Context(), "c1", closeFacts{exit: deathExit, outcome: marotte.TurnOutcomeInterrupted})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,26 +255,24 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 			if n := s.spy.note("steer-a"); n == nil || n.Reason != marotte.SteerReasonDeleted {
 				t.Errorf("target entry = %+v, want deleted", n)
 			}
-			// The command replies before the turn end it handed off is resolved.
-			deadline := time.Now().Add(5 * time.Second)
-			for _, live := s.state("steer-b"); live && time.Now().Before(deadline); _, live = s.state("steer-b") {
-				time.Sleep(time.Millisecond)
-			}
-			if n := s.spy.note("steer-b"); n == nil || n.Reason != marotte.SteerReasonBoundary {
-				t.Errorf("kept entry = %+v, want the boundary note", n)
+			if tc.closed != nil {
+				tc.closed(t, s)
 			}
 			if p := resendPrompt(t, cs); p == nil || p.Text != "b" || !slices.Equal(p.Resends, []string{"steer-b"}) {
 				t.Errorf("resend prompt = %+v, want b naming steer-b", p)
 			}
-			if _, live := s.state("steer-b"); live {
-				t.Error("the kept row is still held after its prompt opened")
+			waitFor(t, func() bool {
+				_, live := s.state("steer-b")
+				return !live
+			})
+			if n := s.spy.note("steer-b"); n == nil || n.Reason != marotte.SteerReasonBoundary {
+				t.Errorf("kept entry = %+v, want the boundary note", n)
 			}
 		})
 	}
 }
 
-// wireEndUnderTheClear stages a bound prompt turn whose end (the drain's clear, then
-// the bracket) folds while the delete's clear is held open.
+// wireEndUnderTheClear stages a bound prompt turn whose end folds while the delete's clear is held open.
 func wireEndUnderTheClear(stop string) func(t *testing.T, s *steerHarness, br *fakeBridge) {
 	return func(t *testing.T, s *steerHarness, br *fakeBridge) {
 		id, _ := s.h.stagePromptTurn(t, "c1")
@@ -314,9 +313,8 @@ func resendPrompt(t *testing.T, cs *testChatStore) *marotte.EntryPrompt {
 	}
 }
 
-// A bridge death with a probe outstanding and a steer waiting behind it collects
-// both for one resend, marks the outstanding one as possibly still in KAS's log,
-// and owes the post-load clear.
+// A bridge death with a probe outstanding and a steer waiting collects both for one resend, marks the
+// outstanding one possibly still in KAS's log, and owes the post-load clear.
 func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T) {
 	s := newSteerHarness(t)
 	probeSent(s)
@@ -325,13 +323,13 @@ func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T
 
 	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
 
-	jobs := s.spy.takeJobs()
-	if len(jobs) != 1 || jobs[0].End == nil || !jobs[0].End.BridgeDeath {
-		t.Fatalf("jobs = %+v, want one death job", jobs)
+	ends := s.q.Ends(s.chat)
+	if len(ends) != 1 || !ends[0].End.BridgeDeath {
+		t.Fatalf("ends = %+v, want one death end", ends)
 	}
-	rows, _ := s.q.JobRows(s.chat, jobs[0].Owner, "")
+	rows, _ := s.q.JobRows(s.chat, ends[0].Owner)
 	if len(rows) != 2 || rows[0].Key != "steer-b" || !rows[0].InKAS || rows[1].Key != "steer-c" || rows[1].InKAS {
-		t.Errorf("job rows = %+v, want steer-b in KAS then steer-c not", rows)
+		t.Errorf("end rows = %+v, want steer-b in KAS then steer-c not", rows)
 	}
 	if s.channel() != chanNone || !s.recs.NeedsPostLoadClear(s.chat) {
 		t.Errorf("channel = %d post-load %v, want NONE owing the clear", s.channel(), s.recs.NeedsPostLoadClear(s.chat))
@@ -365,24 +363,22 @@ func TestCmdSteerRemove_ATeardownUnderTheClearWritesNothing(t *testing.T) {
 	}
 }
 
-// A turn-end job that wakes after the chat's teardown finds no rows to resend.
-func TestSteerRecords_AJobThatWakesAfterTeardownFindsTheChatGone(t *testing.T) {
+// A pending end resolved after the chat's teardown finds no rows to send.
+func TestSteerRecords_AnEndResolvedAfterTeardownFindsTheChatGone(t *testing.T) {
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "a")
 	s.endTurn()
-	jobs := s.spy.takeJobs()
+	ends := s.q.Ends(s.chat)
 
 	s.recs.BeginTeardown(s.chat, nil)
 
-	if rows, gone := s.q.JobRows(s.chat, jobs[0].Owner, ""); !gone || len(rows) != 0 {
+	if rows, gone := s.q.JobRows(s.chat, ends[0].Owner); !gone || len(rows) != 0 {
 		t.Errorf("JobRows after teardown = %+v gone %v, want gone", rows, gone)
 	}
 }
 
-// The prompt's drain does not send a dead buffer's row while KAS may still hold its copy:
-// a clear that fails and a clear an agent row blocks both leave the row unsent,
-// and a clear that lands lets the drain send it.
+// While KAS may still hold a dead buffer's copy, the drain does not send the row; only a landed clear releases it.
 func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 	for _, tc := range []struct {
 		setup     func(s *steerHarness, br *fakeBridge)
@@ -432,10 +428,8 @@ func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 	}
 }
 
-// A turn StartTurn begins while a delete decided in NONE is in flight cannot read the
-// buffer until that delete ends: its execution starts only after its drain takes the
-// chat's steer lock. From StartTurn on, a new delete is refused starting, because the
-// start is the record's own fact, read under the same lock as the delete's decision.
+// A turn StartTurn began during a NONE-state delete cannot read the buffer until the delete ends; from
+// StartTurn on, a new delete is refused, read under the same lock.
 func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	for _, key := range []string{"steer-a", "steer-b"} {
@@ -481,11 +475,15 @@ func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(
 	if got := removedBody(t, code, body); got["deleted"] != "steer-a" {
 		t.Errorf("the in-flight delete = %v, want steer-a deleted", got)
 	}
+	// Up to the prompt only.
 	var order []string
 	for _, m := range br.callLog() {
 		switch m {
 		case marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodPrompt:
 			order = append(order, m)
+		}
+		if m == marotte.MethodPrompt {
+			break
 		}
 	}
 	want := []string{marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodPrompt}
@@ -494,8 +492,7 @@ func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(
 	}
 }
 
-// A resubmit whose RPC fails after the clear landed still answers deleted, and every
-// kept row stays in custody, outstanding under the probe KAS may hold.
+// A resubmit failing after the clear still answers deleted; every kept row stays outstanding under the probe KAS may hold.
 func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	s.bind()

@@ -1,12 +1,6 @@
-// view-swap.ts — Synchronous view swaps with a compositor-only entry fade.
-//
-// Document view transitions are deliberately NOT used here: the spec makes
-// captured content non-hittable while a transition runs (CSS View Transitions
-// Module Level 1 §4.2), so a swap animated that way blocks clicks on chrome
-// and on the incoming view for its whole duration. The swap below is a plain
-// synchronous DOM update — hit-testing is never suppressed — and the animation
-// is a WAAPI opacity fade on the incoming view only, which composites without
-// snapshotting anything.
+// Synchronous view swaps with a compositor-only entry fade. NOT document view transitions: CSS View
+// Transitions Level 1 §4.2 makes captured content non-hittable while one runs, blocking clicks.
+// The swap is a plain DOM update; the fade is WAAPI opacity on the incoming view.
 
 /** Entry-fade duration. Mirrors --dur-enter (css/01-tokens.css: 0.25s). */
 export const DUR_ENTER_MS = 250;
@@ -34,16 +28,9 @@ let entry: Animation | null = null;
  *  single incoming element (the animation is then skipped). */
 type ViewSwap = (() => HTMLElement | null) | (() => void);
 
-/** Apply a view swap NOW and fade the incoming view in.
- *
- *  `update` runs synchronously — the caller's DOM state is final when this
- *  returns.
- *
- *  The animation is fire-and-forget: never awaited, and a cancel/abort
- *  rejection from a replaced handle is swallowed. It is skipped entirely
- *  (the swap still runs) under prefers-reduced-motion — WAAPI does not
- *  consult the CSS reduced-motion sweep — under document.hidden, and before
- *  boot completion. */
+/** Apply a view swap NOW and fade the incoming view in; `update` runs synchronously. The animation
+ *  is fire-and-forget (a replaced handle's rejection is swallowed) and skipped under
+ *  prefers-reduced-motion (WAAPI ignores the CSS sweep), document.hidden, and before boot. */
 export function swapViews(update: ViewSwap): void {
   entry?.cancel();
   entry = null;

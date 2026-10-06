@@ -35,9 +35,7 @@ func TestIdentity_ObserveRetiresOncePerChange(t *testing.T) {
 	}
 }
 
-// A single empty reading after a known identity is a transient (a credential
-// refresh mid-probe answers signed-out), so it retires nothing; the second
-// consecutive one retires, once, and absent never becomes the baseline.
+// One empty reading after a known identity retires nothing; the second retires once; absent never becomes baseline.
 func TestIdentity_AbsentRetiresOnTheSecondReadingAndNeverBecomesBaseline(t *testing.T) {
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
@@ -63,9 +61,7 @@ func TestIdentity_AbsentRetiresOnTheSecondReadingAndNeverBecomesBaseline(t *test
 	}
 }
 
-// A transient empty reading between two readings of the same identity is not a
-// change: the count resets on the identity's return, so a later single empty
-// reading is again a transient rather than the second of a pair.
+// The count resets when the identity returns, so a later single empty reading is again transient.
 func TestIdentity_ATransientAbsenceResetsOnTheIdentitysReturn(t *testing.T) {
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
@@ -160,11 +156,8 @@ func TestIdentityFingerprint_UsesOnlyNamedStableFields(t *testing.T) {
 	}
 }
 
-// readIdentity is the ONE seam that feeds the registrar, because handleWhoami answers
-// from identityCache and forks nothing. So the tests below are what pin the
-// asymmetry the two mechanisms exist under: an identity that PARSED is observed, and
-// one that could not be READ is withheld — a kiro-cli that timed out must not read as
-// an account change and retire every live bridge.
+// readIdentity is the one seam feeding the registrar: a parsed identity is observed, an unread one withheld so a
+// timeout cannot retire every bridge.
 func TestReadIdentity_ObservesAParsedIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0
@@ -197,10 +190,8 @@ func TestReadIdentity_WithholdsAnUnreadableIdentity(t *testing.T) {
 	}
 }
 
-// TestReadIdentity_ObservesASignOutTheCLIReports is the registrar reaching the
-// case identityTTL's own doc names: `kiro-cli logout` run in a terminal. kiro-cli
-// reports that with a non-zero exit, so a read that classified by the exit status
-// withheld it as unreadable and every live bridge kept the retired account.
+// TestReadIdentity_ObservesASignOutTheCLIReports pins that `kiro-cli logout` in a terminal exits non-zero, and an
+// exit-status-first read withheld it, leaving every bridge on the retired account.
 func TestReadIdentity_ObservesASignOutTheCLIReports(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0

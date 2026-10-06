@@ -1,8 +1,6 @@
 package agent
 
-// The admission slot against the REAL registry and coordinator: holder-keyed
-// refusals, the bridge-ready wake, the prime window, StartTurn's stamp timing,
-// and the full prompt path from ack to recovery.
+// The admission slot against the real registry and coordinator.
 
 import (
 	"context"
@@ -18,9 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// shrinkAdmissionWait bounds a deliberately contended full-path wait so a
-// refusal test does not sit out the production budget. Not parallel-safe, so
-// no test using it may call t.Parallel.
+// shrinkAdmissionWait shortens a contended wait. Not parallel-safe.
 func shrinkAdmissionWait(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := command.AdmissionWait
@@ -28,10 +24,7 @@ func shrinkAdmissionWait(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { command.AdmissionWait = prev })
 }
 
-// setCancelGrace writes the unresponsive-cancel budget, in both directions: SHORT so a
-// test can drive the expiry instead of sitting out the production 10s, and LONG so a test
-// can arm the grace and be sure its timer cannot fire inside the run. Not parallel-safe,
-// so no test using it may call t.Parallel.
+// setCancelGrace sets the cancel grace short to drive expiry or long to keep it from firing. Not parallel-safe.
 func setCancelGrace(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := command.CancelGrace
@@ -46,11 +39,8 @@ func seedChat(t *testing.T, cs *testChatStore, id marotte.ChatID) {
 	}
 }
 
-// The refusal arm keys on the HOLDER'S SOURCE alone, never on bridge liveness: a
-// shell holder answers "starting" on a bridgeless AND on a bridged chat — a shell
-// has a live bridge and no steerable turn — and a prompt-class holder answers
-// busy whatever its bridge, because the steer the client converts to is parked
-// until that bridge is live.
+// The refusal keys on the holder's source alone: a shell holder answers "starting" with or without a bridge; a
+// prompt holder answers busy whatever its bridge.
 func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -86,9 +76,7 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 	}
 }
 
-// A free slot admits immediately, and a slot a shell holds parks the waiter
-// until the release admits exactly it. A shell holder is the fixture because it
-// is the one holder a prompt still waits behind.
+// A free slot admits at once; a shell-held one parks the waiter until the release admits it.
 func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -120,10 +108,7 @@ func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 	h.coord.ReleaseTurnReservation("c1")
 }
 
-// A prompt arriving while a prompt-class holder's bridge is still SPAWNING answers
-// busy at once, not after the budget: the fake's startGate holds the spawn open,
-// so the holder has no live bridge for the whole wait, and the answer must come
-// from the holder's source rather than from bridge-ready or from expiry.
+// A prompt-class holder with a still-spawning bridge answers busy at once, from its source rather than readiness or expiry.
 func TestReserveTurnForPrompt_ASpawningPromptHolderAnswersBusyAtOnce(t *testing.T) {
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
@@ -157,10 +142,7 @@ func TestReserveTurnForPrompt_ASpawningPromptHolderAnswersBusyAtOnce(t *testing.
 	}
 }
 
-// The full 409-starting path: a prompt against a shell-held chat answers 409
-// with the additive `reason":"starting"` on the wire, at the wait budget, and
-// writes nothing: admission runs before the turn_open, so a refused prompt
-// leaves the log as it found it.
+// A prompt against a shell-held chat answers 409 with `reason":"starting"` at the budget and writes nothing.
 func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 	shrinkAdmissionWait(t, 60*time.Millisecond)
 	h, cs, _ := newTestHub()
@@ -192,9 +174,7 @@ func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 	}
 }
 
-// gateSpawn parks every bridge spawn on the returned gate, signalling entry.
-// It installs the hook through the PUBLIC setter — the composition root's own
-// path — so these tests also pin that the setter reaches the coordinator.
+// gateSpawn parks every spawn on the returned gate, installed through the public setter so the wiring is pinned too.
 func gateSpawn(h *Runtime) (entered, gate chan struct{}) {
 	entered = make(chan struct{})
 	gate = make(chan struct{})
@@ -209,9 +189,7 @@ func gateSpawn(h *Runtime) (entered, gate chan struct{}) {
 	return entered, gate
 }
 
-// `!echo hi` during a prompt's BLOCKED SPAWN is refused immediately: the shell
-// door's reservation is a try, never a wait, and the spawn window is exactly
-// when the bridge slot does not exist to refuse for it.
+// `!echo hi` during a prompt's blocked spawn is refused at once: the shell door tries, never waits.
 func TestShellDuringABlockedSpawnIsRefusedImmediately(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -243,11 +221,7 @@ func TestShellDuringABlockedSpawnIsRefusedImmediately(t *testing.T) {
 	}
 }
 
-// waitForTurnClosed polls the replay buffer until EXACTLY want turn_closed frames
-// exist and returns their turn_close entries. Deadline-bounded, fails closed with
-// the count. Exact rather than at-least because a surplus is a defect in its own
-// right: a turn announcing its close twice is what the single closer exists to
-// prevent. A surplus landing after the count is reached is not caught.
+// waitForTurnClosed polls until exactly want turn_closed frames exist and returns their turn_close entries; a surplus is a defect.
 func waitForTurnClosed(t *testing.T, h *Runtime, want int) []marotte.EntryTurnClose {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -266,10 +240,7 @@ func waitForTurnClosed(t *testing.T, h *Runtime, want int) []marotte.EntryTurnCl
 	}
 }
 
-// The model is stamped at StartTurn, with the bridge live: a cold chat's turn
-// carries the model the spawn persisted rather than an empty latch. The turn's
-// credits are what its own frames metered, so spend landing on the chat record
-// during the spawn window never reaches the turn_close.
+// The model is stamped at StartTurn with the bridge live; credits are the turn's own frames, so spawn-window spend never reaches its close.
 func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1") // cold: no model on the record yet
@@ -282,7 +253,7 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
 	<-entered
-	// Spend lands while the spawn is still in flight — BEFORE StartTurn.
+	// Spend lands before StartTurn.
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Usage.Credits = 5
 		c.Usage.HasRealData = true
@@ -301,11 +272,8 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 	}
 }
 
-// The recovery arbitrates on the CAPTURED result through the real registry: a
-// wire-ended empty turn closes `empty` and re-prompts on a fresh session as a
-// turn of its own. The capture order is load-bearing — the registry drops the
-// retained result at the last release, so a ReleaseTurn before the AwaitTurn
-// would leave the recovery blind and this test red.
+// The recovery arbitrates on the captured result: an empty wire-ended turn closes `empty` and re-prompts on a fresh
+// session. ReleaseTurn before AwaitTurn would blind it.
 func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.T) {
 	cs := newTestChatStore()
 	gate := make(chan struct{})
@@ -316,8 +284,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 		defer mu.Unlock()
 		br := newFakeBridge()
 		if len(minted) == 0 {
-			// Only the FIRST session's prompt is held open, so the wire turn_end
-			// can land while the call is in flight; the retry's flows freely.
+			// Only the first session's prompt is held, so turn_end lands mid-call.
 			br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
 		}
 		minted = append(minted, br)
@@ -325,7 +292,6 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	}
 	h := New(context.Background(), t.TempDir(), factory, cs)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	seedChat(t, cs, "c1")
 
 	if rec := postCmd(t, h, marotte.ClientCommand{
@@ -334,8 +300,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
-	// The first bridge's prompt call is in flight; the wire closes the turn
-	// EMPTY while the response is still pending.
+	// The wire closes the turn empty while the response is pending.
 	first := func() *fakeBridge {
 		deadline := time.Now().Add(5 * time.Second)
 		for {
@@ -358,7 +323,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	first.deliver(newTurnEndMsg("end_turn"))
 	close(gate)
 
-	// The recovery tears the session down and re-prompts on a fresh one.
+	// The recovery re-prompts on a fresh session.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		mu.Lock()
@@ -388,8 +353,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	}
 }
 
-// Shutdown mid-Call: the blocked prompt call unwinds, the turn finalizes, the
-// in-flight count drains, and Shutdown returns.
+// Shutdown mid-Call: the prompt unwinds, the turn finalizes, inflight drains and Shutdown returns.
 func TestPromptTurn_ShutdownMidCallDrainsTheTurn(t *testing.T) {
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
@@ -412,9 +376,7 @@ func TestPromptTurn_ShutdownMidCallDrainsTheTurn(t *testing.T) {
 	}
 }
 
-// Shutdown between the ack and the goroutine's first real step: the in-flight
-// registration happened BEFORE the ack, so Shutdown waits for the turn rather
-// than racing past it, and the turn still reaches a terminal broadcast.
+// Shutdown right after the ack: the in-flight registration precedes the ack, so Shutdown waits for the turn.
 func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -434,8 +396,7 @@ func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	if err := h.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown = %v: the pre-goroutine window is registered in-flight before the ack", err)
 	}
-	// The goroutine ran to a terminal signal under shutdown rather than being
-	// abandoned mid-flight: either the turn closed or its failure broadcast.
+	// The goroutine reached a terminal signal under shutdown.
 	types := extractTypes(t, bufferedSince(h, 0))
 	if missing := missingEvents(types, string(marotte.EventTurnClosed)); missing != nil {
 		if missingErr := missingEvents(types, string(marotte.EventError)); missingErr != nil {
@@ -444,9 +405,7 @@ func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	}
 }
 
-// A cancel landing between the ack and BeginPromptCall neither wedges the chat
-// nor strands the turn: the cancel answers 200 with nothing to arm against,
-// the turn closes, and the chat accepts the next prompt.
+// A cancel between the ack and BeginPromptCall answers 200 with nothing to arm; the turn closes and the chat accepts the next prompt.
 func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -466,7 +425,7 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	close(gate)
 	waitForTurnClosed(t, h, 1)
 
-	// The chat is not wedged: the slots released, so a fresh prompt is admitted.
+	// The slots released, so a fresh prompt is admitted.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		rec := postCmd(t, h, marotte.ClientCommand{
@@ -484,12 +443,8 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	waitForTurnClosed(t, h, 2)
 }
 
-// session/cancel is a NOTIFICATION nothing acks, so when KAS never answers the
-// pending session/prompt the grace budget cancels the prompt context itself. That
-// exit used to take the ordinary prompt-failure route and conclude `interrupted`,
-// a red card for a stop the reader asked for. Both surfaces are asserted because
-// they are two writes of one verdict, and the close count pins that the turn is
-// closed ONCE: a second closer writing `interrupted` beside it would be two footers.
+// When KAS never answers after an unacked session/cancel, the grace expiry must conclude `cancelled`, on both
+// surfaces, closed once.
 func TestPromptTurn_UnackedCancelConcludesCancelled(t *testing.T) {
 	setCancelGrace(t, 20*time.Millisecond)
 	h, cs, br := newTestHub()
@@ -529,13 +484,8 @@ func TestPromptTurn_UnackedCancelConcludesCancelled(t *testing.T) {
 	}
 }
 
-// The other direction, and what proves the two paths were separated rather than
-// both moved: Shutdown writes no cause on the way to the turn, so an absent grace
-// sentinel keeps meaning `interrupted`. The grace is genuinely ARMED with a budget
-// that outlives the run, so the two cancellers contend for the one close this turn
-// gets and shutdown reaches it first. The waitForCall puts Shutdown strictly AFTER
-// StartTurn and after the bridge is registered, which is what keeps this test off
-// the open shutdown-closer race its pre-goroutine sibling accepts either frame for.
+// Shutdown's cause changes the sentence, never the stop, so a turn without the grace sentinel stays `interrupted`.
+// The grace is armed long and Shutdown runs after StartTurn, so the two contend for one close.
 func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
 	setCancelGrace(t, time.Minute)
 	h, cs, br := newTestHub()
@@ -580,38 +530,14 @@ func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
 	}
 }
 
-// waitForPromptCall blocks until the chat's bridge has registered an in-flight prompt
-// context. That is the state ArmCancelGrace refuses without, so a cancel posted earlier
-// arms nothing and the test would drive a different path than it claims.
-func waitForPromptCall(t *testing.T, h *Runtime, chatID marotte.ChatID) {
+// shutdownMidPrompt blocks a prompt in session/prompt, lets arm stage the live turn, then shuts down.
+func shutdownMidPrompt(t *testing.T, arm func(h *Runtime)) (*Runtime, *testChatStore) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if sb := h.bridge.mgr.get(chatID); sb != nil {
-			sb.mu.Lock()
-			armable := sb.state == bridgePrompting && sb.promptCancel != nil
-			sb.mu.Unlock()
-			if armable {
-				return
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the prompt goroutine never registered its prompt context")
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
-// The SECOND mechanism the same gesture reaches: BeginPromptCall runs before the
-// MCP wait, so a cancel in that window arms the grace and the expiry kills the
-// context before StartTurn. The turn CmdPrompt opened at admission is then closed
-// by the pre-start exit itself through the turn end rule, `cancelled` with no
-// account and no prompt_failed toast. The MCP wait is the fixture because it is
-// the widest part of that window: 30s on a first prompt after boot.
-func TestPromptTurn_CancelDuringTheMCPWaitConcludesCancelled(t *testing.T) {
-	setCancelGrace(t, 20*time.Millisecond)
-	h, cs, _ := newTestHubUnready()
+	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
+	gate := make(chan struct{})
+	defer close(gate)
+	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
 
 	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
@@ -619,32 +545,116 @@ func TestPromptTurn_CancelDuringTheMCPWaitConcludesCancelled(t *testing.T) {
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
-	waitForPromptCall(t, h, "c1")
-
-	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
-		t.Fatalf("cancel = %d, want 200", rec.Code)
+	waitForCall(t, br, marotte.MethodPrompt)
+	if arm != nil {
+		arm(h)
 	}
-	closed := waitForTurnClosed(t, h, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown = %v", err)
+	}
+	return h, cs
+}
+
+// TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart pins that the skipped death closer would otherwise lose a queued steer.
+func TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart(t *testing.T) {
+	_, cs := shutdownMidPrompt(t, func(h *Runtime) {
+		sends, refuse := h.steerQueue.RouteSteer("c1", "s-1", "use tabs",
+			command.SteerHolder{Held: true, PromptClass: true, Live: true})
+		if refuse != "" || len(sends) != 1 {
+			t.Fatalf("RouteSteer = %+v %q, want one send", sends, refuse)
+		}
+		h.bus.steers.SteerWaiting("c1", &marotte.SteerQueuedPayload{
+			SteerID: sends[0].ID, Text: sends[0].Text, Origin: marotte.SteerOriginUser,
+		})
+		h.steerQueue.SteerSent("c1", sends[0], true, nil)
+	})
 
 	entries := logOf(t, cs, "c1")
-	closes := closesOf(t, entries)
-	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeCancelled {
-		t.Errorf("turn_close entries = %+v, want exactly one, %q: an interrupted close here "+
-			"grades the turn broken and paints it red", closes, marotte.TurnOutcomeCancelled)
+	closeAt, steerAt := -1, -1
+	var steer marotte.EntrySteer
+	for i, e := range entries {
+		switch e.Kind {
+		case marotte.EntryKindTurnClose:
+			closeAt = i
+		case marotte.EntryKindSteer:
+			if steerAt >= 0 {
+				t.Errorf("a second steer entry %q, want exactly one", e.ID)
+			}
+			steerAt = i
+			if e.ID != "s-1" {
+				t.Errorf("steer id = %q, want s-1", e.ID)
+			}
+			if err := json.Unmarshal(e.Payload, &steer); err != nil {
+				t.Fatalf("decode the steer: %v", err)
+			}
+		}
 	}
-	if len(closes) == 1 && closes[0].FailureReason != "" {
-		t.Errorf("turn_close failure_reason = %q, want empty: a cancel has no account to give",
-			closes[0].FailureReason)
+	if steerAt < 0 {
+		t.Fatalf("no steer entry after the shutdown, want a dropped/restart record of s-1")
 	}
-	if texts := textsOf(t, entries); len(texts) != 0 {
-		t.Errorf("text entries = %q, want none: the agent was never asked", texts)
+	if closeAt < 0 || steerAt < closeAt {
+		t.Errorf("steer at %d, turn_close at %d, want the steer after the close", steerAt, closeAt)
 	}
-	if closed[0].Outcome != marotte.TurnOutcomeCancelled {
-		t.Errorf("turn_closed outcome = %q, want %q", closed[0].Outcome, marotte.TurnOutcomeCancelled)
+	want := marotte.EntrySteer{Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart}
+	if steer.Text != "" || steer.Origin != want.Origin || steer.State != want.State || steer.Reason != want.Reason {
+		t.Errorf("steer = %+v, want text-less %+v: the empty text is the reconcile signal", steer, want)
 	}
-	if types := extractTypes(t, bufferedSince(h, 0)); slices.Contains(types, string(marotte.EventError)) {
-		t.Errorf("events = %v, want no error frame: prompt_failed routes to a toast, and a "+
-			"red toast for a stop the reader asked for is the same wrong signal as the red card",
-			types)
+}
+
+// TestShutdown_RecordsAParkedSteerWithItsText pins that only this process has its text, so it goes in the dropped row and a Held row.
+func TestShutdown_RecordsAParkedSteerWithItsText(t *testing.T) {
+	_, cs := shutdownMidPrompt(t, func(h *Runtime) {
+		if _, refuse := h.steerQueue.RouteSteer("c1", "s-park", "use tabs",
+			command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
+			t.Fatalf("RouteSteer refused %q", refuse)
+		}
+	})
+
+	got := chatSteers(t, cs, "c1")
+	if len(got) != 1 || got[0].Text != "use tabs" || got[0].State != marotte.SteerStateDropped ||
+		got[0].Reason != marotte.SteerReasonRestart {
+		t.Errorf("steers = %+v, want one dropped/restart carrying the parked text", got)
+	}
+	rows := queuedRows(t, cs, "c1")
+	if len(rows) != 1 || !rows[0].Held || !rows[0].Carried() || rows[0].Text != "use tabs" {
+		t.Errorf("queue = %+v, want one held carried row with the parked text", rows)
+	}
+}
+
+// TestShutdown_TheCutTurnNamesTheRestartAsItsCause: the reader cancelled nothing, so
+// the footer must not say they did.
+func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
+	_, cs := shutdownMidPrompt(t, nil)
+
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want one", len(closes))
+	}
+	if closes[0].Outcome != marotte.TurnOutcomeInterrupted || closes[0].FailureReason != string(shutdownInterruptCause) {
+		t.Errorf("turn_close = outcome %q reason %q, want interrupted with %q",
+			closes[0].Outcome, closes[0].FailureReason, shutdownInterruptCause)
+	}
+}
+
+// TestShutdown_AUserCancelCauseOutranksTheShutdownCause: the cause is first-wins, so
+// one already claimed keeps its word.
+func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
+	const earlier marotte.InterruptCause = "an earlier cause"
+	_, cs := shutdownMidPrompt(t, func(h *Runtime) {
+		own, ok := h.coord.turns.ownTurn("c1")
+		if !ok {
+			t.Fatal("no own turn to claim a cause on")
+		}
+		if !h.coord.turns.interrupt("c1", own.ID, earlier) {
+			t.Fatal("the earlier cause was not claimed")
+		}
+	})
+
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 || closes[0].FailureReason != string(earlier) {
+		t.Errorf("turn_close = %+v, want the earlier cause kept", closes)
 	}
 }

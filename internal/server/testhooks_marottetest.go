@@ -67,9 +67,8 @@ type closeAfterRequest struct {
 	After int `json:"after"`
 }
 
-// registerTestHooks mounts the SSE control surface the browser-mode suite drives:
-// the connection census with the presence table, and the close-after cut, plus the
-// preview token minter. Test builds only.
+// registerTestHooks mounts the SSE control surface the browser-mode suite drives (connection
+// census with presence, the close-after cut) plus the preview token minter. Test builds only.
 func (s *Server) registerTestHooks(mux *http.ServeMux) {
 	s.registerPreviewTestHook(mux)
 	probe, ok := s.agent.(sseProbe)

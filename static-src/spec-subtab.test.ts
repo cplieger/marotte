@@ -1,14 +1,5 @@
-// ---------------------------------------------------------------------------
-// The spec tab as a SUB-TAB: nesting, the close cascade, the per-generation
-// indent, and the one mutation that reassigns a parent.
-//
-// A spec tab is a VIEW of a directory the reader did not open a conversation for,
-// so it carries `owns: false` and hangs under the chat it belongs to. Nothing
-// here calls a mutator directly: the tab set is server-owned, so every case
-// dispatches against the fake collection in `__test-helpers__/tabs-server.ts` and
-// the `tabs_changed` frame that follows is what paints — which is why every open,
-// close and reparent is awaited.
-// ---------------------------------------------------------------------------
+// The spec tab as a SUB-TAB: nesting, the close cascade, the per-generation indent, and the one
+// mutation that reassigns a parent.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Mock } from "vitest";
@@ -23,9 +14,9 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_RUN: "",
   ICON_TAB_WEB: "",
   ICON_TAB_AGENT: "",
-  // roles.ts is in this graph (the factory derives a delegate tab's label from
-  // it), and Browser Mode links a mock as real ESM, so every name any module here
-  // imports has to exist on the factory or the file fails at link time.
+  // roles.ts is in this graph (the factory derives a delegate tab's label from it), and Browser
+  // Mode links a mock as real ESM, so every name any module here imports has to exist on the
+  // factory or the file fails at link time.
   ICON_TAB_PLAN: "",
   ICON_TAB_SPEC: "",
   ICON_TAB_QUICK_SPEC: "",
@@ -59,9 +50,9 @@ vi.mock("./dom.js", () => ({
     {},
     {
       get: (_t, prop: string) => {
-        // tabList has to be a stable document-attached element, because the real
-        // renderDOM appends the rows every assertion here reads. promptInput too:
-        // closing the last tab moves focus to the composer.
+        // tabList has to be a stable document-attached element, because the real renderDOM appends
+        // the rows every assertion here reads. promptInput too: closing the last tab moves focus to
+        // the composer.
         if (prop === "tabList") {
           let tl = document.getElementById("tab-list");
           if (tl === null) {
@@ -110,10 +101,9 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
-// `store.js` is deliberately NOT mocked. No case here stages chat state — the
-// factory reads it only for a DISPLAY NAME, and every row below is addressed by
-// its server-minted id — so the real module is both sufficient and one fewer
-// thing to keep in step with `store.ts`'s own exports.
+// `store.js` is deliberately NOT mocked. No case here stages chat state — the factory reads it only
+// for a DISPLAY NAME, and every row below is addressed by its server-minted id — so the real module
+// is both sufficient and one fewer thing to keep in step with `store.ts`'s own exports.
 vi.mock("./run-store.js", () => ({ runLabelOf: vi.fn(() => "") }));
 vi.mock("./composer-state.js", () => ({
   retargetComposer: vi.fn(),
@@ -151,12 +141,9 @@ import { bindTabsSync, tabServer } from "./__test-helpers__/tabs-server.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
-// --- The injected half of the factory ---
-//
-// `materializeTab` refuses to build a spec with no openers registered, so every
-// case needs these. The spec pair is the one this suite is about: the FEAT's stub
-// `spec-view.ts` is what the composition root lazily imports, and the factory
-// only ever reaches it through this seam.
+// `materializeTab` refuses to build a spec with no openers registered, so every case needs these.
+// The spec pair is the one this suite is about: the FEAT's stub `spec-view.ts` is what the
+// composition root lazily imports, and the factory only ever reaches it through this seam.
 interface Openers {
   chatShow: Mock<TabOpeners["chat"]["show"]>;
   chatRefresh: Mock<TabOpeners["chat"]["refresh"]>;
@@ -239,9 +226,9 @@ async function rowFor(id: string): Promise<HTMLElement> {
   return row;
 }
 
-/** The indent the row carries, read off the inline custom property renderDOM
- *  writes. The class says "is a child"; this says HOW DEEP, which is the fact a
- *  grandchild needs and the class cannot express. */
+/** The indent the row carries, read off the inline custom property renderDOM writes. The class
+ *  says "is a child"; this says HOW DEEP, which is the fact a grandchild needs and the class
+ *  cannot express. */
 async function depthOf(id: string): Promise<string> {
   const row = await rowFor(id);
   return row.style.getPropertyValue("--tab-depth");
@@ -273,8 +260,8 @@ describe("a spec tab nests under its chat", () => {
     const row = await rowFor(spec);
     expect(row.classList.contains("tab-child")).toBe(true);
     expect(row.dataset["parentId"]).toBe(chat);
-    // `owns: false` is the close contract: the sub-tab's x stops watching the
-    // spec, the chat's x is what ends the conversation.
+    // `owns: false` is the close contract: the sub-tab's x stops watching the spec, the chat's x is
+    // what ends the conversation.
     expect(tabServer.subjects().find((s) => s.id === spec)?.owns).toBe(false);
     expect(tabServer.subjects().find((s) => s.id === spec)?.parent).toBe(chat);
   });
@@ -286,15 +273,13 @@ describe("a spec tab nests under its chat", () => {
     await openSpec(SPEC_DIR, chat);
     expect(hasTab("spec", SPEC_DIR)).toBe(true);
 
-    // ONE mutation: the parent and its children go in one frame, so the child is
-    // gone without anything having closed it.
     await closeTab(chat);
     expect(hasTab("chat", "c-1")).toBe(false);
     expect(hasTab("spec", SPEC_DIR)).toBe(false);
   });
 
-  // A spec directory the reader opened from a path link belongs to no
-  // conversation, so nothing invents a parent for it.
+  // A spec directory the reader opened from a path link belongs to no conversation, so nothing
+  // invents a parent for it.
   it("stays top-level with no parent", async () => {
     expect.assertions(2);
     await openSpec(SPEC_DIR);
@@ -304,9 +289,9 @@ describe("a spec tab nests under its chat", () => {
   });
 });
 
-// The indent is per GENERATION rather than per child, which is what a spec under
-// a tangent needs: the tangent is already indented, so its spec has to step in
-// once more or the two read as siblings.
+// The indent is per GENERATION rather than per child, which is what a spec under a tangent needs:
+// the tangent is already indented, so its spec has to step in once more or the two read as
+// siblings.
 describe("--tab-depth", () => {
   it("counts the generations rather than answering is-a-child", async () => {
     expect.assertions(3);
@@ -340,8 +325,8 @@ describe("setTabParent", () => {
     expect(row.style.getPropertyValue("--tab-depth")).toBe("1");
   });
 
-  // An unchanged parent commits nothing server-side and so emits no frame; the
-  // local check answers before spending the round trip.
+  // An unchanged parent commits nothing server-side and so emits no frame; the local check answers
+  // before spending the round trip.
   it("sends nothing when the tab already hangs there", async () => {
     expect.assertions(2);
     await openTab({ kind: "chat", ref: "c-1" });

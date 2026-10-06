@@ -1,23 +1,4 @@
 // THE SEND BUTTON'S CONTRAST FLOORS, measured rather than asserted about.
-//
-// The colour maths lives in scripts/css-contrast.py — sRGB decode, OKLCH
-// conversion, color-mix, the WCAG ratio — and this test shells out to its `pair`
-// subcommand rather than reimplementing any of it in TypeScript. A second
-// implementation would be a second thing to be wrong, and the numbers in
-// 15-input.css's comments were measured with the first one; a floor asserted
-// against a different engine can drift from the comment it is meant to protect.
-//
-// WHAT IS BEING PINNED, and why it is not the obvious pair. The button's fill is
-// the requested colour (the light theme's accent character in dark mode, a light
-// one in light mode) with --c-text-primary on it, and that request puts the ink
-// and the bar on the SAME side of the fill in both themes — so the fill cannot
-// carry 3:1 against the bar AND 4.5:1 for the ink. Measured, the windows for the
-// three state hues do not even overlap within one theme. The EDGE carries the
-// separation instead, which is what WCAG 1.4.11 asks for: a 3:1 boundary, not a
-// 3:1 fill. So the floors here are ink-on-fill >= 4.5 at every depth of the
-// ladder, and edge-vs-bar >= 3.
-//
-// Node environment: this runs a process and reads TSV.
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -29,22 +10,14 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "..", "scripts", "css-contrast.py");
 
-/** The stylesheet, read with `node:fs` rather than through the shared helper's
- *  `?raw` glob. Measured: in vitest's NODE project a `*.css?raw` import resolves
- *  to the EMPTY STRING — Vite's CSS pipeline claims the module for the
- *  server-side environment, where a stylesheet is a side effect with no value —
- *  while `*.ts?raw` and every other extension resolve normally, and `*.css?raw`
- *  in the browser project resolves normally too. This is the only node-project
- *  test that needs a stylesheet, so it reads its own; `ruleBody` above is the
- *  shared parser and needs no import of the file. */
+/** The stylesheet, read with `node:fs` rather than through the shared helper's `?raw` glob. */
 function loadCSS(name: string): string {
   return readFileSync(join(here, "css", name), "utf8");
 }
 
-/** The faces and the depth ladder are READ OUT OF THE STYLESHEET, not restated
- *  here. A floor asserted against numbers the test carries itself would keep
- *  passing after someone changed the CSS to a depth that violates it, which is
- *  the one failure a floor exists to prevent. */
+/** The faces and the depth ladder are READ OUT OF THE STYLESHEET, not restated here. A floor
+ *  asserted against numbers the test carries itself would keep passing after someone changed the
+ *  CSS to a depth that violates it, which is the one failure a floor exists to prevent. */
 function sendBtn(): { hues: string[]; depths: number[] } {
   const body = ruleBody(loadCSS("15-input.css"), ".send-btn").replace(/\/\*[\s\S]*?\*\//g, " ");
   const hues = [...body.matchAll(/--send-hue:\s*var\((--c-[\w-]+)\)/g)].map((m) => m[1]!);
@@ -130,9 +103,9 @@ describe.skipIf(!existsSync(script))("the send button's contrast", () => {
   });
 
   it("draws its edge from the same hue as its fill", () => {
-    // The floor above measures the HUE against the bar, so it only means anything
-    // while the border is that hue. If the border were a swatch of its own, the
-    // measurement and the paint would be two different things.
+    // The floor above measures the HUE against the bar, so it only means anything while the border
+    // is that hue. If the border were a swatch of its own, the measurement and the paint would be
+    // two different things.
     const body = ruleBody(loadCSS("15-input.css"), ".send-btn").replace(/\/\*[\s\S]*?\*\//g, " ");
     expect(body, "the border must be the state hue at full strength").toMatch(
       /border:\s*1px\s+solid\s+var\(--send-hue\)/,
@@ -143,10 +116,8 @@ describe.skipIf(!existsSync(script))("the send button's contrast", () => {
   });
 
   it("keeps the fill's own separation on the record, so a regression is visible", () => {
-    // NOT a floor: this is the measured cost of building the colours that were
-    // asked for, recorded so that anyone who widens the ramp sees the number move
-    // instead of discovering it by eye. If it ever reaches 3:1 the edge stops
-    // being load-bearing and the comment in 15-input.css is out of date.
+    // NOT a floor: this is the measured cost of building the colours that were asked for, recorded
+    // so that anyone who widens the ramp sees the number move instead of discovering it by eye.
     const resting = pair(fill("--c-accent", sendBtn().depths[0]!), BAR);
     const byTheme = new Map(resting.map((m) => [m.theme, m.ratio]));
     expect(byTheme.get("dark")).toBeCloseTo(1.462, 2);
@@ -154,10 +125,9 @@ describe.skipIf(!existsSync(script))("the send button's contrast", () => {
   });
 
   it("reports a miss through its exit status, so the floor cannot pass vacuously", () => {
-    // The floors above read a ratio and compare it here. This one checks the tool
-    // itself still fails a pair it should fail — otherwise a broken `pair`
-    // (a bad expression silently resolving to the backdrop, say) would make every
-    // assertion above trivially true.
+    // The floors above read a ratio and compare it here. This one checks the tool itself still
+    // fails a pair it should fail — otherwise a broken `pair` (a bad expression silently resolving
+    // to the backdrop, say) would make every assertion above trivially true.
     expect(() =>
       execFileSync("python3", [script, "pair", "--c-text-tertiary", "--c-bg-elevated", "4.5"], {
         encoding: "utf8",

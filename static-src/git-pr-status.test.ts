@@ -1,6 +1,4 @@
-// Tests for the PR row's pure read-outs: the check chip, the merge-block
-// reason, and the per-forge capability rules. No DOM needed, which is
-// the reason these live outside git-prs-tab.ts.
+// Pure read-outs, no DOM, which is why they live outside git-prs-tab.ts.
 
 import { describe, it, expect } from "vitest";
 
@@ -34,7 +32,6 @@ function action(over: Partial<GitPRAction> = {}): GitPRAction {
   };
 }
 
-/** A row in the server's shape: open, pinned to a head, nothing blocking. */
 function pr(act: Partial<GitPRAction> = {}, over: Partial<Omit<GitPR, "action">> = {}): GitPR {
   return {
     repo_id: "v1.6f2f72",
@@ -57,9 +54,7 @@ function withoutHead(row: GitPR): GitPR {
 }
 
 describe("mergeVerdict", () => {
-  // Every named cause. The catch-all this replaced said the PR "isn't
-  // mergeable" and told the reader to open it on the forge; no branch may
-  // reintroduce that.
+  // Every named cause; no branch may fall back to a generic "isn't mergeable".
   const table: [string, string][] = [
     ["draft", "draft"],
     ["conflicts", "conflicts"],
@@ -80,9 +75,8 @@ describe("mergeVerdict", () => {
     expect(mergeVerdict(pr({ merge_blocked: "none", mergeable: "unknown" })).reason).toBe("");
   });
 
-  // The Gitea family names no cause on any row, and GitLab names none while it
-  // is still computing. Reading `unknown` alone as blocked would disable Merge
-  // on every Gitea and Codeberg row, so the draft flag and the verdict decide.
+  // The Gitea family names no cause, and GitLab none while computing; reading `unknown` alone as blocked would disable
+  // Merge on every Gitea and Codeberg row.
   describe("when the forge names no cause", () => {
     it("enables the merge when the verdict is yes", () => {
       expect(mergeVerdict(pr({ merge_blocked: "unknown", mergeable: "yes" })).reason).toBe("");
@@ -115,8 +109,7 @@ describe("mergeVerdict", () => {
     });
   });
 
-  // Every family refuses an unpinned merge, so a row without a head commit
-  // cannot merge however clear the forge says it is.
+  // Every family refuses an unpinned merge.
   it("blocks a row the forge reported no head commit for", () => {
     const want = "the forge did not report the head commit.";
     expect(mergeVerdict(withoutHead(pr({ merge_blocked: "none" }))).reason).toBe(want);
@@ -126,23 +119,19 @@ describe("mergeVerdict", () => {
     ).toBe(want);
   });
 
-  // Fail CLOSED on a cause this build does not know. merge_blocked is a plain
-  // string so the server vocabulary can grow, and a fallback to "" would
-  // recreate the exact defect the function exists to fix: the forge refuses
-  // the merge while the row enables the button.
+  // Fail closed on an unknown cause: merge_blocked is an open string, and "" would enable a merge the forge refuses.
   it("blocks on an unrecognised cause and quotes it", () => {
     const reason = mergeVerdict(pr({ merge_blocked: "requires_two_approvals" })).reason;
     expect(reason).toContain("requires_two_approvals");
   });
 
   it("reserves none for mergeable, and nothing else", () => {
-    // The old empty-string spelling of "nothing blocks" is a cause now.
+    // The empty-string spelling of "nothing blocks" is a cause now.
     expect(mergeVerdict(pr({ merge_blocked: "" })).reason).not.toBe("");
     expect(mergeVerdict(pr({ merge_blocked: " " })).reason).not.toBe("");
   });
 
-  // The unknown cause reaches a tooltip, so it is normalised to one bounded
-  // line rather than trusted for its provenance.
+  // The unknown cause reaches a tooltip, so it is normalised to one bounded line.
   it("keeps an unrecognised cause to one short line", () => {
     const reason = mergeVerdict(pr({ merge_blocked: "a\nb".padEnd(120, "x") })).reason;
     expect(reason).not.toContain("\n");
@@ -168,8 +157,7 @@ describe("mergeVerdict", () => {
     }
   });
 
-  // An unknown verdict is its own state: the forge has not decided, which is not
-  // the forge refusing, and the row says which of the two it is.
+  // An unknown verdict (the forge has not decided) is not a refusal, and the row says which.
   describe("its state", () => {
     it("is ready when nothing blocks the merge", () => {
       expect(mergeVerdict(pr({ merge_blocked: "none" })).state).toBe("ready");
@@ -198,9 +186,7 @@ describe("mergeVerdict", () => {
     });
   });
 
-  // A field the family's list does not carry is not an answer: the row says the
-  // value has not been read, or that reading it failed, rather than that the forge
-  // has not decided.
+  // A field the family's list does not carry is not an answer: the row says it is unread or failed.
   describe("over a row's fill", () => {
     function filled(field: string, reason: string): readonly FieldFill[] {
       return [{ field, reason }];
@@ -282,8 +268,7 @@ describe("checkChip", () => {
     );
   });
 
-  // A verdict the family's list does not carry is not "no checks": the chip says
-  // it has not been read, so a row with failing CI cannot read as a quiet one.
+  // The chip says the verdict was not read, so failing CI cannot read as a quiet row.
   it("says a verdict the list does not carry has not been read", () => {
     const row = pr({ checks: "unknown" }, { fill: [{ field: "checks", reason: "not_on_list" }] });
     expect(checkChip(row)).toEqual({
@@ -307,8 +292,7 @@ describe("checkChip", () => {
     expect(checkChip(row)).toBeNull();
   });
 
-  // GitLab serves one pipeline status and no per-check counts, so a pass carries
-  // no count rather than claiming zero checks passed.
+  // GitLab serves one pipeline status and no per-check counts, so a pass claims no count.
   it("states no count the forge did not supply", () => {
     const row = pr(
       { checks: "passing" },
@@ -372,15 +356,13 @@ describe("rerunControl", () => {
     }
   });
 
-  // GitHub decides re-runs per repository and no connection read can say, so its
-  // control stays enabled whatever the capability reads, read or not.
+  // GitHub decides re-runs per repository and no connection read can say, so the control stays enabled.
   it("stays enabled on GitHub when the capability is unknown or not read yet", () => {
     expect(rerunControl("github", cap("unknown"), undefined)).toEqual({ offer: true, reason: "" });
     expect(rerunControl("github", undefined, undefined)).toEqual({ offer: true, reason: "" });
   });
 
-  // Elsewhere an unknown capability is one the server refuses the re-run on, so
-  // the control says so rather than failing on the press.
+  // Elsewhere the server refuses a re-run on an unknown capability, so the control says so before the press.
   it("is disabled with the evidence where another family reads unknown", () => {
     expect(
       rerunControl("gitea", cap("unknown", "no swagger document on this instance"), undefined),
@@ -399,8 +381,7 @@ describe("rerunControl", () => {
     expect(rerunControl("gitlab", undefined, undefined)).toEqual({ offer: false });
   });
 
-  // A failed read is no verdict at all: the press is offered and a refusal, if
-  // one comes, disables it.
+  // A failed read is no verdict: the press is offered, and a refusal disables it.
   it("is enabled when the capability could not be read", () => {
     expect(rerunControl("gitea", null, undefined)).toEqual({ offer: true, reason: "" });
   });
@@ -431,8 +412,7 @@ describe("rerunRefusal", () => {
     );
   });
 
-  // Only these two say the repository will refuse every later press; anything
-  // else is the outcome of this one press.
+  // Only these two codes say every later press is refused too.
   it("is no refusal for any other code", () => {
     for (const code of [undefined, "", "rate_limited", "head_moved", "not_supported"]) {
       expect(rerunRefusal(code, "nope"), String(code)).toBeUndefined();
@@ -443,8 +423,7 @@ describe("rerunRefusal", () => {
 describe("movedRepository", () => {
   const to = { repo_id: "v1.6e65772f7265706f", display_path: "new/repo" };
 
-  // The successor is server-controlled text inside a refusal's body, so only a
-  // whole one is taken.
+  // The successor is server-controlled text in a refusal body, so only a whole one is taken.
   const cases = [
     {
       desc: "a stale refusal naming its successor",
@@ -516,10 +495,7 @@ describe("canArmAutoMerge", () => {
     expect(canArmAutoMerge(pr({ checks: "pending" }))).toBe(true);
   });
 
-  // The pending arm has to be gated on nothing ELSE blocking the merge. A
-  // draft or conflicting PR with a check still running would not merge when
-  // that check went green, so "Merge when green" is a promise the forge
-  // cannot keep.
+  // Arming is gated on nothing else blocking: a draft or conflicting PR would not merge when its check went green.
   it("does not offer arming when another cause blocks the merge", () => {
     for (const cause of [
       "draft",
@@ -549,8 +525,7 @@ describe("canArmAutoMerge", () => {
     ).toBe(false);
   });
 
-  // checks_running is the one named cause that DOES earn the offer: it says
-  // the checks are the only thing in the way.
+  // checks_running says the checks are the only thing in the way.
   it("still offers arming when the checks are the stated cause", () => {
     expect(canArmAutoMerge(pr({ checks: "pending", merge_blocked: "checks_running" }))).toBe(true);
     expect(canArmAutoMerge(pr({ checks: "failing", merge_blocked: "checks_running" }))).toBe(true);

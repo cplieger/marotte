@@ -1,27 +1,13 @@
-// The registry search panel's GEOMETRY, measured against the assembled cascade.
-//
-// Nothing covered css/60-mcp.css before this file, and all three defects it
-// guards were reported as things a reader could see and no test could: a focus
-// ring cut off at both edges, result rows sitting left of the search button that
-// produced them, and result cards so tall that two of them filled the box.
-//
-// Every claim here is a real box in a real browser, which is not decoration: the
-// clearance a focus ring needs is the difference between two paint edges, the
-// squish is the difference between two content boxes, and a DOM emulator reports
-// every one of those as 0.
-//
-// The one non-geometric case is the last: the class the pending face keys on has
-// to be ASKED for at the binding, and a rule nothing applies looks identical to a
-// missing rule from the paint's side.
+// The registry search panel's geometry, measured in a real browser against the assembled cascade (a DOM emulator
+// reports every box as 0). The last case checks the binding asks for the class the pending face keys on.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-// Hoisted, because the mock factories are lifted above every module-level const
-// and both of these are referenced from inside one.
+// Hoisted above module consts, since one factory references both.
 const stubs = vi.hoisted(() => ({
   bindLoadingState: vi.fn(() => () => undefined),
-  /** `byId` keyed by id, so the wiring case can say WHICH element was bound. */
+  /** Keyed by id, so the wiring case can say which element was bound. */
   byId: (id: string): HTMLElement => {
     const tag = id === "mcp-search-input" ? "input" : id === "mcp-search-btn" ? "button" : "div";
     const el = document.createElement(tag);
@@ -33,8 +19,7 @@ const stubs = vi.hoisted(() => ({
 vi.mock("./dom.js", () => ({ byId: stubs.byId }));
 vi.mock("./actions/mcp.js", () => ({
   searchRegistry: { cancel: () => undefined, dispatch: async () => null },
-  // Present-but-undefined so real-ESM linking succeeds: the module under test
-  // imports the name and nothing here reaches the error branch that reads it.
+  // Present-but-undefined for real-ESM linking; nothing here reaches its branch.
   registryFailureOf: undefined,
 }));
 vi.mock("./actions/index.js", () => ({
@@ -47,8 +32,7 @@ vi.mock("./actions/index.js", () => ({
 import { renderRegistryResult, initSearchPanel } from "./mcp-panels-search.js";
 import type { RegistryEntry as Entry } from "./wire/types.gen.js";
 
-/** The ring `40-a11y.css` puts on every focusable control: 2px at a 1px offset,
- *  so it paints in the 3px immediately outside the control's border box. */
+/** `40-a11y.css`'s ring: 2px at a 1px offset, painting the 3px outside the border box. */
 const RING_PX = 3;
 
 let style: HTMLStyleElement;
@@ -107,9 +91,7 @@ interface Panel {
   rows: HTMLElement[];
 }
 
-/** The search panel as `static/index.html` declares it, inside the modal card
- *  that bounds its height. The result rows come from the production builder, so a
- *  row's own markup cannot drift away from the rules measured here. */
+/** As `static/index.html` declares it inside the modal card; rows from the production builder. */
 function mountPanel(count: number, opts: { dual?: boolean } = {}): Panel {
   const card = document.createElement("div");
   card.className = "uip-modal-dialog mcp-modal-card";
@@ -166,8 +148,7 @@ function mountPanel(count: number, opts: { dual?: boolean } = {}): Panel {
   return { panel, searchRow, input, searchBtn, results, rows };
 }
 
-/** The one part of a mounted row a case names, resolved rather than asserted, so
- *  a missing element is a thrown error naming it instead of a null-deref. */
+/** Resolved rather than asserted, so a missing part throws naming it. */
 function part(row: HTMLElement | undefined, selector: string): HTMLElement {
   const hit = row?.querySelector<HTMLElement>(selector) ?? null;
   if (hit === null) {
@@ -176,8 +157,7 @@ function part(row: HTMLElement | undefined, selector: string): HTMLElement {
   return hit;
 }
 
-/** A scroll container's clip edges: overflow clips at the PADDING box, so these
- *  are the edges a focus ring has to stay inside. */
+/** Overflow clips at the padding box, so these are the edges a focus ring must stay inside. */
 function clip(el: HTMLElement): { left: number; right: number; top: number } {
   const r = el.getBoundingClientRect();
   const cs = getComputedStyle(el);
@@ -188,8 +168,7 @@ function clip(el: HTMLElement): { left: number; right: number; top: number } {
   };
 }
 
-/** How much of the panel's padding box its own reserved scrollbar gutter takes.
- *  `clientWidth` is that padding box MINUS the gutter. */
+/** `clientWidth` is the padding box minus the reserved gutter. */
 function reservedGutter(el: HTMLElement): number {
   const cs = getComputedStyle(el);
   const paddingBox =
@@ -201,11 +180,8 @@ function reservedGutter(el: HTMLElement): number {
 
 describe("the premises these measurements rest on", () => {
   it("the search input takes the app's focus ring on programmatic focus", () => {
-    // The ring is what the clearance case below measures, so its presence is the
-    // premise. `02-reset.css` also writes `outline: none` on `:focus` for this
-    // class, at HIGHER specificity — it loses only because that file is
-    // `@layer reset` while 40-a11y.css is unlayered. If the layering ever moved,
-    // the clearance case would pass while measuring nothing.
+    // The ring is the clearance case's premise. `02-reset.css` writes `outline: none` on `:focus` at higher specificity
+    // and loses only because it is `@layer reset`; if layering moved, the clearance case would measure nothing.
     const { input } = mountPanel(1);
     input.focus();
     const cs = getComputedStyle(input);
@@ -215,9 +191,7 @@ describe("the premises these measurements rest on", () => {
   });
 
   it("the panel clips the INLINE axis too, which is why the clearance is needed", () => {
-    // `overflow-y: auto` beside a `visible` inline axis computes to `auto` (CSS
-    // Overflow 3 §3), so this box clips all four sides. That is the whole reason a
-    // ring on a full-width control inside it needs room to paint.
+    // `overflow-y: auto` beside a `visible` inline axis computes to `auto` (CSS Overflow 3 §3), so all four sides clip.
     const cs = getComputedStyle(mountPanel(1).panel);
     expect(cs.overflowY).toBe("auto");
     expect(cs.overflowX).toBe("auto");
@@ -226,11 +200,7 @@ describe("the premises these measurements rest on", () => {
 
 describe("the focus ring has room inside the panel", () => {
   it("on the search input's leading edge and the button's trailing edge", () => {
-    // Measured before the fix: 0px on both, so the ring was cut off flush against
-    // each edge — the reported "purple highlight cut off on the left and sometimes
-    // the right". A result row's own `<summary>` ring is safe by construction and
-    // deliberately not asserted: the row's border and inline padding already put
-    // it 13px inside this edge, so no single change could clip it.
+    // At 0px edges the ring is clipped. A row's own ring sits 13px inside and is not asserted.
     const { panel, input, searchBtn } = mountPanel(3);
     input.focus();
     const edges = clip(panel);
@@ -241,10 +211,7 @@ describe("the focus ring has room inside the panel", () => {
 
 describe("one scroller, so the result column cannot be squished", () => {
   it("leaves the results element a plain block rather than a second scroller", () => {
-    // A nested scroller takes its scrollbar out of the RESULT box alone, which is
-    // the mechanism behind "the scrollbar squishes the result boxes inward". Both
-    // halves are asserted: the computed axis, and that twenty rows produce no
-    // independent scroll for a scrollbar to appear in.
+    // A nested scroller takes its scrollbar out of the result box alone, squishing the rows.
     const { results } = mountPanel(20);
     expect(getComputedStyle(results).overflowY).toBe("visible");
     expect(results.scrollHeight).toBe(results.clientHeight);
@@ -259,10 +226,7 @@ describe("one scroller, so the result column cannot be squished", () => {
   });
 
   it("reserves the scrollbar's gutter before there is one, so the column never moves", () => {
-    // `scrollbar-gutter: stable`, the idiom `#messages-wrap` already uses. The
-    // reservation is the mechanism and is measurable here; the two equalities under
-    // it are the consequence a reader sees, and on a platform whose scrollbar takes
-    // width they are what stops the row jumping inward while they type.
+    // `scrollbar-gutter: stable`, as `#messages-wrap`, so rows do not jump inward while typing.
     const short = mountPanel(1);
     expect(short.panel.scrollHeight).toBe(short.panel.clientHeight);
     expect(reservedGutter(short.panel)).toBeGreaterThan(0);
@@ -276,8 +240,7 @@ describe("one scroller, so the result column cannot be squished", () => {
   });
 
   it("keeps the query box on screen once the panel scrolls", () => {
-    // The cost of moving the scroll to the panel: without a sticky row the input
-    // leaves the viewport as soon as a reader browses the results it produced.
+    // Without a sticky row the input leaves the viewport as the reader browses results.
     const { panel, searchRow } = mountPanel(20);
     expect(getComputedStyle(searchRow).position).toBe("sticky");
     panel.scrollTop = 240;
@@ -290,21 +253,17 @@ describe("one scroller, so the result column cannot be squished", () => {
 
 describe("a result is a compact row", () => {
   it("is one line tall, whatever the entry declares", () => {
-    // The measured heights this replaces: ~96px at the floor, ~143px typical, and
-    // 240-260px for a dual-transport server — against a 352px box. The ceiling is
-    // an upper bound rather than a pinned number, so a font-metric shift does not
-    // fail it while a card growing back does.
+    // An upper bound rather than a pinned number, so a font-metric shift does not fail it.
     const single = mountPanel(1).rows[0]?.getBoundingClientRect().height ?? 0;
     const dual = mountPanel(1, { dual: true }).rows[0]?.getBoundingClientRect().height ?? 0;
     expect(single).toBeGreaterThan(24);
     expect(single).toBeLessThanOrEqual(48);
-    // A second install path adds a button beside the first, not a second block.
+    // A second install path adds a button, not a block.
     expect(dual).toBe(single);
   });
 
   it("reads as one row: the install button and the summary are the same height", () => {
-    // `.btn-small`'s own `--btn-h` would set the row's floor at 36px; the dense
-    // tier is what an action inside a dense row takes.
+    // `.btn-small`'s `--btn-h` would floor the row at 36px; an action in a dense row takes the dense tier.
     const { rows } = mountPanel(1);
     const h = part(rows[0], ".mcp-result-summary").getBoundingClientRect().height;
     expect(h).toBeGreaterThan(24);
@@ -312,23 +271,18 @@ describe("a result is a compact row", () => {
   });
 
   it("shows the whole list rather than two of it", () => {
-    // The point of the compaction, stated as the number a reader experiences. The
-    // viewport is the browser project's fixed 1280x720.
+    // The viewport is the browser project's fixed 1280x720.
     const { panel, rows } = mountPanel(20);
     const rowH = rows[0]?.getBoundingClientRect().height ?? 1;
     expect(Math.floor(panel.clientHeight / rowH)).toBeGreaterThanOrEqual(8);
   });
 
   it("carries a chevron that says it expands, and turns it when it does", () => {
-    // The row's only affordance for "there is more here". Both halves: the glyph
-    // has a real box (`10-shell-app.css` sizes the SVG, not the span, so a missing
-    // rule renders nothing at all) and the turn is keyed off `[open]`.
+    // The glyph has a real box (`10-shell-app.css` sizes the SVG, not the span) and the turn keys off `[open]`.
     const { rows } = mountPanel(1);
     const chevron = part(rows[0], ".disclosure-chevron");
     expect(chevron.getBoundingClientRect().width).toBeGreaterThan(8);
-    // The angle is read off `--chev-turn` rather than off `transform`: the shared
-    // rule TRANSITIONS the transform, so the computed matrix an instant after the
-    // toggle is still the closed one and would compare equal either way.
+    // Read off `--chev-turn`: the transform transitions, so the computed matrix just after the toggle is still closed.
     const closed = getComputedStyle(chevron).getPropertyValue("--chev-turn").trim();
     expect(closed).toBe("-90deg");
     expect(getComputedStyle(chevron).transform).not.toBe("none");
@@ -355,7 +309,7 @@ describe("a result is a compact row", () => {
     const openDesc = desc.getBoundingClientRect();
     expect(row?.getBoundingClientRect().height).toBeGreaterThan(closedH);
     expect(getComputedStyle(desc).whiteSpace).toBe("normal");
-    // Its own line: wider than the space left beside the name, and lower down.
+    // Its own line: wider than the space beside the name.
     expect(openDesc.width).toBeGreaterThan(closedDesc.width);
     expect(openDesc.top).toBeGreaterThan(closedDesc.top);
   });
@@ -363,9 +317,7 @@ describe("a result is a compact row", () => {
 
 describe("the search button reports a query in flight", () => {
   it("swaps its magnifier for the shared spinning ring, at the shared period", () => {
-    // `bindLoadingState` adds the class; the glyph is replaced rather than joined
-    // because the pill is icon-only. The period comes from `--spin-dur`, which
-    // `spin-period.test.ts` sweeps every stylesheet for.
+    // `bindLoadingState` adds the class; the glyph is replaced since the pill is icon-only. Period from `--spin-dur`.
     const { searchBtn } = mountPanel(1);
     const idle = searchBtn.getBoundingClientRect();
     const glyph = part(searchBtn, "svg");
@@ -380,19 +332,15 @@ describe("the search button reports a query in flight", () => {
     expect(ring.animationName).toBe("vk-spin");
     expect(ring.animationDuration).toBe("0.6s");
     expect(ring.animationIterationCount).toBe("infinite");
-    // The busy face in 40-a11y.css reads the aria-busy this binding also sets, so
-    // the ring is not dimmed by the disabled face beside it.
+    // The busy face reads the aria-busy this binding also sets, so the ring is not dimmed.
     expect(getComputedStyle(searchBtn).opacity).toBe("1");
-    // The pending face must not resize the control it sits in.
+    // The pending face must not resize its control.
     expect(searchBtn.getBoundingClientRect().width).toBe(idle.width);
     expect(searchBtn.getBoundingClientRect().height).toBe(idle.height);
   });
 
   it("asks bindLoadingState for that class, on the search button", () => {
-    // The other half, and the half a stylesheet cannot state: `bindLoadingState`
-    // was wired with NO options, so it only ever set `disabled` and the button
-    // said nothing for the whole wait. A rule nothing applies is indistinguishable
-    // from an absent rule.
+    // The class must be asked for at the binding; a rule nothing applies looks like no rule.
     stubs.bindLoadingState.mockClear();
     initSearchPanel();
     const calls = stubs.bindLoadingState.mock.calls as unknown as [

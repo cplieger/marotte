@@ -1,22 +1,7 @@
-// Package modeltext reads the strings a MODEL authored and answers what marotte
-// needs from them: whether a catalog entry's description marks the model hidden,
-// and what a completion says once its markdown wrapper is off.
-//
-// Every symbol here takes text marotte did not write and did not ask to be
-// shaped that way, and returns the part that is usable. That is one job read
-// over two inputs — the model's description of itself, and the model's answer.
-//
-// It exists because this is BEHAVIOUR, and it used to sit in internal/marotte beside
-// the wire and domain TYPES. Five packages call it (bridge, agent and translate
-// for the tags; git and server for the fences), none of which owns the others.
-// internal/git was the obvious candidate for the fence half, holding 3 of its 4
-// production call sites — declined because internal/server holds the fourth and
-// does NOT import git today, so that home would put a markdown helper behind a
-// dependency on a package of HTTP handlers.
-//
-// HiddenTags is a function rather than the exported slice it used to be. A
-// package-level []string is writable by every importer, and one of them already
-// had to defensively copy it before extending.
+// Package modeltext reads strings a MODEL authored and returns the usable part: whether a catalog
+// description marks the model hidden, and a completion with its markdown wrapper off. Its own
+// package because five packages call it and none owns the others; HiddenTags is a function so no
+// importer can mutate it.
 package modeltext
 
 import (
@@ -28,9 +13,9 @@ import (
 // bridge to hide end-of-life models from the user.
 //
 // Deliberately NARROWER than internal/agent's ambient-selection set, which adds
-// [internal] and [experimental]: those models are SHOWN in the picker and merely
-// excluded from ambient-task selection, so the two policies are not the same
-// list and must not be merged into one.
+// [internal], [experimental], [eol] and the prose preview marker: those models
+// are SHOWN in the picker and merely excluded from ambient-task selection, so
+// the two policies are not the same list and must not be merged into one.
 var hiddenTags = []string{
 	"[deprecated]",
 	"[legacy]",
@@ -65,16 +50,8 @@ func HasAnyTag(text string, tags []string) bool {
 	return false
 }
 
-// StripCodeFence removes a single leading/trailing markdown code fence
-// from model output. Models sometimes wrap their answer in ```lang ... ```
-// despite explicit instructions; this is a low-cost safety net that
-// matters because the output goes straight into the editor buffer or
-// commit message.
-//
-// Semantics: strips one wrapping fence (the outermost). Intentional
-// fences inside the content (e.g. a PR description containing code
-// blocks) are preserved. This is the correct behaviour for both the
-// git commit-message and server utility-bridge paths.
+// StripCodeFence removes one wrapping markdown fence (the outermost) from model output, which goes
+// straight into an editor buffer or commit message; fences inside the content are preserved.
 func StripCodeFence(s string) string {
 	if !strings.HasPrefix(s, "```") {
 		return s

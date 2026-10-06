@@ -1,10 +1,5 @@
-// Unit tests for store.ts, the ENTRY-LOG store: the five operations over `session.turns`,
-// the header re-sync, the dock projection, the dot vocabulary and the per-chat repaint
-// causes.
-//
-// Position is `seq` and counts are counts: a value that does not fit is a HOLE and the
-// repair is one range read, so several cases below assert that a repair was ASKED FOR
-// rather than that the store patched anything.
+// Unit tests for store.ts, the ENTRY-LOG store: the five operations over `session.turns`, the
+// header re-sync, the dock projection, the dot vocabulary and the per-chat repaint causes.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fc from "fast-check";
 import {
@@ -91,8 +86,6 @@ import type { ChatHeader, Session, ToolCall, ToolProgressPayload } from "./types
 import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/reactive";
 
-// --- Fixtures -------------------------------------------------------------------------
-
 function makeSession(chatID: string): Session {
   return {
     id: chatID,
@@ -116,8 +109,8 @@ function resetStore(chatID: string): void {
   setActive(chatID);
 }
 
-/** A minimal server header for `chatID`. `model` is deliberately absent, which is the shape
- *  the wire produces for a chat whose model the server has not been told yet (`Model` is
+/** A minimal server header for `chatID`. `model` is deliberately absent, which is the shape the
+ *  wire produces for a chat whose model the server has not been told yet (`Model` is
  *  `omitempty`). */
 function headerFor(chatID: string): ChatHeader {
   return {
@@ -130,8 +123,8 @@ function headerFor(chatID: string): ChatHeader {
   };
 }
 
-/** The `turn_open` that opens turn `turnID`, at session-absolute ordinal `n`. A prompt id
- *  makes it a reader-opened turn, which is what `hasMessage` addresses. */
+/** The `turn_open` that opens turn `turnID`, at session-absolute ordinal `n`. A prompt id makes
+ *  it a reader-opened turn, which is what `hasMessage` addresses. */
 function turnOpenEntry(turnID: string, n: number, promptID?: string): Entry {
   return {
     id: `${turnID}-open`,
@@ -171,8 +164,8 @@ function textEntry(turnID: string, seq: number, text: string, lane?: string): En
   return sealed(turnID, seq, "text", { text }, lane === undefined ? {} : { lane });
 }
 
-// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a
-// `Partial` widens every required field to include `undefined`, which the target type refuses.
+// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a `Partial`
+// widens every required field to include `undefined`, which the target type refuses.
 function toolCall(id: string, over: Partial<EntryToolCall> = {}): EntryToolCall {
   const base: EntryToolCall = {
     id,
@@ -195,8 +188,8 @@ function openTurnIn(chatID: string, turnID: string, n = 1, promptID?: string): s
   return turnID;
 }
 
-/** The repair calls `store.ts` asked for, in order. Installed per test so a case can assert
- *  that a hole was DETECTED without the loader being present. */
+/** The repair calls `store.ts` asked for, in order. Installed per test so a case can assert that
+ *  a hole was DETECTED without the loader being present. */
 let repairs: { chatID: string; turnID: string; afterSeq?: number }[] = [];
 
 beforeEach(() => {
@@ -214,8 +207,6 @@ afterEach(() => {
     // No repair recorded outside a case that installed its own collector.
   });
 });
-
-// --- parseContextSize ----------------------------------------------------------------
 
 describe("parseContextSize reads a window size out of a model's own description", () => {
   const cases: [string, number | undefined][] = [
@@ -237,8 +228,6 @@ describe("parseContextSize reads a window size out of a model's own description"
     });
   }
 });
-
-// --- The active session ----------------------------------------------------------------
 
 describe("the active session", () => {
   it("follows the active id", () => {
@@ -293,8 +282,6 @@ describe("the active session", () => {
     expect(watchActiveId()).toBe("a");
   });
 });
-
-// --- The session collection ------------------------------------------------------------
 
 describe("the session collection stays consistent under arbitrary add and remove", () => {
   it("keeps every id's index in sync with the list", () => {
@@ -406,8 +393,6 @@ describe("reinsertSession", () => {
     expect(getSessions().map((s) => s.id)).toEqual(["a", "b"]);
   });
 });
-
-// --- The five entry operations ---------------------------------------------------------
 
 describe("openTurn", () => {
   it("creates the turn with its turn_open as entries[0] and appends the turn order", () => {
@@ -707,8 +692,6 @@ describe("markWindowStale", () => {
   });
 });
 
-// --- hasMessage -----------------------------------------------------------------------
-
 describe("hasMessage answers off turn_open.prompt.id, the one place a prompt id is addressed", () => {
   it("finds a prompt this client sent", () => {
     resetStore("a");
@@ -733,8 +716,6 @@ describe("hasMessage answers off turn_open.prompt.id, the one place a prompt id 
     expect(hasMessage("ghost", "m-abc")).toBe(false);
   });
 });
-
-// --- Liveness -------------------------------------------------------------------------
 
 describe("turnLive: liveness is the log", () => {
   it("is true while a resident turn carries no turn_close", () => {
@@ -819,8 +800,6 @@ describe("window edges", () => {
     expect(isEmptyChat(undefined)).toBe(true);
   });
 });
-
-// --- The dot vocabulary ---------------------------------------------------------------
 
 describe("outcomeLatch grades a persisted outcome for the dot", () => {
   const cases: [TurnOutcome | undefined, "done" | "failed" | ""][] = [
@@ -934,8 +913,6 @@ describe("subagentStatusFor maps a delegate's invocation status to its dot", () 
   });
 });
 
-// --- The header re-sync ---------------------------------------------------------------
-
 describe("upsertHeader re-syncs an existing row", () => {
   it("never lowers the turn count the client has already seen", () => {
     resetStore("a");
@@ -1002,6 +979,23 @@ describe("upsertHeader re-syncs an existing row", () => {
     upsertHeader(headerFor("a"));
     expect(get("a")?.supervised_mode).toBe(false);
   });
+
+  // The follow-up list and the mode are header-authoritative: a header without them is steer and no
+  // rows, which is how a drained or discarded row leaves every device.
+  it("takes the interrupt mode and the queued rows in both directions", () => {
+    resetStore("a");
+    upsertHeader({
+      ...headerFor("a"),
+      interrupt_mode: "queue",
+      queued_prompts: [{ id: "m-q1", text: "then add tests" }],
+    });
+    expect(get("a")?.interrupt_mode).toBe("queue");
+    expect(get("a")?.queued?.map((q) => q.id)).toEqual(["m-q1"]);
+
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.interrupt_mode).toBe("steer");
+    expect(get("a")?.queued).toEqual([]);
+  });
 });
 
 describe("upsertHeader seeds a brand-new row", () => {
@@ -1013,6 +1007,17 @@ describe("upsertHeader seeds a brand-new row", () => {
     expect(s.supervised_mode).toBe(false);
     expect(s.turns.size).toBe(0);
     expect(s.turn_order).toEqual([]);
+  });
+
+  it("seeds the interrupt mode and the queued rows from the header", () => {
+    setSessions([]);
+    upsertHeader({
+      ...headerFor("a"),
+      interrupt_mode: "queue",
+      queued_prompts: [{ id: "m-q1", text: "held", held: true }],
+    });
+    expect(get("a")?.interrupt_mode).toBe("queue");
+    expect(get("a")?.queued?.[0]?.held).toBe(true);
   });
 
   it("derives has_more from the record's count, because a header carries no window", () => {
@@ -1029,8 +1034,6 @@ describe("upsertHeader seeds a brand-new row", () => {
     expect(get("a")?.last_turn_outcome).toBe("failed");
   });
 });
-
-// --- Per-chat switches ----------------------------------------------------------------
 
 describe("the per-chat switches", () => {
   it("setCurrentMode applies a new mode and does not churn on the one it has", () => {
@@ -1140,8 +1143,6 @@ describe("setAgentStatus", () => {
     expect(get("a")).toBe(before);
   });
 });
-
-// --- The dock -------------------------------------------------------------------------
 
 describe("the steer dock holds what the agent has NOT read", () => {
   beforeEach(() => {
@@ -1390,8 +1391,6 @@ describe("the steer dock holds what the agent has NOT read", () => {
   });
 });
 
-// --- The per-chat repaint causes ------------------------------------------------------
-
 describe("the per-chat transcript version", () => {
   it("counts up by one per explicit bump, on the named chat only", () => {
     setSessions([makeSession("a"), makeSession("b")]);
@@ -1460,8 +1459,6 @@ describe("the per-chat transcript version", () => {
   });
 });
 
-// --- transcriptStale ------------------------------------------------------------------
-
 describe("transcriptStale: the activation refetch gate", () => {
   function loadedChat(): Session {
     resetStore("a");
@@ -1505,8 +1502,6 @@ describe("transcriptStale: the activation refetch gate", () => {
   });
 });
 
-// --- Eviction -------------------------------------------------------------------------
-
 describe("evictChatMessages", () => {
   it("drops the window and keeps the session row, so header data survives", () => {
     resetStore("a");
@@ -1539,8 +1534,8 @@ describe("evictChatMessages", () => {
 });
 
 describe("registerEvictionExemption", () => {
-  // The sweep is the exemption's only reader, so the timer is what makes either half
-  // observable: the predicate and its unregister move nothing else in the store.
+  // The sweep is the exemption's only reader, so the timer is what makes either half observable:
+  // the predicate and its unregister move nothing else in the store.
   it("keeps an exempt chat resident, and its unregister hands the window back", () => {
     vi.useFakeTimers();
     try {
@@ -1561,8 +1556,6 @@ describe("registerEvictionExemption", () => {
     }
   });
 });
-
-// --- Live turn facts ------------------------------------------------------------------
 
 describe("the live turn facts", () => {
   it("keys code references by TURN, and only for a turn the window holds", () => {
@@ -1607,8 +1600,6 @@ describe("the live turn facts", () => {
   });
 });
 
-// --- Tool calls -----------------------------------------------------------------------
-
 describe("settledToolCall joins a call with its result", () => {
   it("returns the call as created when no result has landed", () => {
     const call = toolCall("c1");
@@ -1633,6 +1624,21 @@ describe("settledToolCall joins a call with its result", () => {
   it("latches declined one way, so a later verdict-free result cannot clear it", () => {
     const merged = settledToolCall(toolCall("c1", { declined: true }), toolResult());
     expect(merged.declined).toBe(true);
+  });
+
+  it("carries the result's offloaded output file onto the card", () => {
+    const offload = {
+      path: "/k/sessions/cli/sess_1/tool-outputs/shell-0a1b2c3d.txt",
+      total_chars: 9,
+    };
+    expect(settledToolCall(toolCall("c1"), toolResult({ offload })).offload).toEqual(offload);
+  });
+
+  it("carries the result's answered interaction onto the card", () => {
+    const interaction = { type: "tool_approval", outcome: "selected", choice: "allow_always" };
+    expect(settledToolCall(toolCall("c1"), toolResult({ interaction })).interaction).toEqual(
+      interaction,
+    );
   });
 });
 
@@ -1749,6 +1755,25 @@ describe("republishWindowToolCalls", () => {
     expect(peekToolCallSig("a", "c1")).toBe(shown);
   });
 
+  it("publishes at a card whose only difference is the answered interaction", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1"), { id: "c1" }));
+    const interaction = { type: "tool_approval", outcome: "selected", choice: "reject_once" };
+    appendEntry(
+      "a",
+      sealed(turn, 2, "tool_result", toolResult({ interaction }), { id: "c1:result" }),
+    );
+    const shown = { type: "tool_approval", outcome: "selected", choice: "allow_once" };
+    ensureToolCallSig(
+      "a",
+      "c1",
+      settledToolCall(toolCall("c1"), toolResult({ interaction: shown })),
+    );
+    republishWindowToolCalls("a", [turn]);
+    expect(peekToolCallSig("a", "c1")?.interaction).toEqual(interaction);
+  });
+
   it("mints no signal for a call nothing has mounted", () => {
     resetStore("a");
     const turn = openTurnIn("a", "t1");
@@ -1764,8 +1789,6 @@ describe("republishWindowToolCalls", () => {
     }).not.toThrow();
   });
 });
-
-// --- Defaults -------------------------------------------------------------------------
 
 describe("defaultUsage", () => {
   it("seeds usage as not-yet-measured, so a ring does not claim a reading", () => {

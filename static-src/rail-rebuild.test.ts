@@ -1,19 +1,4 @@
-// ---------------------------------------------------------------------------
 // The rail does not redraw a rail that has not changed.
-//
-// `render()` ends in `root.replaceChildren(...)` over freshly built nodes, and it runs
-// on every transcript paint — several times a second while a turn streams. Every marker
-// is a `<button>` and a pending one carries `vk-dot-beat`, so an unguarded rebuild took
-// focus off a keyboard reader's marker and restarted that animation at the same rate.
-// Same reader-state loss `exec-view/place.ts` records for re-seating an attached node,
-// reached by rebuilding rather than moving.
-//
-// The guard is a signature over every input the nodes read, so the risk it introduces is
-// the opposite one: a MISSED input leaves the rail stale, which is worse than the
-// rebuild. Hence the second half of this file — one case per input that must still force
-// a redraw. Real Chromium, because the first case asserts on `document.activeElement`
-// and on a live animation clock.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { KEY_ATTR } from "@cplieger/reactive";
@@ -47,9 +32,9 @@ for (const [id, tag] of [
   }
   document.body.appendChild(e);
 }
-// Browser Mode serves no CSS, so the scene declares the two boxes the stylesheet would:
-// the track's height (a rail with no box holds one marker) and a real beat on a pending
-// marker, which is what the first case measures.
+// Browser Mode serves no CSS, so the scene declares the two boxes the stylesheet would: the track's
+// height (a rail with no box holds one marker) and a real beat on a pending marker, which is what
+// the first case measures.
 const style = document.createElement("style");
 style.textContent = `
   .turn-rail{position:absolute;inset-block-start:0;block-size:400px}
@@ -89,22 +74,7 @@ function markerFor(n: number): HTMLButtonElement {
   return hit;
 }
 
-/** Wait until the rail has stopped redrawing on its own.
- *
- *  A fresh paint legitimately renders more than once: the track's `clientHeight` is 0
- *  until layout resolves and it feeds the marker span, so the first render's inputs are
- *  not the settled ones. Holding a marker captured before that is holding a DETACHED node
- *  — which is what made the first version of the animation case read `getAnimations()` on
- *  an element with no parent and no computed style at all.
- *
- *  The sample is the rail's whole markup, not the marker labels: the position mark
- *  (`data-current`) is a render input too, and it lands from an IntersectionObserver
- *  delivery that under a cold full-suite load arrives after the labels have stopped
- *  moving — so a label-only wait returned while one more rebuild was still coming, and
- *  the repaint case then compared a marker against its rebuilt successor. Frames rather
- *  than a 16ms timer, because observer callbacks are delivered in the rendering step
- *  and a loaded frame is longer than the timer; three identical frames is two with no
- *  redraw in them. */
+/** Wait until the rail has stopped redrawing on its own. */
 async function settle(): Promise<void> {
   const root = outer.querySelector(".turn-rail");
   let last = "";
@@ -117,16 +87,13 @@ async function settle(): Promise<void> {
   }
 }
 
-/** The chat every paint in a test uses.
- *
- *  ONE id per test, and that is what makes the staleness half of this file able to fail:
- *  a NEW chat resets the rail, so re-fetching under a fresh id re-renders whatever the
- *  signature says and the guard is never consulted. Measured — with a per-paint id, a
- *  signature stripped of every per-marker fact passed all five redraw cases. */
+/** The chat every paint in a test uses. ONE id per test, and that is what makes the staleness
+ *  half of this file able to fail: a NEW chat resets the rail, so re-fetching under a fresh id
+ *  re-renders whatever the signature says and the guard is never consulted. */
 const CHAT = "c-rail-rebuild";
 
-/** Re-fetch the SAME chat's index and let the rail settle. `force`, because the record
- *  for an unchanged chat is otherwise served from cache without a render. */
+/** Re-fetch the SAME chat's index and let the rail settle. `force`, because the record for an
+ *  unchanged chat is otherwise served from cache without a render. */
 async function paint(turns: TurnSummary[]): Promise<void> {
   vi.mocked(apiGet).mockResolvedValue({ turns } as never);
   await rail.loadTurnRail(CHAT, { force: true });
@@ -167,16 +134,9 @@ describe("an unchanged rail", () => {
   });
 
   it("does not restart a marker's animation across a repaint", async () => {
-    // Production's is `vk-dot-beat` on `.rail-marker[data-pending]`; the scene declares one
-    // on every marker instead, because the property under test is that a rebuild does not
-    // knock an animation on a marker back to zero, whichever state carries it.
-    //
-    // PAUSED AT A KNOWN POINT, so the case depends on no clock at all. Waiting for the
-    // animation to have ADVANCED made the premise a timing bet, and under a cold
-    // full-suite run Chromium throttles rAF hard enough to lose it — measured, a 200ms
-    // sleep left `currentTime` at 0. Positioning it ourselves removes the bet: a paused
-    // animation holds its `currentTime`, and a rebuild cannot preserve it, because a
-    // rebuilt marker carries a fresh RUNNING animation from zero.
+    // Production's is `vk-dot-beat` on `.rail-marker[data-pending]`; the scene declares one on
+    // every marker instead, because the property under test is that a rebuild does not knock an
+    // animation on a marker back to zero, whichever state carries it.
     await paint(THREE);
     const marker = markerFor(2);
     expect(marker.isConnected, "the probe must hold a live marker").toBe(true);

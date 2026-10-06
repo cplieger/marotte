@@ -1,20 +1,4 @@
-// ---------------------------------------------------------------------------
 // The activity dot on a workflow run's tab.
-//
-// Four rules carry the whole feature and each is easy to break silently: EVERY
-// run gets a dot (a chat's own dot cannot cover a run that outlives its turn); the
-// dot must repaint when the DOCK's queue changes rather than only when a run event
-// arrives (a background run blocked on a permission with nobody watching is the
-// case it exists for); the status must come from the store AS A TRACKED READ, so
-// the fetch an invalidation coalesces into repaints the dot when it resolves; and
-// a tracked run whose tab is not there YET keeps its place and paints the moment
-// the tab lands — the tab a starting run gets is opened server-side, so the run's
-// first frame routinely beats its own tab.
-//
-// The NAME rides the same effect, and for the same reason as that last rule: a tab
-// opened by the server carries no label, so the row is built from a store cell that
-// is still empty and has to be corrected when the first fetch resolves.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/reactive";
@@ -24,34 +8,28 @@ const m = {
   painted: [] as { id: string; status: string }[],
   named: [] as { id: string; name: string }[],
   tabs: new Set<string>(),
-  // One entry per unanswered ask, as the dock holds it: the chat id it is FILED
-  // under plus the run stamped on its payload. Two fields rather than one set of
-  // keys, because the two keyings are exactly what the join has to reconcile — a
-  // parentless run's ask is filed under `run:<id>` with no chat, an
-  // agent-launched one under the LAUNCHING chat with the run on the payload.
+  // One entry per unanswered ask, as the dock holds it: the chat id it is FILED under plus the run
+  // stamped on its payload.
   asks: [] as { chatID: string; runID: string }[],
   states: new Map<string, RunState>(),
   names: new Map<string, string>(),
-  /** The run refs the projection holds, as `openRunRefs` answers them. Separate
-   *  from `tabs` above, which is keyed by the readable TAB id the fake resolves. */
+  /** The run refs the projection holds, as `openRunRefs` answers them. Separate from `tabs`
+   *  above, which is keyed by the readable TAB id the fake resolves. */
   runTabs: new Set<string>(),
-  /** One entry per `invalidateRun` call, in order, so the seed's bound is
-   *  assertable. */
+  /** One entry per `invalidateRun` call, in order, so the seed's bound is assertable. */
   invalidated: [] as string[],
 };
 
 const tabsVersion = signal(0);
 vi.mock("./tabs.js", () => ({
-  // The projection's lookup: a run's TAB id is opaque, so the module asks for it
-  // by `(kind, ref)`. The fake keeps the old readable id as the answer, which is
-  // what the assertions below name.
+  // The projection's lookup: a run's TAB id is opaque, so the module asks for it by `(kind, ref)`.
   tabIdFor: vi.fn((_kind: string, ref: string) => (m.tabs.has(`run:${ref}`) ? `run:${ref}` : "")),
   setTabStatus: vi.fn((id: string, status: string) => {
     m.painted.push({ id, status });
   }),
-  // The real one is a no-op when the row already carries the label, which is what
-  // bounds the self-write this effect makes; the fake records every call so a case
-  // can assert the repeat is suppressed.
+  // The real one is a no-op when the row already carries the label, which is what bounds the
+  // self-write this effect makes; the fake records every call so a case can assert the repeat is
+  // suppressed.
   renameTab: vi.fn((id: string, name: string) => {
     if (m.names.get(id) === name) {
       return;
@@ -60,8 +38,8 @@ vi.mock("./tabs.js", () => ({
     m.named.push({ id, name });
     tabsVersion.value = tabsVersion.value + 1;
   }),
-  // A signal read, like production: the effect's re-run on a tab mutation IS the
-  // dependency under test.
+  // A signal read, like production: the effect's re-run on a tab mutation IS the dependency under
+  // test.
   tabSetVersion: vi.fn(() => tabsVersion.value),
   // TRACKED like production's, so the seed effect re-runs when a run tab lands.
   openRunRefs: vi.fn(() => {
@@ -70,15 +48,14 @@ vi.mock("./tabs.js", () => ({
   }),
 }));
 
-// All three dependencies have to stay SIGNAL reads, or the effect under test
-// loses the dependency that makes it repaint.
+// All three dependencies have to stay SIGNAL reads, or the effect under test loses the dependency
+// that makes it repaint.
 const queueVersion = signal(0);
 vi.mock("./decision-dock.js", () => ({
-  // The RUN-scoped reader, and the fake performs the real join rather than a set
-  // lookup: `hasPendingDecision` is a CHAT-keyed predicate, so passing it a
-  // workflow id matched nothing ever and an agent-launched run's ask — the one
-  // population whose asks arrive on a chat bridge — never reached this dot.
-  // Production importing that name again fails the suite at link time.
+  // The RUN-scoped reader, and the fake performs the real join rather than a set lookup:
+  // `hasPendingDecision` is a CHAT-keyed predicate, so passing it a workflow id matched nothing
+  // ever and an agent-launched run's ask — the one population whose asks arrive on a chat bridge —
+  // never reached this dot.
   runPendingAsks: vi.fn((workflowID: string) => {
     void queueVersion.value;
     const runKey = `run:${workflowID}`;
@@ -90,35 +67,31 @@ vi.mock("./decision-dock.js", () => ({
 const statesVersion = signal(0);
 let observer: ((workflowID: string) => void) | null = null;
 vi.mock("./run-store.js", () => ({
-  // TRACKED, like the real runState: a cell write repaints. The old peekRunState
-  // read is the mutant this mock refuses to satisfy — production importing it
-  // fails the suite at link time.
+  // TRACKED, like the real runState: a cell write repaints.
   runState: vi.fn((id: string) => {
     void statesVersion.value;
     return m.states.get(id);
   }),
-  // The label, resolved by the store over the same cell. Untracked in production,
-  // which costs nothing here: the status read above is already the subscription.
+  // The label, resolved by the store over the same cell. Untracked in production, which costs
+  // nothing here: the status read above is already the subscription.
   runLabelOf: vi.fn((id: string) => {
     const st = m.states.get(id);
     return st?.runLabel ?? st?.workflowName ?? "";
   }),
-  // The store's seam for "this client now knows about this run", which the
-  // live-runs rebuild reports each row to. Recorded rather than inert: whether a
-  // consumer registers at all is the half a store-side test cannot see.
+  // The store's seam for "this client now knows about this run", which the live-runs rebuild
+  // reports each row to. Recorded rather than inert: whether a consumer registers at all is the
+  // half a store-side test cannot see.
   registerLiveRunObserver: vi.fn((fn: (workflowID: string) => void) => {
     observer = fn;
   }),
-  // The fetch the seed asks for. Recorded rather than resolved: a case drives the
-  // cell write itself, so the request and its answer are separately assertable.
+  // The fetch the seed asks for. Recorded rather than resolved: a case drives the cell write
+  // itself, so the request and its answer are separately assertable.
   invalidateRun: vi.fn((id: string) => {
     m.invalidated.push(id);
   }),
-  // The REAL rule, not a stub. The dot's yellow arm is decided by it, so a stub
-  // answering `false` would leave the park case green while production could not
-  // tell a park on a person from a network blip. BOTH arms, because a park inside a
-  // parallel branch reaches only the second: the run keeps no matching reason for
-  // it, and the node's own signal is what survives.
+  // The REAL rule, not a stub. The dot's yellow arm is decided by it, so a stub answering `false`
+  // would leave the park case green while production could not tell a park on a person from a
+  // network blip.
   isNeedInputPark: (state: RunState | undefined): boolean => {
     if (state?.status !== "paused") {
       return false;
@@ -185,10 +158,7 @@ describe("every run's tab gets a dot, whoever launched it", () => {
     expect(m.painted).toEqual([{ id: "run:wf_1", status: "working" }]);
   });
 
-  // The REVERSAL, pinned in the direction it was reversed. An agent-launched run
-  // used to be excluded because its launching chat showed `working`; that chat goes
-  // idle the moment the launching turn ends, which is seconds into a run that lasts
-  // minutes, so the exclusion left the run with no signal at all.
+  // The REVERSAL, pinned in the direction it was reversed.
   it("paints an agent-launched run too, because its chat's dot goes idle first", () => {
     m.tabs.add("run:wf_agent");
     m.states.set("wf_agent", { workflowId: "wf_agent", status: "running" });
@@ -208,20 +178,14 @@ describe("every run's tab gets a dot, whoever launched it", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The name.
-//
-// A run's tab is opened by the SERVER, and a `tabs_changed` frame carries no
-// label, so the row is built from a store cell that is still empty at that
-// instant. The correction is this effect, on the same read as the dot.
-// ---------------------------------------------------------------------------
 
 describe("the tab's name is corrected when the run's state arrives", () => {
   it("renames the row once the first fetch resolves", () => {
     m.tabs.add("run:wf_name");
     trackRun("wf_name");
-    // Nothing fetched yet: the factory's placeholder stands, and renaming to
-    // nothing would be worse than leaving it.
+    // Nothing fetched yet: the factory's placeholder stands, and renaming to nothing would be worse
+    // than leaving it.
     expect(m.named).toEqual([]);
 
     m.states.set("wf_name", { workflowId: "wf_name", runLabel: "nightly sweep" });
@@ -230,8 +194,8 @@ describe("the tab's name is corrected when the run's state arrives", () => {
   });
 
   it("renames once, not on every repaint", () => {
-    // The self-write this effect makes is bounded by renameTab returning early on
-    // an unchanged label. Without that it would re-enter on its own tab-set bump.
+    // The self-write this effect makes is bounded by renameTab returning early on an unchanged
+    // label. Without that it would re-enter on its own tab-set bump.
     m.tabs.add("run:wf_once");
     m.states.set("wf_once", { workflowId: "wf_once", runLabel: "sweep" });
     trackRun("wf_once");
@@ -269,10 +233,9 @@ describe("the status comes from the store, as a tracked read", () => {
     trackRun("wf_3");
     expect(m.painted.at(-1)).toEqual({ id: "run:wf_3", status: "working" });
 
-    // A pause is not a finish: the run is stopped waiting for something. The
-    // drive is the STORE's own signal — the fetch an invalidation coalesced
-    // into resolving — with no run event and no dock churn. An untracked read
-    // (the old peekRunState) never sees these writes and the dot stays stale.
+    // A pause is not a finish: the run is stopped waiting for something. The drive is the STORE's
+    // own signal — the fetch an invalidation coalesced into resolving — with no run event and no
+    // dock churn.
     m.states.set("wf_3", { workflowId: "wf_3", status: "paused" });
     storeChanged();
     expect(m.painted.at(-1)).toEqual({ id: "run:wf_3", status: "waiting" });
@@ -287,17 +250,17 @@ describe("the status comes from the store, as a tracked read", () => {
   });
 
   it("paints nothing at all for a run the store has never answered for", () => {
-    // "" is the absent state, not `idle`: an idle dot would claim a run exists and
-    // is doing nothing, which is a different thing from not knowing yet.
+    // "" is the absent state, not `idle`: an idle dot would claim a run exists and is doing
+    // nothing, which is a different thing from not knowing yet.
     m.tabs.add("run:wf_4");
     trackRun("wf_4");
     expect(m.painted).toEqual([{ id: "run:wf_4", status: "" }]);
   });
 
   it("refreshRunDots repaints a run the module already knows", () => {
-    // run-view's door: after its own fetch it calls trackRun (a no-op for a
-    // known id, so no bump) + refreshRunDots. The nudge must repaint from the
-    // store's CURRENT answer even though no tracked signal fired.
+    // run-view's door: after its own fetch it calls trackRun (a no-op for a known id, so no bump) +
+    // refreshRunDots. The nudge must repaint from the store's CURRENT answer even though no tracked
+    // signal fired.
     m.tabs.add("run:wf_nudge");
     m.states.set("wf_nudge", { workflowId: "wf_nudge", status: "running" });
     trackRun("wf_nudge");
@@ -323,10 +286,8 @@ describe("the dot repaints on a dock change, with no run event", () => {
     expect(m.painted).toEqual([{ id: "run:wf_5", status: "input" }]);
   });
 
-  // The half the chat-keyed predicate could never see: an agent-launched run's ask
-  // is filed under the LAUNCHING chat's id, so only a scan over the payload's run
-  // finds it. Before the run-scoped reader this population had no amber dot at all,
-  // which is the same masking one level up from the transcript's run card.
+  // The half the chat-keyed predicate could never see: an agent-launched run's ask is filed under
+  // the LAUNCHING chat's id, so only a scan over the payload's run finds it.
   it("flips to input for a CHAT-PARENTED run's ask, filed under the launching chat", () => {
     m.tabs.add("run:wf_6");
     m.states.set("wf_6", { workflowId: "wf_6", status: "running" });
@@ -365,11 +326,8 @@ describe("the dot repaints on a dock change, with no run event", () => {
 });
 
 describe("a tracked run without a tab keeps its place and paints on arrival", () => {
-  // The automatic tab offer is a server round trip, so a run's first frame
-  // routinely beats its own tab. The old sweep DELETED the id when the tab was
-  // missing, and a paused run emits no re-add frame at all — its dot stayed
-  // blank until unrelated dock churn happened to repaint. PAUSED is used below
-  // because it is exactly the no-second-chance case.
+  // The automatic tab offer is a server round trip, so a run's first frame routinely beats its own
+  // tab. PAUSED is used below because it is exactly the no-second-chance case.
   it("paints the moment the tab lands, with no fresh run event", () => {
     m.states.set("wf_race", { workflowId: "wf_race", status: "paused" });
     trackRun("wf_race");
@@ -400,14 +358,10 @@ describe("a tracked run without a tab keeps its place and paints on arrival", ()
   });
 });
 
-// ---------------------------------------------------------------------------
-// The live-runs rebuild is the THIRD door into "this client knows about this
-// run", and it is the only one a PAUSED run restored on boot reaches: such a run
-// emits no frame at all and nothing paints its view, so without a consumer on
-// the store's seam its row keeps the factory's placeholder and its dot stays
-// blank for the life of the pause. Resolving the run's state is only half of
-// that — a run the painter never learned about is not in the repaint at all.
-// ---------------------------------------------------------------------------
+// The live-runs rebuild is the THIRD door into "this client knows about this run", and it is the
+// only one a PAUSED run restored on boot reaches: such a run emits no frame at all and nothing
+// paints its view, so without a consumer on the store's seam its row keeps the factory's
+// placeholder and its dot stays blank for the life of the pause.
 
 describe("the live-runs rebuild reaches the dot, which a boot-restored run needs", () => {
   it("registers with the store, so the rebuild has something to report to", () => {
@@ -424,26 +378,15 @@ describe("the live-runs rebuild reaches the dot, which a boot-restored run needs
 
     observer?.("wf_boot");
 
-    // The dot is asserted by CONTENT rather than by call count: the rename below
-    // bumps the tab set, so the effect re-enters once and repaints the same status.
-    // That extra pass is the documented bound, not a behaviour to pin.
+    // The dot is asserted by CONTENT rather than by call count: the rename below bumps the tab set,
+    // so the effect re-enters once and repaints the same status. That extra pass is the documented
+    // bound, not a behaviour to pin.
     expect(m.painted).toContainEqual({ id: "run:wf_boot", status: "waiting" });
     expect(m.named).toEqual([{ id: "run:wf_boot", name: "nightly sweep" }]);
   });
 });
 
-// ---------------------------------------------------------------------------
 // The FOURTH door: an open run tab seeds its own run state.
-//
-// A cold load — the iPad shape, where the tab is evicted and the page reloads —
-// restores every open run tab from a persisted subject that names the run and says
-// nothing about it, so the row carries the factory's placeholder and no dot. The
-// three doors above cannot repair it: no frame arrives for a run nobody prompted,
-// the run view's own paint needs the tab activated, and `/api/runs/live` is
-// presence over LEASES, so every settled run is outside it. The ids below appear
-// nowhere else in this file on purpose: `tracked` has no reset, so a reused id
-// arrives already seeded and the case would assert nothing.
-// ---------------------------------------------------------------------------
 
 describe("an open run tab seeds its own run state, with no activation", () => {
   it("fetches for a restored tab, then paints and names it when the cell resolves", () => {
@@ -457,8 +400,8 @@ describe("an open run tab seeds its own run state, with no activation", () => {
     expect(m.named).toEqual([]);
     expect(m.painted.at(-1)).toEqual({ id: "run:wf_resumed", status: "" });
 
-    // The resolved fetch, as a cell write. `completed` deliberately: a settled run
-    // is exactly the population `/api/runs/live` cannot name.
+    // The resolved fetch, as a cell write. `completed` deliberately: a settled run is exactly the
+    // population `/api/runs/live` cannot name.
     m.states.set("wf_resumed", {
       workflowId: "wf_resumed",
       runLabel: "Nightly audit",
@@ -466,8 +409,8 @@ describe("an open run tab seeds its own run state, with no activation", () => {
     });
     storeChanged();
 
-    // No trackRun, no refreshRunDots and no showRun in this case: both halves are
-    // repaired without the sub-tab ever being activated.
+    // No trackRun, no refreshRunDots and no showRun in this case: both halves are repaired without
+    // the sub-tab ever being activated.
     expect(m.named).toEqual([{ id: "run:wf_resumed", name: "Nightly audit" }]);
     expect(m.painted.at(-1)).toEqual({ id: "run:wf_resumed", status: "done" });
   });
@@ -485,23 +428,16 @@ describe("an open run tab seeds its own run state, with no activation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The dot's status vocabulary, read against the REAL `store.js`.
-//
-// This file is the right home for it because it already imports that store (it
-// mocks `tabs.js`, `decision-dock.js` and `run-store.js`, not the store), so the
-// vocabulary is read against production code rather than against a fake.
-// ---------------------------------------------------------------------------
 
 const { RUN_STATUSES } = await import("./run-controls.js");
 const { runStatusFor } = await import("./store.js");
 const { classifyRunStatus } = await import("./run-status.js");
 
 describe("an unanswered ask outranks the wire's own word for the run", () => {
-  // Exhaustive over the WIRE's own words rather than over whatever subset a table
-  // names, plus a status this build has never seen: an ask is the vocabulary's
-  // SECOND input and it wins over every one of them, so a run waiting on a person
-  // is amber even when the wire says it finished.
+  // Exhaustive over the WIRE's own words rather than over whatever subset a table names, plus a
+  // status this build has never seen: an ask is the vocabulary's SECOND input and it wins over
+  // every one of them, so a run waiting on a person is amber even when the wire says it finished.
   it.each([...RUN_STATUSES, "cancelled", "something-new-upstream"])(
     "reads an unanswered ask on %s as amber rather than green",
     (status: string) => {
@@ -510,14 +446,7 @@ describe("an unanswered ask outranks the wire's own word for the run", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
 // The PARK, which is the row the liveness split added.
-//
-// A parked run holds no process now, so its dot is the only thing on screen that
-// separates "waiting on a person" from "waiting on the network" — and the two want
-// opposite things from the reader. The dock's card answers the same question when
-// this client has one; the pause reason is what answers it when it does not.
-// ---------------------------------------------------------------------------
 
 describe("the dot separates a park on a PERSON from every other pause", () => {
   it("reads a needInput park as amber with no card in the dock", () => {
@@ -528,9 +457,8 @@ describe("the dot separates a park on a PERSON from every other pause", () => {
     expect(runStatusFor("paused", false, "")).toBe("waiting");
   });
 
-  // The gate, and the reason the class is consulted only in the `paused` arm: a
-  // reason can outlive the pause it described, so a finished run must not be
-  // painted as one waiting on somebody.
+  // The gate, and the reason the class is consulted only in the `paused` arm: a reason can outlive
+  // the pause it described, so a finished run must not be painted as one waiting on somebody.
   it.each([...RUN_STATUSES.filter((s: string) => s !== "paused"), "cancelled"])(
     "ignores the pause class on %s",
     (status: string) => {
@@ -549,18 +477,13 @@ describe("a run parked on a person paints amber through the effect", () => {
       pauseReason: "Step 'review' is waiting for user input.",
     });
     trackRun("wf_park");
-    // No ask was pushed into the mocked dock, which is the whole case: a client
-    // that connected after the question was raised holds nothing to join.
+    // No ask was pushed into the mocked dock, which is the whole case: a client that connected
+    // after the question was raised holds nothing to join.
     expect(m.asks).toEqual([]);
     expect(m.painted).toEqual([{ id: "run:wf_park", status: "input" }]);
   });
 
-  // The arm no pause reason can reach. KAS runs a parallel branch against a shallow
-  // COPY of the run state, so the branch's own sentence is written to a throwaway
-  // object and the run keeps only `Parallel '<id>' is waiting on branch '<branch>'.`
-  // — which fails the reason rule, so before the node-signal arm this run painted
-  // the ordinary blue waiting dot and the one pause a reader has to act on was
-  // indistinguishable from a network blip.
+  // The arm no pause reason can reach.
   it("paints amber for a park inside a parallel branch", () => {
     m.tabs.add("run:wf_branch");
     m.states.set("wf_branch", {
@@ -593,9 +516,9 @@ describe("a run parked on a person paints amber through the effect", () => {
     expect(m.painted).toEqual([{ id: "run:wf_branch", status: "input" }]);
   });
 
-  // The negative, and it is the same wrapper sentence: KAS emits it whenever the
-  // paused branch carries no detail, which covers an interruption and a permanent
-  // failure as well. Amber here would tell a reader to answer a question nobody asked.
+  // The negative, and it is the same wrapper sentence: KAS emits it whenever the paused branch
+  // carries no detail, which covers an interruption and a permanent failure as well. Amber here
+  // would tell a reader to answer a question nobody asked.
   it("paints a branch parked for another cause blue", () => {
     m.tabs.add("run:wf_branch_blip");
     m.states.set("wf_branch_blip", {

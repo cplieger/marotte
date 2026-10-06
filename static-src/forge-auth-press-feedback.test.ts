@@ -1,6 +1,5 @@
-// Every control on the Sources tab that starts a request is busy at once, stays
-// busy through a repaint while it runs, and shows its outcome in place. Only
-// the network is held.
+// A control that starts a request is busy at once, stays busy through a repaint while it runs, and shows its
+// outcome in place. Only the network is held.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -27,8 +26,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   confirm: H.confirm,
 }));
-// The forge list is the shared store's, which reads it through an action; routed
-// through the mocked client so each describe answers it with the rest.
+// The forge store reads the list through an action; routed through the mocked client so each describe answers it.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
@@ -49,8 +47,7 @@ vi.mock("./git-scroll.js", async (importOriginal) => ({
     fn();
   },
 }));
-// Spread: the originals spread above import this module's other exports (the real
-// confirm's `ask` imports `openDialog` and `closeDialog`).
+// The real confirm's `ask` imports `openDialog` and `closeDialog`, so the originals stay.
 vi.mock("@cplieger/ui-primitives/dialog", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createDialog: () => ({ open: H.dialogOpen, close: H.dialogClose }),
@@ -86,7 +83,6 @@ describe("the Sources tab", () => {
   const FIRST_PAGE = "/api/forges/github%3Agithub.com/repos";
 
   let host: HTMLElement;
-  /** The workspace's clones, as `/api/git/repos` answers them. */
   let clones = new Set<string>();
   let listed: string[] = [];
 
@@ -143,7 +139,6 @@ describe("the Sources tab", () => {
     return d;
   }
 
-  /** The control that opens and closes the repository list. */
   function toggle(d: HTMLElement): HTMLButtonElement {
     return d.querySelector<HTMLButtonElement>(".forge-account-repos-summary")!;
   }
@@ -158,7 +153,6 @@ describe("the Sources tab", () => {
     return row(name).querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) ?? undefined;
   }
 
-  /** What the row says about its last press. */
   function note(name: string): string {
     return row(name).querySelector(".forge-account-error")?.textContent ?? "";
   }

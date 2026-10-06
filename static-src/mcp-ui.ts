@@ -1,23 +1,15 @@
-// ---------------------------------------------------------------------------
-// MCP UI: section scaffold, server list rendering, row sub-components, init.
-//
-// Rows are rendered by a single bindList over the `servers` collection
-// (keyed by id), so add/remove/reorder touch the DOM minimally and a row
-// element persists across changes (no full-rebuild that loses toggle focus or
-// re-binds bindLoadingState every render). Each row owns one effect that reads
-// its server signal + the per-server runtime-status + prewarm signals and
-// surgically patches the dot / meta / oauth pill / prewarm badge / toggle.
-// ---------------------------------------------------------------------------
+// One bindList over `servers` (keyed by id), so a row element persists across changes and keeps toggle focus. Each
+// row's one effect reads its server, status and prewarm signals and patches the row surgically.
 
-import { el, bindList, effect } from "@cplieger/reactive";
+import { el, bindList, effect, signal } from "@cplieger/reactive";
 
 import { $, setControlBusy } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { isSafeURL } from "./url-safety.js";
 import { onSSE } from "./bus.js";
-import { onGovernanceChange } from "./governance.js";
-import type { GovernanceStatePayload } from "./types.js";
+import { GOVERNANCE_UNAVAILABLE, governanceReasonKind, onGovernanceChange } from "./governance.js";
+import type { GovernanceMCPRegistry, GovernanceStatePayload } from "./types.js";
 import { onModalClose, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
@@ -27,7 +19,6 @@ import {
   type KeyPair,
   type RuntimeStatus,
   type RuntimeState,
-  type Origin,
   type PrewarmState,
   type ServerDiscovery,
   type MCPPromptInfo,
@@ -43,33 +34,31 @@ import {
   configuredServers,
 } from "./mcp-state.js";
 import { setEditing, initModal, cleanupModal } from "./mcp-panels.js";
+import type { MCPOrigin } from "./wire/types.gen.js";
 import { editModeFor, extractNpxPackage } from "./mcp-panels.js";
 import {
   toggleServer,
   deleteServer,
   openEdit,
+  saveServer,
   reconnectServer,
   relayOAuthCallback,
   getPromptContent,
   getResourceContent,
 } from "./actions/mcp.js";
 import { promptResultToText, resourceResultToText } from "./mcp-content.js";
-import { bindLoadingState, registerCleanup } from "./actions/index.js";
-
-// --- Section scaffold ---
+import { bindLoadingState, isPending, registerCleanup } from "./actions/index.js";
 
 let sectionBody: HTMLDivElement | null = null;
 let foreignBody: HTMLDivElement | null = null;
 let emptyMsg: HTMLParagraphElement | null = null;
 let listBound = false;
 let foreignBound = false;
-// Held so the governance effect can disable the add affordance and toggle the
-// "disabled by your organization" notice when mcp_enabled is off.
+// Held so the governance effect can disable it and toggle the notice.
 let addBtn: HTMLButtonElement | null = null;
 let govDisabledMsg: HTMLParagraphElement | null = null;
 
-// Per-row cleanups (the row effect + its bindLoadingState bindings), disposed
-// when the row leaves the list.
+// Per-row cleanups (the row effect and its loading bindings), disposed when the row leaves.
 const rowCleanups = new Map<string, (() => void)[]>();
 registerCleanup(() => {
   for (const cs of rowCleanups.values()) {
@@ -109,19 +98,17 @@ function buildSectionScaffold(): void {
   const actions = el("div", { className: "action-bar action-bar-inline" }, btn);
   const actionRow = el("div", { className: "section-actions-row" }, actions);
 
-  // Org-governance notice: shown only when governance says MCP is disabled.
   govDisabledMsg = el("p", {
     className: "mcp-gov-disabled",
     hidden: true,
   }) as HTMLParagraphElement;
+  const registryPanel = el("div", { className: "mcp-registry-panel hidden" }) as HTMLDivElement;
+  bindRegistryPanel(registryPanel);
 
   emptyMsg = el("p", { className: "mcp-empty" }, EMPTY_DEFAULT) as HTMLParagraphElement;
   sectionBody = el("div", { className: "mcp-server-list" }) as HTMLDivElement;
-  // Read-only rows for servers the agent reported that this page does not
-  // configure. A separate container, not extra entries in the configured
-  // collection: that collection is keyed by a persisted server id these servers
-  // have none of, and every mutation path on it (edit, delete, toggle, prewarm
-  // mapping) addresses a record that does not exist for them.
+  // A separate container: these servers have no persisted id, and every mutation path on the configured collection
+  // addresses a record that does not exist for them.
   foreignBody = el("div", { className: "mcp-server-list mcp-foreign-list" }) as HTMLDivElement;
 
   section.replaceChildren(
@@ -129,6 +116,7 @@ function buildSectionScaffold(): void {
     hint,
     actionRow,
     govDisabledMsg,
+    registryPanel,
     emptyMsg,
     sectionBody,
     foreignBody,
@@ -137,53 +125,193 @@ function buildSectionScaffold(): void {
   bindForeignList();
 }
 
-// The section's held elements are the only thing this adds to the pure
-// applyMcpGovernance, which is what makes that one testable without initMCP's
-// network side effects.
+// Holds the section's elements, keeping applyMcpGovernance pure and testable.
 function applyGovernance(g: GovernanceStatePayload): void {
+  applyMcpRowPolicy(g);
   if (addBtn !== null && govDisabledMsg !== null && emptyMsg !== null) {
     applyMcpGovernance(g, { add: addBtn, notice: govDisabledMsg, empty: emptyMsg });
   }
 }
 
-/** The three elements the MCP policy decides: the add affordance, the notice
- *  that says why it is off, and the empty state, whose call to action names
- *  that same affordance. Named rather than positional because all three are
- *  paragraphs-or-buttons and a swap would be silent. */
+/** What the organization decides about the configured rows and the registry panel. */
+interface RowPolicy {
+  /** Why MCP is blocked, while it is; the rows are read-only. */
+  readonly lockReason: string | undefined;
+  /** Configured servers the organization's registry does not allow. */
+  readonly filtered: ReadonlySet<string>;
+  /** The registry MCP is restricted to, while it is. */
+  readonly registry: GovernanceMCPRegistry | undefined;
+}
+
+const rowPolicy = signal<RowPolicy>({
+  lockReason: undefined,
+  filtered: new Set(),
+  registry: undefined,
+});
+
+const NOT_IN_REGISTRY = "Not allowed by your organization's MCP registry";
+const MCP_ORG_OFF = "MCP is disabled by your organization";
+const MCP_UNAVAILABLE = "MCP is unavailable";
+
+/** Publish the row policy every configured row reads. Exported for testing. */
+export function applyMcpRowPolicy(g: GovernanceStatePayload): void {
+  rowPolicy.value = {
+    lockReason: mcpBlockReason(g),
+    filtered: new Set(g.mcp_registry?.filtered ?? []),
+    registry: g.mcp_registry,
+  };
+}
+
+/**
+ * The registry panel's one writer, repainting on a policy change and on a configured-list change, so neither drops the
+ * other's block. Exported for testing.
+ */
+export function bindRegistryPanel(host: HTMLElement): () => void {
+  return effect(() => {
+    const policy = rowPolicy.value;
+    const configured = servers.ids.value.length === 0 ? [] : configuredServers();
+    renderRegistryPanel(host, policy.registry, configured, addRegistryServer, policy.lockReason);
+  });
+}
+
+/** The account profile turning MCP off outranks an administrator's deny, as in the notice. */
+function mcpBlockReason(g: GovernanceStatePayload): string | undefined {
+  if (g.known && !g.features.mcp_enabled) {
+    return governanceReasonKind(g.disabled_reason) === "unavailable"
+      ? MCP_UNAVAILABLE
+      : MCP_ORG_OFF;
+  }
+  return g.locks?.["mcp"]?.reason;
+}
+
+/** A `{"type":"registry"}` entry; KAS resolves the rest. */
+async function addRegistryServer(name: string): Promise<void> {
+  const o = await saveServer.dispatch({
+    id: "",
+    body: { name, transport: "registry", enabled: true },
+  }).outcome;
+  if (o.status !== "success") {
+    return;
+  }
+  mcpState.refetchServers();
+  mcpState.refetchStatus();
+}
+
+/**
+ * Render the organization's registry: allowed catalog servers with Add, plus dropped servers with no row of their own
+ * and entries the catalog lacks. Hidden when not restricted; Add disabled while `lockReason` is set. Exported for
+ * testing.
+ */
+export function renderRegistryPanel(
+  host: HTMLElement,
+  reg: GovernanceMCPRegistry | undefined,
+  configured: readonly Server[],
+  onAdd: (name: string) => Promise<void>,
+  lockReason?: string,
+): void {
+  host.classList.toggle("hidden", reg === undefined);
+  if (reg === undefined) {
+    host.replaceChildren();
+    return;
+  }
+  const have = new Set(configured.map((s) => s.name));
+  const children: HTMLElement[] = [
+    el(
+      "p",
+      { className: "mcp-gov-disabled" },
+      "Your organization limits MCP to its registry: only the servers below can run, and any other server you configure stays off.",
+    ),
+  ];
+  const list = el("ul", { className: "mcp-registry-list" });
+  for (const srv of reg.servers) {
+    const added = have.has(srv.name);
+    const locked = lockReason !== undefined;
+    const btn = el(
+      "button",
+      { type: "button", className: "btn-small", disabled: added || locked },
+      added ? "Added" : "Add",
+    ) as HTMLButtonElement;
+    btn.setAttribute("aria-label", added ? `${srv.name} is added` : `Add ${srv.name}`);
+    if (lockReason !== undefined && !added) {
+      btn.dataset["tooltip"] = lockReason;
+    }
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      void onAdd(srv.name).finally(() => {
+        btn.disabled = have.has(srv.name) || locked;
+      });
+    });
+    const text = el("div", { className: "mcp-registry-text" }, el("strong", null, srv.name));
+    if (srv.description !== undefined && srv.description !== "") {
+      text.appendChild(el("span", { className: "section-hint" }, srv.description));
+    }
+    list.appendChild(el("li", { className: "mcp-registry-row" }, text, btn));
+  }
+  if (reg.servers.length === 0) {
+    children.push(el("p", { className: "section-hint" }, "Its catalog lists no servers."));
+  } else {
+    children.push(list);
+  }
+  const rowless = reg.filtered.filter((name) => !have.has(name));
+  if (rowless.length > 0) {
+    children.push(
+      el("p", { className: "section-hint" }, `${NOT_IN_REGISTRY}: ${rowless.join(", ")}.`),
+    );
+  }
+  if (reg.unresolved.length > 0) {
+    children.push(
+      el(
+        "p",
+        { className: "section-hint" },
+        `Not in your organization's catalog: ${reg.unresolved.join(", ")}.`,
+      ),
+    );
+  }
+  host.replaceChildren(...children);
+}
+
+/**
+ * The three elements the MCP policy decides: the add affordance, the notice saying why it is off, and the empty state
+ * naming that affordance. Named, since a positional swap would be silent.
+ */
 export interface McpGovernanceEls {
   add: HTMLButtonElement;
   notice: HTMLElement;
   empty: HTMLElement;
 }
 
-/** Apply the MCP governance policy: when governance is KNOWN and mcp_enabled is
- *  false, the add-server affordance is disabled, the notice (with
- *  disabledReason when present) is shown, and the empty state stops telling a
- *  reader to click a button that cannot be clicked. An unknown policy leaves
- *  the affordance enabled (permissive default). Exported for focused testing. */
+/**
+ * Apply the MCP governance policy. Known and off: the add affordance is disabled, the notice says why, and the empty
+ * state stops naming it. Unknown leaves it enabled. Registry mode hides it (KAS would discard what it adds). Exported
+ * for testing.
+ */
 export function applyMcpGovernance(g: GovernanceStatePayload, els: McpGovernanceEls): void {
-  const disabled = g.known && !g.features.mcp_enabled;
+  // An administrator's deny on mcp blocks MCP on any account.
+  const adminLock = g.locks?.["mcp"];
+  const orgOff = g.known && !g.features.mcp_enabled;
+  const disabled = orgOff || adminLock !== undefined;
+  const unavailable = orgOff && governanceReasonKind(g.disabled_reason) === "unavailable";
+  const registry = g.mcp_registry !== undefined;
+  els.add.classList.toggle("hidden", registry);
   els.add.disabled = disabled;
-  els.add.setAttribute(
-    "data-tooltip",
-    disabled ? "MCP is disabled by your organization" : "Connect integration",
-  );
+  els.add.setAttribute("data-tooltip", mcpBlockReason(g) ?? "Connect integration");
   els.notice.hidden = !disabled;
   if (disabled) {
-    const reason = (g.disabled_reason ?? "").trim();
     els.notice.textContent =
-      reason !== ""
-        ? `MCP integrations are disabled by your organization: ${reason}`
-        : "MCP integrations are disabled by your organization.";
+      !orgOff && adminLock !== undefined
+        ? `${adminLock.reason}.`
+        : unavailable
+          ? `MCP integrations are unavailable. ${GOVERNANCE_UNAVAILABLE}`
+          : "MCP integrations are disabled by your organization.";
   }
-  els.empty.textContent = disabled ? EMPTY_GOV_OFF : EMPTY_DEFAULT;
+  els.empty.textContent = disabled ? EMPTY_GOV_OFF : registry ? EMPTY_REGISTRY : EMPTY_DEFAULT;
 }
 
 const EMPTY_DEFAULT =
   "No integrations connected yet. Click + to search the official MCP registry or paste a config.";
 const EMPTY_GOV_OFF = "No integrations connected, and none can be added while MCP is disabled.";
-
-// --- Reactive server list ---
+const EMPTY_REGISTRY =
+  "No integrations connected yet. Add one from your organization's registry above.";
 
 function bindServerList(): void {
   if (listBound || sectionBody === null) {
@@ -197,7 +325,7 @@ function bindServerList(): void {
       cleanupRow(id);
     },
   });
-  // Empty-state toggle (sibling of the bindList container, not reconciled).
+  // Empty-state toggle, a sibling of the bindList container.
   effect(() => {
     if (empty !== null) {
       empty.hidden = servers.ids.value.length > 0;
@@ -215,9 +343,7 @@ function cleanupRow(id: string): void {
   }
 }
 
-/** Render the read-only rows for servers this page does not configure. One
- *  effect over the name list plus one per-row effect, mirroring the configured
- *  list's shape. */
+/** Read-only rows for servers this page does not configure, mirroring the configured list's shape. */
 function bindForeignList(): void {
   if (foreignBound || foreignBody === null) {
     return;
@@ -227,9 +353,8 @@ function bindForeignList(): void {
   registerCleanup(
     effect(() => {
       const names = unconfiguredNames.value;
-      // Keyed by name: a row carries a `<details>` the reader can open, and this
-      // effect re-runs whenever any unconfigured server's status moves. `onRemove`
-      // is what disposes a departing row's own effect.
+      // Keyed by name: a row holds a `<details>` the reader can open, and this effect re-runs on any status move.
+      // `onRemove` disposes a departing row's effect.
       reconcile(host, names, {
         key: (name: string) => name,
         mount: (name: string) => mountForeignRow(name),
@@ -243,9 +368,7 @@ function bindForeignList(): void {
   );
 }
 
-/** One disposer per foreign row, so a row leaving the list takes its effect with it.
- *  Its own map rather than a namespaced key in `rowCleanups`, which is keyed by
- *  server ID where this is keyed by NAME. */
+/** Its own map, keyed by name where `rowCleanups` is keyed by id. */
 const foreignRowCleanups = new Map<string, () => void>();
 registerCleanup(() => {
   for (const stop of foreignRowCleanups.values()) {
@@ -254,14 +377,11 @@ registerCleanup(() => {
   foreignRowCleanups.clear();
 });
 
-/** One read-only row: status dot, name, provenance chip, and the discovery
- *  disclosure when the server advertises anything.
- *
- *  No toggle, no edit, no delete, and no Reconnect. There is no persisted record
- *  behind the row, so every one of those affordances would address a server id
- *  that does not exist; the row's job is to stop the page being silent about an
- *  integration whose tools are in the agent's tool list. */
-function mountForeignRow(name: string): HTMLElement {
+/**
+ * One read-only row for a server KAS runs that marotte's store does not hold: dot, name, provenance chip, discovery,
+ * and Reconnect and sign-in while live. No toggle, edit or delete. Exported for testing.
+ */
+export function mountForeignRow(name: string): HTMLElement {
   const dot = el("span", { className: "mcp-dot", role: "img" });
   const nameEl = el("span", { className: "mcp-row-name" }, name);
   const originChip = buildOriginChip();
@@ -274,27 +394,36 @@ function mountForeignRow(name: string): HTMLElement {
     el("div", { className: "mcp-row-meta" }, originChip, metaText),
     discoveryBox,
   );
-  const row = el("div", { className: "mcp-row mcp-row-readonly" }, body) as HTMLDivElement;
+  const reconnectBtn = renderReconnectBtn(name, () => name);
+  const actions = el("div", { className: "mcp-row-actions" }, reconnectBtn);
+  const row = el(
+    "div",
+    { className: "mcp-row mcp-row-readonly", "data-server-name": name },
+    body,
+    actions,
+  ) as HTMLDivElement;
 
-  // A nested effect's only disposer is its own stop function — the enclosing effect
-  // disposes nothing — so the list holds this one and `onRemove` calls it.
+  const syncOAuth = oauthControls(body, () => name);
+
+  // A nested effect is not disposed by its enclosing effect, so the list holds its stop function and `onRemove` calls it.
   foreignRowCleanups.get(name)?.();
   foreignRowCleanups.set(
     name,
     effect(() => {
       const st = statusSignalFor(name).value;
       applyStatusDotForeign(dot, name, st);
-      applyOriginChip(originChip, st.origin);
+      applyOriginChip(originChip, st);
       metaText.textContent = renderForeignMeta(st);
+      const live = carriesLiveReport(st, false);
+      reconnectBtn.hidden = !live;
+      syncOAuth(st, live);
       renderDiscovery(discoveryBox, name, discoverySignalFor(name).value, true);
     }),
   );
   return row;
 }
 
-/** Status dot for a read-only row. Split from applyStatusDot because that one
- *  reads the config record's `enabled` flag, and there is no record here — the
- *  server's own reported state is the only input. */
+/** No config record here, so the reported state is the only input. */
 function applyStatusDotForeign(dot: HTMLSpanElement, name: string, st: RuntimeStatus): void {
   dot.className = "mcp-dot";
   const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
@@ -325,10 +454,14 @@ export function renderForeignMeta(st: RuntimeStatus): string {
   }
 }
 
-function mountRow(s: Server, id: string): HTMLElement {
+/**
+ * One row for a server marotte's store holds. Edit, delete and the toggle unless an administrator denies MCP;
+ * Reconnect and sign-in follow the live report. Exported for testing.
+ */
+export function mountRow(s: Server, id: string): HTMLElement {
   const cleanups: (() => void)[] = [];
 
-  // Toggle (built once; the effect only syncs .checked so user focus survives).
+  // Built once; the effect syncs only `.checked`, so focus survives.
   const input = el("input", { type: "checkbox" }) as HTMLInputElement;
   input.addEventListener("change", () => {
     input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
@@ -338,16 +471,18 @@ function mountRow(s: Server, id: string): HTMLElement {
         silent: true,
         onSuccess: () => {
           mcpState.refetchServers();
-          // Enabling or disabling a server changes what KAS runs, so the dot and
-          // the meta line are stale until the status is re-read. The two fetches
-          // are independent and each coalesces per microtask, so asking for both
-          // costs one extra request rather than one per mutation.
+          // A toggle changes what KAS runs, so status is re-read; both fetches coalesce per microtask.
           mcpState.refetchStatus();
         },
       },
     );
   });
-  cleanups.push(bindLoadingState("mcp.toggle_server", input));
+  // A settled toggle returns to the lock's answer, not to enabled.
+  cleanups.push(
+    bindLoadingState("mcp.toggle_server", input, {
+      disabledFn: () => rowPolicy.peek().lockReason !== undefined,
+    }),
+  );
   const toggle = el(
     "label",
     { className: "toggle mcp-toggle" },
@@ -359,29 +494,25 @@ function mountRow(s: Server, id: string): HTMLElement {
   const nameEl = el("span", { className: "mcp-row-name" });
   const transportBadge = el("span", { className: "mcp-transport" });
   const nameLine = el("div", { className: "mcp-row-name-line" }, dot, nameEl, transportBadge);
-  // The origin chip is a held element beside the meta text rather than part of
-  // it: renderMeta stays a pure string function (unit-testable, no DOM), and the
-  // chip keeps its own identity across effect runs so it is patched, not rebuilt.
-  const originChip = buildOriginChip();
   const metaText = el("span", { className: "mcp-row-meta-text" });
-  const meta = el("div", { className: "mcp-row-meta" }, originChip, metaText);
+  const meta = el("div", { className: "mcp-row-meta" }, metaText);
   const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
 
-  const reconnectBtn = renderReconnectBtn(id, s);
+  const reconnectBtn = renderReconnectBtn(s.name, () => (servers.signalFor(id)?.value ?? s).name);
   const editBtn = renderEditBtn(s, cleanups);
   const deleteBtn = renderDeleteBtn(s, cleanups);
   const actions = el("div", { className: "mcp-row-actions" }, reconnectBtn, editBtn, deleteBtn);
 
-  // Discovery disclosure (prompts & resources) — lives in the row body,
-  // rendered by its own effect so it re-renders only when THIS server's
-  // discovery changes (independent of the status/prewarm tier below).
+  // Its own effect, re-rendering only when this server's discovery changes.
   const discoveryBox = el("div", { className: "mcp-discovery" }) as HTMLDivElement;
   body.appendChild(discoveryBox);
   cleanups.push(
     effect(() => {
       const cur = servers.signalFor(id)?.value ?? s;
       const disc = discoverySignalFor(cur.name).value;
-      renderDiscovery(discoveryBox, cur.name, disc, cur.enabled);
+      // A shadowed name's discovery belongs to the running server's own read-only row.
+      const live = carriesLiveReport(statusSignalFor(cur.name).value, true);
+      renderDiscovery(discoveryBox, cur.name, disc, live);
     }),
   );
 
@@ -393,56 +524,40 @@ function mountRow(s: Server, id: string): HTMLElement {
     actions,
   ) as HTMLDivElement;
 
-  // Per-row content tier: react to this server's config + runtime status +
-  // prewarm, patching surgically (no replaceChildren -> focus/identity kept).
-  let oauthPill: HTMLAnchorElement | null = null;
-  let oauthUrl: string | null = null;
-  let oauthRelay: HTMLDetailsElement | null = null;
+  // Patch surgically, never replaceChildren, so focus and identity are kept.
+  const syncOAuth = oauthControls(body, () => (servers.signalFor(id)?.value ?? s).name);
   let prewarmBadge: HTMLSpanElement | null = null;
   cleanups.push(
     effect(() => {
       const cur = servers.signalFor(id)?.value ?? s;
       const st = statusSignalFor(cur.name).value;
       const pw = prewarmSignalFor(id).value;
+      const policy = rowPolicy.value;
+      const notInRegistry = policy.filtered.has(cur.name);
+      const lockReason = policy.lockReason;
 
       input.checked = cur.enabled;
       input.setAttribute("aria-label", `${cur.enabled ? "Disable" : "Enable"} ${cur.name}`);
+      if (!isPending("mcp.toggle_server")) {
+        input.disabled = lockReason !== undefined;
+      }
+      if (lockReason === undefined) {
+        toggle.removeAttribute("data-tooltip");
+      } else {
+        toggle.dataset["tooltip"] = lockReason;
+      }
+      editBtn.classList.toggle("hidden", cur.transport === "registry" || lockReason !== undefined);
+      deleteBtn.classList.toggle("hidden", lockReason !== undefined);
+      row.classList.toggle("mcp-row-readonly", lockReason !== undefined);
       nameEl.textContent = cur.name;
       transportBadge.className = `mcp-transport mcp-transport-${cur.transport}`;
       transportBadge.textContent = cur.transport;
-      applyStatusDot(dot, cur, st);
-      applyOriginChip(originChip, st.origin);
-      metaText.textContent = renderMeta(cur, st);
+      applyStatusDot(dot, cur, st, notInRegistry);
+      metaText.textContent = renderMeta(cur, st, notInRegistry);
 
-      // Reconnect only makes sense when a live bridge could hold this
-      // server's connection: enabled and past the "idle" (no-bridge) state.
-      reconnectBtn.hidden = !cur.enabled || st.state === "idle";
-
-      if (cur.enabled && st.state === "needs_auth") {
-        if (oauthPill === null || oauthUrl !== st.oauth_url) {
-          oauthPill?.remove();
-          oauthPill = renderOAuthPill(st.oauth_url);
-          oauthUrl = st.oauth_url;
-          body.appendChild(oauthPill);
-        }
-        // The relay is offered only while a callback could still be delivered.
-        // Once this attempt's code has been relayed the box goes away: the code
-        // is spent, so a second paste can only fail, and leaving the field there
-        // would invite exactly that.
-        if (st.relayed) {
-          oauthRelay?.remove();
-          oauthRelay = null;
-        } else if (oauthRelay === null) {
-          oauthRelay = renderOAuthRelay(cur.name);
-          body.appendChild(oauthRelay);
-        }
-      } else if (oauthPill !== null || oauthRelay !== null) {
-        oauthPill?.remove();
-        oauthPill = null;
-        oauthUrl = null;
-        oauthRelay?.remove();
-        oauthRelay = null;
-      }
+      const live = carriesLiveReport(st, true);
+      reconnectBtn.hidden = !live;
+      syncOAuth(st, live);
 
       prewarmBadge = applyPrewarm(prewarmBadge, nameEl, pw);
     }),
@@ -452,7 +567,50 @@ function mountRow(s: Server, id: string): HTMLElement {
   return row;
 }
 
-// --- Row sub-components ---
+/**
+ * Whether a row shows a server KAS is running, which Reconnect, sign-in and discovery act on. A config row carries one
+ * only for a `user` status. Exported for testing.
+ */
+export function carriesLiveReport(st: RuntimeStatus, ownRow: boolean): boolean {
+  if (ownRow && st.origin !== "user") {
+    return false;
+  }
+  return st.state !== "idle" && st.state !== "disabled";
+}
+
+/** Shared by both row kinds: a server awaiting sign-in may be on either. */
+function oauthControls(
+  body: HTMLElement,
+  nameOf: () => string,
+): (st: RuntimeStatus, live: boolean) => void {
+  let pill: HTMLAnchorElement | null = null;
+  let pillUrl: string | null = null;
+  let relay: HTMLDetailsElement | null = null;
+  return (st, live) => {
+    if (!live || st.state !== "needs_auth") {
+      pill?.remove();
+      pill = null;
+      pillUrl = null;
+      relay?.remove();
+      relay = null;
+      return;
+    }
+    if (pill === null || pillUrl !== st.oauth_url) {
+      pill?.remove();
+      pill = renderOAuthPill(st.oauth_url);
+      pillUrl = st.oauth_url;
+      body.appendChild(pill);
+    }
+    // A relayed code is spent, so a second paste can only fail.
+    if (st.relayed) {
+      relay?.remove();
+      relay = null;
+    } else if (relay === null) {
+      relay = renderOAuthRelay(nameOf());
+      body.appendChild(relay);
+    }
+  };
+}
 
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
@@ -462,42 +620,65 @@ const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>
   disabled: { css: "disabled", title: "Disabled" },
 };
 
-/** What each non-user origin says on the row. `user` has no entry: the config
- *  list already owns that row, so a chip declaring the obvious would sit on
- *  every row and mean nothing. */
-const ORIGIN_META: Readonly<Record<Exclude<Origin, "user">, { label: string; title: string }>> = {
-  power: {
-    label: "from a Power",
+/** The provenance a row's chip and copy read off a status. */
+type RowProvenance = Pick<RuntimeStatus, "origin" | "originRoot" | "originPower">;
+
+/** `user` has no entry: the config list already owns that row, and a chip on every row means nothing. */
+const ORIGIN_META: Readonly<
+  Record<Exclude<MCPOrigin, "user">, (p: RowProvenance) => { label: string; title: string }>
+> = {
+  workspace: (p) => ({
+    label: "from the workspace config",
+    title: `Defined in ${p.originRoot ?? "a workspace"}/.kiro/settings/mcp.json. Edit it there; this page cannot edit or remove it.`,
+  }),
+  power: (p) => ({
+    label: p.originPower === undefined ? "from a Power" : `from the ${p.originPower} Power`,
     title:
       "An installed Power contributed this server. Manage it where the Power is installed. This page cannot edit or remove it.",
-  },
-  unknown: {
+  }),
+  bundled: () => ({
+    label: "bundled with Kiro",
+    title: "Kiro ships this server, so this page cannot edit or remove it.",
+  }),
+  unknown: () => ({
     label: "not managed here",
     title:
       "The agent reported this server, but it is not in this page's configuration. It comes from a config marotte does not manage, so it cannot be edited or removed here.",
-  },
+  }),
 };
 
-/** Build the (initially hidden) provenance chip. */
 function buildOriginChip(): HTMLSpanElement {
   return el("span", { className: "mcp-origin", hidden: true });
 }
 
-/** Show or hide the provenance chip for an origin. Exported for testing. */
-export function applyOriginChip(chip: HTMLSpanElement, origin: Origin): void {
-  if (origin === "user") {
+/** Show or hide the provenance chip for a status's origin. Exported for testing. */
+export function applyOriginChip(chip: HTMLSpanElement, p: RowProvenance): void {
+  if (p.origin === "user") {
     chip.hidden = true;
     chip.textContent = "";
     chip.removeAttribute("data-tooltip");
     return;
   }
-  const meta = ORIGIN_META[origin];
+  const meta = ORIGIN_META[p.origin](p);
   chip.hidden = false;
   chip.textContent = meta.label;
   chip.dataset["tooltip"] = meta.title;
 }
 
-/** Type-narrowing guard for the "failed" RuntimeStatus variant. */
+/** Who defines the server running under a name marotte holds. */
+function shadowSource(p: RowProvenance): string {
+  switch (p.origin) {
+    case "workspace":
+      return "the workspace config";
+    case "power":
+      return p.originPower === undefined ? "a Power" : `the ${p.originPower} Power`;
+    case "bundled":
+      return "Kiro's bundled config";
+    default:
+      return "another config";
+  }
+}
+
 function isFailedWithError(
   st: RuntimeStatus,
 ): st is RuntimeStatus & { state: "failed"; error: string } {
@@ -505,8 +686,25 @@ function isFailedWithError(
   return st.state === FAILED && st.error !== "";
 }
 
-function applyStatusDot(dot: HTMLSpanElement, s: Server, st: RuntimeStatus): void {
+function applyStatusDot(
+  dot: HTMLSpanElement,
+  s: Server,
+  st: RuntimeStatus,
+  notInRegistry: boolean,
+): void {
   dot.className = "mcp-dot";
+  if (st.origin !== "user") {
+    dot.classList.add(STATUS_META.idle.css);
+    dot.dataset["tooltip"] = "Not in use";
+    dot.setAttribute("aria-label", `${s.name}: not in use`);
+    return;
+  }
+  if (notInRegistry) {
+    dot.classList.add("disabled");
+    dot.dataset["tooltip"] = NOT_IN_REGISTRY;
+    dot.setAttribute("aria-label", `${s.name}: not allowed by the MCP registry`);
+    return;
+  }
   if (!s.enabled) {
     dot.classList.add("disabled");
     dot.dataset["tooltip"] = "Disabled";
@@ -524,22 +722,18 @@ function applyStatusDot(dot: HTMLSpanElement, s: Server, st: RuntimeStatus): voi
   }
 }
 
-/** Count the key-pair rows that would actually be sent: `collectKeyPairs` skips
- *  a row whose trimmed name is empty, and the editor seeds one blank row for an
- *  empty list, so a bare count would report a credential nobody entered. */
+/**
+ * `collectKeyPairs` skips a row with an empty trimmed name and the editor seeds one blank row, so a bare count would
+ * report a credential nobody entered.
+ */
 function namedPairs(pairs: readonly KeyPair[] | undefined): number {
   return (pairs ?? []).filter((p) => p.name.trim() !== "").length;
 }
 
-/** What credentials this server carries, for the row that would otherwise look
- *  identical whether the reader had supplied one or not.
- *
- *  Presence is knowable from the masked record: `internal/mcp`'s export
- *  preserves each pair's NAME and the slice LENGTH, masks a set
- *  `oauth_client_secret` to the sentinel, and does not mask
- *  `oauth_client_id` at all — so no wire change is needed to say this. It
- *  reports what the RECORD holds rather than what the transport can use, so a
- *  hand-edited mcp.json carrying both cannot hide half of it. */
+/**
+ * What credentials this server carries. Read off the masked record (pair names and slice length survive, oauth
+ * members are unmasked), reporting what the record holds whatever the transport uses.
+ */
 export function credentialSummary(s: Server): string {
   const parts: string[] = [];
   const env = namedPairs(s.env);
@@ -550,15 +744,13 @@ export function credentialSummary(s: Server): string {
   if (headers > 0) {
     parts.push(headers === 1 ? "1 header" : `${headers} headers`);
   }
-  if ((s.oauth_client_id ?? "") !== "" || (s.oauth_client_secret ?? "") !== "") {
+  if ((s.oauth_client_id ?? "") !== "" || (s.oauth_client_metadata_url ?? "") !== "") {
     parts.push("OAuth client configured");
   }
   return parts.length === 0 ? "no credentials" : parts.join(", ");
 }
 
-/** The state phrase for a row whose status the reader must act on. `connected`
- *  and `idle` get none: the dot already says so, and a phrase on every row would
- *  push the credential summary and the source out of the ellipsised track. */
+/** `connected` and `idle` get none: the dot says so, and a phrase would push the rest out of the track. */
 function statePhrase(st: RuntimeStatus): string {
   if (st.state === "failed") {
     return st.error === "" ? "Failed to start" : `Failed to start. ${st.error}`;
@@ -569,16 +761,17 @@ function statePhrase(st: RuntimeStatus): string {
   return "";
 }
 
-/** The row's meta line: state phrase, then credentials, then the source.
- *
- *  Credentials lead the source because the line ellipsises and a command or URL
- *  is the long segment, so a tail-clipped source would take the credential fact
- *  with it. The server NAME is on its own line, so `source` is not the identity
- *  anchor this order costs.
- *
- *  Exported for its test, like `renderForeignMeta`: the ORDER is the half of this
- *  that a `credentialSummary` test cannot reach. */
-export function renderMeta(s: Server, st: RuntimeStatus): string {
+/**
+ * The row's meta line: state phrase, credentials, then the source, because the line ellipsises and the source is the
+ * long segment. Exported for its order test.
+ */
+export function renderMeta(s: Server, st: RuntimeStatus, notInRegistry = false): string {
+  if (st.origin !== "user") {
+    return `Not in use: ${shadowSource(st)} defines a server with this name`;
+  }
+  if (notInRegistry) {
+    return NOT_IN_REGISTRY;
+  }
   if (!s.enabled) {
     return "Disabled";
   }
@@ -586,8 +779,7 @@ export function renderMeta(s: Server, st: RuntimeStatus): string {
   return [statePhrase(st), credentialSummary(s), source].filter((p) => p !== "").join(" · ");
 }
 
-/** Add/update/remove the prewarm badge after the name. Returns the badge (or
- *  null when cleared) so the caller tracks it across effect runs. */
+/** Returns the badge, or null when cleared, so the caller tracks it. */
 function applyPrewarm(
   badge: HTMLSpanElement | null,
   nameEl: HTMLElement,
@@ -624,25 +816,15 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
   ) as HTMLAnchorElement;
 }
 
-/** The rescue box for a sign-in whose redirect landed on the wrong machine.
- *
- *  WHY IT EXISTS. KAS binds its OAuth redirect listener on the CONTAINER's
- *  localhost. A browser reaching marotte from a phone or another laptop is sent
- *  to ITS OWN localhost, where nothing answers, so the sign-in dies on a
- *  connection-refused page and clicking the pill again just repeats it. For a
- *  container reached over the network that is the normal case.
- *
- *  Inline, not a modal: the address being pasted is on the clipboard from
- *  another tab, and the refusal has to land next to the field that caused it.
- *  The details element is collapsed by default so a local-browser sign-in (which
- *  needs none of this) sees one line rather than a form. */
+/**
+ * The rescue box for a sign-in whose redirect landed on the wrong machine: KAS listens on the container's localhost,
+ * so a remote browser's callback dies. Inline, beside the field the refusal names; collapsed by default.
+ */
 export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
   const input = el("input", {
     type: "url",
     className: "mcp-relay-input",
-    // No `required`/`pattern`: every rejection is the server's to make against
-    // the authorization URL it stored, and a browser-side pattern would only
-    // duplicate part of that rule and drift from it.
+    // No `required` or `pattern`: the server checks against the authorization URL it stored.
     placeholder: "http://localhost:1234/oauth/callback?code=…",
     "aria-label": "The address the sign-in page could not reach",
     autocomplete: "off",
@@ -674,17 +856,12 @@ export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
         { server: serverName, redirect_url: pasted },
         {
           onSuccess: () => {
-            // The code is delivered; the token exchange is still KAS's to
-            // finish. So this says DELIVERED and refetches — claiming
-            // "connected" here would be inventing a state transition that only
-            // `_kiro/mcp/status` can report.
+            // Delivered, not connected: the token exchange is KAS's to finish, and only `_kiro/mcp/status` reports it.
             setNote("Delivered. Waiting for the server to finish signing in…", "ok");
             input.value = "";
             mcpState.refetchStatus();
           },
-          // The server's reason names which part of the address was wrong, and
-          // it is the only thing that can: it is checked against the
-          // authorization URL KAS stored, which the client never sees.
+          // Only the server can name which part was wrong; the client never sees the stored authorization URL.
           onError: (err) => {
             setNote(err.message, "err");
           },
@@ -719,6 +896,7 @@ function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
     "aria-label": `Edit ${s.name}`,
   }) as HTMLButtonElement;
   btn.innerHTML = ICON_EDIT_UI;
+  // Visibility is the row effect's: a registry entry has no form, and a locked row has no edit.
   btn.addEventListener("click", () => {
     void openEditModal(s.id);
   });
@@ -759,28 +937,26 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
   return btn;
 }
 
-function renderReconnectBtn(id: string, initial: Server): HTMLButtonElement {
+function renderReconnectBtn(label: string, serverName: () => string): HTMLButtonElement {
   const btn = el("button", {
     type: "button",
     className: "icon-btn",
     "data-tooltip": "Reconnect",
-    "aria-label": `Reconnect ${initial.name}`,
+    "aria-label": `Reconnect ${label}`,
   }) as HTMLButtonElement;
   btn.innerHTML = ICON_REFRESH;
   btn.addEventListener("click", () => {
     if (btn.disabled) {
       return;
     }
-    const cur = servers.signalFor(id)?.value ?? initial;
     setControlBusy(btn, true);
     btn.innerHTML = ICON_SPINNER;
     void reconnectServer
       .dispatch(
-        { server: cur.name },
+        { server: serverName() },
         {
           onSuccess: (res) => {
-            // Server-canonical: the reconnect re-emits _kiro/mcp/status on
-            // every bridge; refetch to pull the refreshed dot + discovery.
+            // The reconnect re-emits _kiro/mcp/status on every bridge; refetch for the dot and discovery.
             mcpState.refetchStatus();
             if (res.reconnected === 0) {
               showToast("No active chat to reconnect through. Open a chat first.", "info");
@@ -796,20 +972,14 @@ function renderReconnectBtn(id: string, initial: Server): HTMLButtonElement {
   return btn;
 }
 
-// --- Discovery (prompts & resources) surface ---
-
-/** Pick the display string, falling back when the primary is empty. */
 function orFallback(primary: string, fallback: string): string {
   return primary !== "" ? primary : fallback;
 }
 
-/** (Re)render the per-server prompts/resources disclosure. Hidden when the
- *  server is disabled or advertises nothing.
- *
- *  Guarded: the box IS a `<details>`, both call sites run on state that moves
- *  without the advertised set moving, and nothing else records that the reader
- *  opened it. `enabled` is in the signature because it decides whether the box
- *  renders at all. */
+/**
+ * (Re)render the per-server prompts/resources disclosure; hidden when disabled or empty. Guarded: the box is a
+ * `<details>` whose open state nothing else records, and both callers run on state that moves without it.
+ */
 function renderDiscovery(
   box: HTMLDivElement,
   serverName: string,
@@ -846,7 +1016,6 @@ function renderDiscovery(
   box.appendChild(details);
 }
 
-/** Build the label (name + optional description) shared by disc items. */
 function discItemLabel(name: string, description: string | undefined): HTMLElement {
   const label = el(
     "div",
@@ -1003,16 +1172,13 @@ async function insertResource(
   }
 }
 
-/** Append text to the prompt input (preserving any draft) and notify the
- *  prompt-input module so it re-sizes + re-enables the send button. */
+/** Keeps any draft and notifies prompt-input so it resizes and re-enables send. */
 function insertIntoPrompt(text: string): void {
   const input = $.promptInput;
   input.value = input.value === "" ? text : `${input.value}\n\n${text}`;
   input.focus();
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
-
-// --- Modal openers ---
 
 function openAddModal(): void {
   setEditing({ id: "" });
@@ -1030,29 +1196,20 @@ async function openEditModal(id: string): Promise<void> {
   openModal($.mcpModal);
 }
 
-// --- Init ---
-
 export function initMCP(): void {
   buildSectionScaffold();
 
-  // The modal's Close button is wired generically by initAllModals; the
-  // add/edit-form cleanup must run on EVERY close path (Close button, backdrop
-  // drag-safe click, Escape), so hang it off the controller's onClose. This
-  // replaces the old MutationObserver that watched for the `.hidden` class the
-  // overlay system toggled (the native <dialog> no longer uses it).
+  // The cleanup must run on every close path, so it hangs off the controller's onClose.
   onModalClose($.mcpModal, cleanupModal);
 
-  // Runtime status / config changes flow through the per-server signals; the
-  // row effects re-render reactively (no explicit re-render call needed).
+  // Status and config flow through the per-server signals; rows re-render reactively.
   onSSE("mcp_config_changed", () => {
     mcpState.refetchServers();
     mcpState.refetchStatus();
   });
   onSSE("mcp_connected", (_chat, p) => {
     mcpState.setStatusFromEvent(p.server, { name: p.server, state: "connected" });
-    // Pull the newly-connected server's advertised prompts/resources (they
-    // ride /api/mcp/status, not the mcp_connected payload) — and, for a server
-    // this page does not configure, the origin that makes its row appear.
+    // Prompts and resources ride /api/mcp/status, and so does a foreign server's origin.
     mcpState.refetchStatus();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
@@ -1060,16 +1217,12 @@ export function initMCP(): void {
       name: p.server,
       state: "needs_auth",
       oauth_url: p.url,
-      // A fresh authorization attempt, so the relay latch clears with it — the
-      // server's recordOAuth replaces the whole record for the same reason. A
-      // stale `true` here would hide the paste box for a code that was never
-      // delivered, which is the one state the user cannot recover from.
+      // A fresh attempt clears the relay latch: a stale `true` hides the paste box for an undelivered code.
       relayed: false,
     });
   });
   onSSE("mcp_failed", (_chat, p) => {
-    // Read the PREVIOUS state before writing the new one: the toast fires on the
-    // transition into `failed`, not on the frame. See announceMCPFailure.
+    // Read the previous state first: the toast fires on the transition into `failed`.
     announceMCPFailure(p.server, p.error, statusSignalFor(p.server).peek().state);
     mcpState.setStatusFromEvent(p.server, { name: p.server, state: "failed", error: p.error });
   });
@@ -1080,15 +1233,12 @@ export function initMCP(): void {
     updatePrewarmStatus(p.package, p.state as "installing" | "done" | "failed");
   });
 
-  // Reflect the org MCP policy (disable add + show notice when suppressed).
-  // Fires immediately if governance is already known, then on every change.
+  // Fires immediately if governance is known, then on every change.
   onGovernanceChange(applyGovernance);
 
   mcpState.refetchServers();
   mcpState.refetchStatus();
 }
-
-// --- Prewarm progress indicator ---
 
 /** Map an npx prewarm event (keyed by package) to its server's prewarm signal. */
 function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed"): void {
@@ -1102,25 +1252,12 @@ function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed
   }
 }
 
-// --- Broken-server notice ---
-//
-// A toast when a server turns out to be broken, and NO proactive probing. Not
-// every chat uses an MCP server, so an MCP problem must not block or complicate
-// the chat flow, and a health page is a different surface. What arrives here is
-// the failure kiro-cli already reported (`_kiro/mcp/status` carrying
-// `_kiro.dev/mcp/server_init_failure`), so the state, the reason and the delivery
-// mechanism all existed and only the notice did not.
-//
-// This joins the one existing `mcp_failed` consumer rather than adding a second
-// subscription to the same event: that handler already holds both the server name
-// and the reason, and it is where the previous state can still be read.
+// A toast when a server turns out to be broken, with no proactive probing: the failure is the one kiro-cli reported.
 
-/** DEDUPE IS REQUIRED, and it keys on the state TRANSITION rather than on the
- *  frame. Each bridge emits its own `_kiro/mcp/status` on connect and
- *  `recordInitFailure` broadcasts unconditionally, so a reconnect storm is a
- *  broadcast storm; without this a wedged server would produce one toast per
- *  bridge per reconnect. Leaving `failed` re-arms it, which is what keeps the
- *  next genuine failure audible. */
+/**
+ * Dedupe on the state transition: every bridge emits its own status on connect, so a reconnect storm is a broadcast
+ * storm. Leaving `failed` re-arms it.
+ */
 export function announceMCPFailure(server: string, reason: string, prevState: RuntimeState): void {
   if (prevState === "failed") {
     return;
@@ -1128,11 +1265,7 @@ export function announceMCPFailure(server: string, reason: string, prevState: Ru
   showToast(mcpFailureText(server, reason), "error");
 }
 
-/** The captured reason, not a generic message: `error` is kiro-cli's own text and
- *  it is what separates "command not found" from a handshake timeout. It CAN be
- *  empty (adaptStatus defaults a missing one to ""), so the fallback still names
- *  the server — a toast that says only "an integration failed" sends the reader
- *  looking for which one. */
+/** kiro-cli's own text separates "command not found" from a timeout. It can be empty, so the fallback names the server. */
 export function mcpFailureText(server: string, reason: string): string {
   const trimmed = reason.trim();
   if (trimmed === "") {

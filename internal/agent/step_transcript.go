@@ -1,9 +1,7 @@
 package agent
 
-// Serving ONE workflow step's transcript: KAS's own session log for the step's session,
-// read back through `session/load`. Nothing is stored, the step is addressed by PATH (a
-// repeat's iterations share a node id), and it runs on the UTILITY bridge under its own
-// budget — a wedged read on a chat's bridge would be a wedged chat.
+// One workflow step's transcript from KAS's session log via `session/load`. Nothing is stored; the step is
+// addressed by path (repeat iterations share a node id); it runs on the utility bridge under its own budget.
 
 import (
 	"context"
@@ -19,28 +17,18 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// stepTranscriptBudget bounds ONE step read end to end: the `session/load` RPC and the
-// drain barrier after it. A bridge Call has no client-side timeout, so without it a step
-// whose session KAS cannot hydrate holds the HTTP request until the client gives up and
-// leaves a replay open behind it. A `var` only so a test can drive the expiry in
-// milliseconds; never reassigned in production.
+// stepTranscriptBudget bounds one step read, RPC and barrier: a bridge Call has no client timeout. A var for tests.
 var stepTranscriptBudget = 60 * time.Second
 
-// errStepUnknown means the run's plan names no step at the requested path. The handler
-// answers 404 with it; every other outcome is a 200 carrying its own verdict.
+// errStepUnknown means the plan names no such step path (404); every other outcome is a 200 with a verdict.
 var errStepUnknown = errors.New("this run has no step at that path")
 
-// errRunStateUndecodable means the inspect reply could not be decoded. Kept apart from
-// errStepUnknown because that one is a 404 and this is an `unavailable` verdict, and
-// collapsing them would blame the caller for a wire change.
+// errRunStateUndecodable means the inspect reply would not decode: `unavailable`, not a 404 blaming the caller.
 var errRunStateUndecodable = errors.New("this run's state could not be decoded")
 
-// StepTranscript reads one step's transcript: out of the run's own log when it holds
-// a turn for the path (`source: log`, readable while the step is open, with the open
-// tails and one run_turn stamp per open turn), else out of KAS's replay of the step's
-// session (`source: replay`). Three-valued: `ready` with the entries, `gone` when KAS
-// no longer holds the session (or the step never started), and `unavailable` when the
-// read could not be completed. Only the last is worth retrying.
+// StepTranscript reads one step's transcript from the run's log when it holds a turn for the path (`log`, with
+// open tails and stamps), else KAS's replay (`replay`). `ready`, `gone` (session gone or never started) or
+// `unavailable` (worth retrying).
 func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string) (marotte.RunStepTranscript, error) {
 	out := marotte.RunStepTranscript{
 		Entries:     []marotte.Entry{},
@@ -56,22 +44,17 @@ func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string)
 	}
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		// The RUN endpoint is where a missing workflow engine is reported.
+		// A missing workflow engine is the run endpoint's to report.
 		slog.Warn("step transcript: run state unreadable", "workflow_id", workflowID,
 			"node_path", nodePath, "error", err, "detail", rpcerr.Details(err))
 		return out, nil
 	}
-	// No empty-reply check: a KAS refusal is an error above, and the undecodable branch
-	// below answers a reply that arrives empty anyway. The LOAD path does need its own,
-	// because there the two arms differ by a whole budget.
-	//
-	// The step→session registry attributes a resumed run's frames after a restart emptied it.
+	// A KAS refusal errors above, and an empty reply fails to decode below. The registry attributes a resumed run's frames after a restart.
 	rs.translate.RecordRunSteps(raw)
 
 	sessionID, err := stepSessionAt(raw, nodePath)
 	if errors.Is(err, errRunStateUndecodable) {
-		// Not the caller's fault, so not a 404: the path may name a real step in bytes
-		// this build cannot read.
+		// Not a 404: the path may be real in bytes this build cannot read.
 		slog.Warn("step transcript: run state undecodable", "workflow_id", workflowID,
 			"node_path", nodePath, "error", err)
 		return out, nil
@@ -80,7 +63,7 @@ func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string)
 		return out, err
 	}
 	if sessionID == "" {
-		// A step that never ran has no session, so there is nothing to load and never was.
+		// A step that never ran has no session.
 		out.State = marotte.RunStepTranscriptGone
 		return out, nil
 	}
@@ -93,9 +76,8 @@ func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string)
 	return out, nil
 }
 
-// stepSessionAt resolves the ACP session a step path names, off one inspect reply. Returns
-// errStepUnknown when the plan names no such path, and an EMPTY session id when it names a
-// step that has not run — which is why it reads workflow.Steps rather than StepSessions.
+// stepSessionAt resolves the step path's ACP session off one inspect reply: errStepUnknown for no such path,
+// "" for a step not yet run (hence workflow.Steps).
 func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 	var res workflow.InspectResult
 	if json.Unmarshal(raw, &res) != nil {
@@ -109,19 +91,15 @@ func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 	return "", errStepUnknown
 }
 
-// replayStepSession loads one session on the utility bridge and returns what its replay
-// projected. A RAW `session/load` Call rather than bridge.Start: Start's load path calls
-// adoptLoadedSession, which REBINDS the bridge's sessionID, so a step's id would be
-// reported as the utility session's own and take it out of the orphan reaper's keep-list.
+// replayStepSession loads one session on the utility bridge and returns its projection. A raw `session/load`:
+// Start's adoptLoadedSession would rebind the utility's session id and drop it from the reaper's keep-list.
 func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]translate.ProjectedTurn, marotte.RunStepTranscriptState) {
 	if !rs.stepReplays.open(sessionID, translate.NewEntryProjection(newMessageID, rs.workDir)) {
-		// Refused rather than joined: two readers of one barrier is a lifecycle this
-		// registry does not carry, and the retry meets a settled registry a moment later.
+		// Refused rather than joined; a retry meets a settled registry.
 		slog.Debug("step transcript: a read of this session is already in flight", "session_id", sessionID)
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
-	// Taken on EVERY path, expiry included, so an abandoned replay leaks neither a map
-	// entry nor a waiter.
+	// Taken on every path, expiry included.
 	defer func() { _ = rs.stepReplays.take(sessionID) }()
 
 	cctx, cancel := context.WithTimeout(ctx, stepTranscriptBudget)
@@ -131,29 +109,20 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 	if u == nil {
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
-	// The empty-result arm stays beside the error one: KAS refusing to hydrate a reaped
-	// session normally errors, but a `{"result":null}` reply would otherwise wait out
-	// the whole budget on a replay that is never coming.
+	// A `{"result":null}` reply would otherwise wait out the budget.
 	raw, at, err := u.session.rawCallAt(cctx, "step transcript load", marotte.MethodSessionLoad,
 		callerParams(map[string]any{marotte.KeySessionID: sessionID}))
 	if err != nil || len(raw) == 0 {
-		// KAS's reason is machine prose, so it is logged and NOT forwarded.
+		// KAS's reason is machine prose: logged, not forwarded.
 		slog.Warn("step transcript: session load failed", "session_id", sessionID,
 			"error", err, "detail", rpcerr.Details(err))
-		// UNAVAILABLE, never `gone`: KAS answers an id it does not hold and a transient
-		// fault with the same -32603 shape, and only the latter is worth retrying, so
-		// `gone` is reserved for what this side can PROVE — a step with no session id.
+		// Unavailable, never gone: KAS answers an unknown id and a transient fault alike (-32603).
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
-	// rawCallAt for the POSITION: the replay is complete once the consumer has folded
-	// everything preceding this response, and this is the only place that number is known.
-	// Recording it also ATTEMPTS one settle, which answers a replay already drained by the
-	// time the RPC returned, whose barrier nothing else would close.
+	// rawCallAt gives the response's position, which the barrier measures against; recording it attempts one settle.
 	rs.stepReplays.markLoadedAt(sessionID, at)
 
-	// The barrier, not the RPC's return: the replay frames precede the result on the wire
-	// and the notification channel is buffered. Already closed above in the drained-early
-	// case. See step_replay.go.
+	// The barrier: replay frames precede the result and the channel is buffered (step_replay.go).
 	select {
 	case <-rs.stepReplays.barrier(sessionID):
 	case <-cctx.Done():
@@ -162,16 +131,12 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
 
-	// The projected turn_open carries the step's instruction as its prompt; the pane
-	// reads the fallback's turn_open for its node_path and n and ignores the prompt.
+	// The turn_open's prompt is the step's instruction; the pane reads its node_path and n.
 	return rs.stepReplays.take(sessionID), marotte.RunStepTranscriptReady
 }
 
-// TurnRange reads one step turn's tail out of the run's own log, the repair read the
-// run pane runs on a `run_turn` stamp mismatch or a seq hole. There is no replay
-// fallback: a replayed session carries no turn ids, so a turn this log never held is
-// not addressable in that source, which is why the verdict is found-or-not rather
-// than StepTranscript's three states. found is false for a run with no log.
+// TurnRange reads one step turn's tail from the run's log for a `run_turn` repair. No replay fallback (a replay
+// has no turn ids), so found-or-not; false for a run with no log.
 func (rs *Runs) TurnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
 	if rs.log == nil {
 		return nil, nil, nil, false, nil

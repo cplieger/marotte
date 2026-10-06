@@ -33,10 +33,7 @@ from shape_rules_reach import (
     dependency_interface_members,
 )
 
-# The repo to audit. Defaults to this script's own repo and is overridable with
-# SHAPE_AUDIT_ROOT so the rules can be pointed at a sibling repo — the same fix
-# cohesion.py needed. A checker that can only ever see one tree is how a whole
-# codebase goes unmeasured while the report reads clean.
+# The repo to audit; SHAPE_AUDIT_ROOT points the rules at a sibling repo.
 ROOT = pathlib.Path(
     os.environ.get("SHAPE_AUDIT_ROOT", pathlib.Path(__file__).resolve().parent.parent)
 )
@@ -81,11 +78,8 @@ RECEIVER = {
     "mcpRecorder": "r",
 }
 
-# Identifiers that named a type or package this module has renamed away from.
-# Retired vocabulary, PER MODULE. These record one repo's rename history, so
-# applying them to another repo is a category error: subflux never had an
-# internal/hub, and every "hub" in it is the shared cplieger/sse library's type —
-# 28 findings, none of them real, the first time the rules were pointed at it.
+# Identifiers this module renamed away from, PER MODULE: one repo's rename history
+# applied to another is a category error.
 STALE_BY_MODULE = {
     "github.com/cplieger/marotte": {
         "hub": "internal/hub became internal/agent; Hub became Runtime",
@@ -110,9 +104,7 @@ def stale_vocabulary():
 
 
 def go_files(pkg=None):
-    # Every package, whatever the repo's layout: a library keeps its packages at
-    # the top level, and globbing internal/** alone read four of auth's six
-    # packages as absent.
+    # Every package, whatever the layout: a library keeps its packages at the top level.
     for p in _repo_go_files(ROOT):
         if p.name.endswith("_test.go"):
             continue
@@ -130,10 +122,9 @@ def methods():
                 yield p, i, m.group(1), m.group(2), m.group(3)
 
 
-# There is deliberately NO method-count rule: no authority states a limit, and the
-# standard library fails any plausible one (reflect.Value 97, go/types.Checker 195,
-# os.File 73, time.Time 60 methods). Cohesion is what discriminates, and it does
-# not reduce to pass/fail, so scripts/cohesion.py reports it instead.
+# Deliberately NO method-count rule: no authority states one and the standard library
+# fails any such limit. Cohesion is the discriminating property; scripts/cohesion.py
+# reports it.
 def camel_words(name):
     """Split a Go identifier into its CamelCase components.
 
@@ -155,18 +146,14 @@ def rule_name_repeats_receiver(f):
 
 
 def rule_get_prefix(f):
-    # A method satisfying a FIRST-PARTY DEPENDENCY's interface is not named by this
-    # repo. cplieger/auth's UserStore, SessionPersister, PasskeyStore and KeyStore
-    # all spell their reads Get*, so eight of subflux's authstore methods were
-    # reported and renamed before the compiler objected. The library's own naming
-    # is a finding against the LIBRARY, not against every implementer of it.
+    # A method satisfying a FIRST-PARTY DEPENDENCY's interface is named by that library, so a
+    # Get* there is a finding against the library, not its implementers.
     external = dependency_interface_members()
     for p, ln, _, typ, name in methods():
         if name in external:
             continue
-        # GetOrX is a get-or-CREATE, which is an action; Go's rule targets pure
-        # accessors ("LookupUser, not GetUser"). Dropping the prefix there would
-        # lose the "or create" the caller needs to see.
+        # GetOrX is a get-or-CREATE, an action; Go's rule targets pure accessors, and dropping the
+        # prefix would lose the "or create".
         if re.match(r"^[Gg]etOr[A-Z]", name):
             continue
         if re.match(r"^[Gg]et[A-Z]", name):
@@ -174,10 +161,7 @@ def rule_get_prefix(f):
 
 
 def rule_one_receiver_per_type(f):
-    # Keyed by PACKAGE and type. Keying by type name alone reported Buffer and
-    # Store as having two receivers each, because several packages declare a type
-    # by those names — the same trap that invents a god object out of ten
-    # different Handlers.
+    # Keyed by PACKAGE and type: several packages declare a Buffer or a Store.
     seen = collections.defaultdict(set)
     for p, _, recv, typ, _ in methods():
         seen[(str(p.parent.relative_to(ROOT)), typ)].add(recv)
@@ -236,8 +220,7 @@ def rule_wide_interfaces(f):
 def rule_nolint_explained(f):
     for p in go_files():
         for i, line in enumerate(p.read_text().split("\n"), 1):
-            # A line that is ENTIRELY a comment is prose about nolint, not a
-            # directive; one such line said "no //nolint needed" and was reported.
+            # A line that is ENTIRELY a comment is prose about nolint, not a directive.
             if line.lstrip().startswith("//"):
                 continue
             if "//nolint" in line and "//" not in line.split("//nolint")[1]:
@@ -272,13 +255,8 @@ def rule_stale_vocabulary(f):
                     break
 
 
-# Deliberately NOT here, because golangci-lint already enforces them with a real
-# parser and this file only had regexes: ctx-first (revive context-as-argument),
-# exported doc comments (revive exported, enabled org-wide), error-string style
-# (staticcheck ST1005). Each of my three reimplementations produced only false
-# positives — a func-TYPE parameter containing context.Context, an env var name
-# read as a capitalised sentence — which is the argument against writing them at
-# all. This file's job is the SHAPE rules no linter knows about.
+# Deliberately NOT here: golangci-lint enforces ctx-first, exported doc comments and
+# error-string style with a real parser. This file holds the SHAPE rules no linter knows.
 RULES = [
     *REACH_RULES,
     rule_name_repeats_receiver,

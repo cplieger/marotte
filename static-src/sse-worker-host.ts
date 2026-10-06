@@ -1,10 +1,6 @@
-// The profile's stream owner, hosted in the SharedWorker: `@cplieger/sse`'s
-// `createWorkerHost` around marotte's two routes, plus the two decisions that are
-// marotte's own. `sse-worker.ts` is the classic-script entry that wires `onconnect`.
-//
-// The host holds the profile's version map (every tab reports each stamp it records)
-// and performs ONE digest per run; the verdict rides the run to every tab, whose body
-// (`sse-adapter.ts`) is the action column over it.
+// The profile's stream owner, hosted in the SharedWorker: `@cplieger/sse`'s `createWorkerHost`
+// around marotte's two routes, plus the two decisions that are marotte's own. `sse-worker.ts` is
+// the classic-script entry that wires `onconnect`.
 
 import {
   type DigestClient,
@@ -32,14 +28,10 @@ function hookCarried(subject: State): boolean {
   return subject.kind === "pending" || subject.kind === "status";
 }
 
-/** The library's `revalidate` on the host side: one digest over the profile's map, then
- *  one run fanned to every acknowledging tab carrying the verdict, settled when each has
- *  answered, expired or left. A full run and an empty map skip the digest; the run still
- *  reaches the tabs, because a wake refreshes a tab's active view whatever the map holds.
- *  `must_refetch` binds the map to the new epoch and fans a full run at it. Rejects when
- *  the digest failed, so the library ends the connection and the next hello runs again.
- *  `pending` or `status` moved: ONE fresh hello for the profile, after every tab's GET
- *  settled; never on a hello's own run (`sse-adapter.ts` `helloIfMoved` has the loop). */
+/** The library's `revalidate` on the host side: one digest over the profile's map, then one run
+ *  fanned to every acknowledging tab carrying the verdict, settled when each has answered,
+ *  expired or left. A full run and an empty map skip the digest; the run still reaches the tabs,
+ *  because a wake refreshes a tab's active view whatever the map holds. */
 export async function profileRevalidate(
   ctx: RevalidateContext,
   tabs: TabSet,
@@ -69,13 +61,9 @@ export async function profileRevalidate(
   }
 }
 
-/** Every tab that attaches to a LIVE stream needs the connect hook's two snapshot
- *  frames (`pending_snapshot`, `status_snapshot`): those sets reach a client only
- *  through the hook, and the hook ran once, for the tabs attached at that connect. So
- *  an attach while the stream is open reconnects it in place (a resumed hello, so the
- *  replay is gap-free); one that started or un-hid the stream adds nothing. Decided
- *  here, not by the joining tab: the record names no tab, so a tab cannot tell its own
- *  attach from another's, and N tabs each asking would open N connections. */
+/** Every tab that attaches to a LIVE stream needs the connect hook's two snapshot frames
+ *  (`pending_snapshot`, `status_snapshot`): those sets reach a client only through the hook, and
+ *  the hook ran once, for the tabs attached at that connect. */
 function reconnectForAttach(ev: LifecycleEvent, stream: Stream): void {
   if (ev.kind === "tab_attached" && ev.state === "open") {
     stream.reconnect();
@@ -88,8 +76,8 @@ export function createSSEHost(): WorkerHost {
   const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
   const created: WorkerHost = createWorkerHost({
     url: "/api/events",
-    // `SSE-Client` is filled by the host from the first attaching tab's tag, before
-    // the first connect; an empty header would reach the server as an invalid tag.
+    // `SSE-Client` is filled by the host from the first attaching tab's tag, before the first
+    // connect; an empty header would reach the server as an invalid tag.
     alive: { url: "/api/events/alive" },
     versions,
     revalidate: (ctx, tabs) => profileRevalidate(ctx, tabs, versions, digest, created.stream()),

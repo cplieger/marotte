@@ -1,23 +1,9 @@
 package agent
 
-// Knowledge-base management: list / add / remove workspace knowledge
-// contexts over the v3 (KAS) _kiro/knowledge C→A request.
-//
-// The store is disk-backed at $KIRO_HOME/.kiro/knowledge_bases/default and
-// shared by every kiro-cli process on the same KIRO_HOME, so these ops
-// route through the long-lived UTILITY bridge — always available with no
-// chat open — and _kiro/knowledge is issued WITHOUT a sessionId so it
-// deterministically targets that global default store (a custom "wire"
-// agent session would otherwise get its own in-memory store).
-//
-// Verified live against kiro-cli acp v3 2.12.0:
-//   - subcommands: show / add / remove / update / clear / cancel; an
-//     unknown subcommand returns {success:false, message:"Unknown
-//     subcommand: …"}.
-//   - `add` is ASYNC: returns {success:true, message:"Indexing … in
-//     background"} immediately. Progress shows up in `show` as an entry
-//     with indexing:true + items_display; the client polls `show` for
-//     user-add progress since no notification path exists for it.
+// Knowledge-base management over KAS's _kiro/knowledge. The store lives at
+// $KIRO_HOME/.kiro/knowledge_bases/default, shared by every kiro-cli on that KIRO_HOME, so calls
+// go through the utility bridge WITHOUT a sessionId, which targets the global store. `add` is
+// async (kiro-cli 2.12.0): progress appears in `show` as indexing:true, which the client polls.
 
 import (
 	"context"
@@ -36,22 +22,18 @@ import (
 // keySubcommand is the _kiro/knowledge dispatch field naming the operation.
 const keySubcommand = "subcommand"
 
-// knowledgeCallTimeout bounds one _kiro/knowledge round-trip. The only slow
-// path is the first call, which lazily spins up the utility bridge.
+// knowledgeCallTimeout bounds one _kiro/knowledge round-trip; only the first call starts the utility bridge.
 const knowledgeCallTimeout = 45 * time.Second
 
-// kasKnowledgeResult is the _kiro/knowledge reply. `show` fills Entries;
-// add/remove/update/clear/cancel fill Message. Success is false for a
-// usage error, a not-found remove target, or an unknown subcommand.
+// kasKnowledgeResult is the _kiro/knowledge reply: `show` fills Entries, mutations fill Message.
+// Success is false for a usage error, a missing remove target or an unknown subcommand.
 type kasKnowledgeResult struct {
 	Message string              `json:"message"`
 	Entries []kasKnowledgeEntry `json:"entries"`
 	Success bool                `json:"success"`
 }
 
-// kasKnowledgeEntry is one entry in a `show` reply: either an indexed
-// context (item_count + path, no indexing flag) or an in-flight operation
-// (indexing true + items_display progress).
+// kasKnowledgeEntry is one `show` entry: an indexed context, or an in-flight operation (indexing + items_display).
 type kasKnowledgeEntry struct {
 	Name         string `json:"name"`
 	ID           string `json:"id"`
@@ -62,9 +44,7 @@ type kasKnowledgeEntry struct {
 	Indexing     bool   `json:"indexing"`
 }
 
-// knowledgeContext is one entry in the GET /api/knowledge response. Field
-// set mirrors kasKnowledgeEntry; the client keys rows by ID and drives the
-// live progress ring from Indexing + ItemsDisplay.
+// knowledgeContext is one GET /api/knowledge entry; the client keys rows by ID and draws progress from Indexing and ItemsDisplay.
 type knowledgeContext struct {
 	Name         string `json:"name"`
 	ID           string `json:"id"`
@@ -80,15 +60,12 @@ type knowledgeListResponse struct {
 	Contexts []knowledgeContext `json:"contexts"`
 }
 
-// knowledgeMessageResponse is the POST /api/knowledge (add) success body:
-// the KAS background-indexing confirmation, surfaced verbatim.
+// knowledgeMessageResponse is the POST /api/knowledge success body: KAS's confirmation, verbatim.
 type knowledgeMessageResponse struct {
 	Message string `json:"message"`
 }
 
-// knowledgeCall lazily constructs the utility bridge and issues one
-// _kiro/knowledge request with a bounded timeout. sessionId is
-// intentionally never set (global default store).
+// knowledgeCall issues one bounded _kiro/knowledge request on the utility bridge, never with a sessionId.
 func (st *Settings) knowledgeCall(ctx context.Context, params map[string]any) (json.RawMessage, error) {
 	u := st.utility()
 	cctx, cancel := context.WithTimeout(ctx, knowledgeCallTimeout)
@@ -108,8 +85,7 @@ func parseKnowledgeResult(raw json.RawMessage) (*kasKnowledgeResult, error) {
 	return &r, nil
 }
 
-// knowledgeShow lists the global store's contexts + any in-flight indexing
-// operations.
+// knowledgeShow lists the store's contexts and in-flight operations.
 func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, error) {
 	raw, err := st.knowledgeCall(ctx, map[string]any{keySubcommand: "show"})
 	if err != nil {
@@ -122,8 +98,7 @@ func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, erro
 	if !res.Success {
 		return nil, errors.New(cleanKnowledgeMsg(res.Message))
 	}
-	// kasKnowledgeEntry and knowledgeContext have identical field layout
-	// (only json tags differ), so a direct conversion suffices.
+	// Identical field layout, so a direct conversion suffices.
 	out := make([]knowledgeContext, 0, len(res.Entries))
 	for _, e := range res.Entries {
 		out = append(out, knowledgeContext(e))
@@ -131,9 +106,7 @@ func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, erro
 	return out, nil
 }
 
-// resolveKnowledgePath makes a user-supplied knowledge path absolute: a
-// relative path resolves against the workspace dir; an absolute path is
-// cleaned and used as-is.
+// resolveKnowledgePath resolves a relative path against the workspace dir and cleans an absolute one.
 func (st *Settings) resolveKnowledgePath(p string) string {
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
@@ -141,14 +114,8 @@ func (st *Settings) resolveKnowledgePath(p string) string {
 	return filepath.Join(st.lifecycle.workDir, p)
 }
 
-// knowledgeNameUnaddressable reports why a name could never be addressed by
-// the per-base routes, or "" when it can. Both of them take ONE path segment,
-// and canonicalAPIPath 400s a request whose decoded path is not the path
-// ServeMux would route it as, so "." and ".." are unreachable however they are
-// encoded. A name holding "/" IS reachable as %2F (measured on go1.27.1: Go
-// unescapes per segment, so the name arrives whole), but only while the client
-// encodes it, no proxy decodes it, and the decoded form stays canonical — two
-// of those three are outside marotte, so the name is refused instead.
+// knowledgeNameUnaddressable reports why the per-base routes could never address a name, or "".
+// "." and ".." are unroutable; a "/" survives only as %2F through every proxy, so it is refused.
 func knowledgeNameUnaddressable(name string) string {
 	switch {
 	case name == "." || name == "..":
@@ -161,8 +128,7 @@ func knowledgeNameUnaddressable(name string) string {
 	return ""
 }
 
-// cleanKnowledgeMsg trims a KAS message for surfacing as an HTTP error,
-// falling back to a generic sentinel when empty.
+// cleanKnowledgeMsg trims a KAS message for an HTTP error, with a sentinel when empty.
 func cleanKnowledgeMsg(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -171,22 +137,80 @@ func cleanKnowledgeMsg(s string) string {
 	return s
 }
 
-// --- HTTP handlers (registered by registerKnowledgeRoutes) ---
-
-// handleKnowledge dispatches the collection: GET lists, POST adds. Anything
-// else answers 405 with an Allow header naming the two, which is what a
-// per-method route pattern cannot do — ServeMux hands a refused method to the
-// /api/ fallback, whose 404 sends the caller looking for a route that is
-// registered and healthy and carries no Allow.
+// handleKnowledge dispatches GET list, POST add, DELETE clear; anything else answers 405 with
+// Allow, which a per-method pattern cannot (the /api/ fallback would 404).
 func (st *Settings) handleKnowledge(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		st.handleKnowledgeList(w, r)
 	case http.MethodPost:
 		st.handleKnowledgeAdd(w, r)
+	case http.MethodDelete:
+		st.handleKnowledgeClear(w, r)
 	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost, http.MethodDelete)
 	}
+}
+
+func (st *Settings) handleKnowledgeClear(w http.ResponseWriter, r *http.Request) {
+	res, err := st.knowledgeMutate(r.Context(), map[string]any{keySubcommand: "clear"})
+	if err != nil {
+		writeKnowledgeErr(w, err)
+		return
+	}
+	if !res.Success {
+		httpreply.ServerError(w, "clear failed", errors.New(cleanKnowledgeMsg(res.Message)))
+		return
+	}
+	webhttp.Ok(w)
+}
+
+// handleKnowledgeCancel resolves the name to the operation's short id, which only `show` reports.
+func (st *Settings) handleKnowledgeCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		httpreply.BadRequest(w, "name required")
+		return
+	}
+	opID, err := st.knowledgeOperationID(r.Context(), name)
+	if err != nil {
+		writeKnowledgeErr(w, err)
+		return
+	}
+	if opID == "" {
+		httpreply.NotFound(w, "no indexing in progress under that name")
+		return
+	}
+	res, err := st.knowledgeMutate(r.Context(), map[string]any{
+		keySubcommand: "cancel",
+		"operationId": opID,
+	})
+	if err != nil {
+		writeKnowledgeErr(w, err)
+		return
+	}
+	if !res.Success {
+		httpreply.NotFound(w, cleanKnowledgeMsg(res.Message))
+		return
+	}
+	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
+}
+
+func (st *Settings) knowledgeOperationID(ctx context.Context, name string) (string, error) {
+	ctxs, err := st.knowledgeShow(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range ctxs {
+		if c.Name == name && c.Indexing && c.ID != "" {
+			return c.ID, nil
+		}
+	}
+	return "", nil
 }
 
 // handleKnowledgeOne dispatches one base by name: DELETE removes it.
@@ -198,9 +222,7 @@ func (st *Settings) handleKnowledgeOne(w http.ResponseWriter, r *http.Request) {
 	st.handleKnowledgeRemove(w, r)
 }
 
-// handleKnowledgeList: GET /api/knowledge → the global store's contexts +
-// in-flight indexing operations. The client polls this while any entry is
-// still indexing.
+// handleKnowledgeList serves GET /api/knowledge; the client polls it while anything indexes.
 func (st *Settings) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	ctxs, err := st.knowledgeShow(r.Context())
 	if err != nil {
@@ -215,10 +237,8 @@ type knowledgeAddReq struct {
 	Name string `json:"name"`
 }
 
-// handleKnowledgeAdd: POST /api/knowledge {path, name?} → start a background
-// index of a directory. Name defaults to the path's base name. Returns the
-// KAS confirmation message on success (200); a usage / bad-path failure is a
-// 400 with the KAS message.
+// handleKnowledgeAdd serves POST /api/knowledge {path, name?}: a background index, name defaulting
+// to the base name. 200 with KAS's message, or 400 with it.
 func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 	var body knowledgeAddReq
 	if !httpreply.DecodeJSON(w, r, &body) {
@@ -234,8 +254,7 @@ func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = filepath.Base(abs)
 	}
-	// After the default, because a derived name is as unaddressable as a
-	// supplied one and a stored row nothing can remove is worse than a refusal.
+	// After the default: a stored row nothing can remove is worse than a refusal.
 	if reason := knowledgeNameUnaddressable(name); reason != "" {
 		httpreply.BadRequest(w, reason)
 		return
@@ -256,8 +275,7 @@ func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
-// handleKnowledgeRemove: DELETE /api/knowledge/{name} → drop a context by name
-// (KAS matches path first, then name). A missing target is a 404.
+// handleKnowledgeRemove serves DELETE /api/knowledge/{name}; KAS matches path, then name. Missing is 404.
 func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
@@ -279,14 +297,8 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 	webhttp.Ok(w)
 }
 
-// handleKnowledgeReindex: POST /api/knowledge/{name}/reindex → re-index a
-// settled base from the directory it was added from. ASYNC like add, so the
-// client polls the list for progress.
-//
-// The name is resolved to a path HERE because KAS's `update` requires `path`
-// and matches it against sourcePath exactly — unlike `remove`, which accepts a
-// name. Resolving in the client would leak that keying onto the wire and lose
-// the 404 for a name nothing holds.
+// handleKnowledgeReindex serves POST /api/knowledge/{name}/reindex, async like add. The name is
+// resolved here because KAS's `update` matches `path` against sourcePath exactly.
 func (st *Settings) handleKnowledgeReindex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -321,9 +333,8 @@ func (st *Settings) handleKnowledgeReindex(w http.ResponseWriter, r *http.Reques
 	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
-// knowledgeSourcePath answers the source path of the settled base carrying
-// name, or "" when none does. An in-flight entry is skipped: its path is the one
-// already being indexed, and re-indexing it would race that add.
+// knowledgeSourcePath answers the source path of the settled base named name, or "". In-flight
+// entries are skipped: re-indexing would race their add.
 func (st *Settings) knowledgeSourcePath(ctx context.Context, name string) (string, error) {
 	ctxs, err := st.knowledgeShow(ctx)
 	if err != nil {
@@ -337,8 +348,7 @@ func (st *Settings) knowledgeSourcePath(ctx context.Context, name string) (strin
 	return "", nil
 }
 
-// knowledgeMutate issues a mutating subcommand (add/remove/…) and parses the
-// {success, message} reply.
+// knowledgeMutate issues a mutating subcommand and parses its {success, message} reply.
 func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) (*kasKnowledgeResult, error) {
 	raw, err := st.knowledgeCall(ctx, params)
 	if err != nil {
@@ -347,20 +357,17 @@ func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) 
 	return parseKnowledgeResult(raw)
 }
 
-// writeKnowledgeErr maps a bridge / kiro-cli failure to 502 with a generic
-// message (details logged, not leaked). No errNoLiveBridge case here: the
-// utility bridge is auto-started, so a failure is a backend fault.
+// writeKnowledgeErr maps a bridge failure to 502 with a generic message.
 func writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }
 
-// registerKnowledgeRoutes wires the knowledge-base management endpoints. The
-// patterns carry no method on purpose: each handler dispatches on r.Method so a
-// refused one answers 405 + Allow, where a per-method pattern leaves it to the
-// /api/ fallback's 404.
+// registerKnowledgeRoutes wires the knowledge endpoints. Patterns carry no method, so each
+// handler answers a refused method with 405 + Allow.
 func (st *Settings) registerKnowledgeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/knowledge", st.handleKnowledge)
 	mux.HandleFunc("/api/knowledge/{name}", st.handleKnowledgeOne)
 	mux.HandleFunc("/api/knowledge/{name}/reindex", st.handleKnowledgeReindex)
+	mux.HandleFunc("/api/knowledge/{name}/cancel", st.handleKnowledgeCancel)
 }

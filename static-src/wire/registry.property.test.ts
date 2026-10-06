@@ -71,10 +71,8 @@ describe("wire registry completeness", () => {
   });
 
   it("every registered event maps to a real exported generated decoder", () => {
-    // Cross-check the registry wiring against the actual decoder module: each
-    // registered event must resolve (via lookupSSEDecoder) to one of the
-    // functions exported by decoders.gen.ts — not undefined, not an ad-hoc
-    // wrapper. Catches a registry that wires a stub, a stale name, or nothing.
+    // Each registered event must resolve (lookupSSEDecoder) to a function decoders.gen.ts exports, not
+    // a stub, a stale name or nothing.
     const exportedDecoders = new Set<unknown>(
       Object.values(decoders).filter((v) => typeof v === "function"),
     );
@@ -88,12 +86,8 @@ describe("wire registry completeness", () => {
   });
 
   it("registered decoders reject the empty object with a TypeError (never another error class)", () => {
-    // Exhaustive over every registered event (a plain loop, not a sampled
-    // fc.constantFrom, so no event is skipped). An empty object is missing the
-    // required fields of most payloads; the decoder must reject it via the
-    // validators.ts failure mode (TypeError), not crash with some other error.
-    // Payloads with no required fields (whoami) decode {} fine —
-    // that's an accepted no-throw outcome, not a failure.
+    // Exhaustive over registered events. An empty object must be rejected through validators.ts's
+    // TypeError, not another crash; a payload with no required fields (whoami) may decode {}.
     for (const eventName of registeredEvents) {
       const decoder = lookupSSEDecoder(eventName);
       expect(decoder, `missing decoder for ${eventName}`).toBeDefined();

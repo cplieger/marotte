@@ -2,26 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-// ---------------------------------------------------------------------------
-// A metering unit label wraps inside the context pill's card.
-//
-// The label is `MeteringItem.UnitPlural` — whatever kiro-cli reports for a
-// usage dimension, with nothing bounding its length — and `.pill-metering`'s
-// own comment has always said such a label wraps. It could not: the card sets
-// `white-space: nowrap`, and an underscored identifier carries no wrap
-// opportunity of its own, so BOTH `white-space: normal` and
-// `overflow-wrap: anywhere` are needed and neither works alone.
-//
-// The assertions are the two halves of one outcome, because a box can also stop
-// overflowing by clipping: the card stays within the width it was given, AND
-// the label got taller, which is only true if the text wrapped.
-//
-// The phone cap that made this visible (`max-inline-size` under
-// `@media (width <= 48rem)`) is not what is exercised here — the mechanism is
-// min-content sizing, so a shrink-to-fit card in a narrow host reproduces it at
-// every width. Measured in Chromium: 260px card / 4-line label as shipped, and
-// 301px card / 1-line label with either declaration reverted.
-// ---------------------------------------------------------------------------
+// An underscored unit label has no wrap opportunity, so the card needs BOTH
+// `white-space: normal` and `overflow-wrap: anywhere`; the label must also get taller.
 
 /** Long enough to exceed the host, with no break opportunity anywhere in it. */
 const UNBREAKABLE_UNIT = "cache_read_input_tokens_including_prompt_prefix";
@@ -49,8 +31,7 @@ afterEach(() => {
   host.replaceChildren();
 });
 
-/** The metering row as `status.ts` renders it, inside the card that owns the
- *  inherited `nowrap`. Returns the card and the label. */
+/** The metering row as `status.ts` renders it, inside the card that owns the inherited `nowrap`. */
 function mountMeteringRow(unit: string): { card: HTMLElement; label: HTMLElement } {
   const card = document.createElement("span");
   card.className = "pill-expand-content pill-context-content is-open";

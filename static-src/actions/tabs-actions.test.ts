@@ -1,11 +1,6 @@
-// ---------------------------------------------------------------------------
-// The four tab mutations, and the two opposite properties their coalescing has
-// to hold at once. A DOUBLE GESTURE IS ONE MUTATION: two taps on one door open one
-// tab (`dedupe` keyed on (kind, ref)). A REPEATED GESTURE IS SEVERAL: pin → unpin
-// → pin ends pinned and a drag A → B → A ends at A. An argument-composite
-// idempotency key breaks the second; a dedupe key holding a unique id breaks the
-// first.
-// ---------------------------------------------------------------------------
+// Two opposite coalescing properties. A DOUBLE gesture is one mutation (`dedupe` keyed on
+// (kind, ref)). A REPEATED gesture is several: pin → unpin → pin ends pinned and A → B → A ends
+// at A, so neither dedupe nor an arg-composite idempotency key may collapse the third onto the first.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -19,9 +14,7 @@ vi.mock("../toast.js", () => ({
 
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Inert: present only so real-ESM linking succeeds.
   newOpID: vi.fn(() => "op-test"),
 }));
 
@@ -29,9 +22,7 @@ vi.mock("../api-client.js", () => ({
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Inert: present only so real-ESM linking succeeds.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
 }));
@@ -76,9 +67,7 @@ function subject(id: string, over: Record<string, unknown> = {}): Record<string,
   return { id, kind: "chat", ref: "c-1", parent: "", pinned: false, owns: true, ...over };
 }
 
-/** A reply that does not resolve until released, so a second dispatch is
- *  genuinely IN FLIGHT alongside the first — which is the only window `dedupe`
- *  covers. */
+/** A reply held until released, so a second dispatch is IN FLIGHT: the only window `dedupe` covers. */
 function heldReply(body: unknown): { release: () => void } {
   let release = (): void => {
     /* replaced by the promise below */
@@ -98,8 +87,6 @@ beforeEach(() => {
   mockSend.mockReset();
   mockSend.mockResolvedValue(okWith({ ok: true }) as never);
 });
-
-// --- open_tab ---
 
 describe("open_tab", () => {
   it("sends kind, ref, parent, owns and the op id", async () => {
@@ -124,9 +111,7 @@ describe("open_tab", () => {
   });
 
   it("carries a FRESH idempotency key per dispatch, never one derived from the args", async () => {
-    // An arg-composite key is the same defect as a collapsing dedupe seen from the
-    // other side: inside the 5-minute cache a repeated mutation replays a cached
-    // success and never runs. The key is per-dispatch; `op_id` is what correlates.
+    // An arg-composite key would replay a cached success inside the 5-minute cache; `op_id` correlates.
     mockSend.mockResolvedValue(okWith({ subject: subject("t1"), created: true }) as never);
     const args = { kind: "chat", ref: "c-1", parent: "", owns: true } as const;
     await openTabCommand.dispatch({ ...args, opID: "op-1" });
@@ -151,9 +136,7 @@ describe("open_tab", () => {
   });
 
   it("reports created:false for a tab that is already open", async () => {
-    // The idempotent open. Nothing was committed, so NO frame will follow — a
-    // caller that waited only for one would wait forever, which is the silent
-    // no-op this flag exists to remove.
+    // Nothing committed, so NO frame follows: a caller waiting for one would wait forever.
     mockSend.mockResolvedValue(
       okWith({ subject: subject("t1"), created: false, version: 9 }) as never,
     );
@@ -179,9 +162,7 @@ describe("open_tab", () => {
       owns: true,
       opID: "op-a",
     });
-    // Same (kind, ref), a different op id — which is the whole trap: the default
-    // key is safeStringify(args), so the unique op would make every gesture its
-    // own key and the option would collapse nothing.
+    // The trap: the default key is safeStringify(args), so the unique op id would collapse nothing.
     const second = openTabCommand.dispatch({
       kind: "chat",
       ref: "c-1",
@@ -192,8 +173,7 @@ describe("open_tab", () => {
     release();
     const [a, b] = await Promise.all([first, second]);
     expect(mockSend).toHaveBeenCalledTimes(1);
-    // Both callers get the SAME answer, which is what lets each run its own
-    // activation against one open.
+    // Both callers get the SAME answer, so each runs its own activation against one open.
     expect(a?.subject.id).toBe("t1");
     expect(b?.subject.id).toBe("t1");
   });
@@ -221,10 +201,8 @@ describe("open_tab", () => {
   });
 
   it("reaches the server again once the first dispatch has resolved", async () => {
-    // `dedupe` covers the IN-FLIGHT window only — the framework evicts the slot in
-    // result.finally. Outside it the server's own (kind, ref) uniqueness answers a
-    // late second tap by returning the tab already open, which is why nothing
-    // further is needed here.
+    // `dedupe` covers the IN-FLIGHT window only; outside it the server's (kind, ref) uniqueness
+    // answers a late tap with the tab already open.
     mockSend.mockResolvedValue(okWith({ subject: subject("t1"), created: true }) as never);
     await openTabCommand.dispatch({
       kind: "chat",
@@ -254,8 +232,7 @@ describe("open_tab", () => {
       owns: true,
       opID: "op-4",
     });
-    // The refusal has a remedy, and a control that says only "failed" reads as
-    // broken rather than as bounded.
+    // The refusal has a remedy; "failed" alone reads as broken.
     expect(mockToastError.mock.calls[0]?.[0]).toContain("Close a tab first");
   });
 
@@ -269,12 +246,9 @@ describe("open_tab", () => {
   });
 });
 
-// --- close_tab ---
-
 describe("close_tab", () => {
   it("returns every id the mutation closed, with the committed version", async () => {
-    // A parent and its children go as ONE mutation, so this is a list — and the
-    // version rides beside it for the pending-op machine.
+    // A parent and its children close as ONE mutation, hence a list.
     mockSend.mockResolvedValue(okWith({ closed: ["p", "c1", "c2"], version: 3 }) as never);
     const reply = await closeTabCommand.dispatch({ id: "p", opID: "op-1" });
     expect(reply?.closed).toEqual(["p", "c1", "c2"]);
@@ -282,9 +256,7 @@ describe("close_tab", () => {
   });
 
   it("treats an empty list as a normal answer, not a failure", async () => {
-    // Two devices can close one tab. Closing an id that is not open commits
-    // nothing and is not an error — the empty list is the machine's semantic
-    // confirmation of absence.
+    // Two devices can close one tab: the empty list confirms absence.
     mockSend.mockResolvedValue(okWith({ closed: [], version: 3 }) as never);
     const reply = await closeTabCommand.dispatch({ id: "gone", opID: "op-2" });
     expect(reply?.closed).toEqual([]);
@@ -301,22 +273,14 @@ describe("close_tab", () => {
   });
 });
 
-// --- pin_tab, and the repeat that must NOT collapse ---
-
 describe("pin_tab", () => {
   it("executes a repeated pin -> unpin -> pin, all three", async () => {
-    // The third gesture repeats the first. Any coalescing keyed on (id, pinned)
-    // would collapse it onto the first while it was still in flight and leave the
-    // tab UNPINNED — silently, which is the failure mode that makes this worth a
-    // test rather than a comment.
+    // The third gesture repeats the first: coalescing on (id, pinned) would leave it UNPINNED.
     await pinTabCommand.dispatch({ id: "t1", pinned: true, opID: "op-1" });
     await pinTabCommand.dispatch({ id: "t1", pinned: false, opID: "op-2" });
     await pinTabCommand.dispatch({ id: "t1", pinned: true, opID: "op-3" });
     expect(sent().map((s) => s.payload["pinned"])).toEqual([true, false, true]);
-    // And each carries its OWN idempotency key. An arg-composite key would make
-    // the third gesture identical to the first, so a real server would replay the
-    // first's cached success and the tab would end UNPINNED — the same silent
-    // outcome a collapsing dedupe produces, reached through the other mechanism.
+    // Its OWN idempotency key: an arg-composite key would replay the first's cached success.
     expect(idempotencyKeys()[0]).not.toBe(idempotencyKeys()[2]);
   });
 
@@ -340,8 +304,6 @@ describe("pin_tab", () => {
   });
 });
 
-// --- reorder_tabs ---
-
 describe("reorder_tabs", () => {
   it("executes a drag A -> B -> A, all three", async () => {
     await reorderTabsCommand.dispatch({ order: ["a", "b"], opID: "op-1" });
@@ -352,8 +314,7 @@ describe("reorder_tabs", () => {
       ["b", "a"],
       ["a", "b"],
     ]);
-    // Same reasoning as the repeated pin: the third order equals the first, so an
-    // arg-composite idempotency key would leave the collection at B.
+    // The third order equals the first: an arg-composite key would leave the collection at B.
     expect(idempotencyKeys()[0]).not.toBe(idempotencyKeys()[2]);
   });
 
@@ -372,9 +333,7 @@ describe("reorder_tabs", () => {
   });
 
   it("reports a 409 as stale rather than as a failure", async () => {
-    // The exact-set check refused the order because the SET moved under the drag.
-    // Nothing is broken and nothing is lost, so this must not reach the error
-    // notification: the caller re-lists and the drag snaps back.
+    // The SET moved under the drag: not an error; the caller re-lists and the drag snaps back.
     mockSend.mockResolvedValue({ ok: false, status: 409, error: "order mismatch" } as never);
     expect(await reorderTabsCommand.dispatch({ order: ["a"], opID: "op-1" })).toBe(REORDER_STALE);
     expect(mockToastError).not.toHaveBeenCalled();

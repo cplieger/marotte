@@ -1,32 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as ModGitTabs from "./git-tabs.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
+/**
+ * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
+ * extension is load-bearing: written `.js`, coverage attributes every evaluation to a file that does not exist. Only
+ * the module under test is busted, so `vi.mock` still intercepts its dependencies.
  */
 let bootSeq = 0;
 
-// git-tabs is a deduped signal + subscribe store (mirrors settings-tabs.ts).
-// The core contract is pure signal behavior, but setGitTab now also pushes a
-// URL (pushState) and syncs the git tab's route, so the suite runs under
-// the real window.location / history. A fresh module per test resets the
-// activeTab signal to its "changes" default and stops subscriber registrations
-// from leaking across tests.
+// setGitTab pushes a URL and syncs the git tab's route, so the suite runs under the real location and history; a
+// fresh module per test resets the signal to "changes".
 beforeEach(() => {
   vi.resetModules();
   bootSeq++;
-  // Reset the shared location so URL assertions start from a known
-  // state (resetModules clears module state, not the global location).
+  // resetModules clears module state, not the global location.
   history.replaceState(null, "", "/");
 });
 
@@ -69,9 +56,9 @@ describe("git-tabs store", () => {
 
     const fn = vi.fn<(tab: GitTabName) => void>();
     const dispose = onGitTabChange(fn);
-    fn.mockClear(); // drop the immediate fire so we only count change notifications
+    fn.mockClear(); // Drop the immediate fire; count change notifications only.
 
-    setGitTab("changes"); // already the default → deduped signal → no notify
+    setGitTab("changes"); // Already the default: deduped, no notify.
 
     expect(fn).not.toHaveBeenCalled();
     expect(getGitTab()).toBe("changes");
@@ -109,11 +96,8 @@ describe("git-tabs store", () => {
       /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
     )) as typeof ModGitTabs;
 
-    // The heading has TWO writers on two clocks: `showView` owns the title and
-    // names the kind, the tab module owns the subtitle. `setPageSubtitle` paints
-    // only for the kind currently shown, so a view that is not on screen records
-    // its section without stealing another view's heading — which means this test
-    // has to perform the view switch, exactly as `tabs.ts` does.
+    // Two writers: `showView` owns the title, the tab module the subtitle, which paints only for the kind shown, so the
+    // test performs the view switch as `tabs.ts` does.
     const { setPageTitle } = await import("./page-title.js");
     setPageTitle("Git", "git");
 
@@ -125,7 +109,5 @@ describe("git-tabs store", () => {
   });
 });
 
-// Local alias matching the module's exported GitTab union, kept here so the
-// test arrays stay strongly typed without importing the type at module scope
-// (each test imports the module fresh inside its own body).
+// A local alias, since each test imports the module fresh inside its own body.
 type GitTabName = "changes" | "prs" | "sources";

@@ -5,50 +5,28 @@
 import type { SettingsTab } from "../route-path.js";
 import type { ErrorCode } from "../wire/types.gen.js";
 
-/** The in-app jump a routed error offers, as DATA rather than a callback so the
- *  routing table stays a table — the handler maps it onto the toast's one action
- *  slot. Discriminated because the two kinds go to different places: `setting`
- *  names a Settings control the message is really about, `sign-in` opens the login
- *  modal, which is not in Settings at all. */
+/** The in-app jump a routed error offers, as DATA so the routing table stays a table. `setting`
+ *  names a Settings control; `sign-in` opens the login modal. */
 export type ErrorAction =
   | { kind: "setting"; tab: SettingsTab; control: string; label: string }
   | { kind: "sign-in"; label: string };
 
 export interface ErrorRoute {
-  /** Where this error is reported.
-   *
-   *  - `toast`: bottom-right, paired with the turn's own transcript divider (the
-   *    server writes the same reason there). Raised for EVERY chat, and named with
-   *    that chat when its tab is not the one on screen.
-   *  - `agent-down`: the send button's alert face. Reserved for "there is no
-   *    agent to send to", never for a failed attempt — see send-state.ts.
-   */
+  /** Where this error is reported. `toast`: bottom-right beside the turn's own divider, raised for
+   *  EVERY chat and named when its tab is not on screen. `agent-down`: the send button's alert face,
+   *  only for "no agent to send to" (see send-state.ts). */
   surface: "toast" | "agent-down";
   action?: ErrorAction;
 }
 
-// WHETHER A FAILURE ENDS A TURN IS NOT IN THIS TABLE, and a `turnScoped?: true`
-// flag lived here until it was measured wrong. It let `reportFailure` drop the
-// toast for a chat the reader is already looking at, on the grounds that the turn's
-// own card carries the same reason durably — but a route describes a CODE and
-// having-a-turn is a property of the EMISSION. Three of the five server emitters
-// behind `prompt_failed` and `recovery_failed` open no turn at all (a held bridge
-// slot, a zero epoch, a failed recovery respawn), so one answer per code silenced
-// those three on the chat in front of the reader with nothing else reporting them.
-//
-// The server states it per frame instead: `ErrorPayload.turn_scoped`, read by the
-// `error` handler in turn.ts and passed to `reportFailure`. Absent means no, which
-// is the direction that reports rather than trusts a row that may not exist.
+// Whether a failure ends a turn is a property of the EMISSION, not the code (three of the five
+// `prompt_failed`/`recovery_failed` emitters open no turn), so the server states it per frame as
+// `ErrorPayload.turn_scoped`, read in turn.ts. Absent means no, the direction that reports.
 
 export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   agent_not_found: { surface: "toast" },
-  // The payload names a `.kiro/agents` path, so the message is about authored
-  // configuration; Custom instructions is the panel that owns it, and the global
-  // instructions box is the control a reader lands on to check their setup.
-  //
-  // Sticky rather than the 12s an action reachable elsewhere gets (toast.ts): a
-  // typo in a `.kiro/agents` file blocks the chat and nothing else on screen says
-  // so, so this notice must not expire unread.
+  // About authored `.kiro/agents` configuration, so the CTA is the global instructions box. Sticky:
+  // such a typo blocks the chat and nothing else on screen says so.
   agent_config_error: {
     surface: "toast",
     action: {
@@ -63,40 +41,19 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   // The chat is running, just not in the mode that was asked for, and the fix is
   // one click on the mode pill, so this reports without blocking the composer.
   mode_not_applied: { surface: "toast" },
-  // The chat is running, it just will not ask before writing, and the fix is one
-  // click on the supervised switch — so this reports without blocking the composer,
-  // exactly like its mode sibling above. An entry is REQUIRED rather than optional
-  // even though reportFailure is the fallthrough: the generated ERROR_CODES array
-  // validates the frame, and an unmapped code reaching a generic failure surface
-  // would claim the turn failed when the turn is fine.
+  // Reports without blocking the composer. REQUIRED, not left to the fallthrough: an unmapped code
+  // on a generic failure surface would claim the turn failed.
   supervised_not_applied: { surface: "toast" },
-  // kiro-cli could not vend a KAS access token, so the agent runtime is running
-  // unauthenticated: the session opened and every service-backed surface behind
-  // it will fail. Sticky, because nothing else on screen says the runtime is
-  // signed out. The CTA is the login modal: the only action that fixes it is
-  // signing in, and there is no Settings control for that.
-  //
-  // This is the code the server marks turn-scoped AND that carries an action, which
-  // is the pair making `failure-notice.ts`'s action clause load-bearing rather than
-  // theoretical: the turn it failed carries the reason inline, and the toast is
-  // still raised because Sign in is reachable from nowhere else on screen.
+  // kiro-cli could not vend a KAS access token, so service-backed surfaces will fail. Sticky, with
+  // the login modal as CTA; turn-scoped AND actionable, so the toast is raised beside the turn's
+  // inline reason.
   auth_token_unavailable: {
     surface: "toast",
     action: { kind: "sign-in", label: "Sign in" },
   },
-  // The four failed-attempt codes. Each one ends the turn and each one leaves a
-  // promptable chat behind, which is precisely why none of them reaches the send
-  // button: the composer's next Send is the retry.
-  //
-  // `prompt_failed` is the throttle / 5xx / capacity family and the reason this
-  // whole routing changed. `recovery_failed` is empty-turn recovery giving up,
-  // routed explicitly rather than left to the unknown-code fallthrough because it
-  // is the one error whose meaning is "the automatic repair did not work".
-  // `switch_failed` and `model_not_served` are the two halves of choosing a model,
-  // refused before the wire and on it.
-  //
-  // Both are the codes whose emitters DISAGREE about turn-scopedness — three of the
-  // five open no turn — which is why the flag left this table; see the note above.
+  // The four failed-attempt codes: each ends the turn and leaves a promptable chat, so none reaches
+  // the send button (the next Send is the retry). `recovery_failed` is explicit because it means the
+  // automatic repair gave up.
   prompt_failed: { surface: "toast" },
   recovery_failed: { surface: "toast" },
   switch_failed: { surface: "toast" },

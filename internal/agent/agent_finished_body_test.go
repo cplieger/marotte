@@ -20,7 +20,6 @@ func TestAgentFinishedBodyFrom(t *testing.T) {
 			want: "Reviewing the MCP validation accumulation",
 		},
 		{
-			// An agent need never declare a focus, so this is the ordinary case.
 			name: "EmptyFallsBackToTheLiteral", desc: "", want: defaultAgentFinishedBody,
 		},
 		{
@@ -40,23 +39,18 @@ func TestAgentFinishedBodyFrom(t *testing.T) {
 	}
 }
 
-// The ordering: emit() CLEARS the chat's status as the turn_closed frame goes out, so a
-// read taken at the push site finds the entry gone and falls back to the literal —
-// silently, and indistinguishably from an agent that never declared anything.
+// emit() clears the chat's status as turn_closed goes out, so the push must not read it at the push site.
 func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(context.Background(), "/tmp/push-desc", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	id, log := h.stagePromptTurn(t, "c1")
 	sayText(t, log)
-	// Broadcast the way translate/focus.go's chat_status path does it: MID-turn, on a
-	// session_info_update, through the production write. Only that path stages the
-	// description on the open TURN, which is what the push body reads.
+	// Broadcast mid-turn through the production write: only that path stages the description on the open turn.
 	h.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
 		Status:      "in_progress",
 		Description: "Wiring the PR status poller",
@@ -79,11 +73,8 @@ func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
 	}
 }
 
-// The push may not claim success over a failure: the description is what the agent was
-// DOING, so pushing it for a failed turn gives the off-screen reader the agent's own words
-// for work that did not land. The bodies are hardcoded rather than read back through
-// DefaultFailureReason, because an expectation computed by the code under test passes for
-// any mapping.
+// A failed turn must not push the agent's description. Bodies are hardcoded: an
+// expectation computed by the code under test passes for any mapping.
 func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -106,15 +97,13 @@ func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 			fp := &recordingPush{sends: make(chan string, 4)}
 			h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 			cs.wire(h)
-			h.mcpRegistry.SignalReady()
 			ctx := t.Context()
 			_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 			id, log := h.stagePromptTurn(t, "c1")
 			if !tc.silent {
 				sayText(t, log)
 			}
-			// Present for every case, so an arm leaking it fails visibly rather than absently.
-			// Broadcast mid-turn, where the real frame lands: see the sibling test above.
+			// Present for every case, so an arm leaking it fails visibly.
 			h.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
 				Status: "in_progress", Description: "Wiring the PR status poller",
 			}))
@@ -142,14 +131,9 @@ func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 	}
 }
 
-// TestPushBody_CarriesOnlyThisTurnsDescription: the body is the description the agent
-// declared DURING the turn that is ending, and a retained waiting_on_user claim outlives
-// its turn on purpose — so a chat's copy cannot answer for one turn without handing the
-// next turn the previous turn's words.
-//
-// Turn N+1 is a WIRE-started turn deliberately. A prompt-class source would discharge
-// the retention first, emptying the cache, so a cache-reading implementation would also
-// produce the default and the case could never go red.
+// TestPushBody_CarriesOnlyThisTurnsDescription pins that the body is the description
+// declared during the ending turn, not a retained claim from the previous one. Turn N+1 is
+// wire-started: a prompt-class source would empty the cache and the case could never go red.
 func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 	newFixture := func(t *testing.T) (*Runtime, *recordingPush) {
 		t.Helper()
@@ -157,7 +141,6 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		fp := &recordingPush{sends: make(chan string, 4)}
 		h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 		cs.wire(h)
-		h.mcpRegistry.SignalReady()
 		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 		return h, fp
 	}
@@ -197,8 +180,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		}))
 		endTurn(t, h, "c1", id)
 		_ = awaitBody(t, fp)
-		// The claim is RETAINED past turn end; that is the feature. So the cache still
-		// holds a description turn N+1 never declared.
+		// The claim is retained past turn end by design, so the cache still holds a description turn N+1 never declared.
 		if got := h.bus.chatStatus.Snapshot()["c1"]; got.Status != marotte.ChatStatusWaitingOnUser {
 			t.Fatalf("the fixture lost the retention: status is %q", got.Status)
 		}
@@ -208,7 +190,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 			t.Fatal("the fixture could not open a wire-started turn")
 		}
 		sayText(t, wire)
-		h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
+		h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn)
 
 		if got := awaitBody(t, fp); got != defaultAgentFinishedBody {
 			t.Errorf("push body = %q, want %q: this turn declared nothing", got, defaultAgentFinishedBody)
@@ -216,14 +198,12 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 	})
 }
 
-// A chat notification must still travel as a chat SUBJECT rather than a bare key, or it
-// loses the per-chat coalescing tag.
+// A chat notification travels as a chat SUBJECT, or it loses the per-chat coalescing tag.
 func TestPushTurnOutcome_PushSubjectIsTheChat(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(context.Background(), "/tmp/push-subject", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 

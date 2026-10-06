@@ -1,9 +1,3 @@
-// ---------------------------------------------------------------------------
-// Commit workflow rendering: commit message textarea + AI generate +
-// recent commits collapsible section. Extracted from git-changes-tab.ts
-// to isolate the commit-specific UI concern.
-// ---------------------------------------------------------------------------
-
 import { apiGet } from "./api-client.js";
 import { commit as commitAction, generateCommitMessage } from "./actions/git-changes.js";
 import type { ActionOutcome } from "./actions/index.js";
@@ -15,10 +9,10 @@ import type { GitRepoStatus } from "./git-types.js";
 
 type RepoStatus = GitRepoStatus;
 
-/** The host a server-derived commit-URL prefix points at, or "" when there is
- *  no usable prefix. Doubles as the render gate below — no host, no link — and
- *  as the belt-and-braces scheme guard over a value the server built out of a
- *  repository's own origin remote, which is config we do not control. */
+/**
+ * The host a server-derived commit-URL prefix points at, or "" when unusable. Doubles as the render gate and as the
+ * scheme guard over a value built from a repository's origin remote, which marotte does not control.
+ */
 function commitLinkHost(prefix: string): string {
   if (prefix === "" || !isSafeURL(prefix)) {
     return "";
@@ -26,9 +20,7 @@ function commitLinkHost(prefix: string): string {
   return new URL(prefix).host;
 }
 
-/** The commit hash: a link to its page on `host` when the server derived one,
- *  else the plain selectable text it has always been. The accessible name says
- *  where the link goes, because the hash alone does not. */
+/** The accessible name says where the link goes, because the hash alone does not. */
 function renderSha(sha: string, prefix: string, host: string): HTMLElement {
   const code = el("code", { className: "git-recent-commits-sha" }, sha);
   if (host === "") {
@@ -92,8 +84,7 @@ export function refusalOf(o: ActionOutcome<unknown>, could: string): Refusal | n
   };
 }
 
-/** The commit message box on screen for `repo`: a repaint during a press
- *  replaces the one the press was built with. */
+/** The box on screen for `repo`: a repaint during a press replaces the one the press was built with. */
 function liveBox(repo: string): HTMLTextAreaElement | null {
   return document.querySelector<HTMLTextAreaElement>(
     `.git-commit-input[data-repo="${CSS.escape(repo)}"]`,
@@ -140,7 +131,7 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
       const list = el("ul", { className: "git-recent-commits-list" });
       for (const line of entries.slice(0, 20)) {
         const li = el("li", { className: "git-recent-commits-row" });
-        // line shape: "<sha> <subject>"
+        // Line shape: "<sha> <subject>".
         const sp = line.indexOf(" ");
         if (sp > 0) {
           li.appendChild(renderSha(line.slice(0, sp), prefix, host));
@@ -159,13 +150,10 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
   return wrap;
 }
 
-/** Render the commit message textarea + AI generate + Commit button.
- *
- *  `stagedCount` is the number of staged FILES, and the Commit button
- *  names it. The button used to read a bare "Commit" sitting below the
- *  whole file list, so the one control that writes history said nothing
- *  about what it was about to write — and since the index is the
- *  selection, nothing else on the row did either. */
+/**
+ * Render the commit message box, AI generate and the Commit button. `stagedCount` is the staged file count, which
+ * the button names so the one control that writes history says what it will write.
+ */
 export function renderCommitArea(
   r: RepoStatus,
   deps: CommitDeps,
@@ -179,7 +167,6 @@ export function renderCommitArea(
     rows: 2,
     "data-repo": r.repo,
   }) as HTMLTextAreaElement;
-  // Restore previously typed commit message.
   const saved = deps.commitMessages.get(r.repo);
   if (saved) {
     ta.value = saved;
@@ -208,8 +195,7 @@ export function renderCommitArea(
         if (o.status !== "success") {
           return refusalOf(o, "write a commit message");
         }
-        // Server returns {output}; only fill when non-empty so a failed/empty
-        // generation never wipes a message the user already typed.
+        // Only fill when non-empty, so a failed generation never wipes a typed message.
         const generated = o.value.output ?? "";
         if (generated !== "") {
           deps.commitMessages.set(r.repo, generated);
@@ -236,8 +222,7 @@ export function renderCommitArea(
       if (message === "") {
         return { lead: "Could not commit.", detail: "Write a commit message first." };
       }
-      // A refused commit (a hook, an identity) leaves the typed message where it
-      // is (18-F1); only a commit that landed clears it.
+      // A refused commit (a hook, an identity) keeps the typed message; only a landed commit clears it.
       const o = await commitAction.dispatch({ repo: r.repo, message }).outcome;
       const refused = refusalOf(o, "commit");
       if (refused !== null) {

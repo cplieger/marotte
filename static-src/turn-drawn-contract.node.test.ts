@@ -1,10 +1,6 @@
-// The client half of the shared drawn-predicate oracle: testdata/turn_drawn.json is the
-// contract and TestTurnDrawnContract_ServerHalf is the other reader. That one builds a
-// real entry log and asks RailRows; this builds a TurnState and asks turnIsDrawn, so the
-// two construct their rows from different shapes — the divergence the fixture exists to
-// catch, because a turn this half draws and the rail refuses has no jump target.
-//
-// Node placement because the fixture is a disk read.
+// The client half of the drawn-predicate oracle (testdata/turn_drawn.json; the server half is
+// TestTurnDrawnContract_ServerHalf, through RailRows). Each half builds rows from a different shape,
+// which is the divergence the fixture catches: a drawn turn the rail refuses has no jump target.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";

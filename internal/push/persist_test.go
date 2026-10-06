@@ -189,20 +189,8 @@ func TestLoadKeys_ReportsOrphanedSubscriptions(t *testing.T) {
 	})
 }
 
-// TestLoadKeys_ReportsUnusableStoredKeys pins the other door into the same
-// state, and it needs nobody to have deleted anything: a vapid-keys.json that is
-// present but unusable (a truncated write, a partial restore) is REPLACED, which
-// heals the service and kills every stored subscription at once. The service
-// stays healthy on purpose — refusing to send would leave no way to recover —
-// so this line is the only record of what happened.
-//
-// half_written is the case the guard used to miss, and it is the one a persistent
-// volume produces: the file is valid JSON carrying only the public half, so a
-// PublicKey-only check adopted it, left vapidPriv nil, and every send was then
-// dropped by preflightSend's health gate with no boot able to repair it. Signing
-// is what the assertion reads for that reason — a fresh public key alone would
-// pass while the service still could not send. Invariant 6: a broken state must
-// be able to heal itself.
+// TestLoadKeys_ReportsUnusableStoredKeys asserts that a vapid-keys.json present but unusable (truncated,
+// partial) must be reported, not silently replaced.
 func TestLoadKeys_ReportsUnusableStoredKeys(t *testing.T) {
 	const msg = "push: stored VAPID keys unusable, generating a replacement"
 	cases := []struct {

@@ -1,20 +1,5 @@
-// Design 13 property 8's SECOND arm, the two clauses the RUN's own reads own: a step that
-// opened and closed entirely inside a connection gap, and a pane opened by RELOAD while a
-// step is still streaming.
-//
-// The arm's other clauses are pinned elsewhere and are deliberately not restated here: the
-// digest MISMATCH and the `gone` verdict both running the run's range read are
-// `sse-adapter.test.ts`'s (over a mocked run store), and the pane's own arming rules -- which
-// node earns a read, and which earns none -- are `run-view.test.ts`'s "run view step reads".
-// What is missing from both is the composition, so this file drives the REAL store, the real
-// step GET and the real range read: the store holds no turn for the closed step's path, and
-// the stamp the reload case repairs from is the one the store minted out of the step GET's own
-// answer.
-//
-// Two things are derived rather than scripted, so neither case can assert itself into
-// existence: the digest's `changed` set is computed from the versions the client posted
-// against the log the fixture server holds, and the version the reload case expects to hold is
-// read off the step GET's own `subject` rather than written twice.
+// Gap recovery through the RUN's own reads: a step that opened and closed entirely inside a
+// connection gap, and a pane opened by RELOAD while a step is still streaming.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -72,14 +57,14 @@ function entry(seq: number, kind: Entry["kind"], payload: unknown): Entry {
   return { id: `${TURN}-e${String(seq)}`, turn: TURN, kind, seq, ts: seq + 1, payload };
 }
 
-/** The server's log for the step's turn, and the tail it has not sealed yet. Both mutable:
- *  the reload case's gap is one seal, which moves the tail into the log and the turn's
- *  version with it. */
+/** The server's log for the step's turn, and the tail it has not sealed yet. Both mutable: the
+ *  reload case's gap is one seal, which moves the tail into the log and the turn's version with
+ *  it. */
 let log: Entry[] = [];
 let tail: OpenEntry | undefined;
 
-/** A step that RAN AND FINISHED: its `turn_close` is in the log, so the turn is settled and
- *  the run holds no `run_turn` ref for it. */
+/** A step that RAN AND FINISHED: its `turn_close` is in the log, so the turn is settled and the
+ *  run holds no `run_turn` ref for it. */
 function closedStep(): void {
   log = [
     entry(0, "turn_open", { source: "workflow_step", n: 1 }),
@@ -100,8 +85,8 @@ function streamingStep(): void {
   tail = { turn: TURN, id: `${TURN}-open3`, kind: "text", text: "thr", n: 1 };
 }
 
-/** One entry seals on the server while the client holds the pane and receives no frame. The
- *  turn stays open. */
+/** One entry seals on the server while the client holds the pane and receives no frame. The turn
+ *  stays open. */
 function sealDuringGap(): void {
   log = [...log, entry(3, "text", { text: "three" })];
   tail = undefined;
@@ -117,8 +102,8 @@ function runTurnRef(): string {
   return `${runID}/${TURN}`;
 }
 
-/** The stamps the step GET certifies: one `run_turn` per OPEN turn of the path, and NONE at
- *  all for a settled path. */
+/** The stamps the step GET certifies: one `run_turn` per OPEN turn of the path, and NONE at all
+ *  for a settled path. */
 function stepStamps(): SubjectStamp[] {
   return log.some((e) => e.kind === "turn_close")
     ? []
@@ -139,8 +124,8 @@ function stepAnswer(): ReturnType<typeof decodeRunStepTranscript> {
   });
 }
 
-/** What the two folds are compared on: the entries at the positions their `seq` claims, the
- *  open tails per lane, and where the closer landed. */
+/** What the two folds are compared on: the entries at the positions their `seq` claims, the open
+ *  tails per lane, and where the closer landed. */
 function heldFold(): unknown {
   const state = runTurns(runID).find(([id]) => id === TURN)?.[1];
   return {
@@ -150,8 +135,7 @@ function heldFold(): unknown {
   };
 }
 
-/** The same fold read off the fixture server, which is what a client that lost no frame
- *  holds. */
+/** The same fold read off the fixture server, which is what a client that lost no frame holds. */
 function serverFold(): unknown {
   return {
     entries: log,
@@ -215,8 +199,8 @@ beforeEach(() => {
   api.getTypedOrError.mockImplementation(() =>
     Promise.resolve({ ok: true, status: 200, data: stepAnswer(), error: "" }),
   );
-  // The range read, answered from the same log so the two reads cannot disagree about what
-  // the server holds.
+  // The range read, answered from the same log so the two reads cannot disagree about what the
+  // server holds.
   api.getTyped.mockImplementation((path: string) => {
     const cut = path.indexOf("?after=");
     const after = cut === -1 ? -1 : Number(path.slice(cut + "?after=".length));
@@ -227,8 +211,8 @@ beforeEach(() => {
   });
   digests = [];
   scripted = createScriptedFetch();
-  // The real server compares each held version against its log and names what moved, so the
-  // answer is a reading of the request rather than a fixture.
+  // The real server compares each held version against its log and names what moved, so the answer
+  // is a reading of the request rather than a fixture.
   scripted.respond("/api/sync", (req) => {
     const body = JSON.parse(req.body ?? "{}") as { subjects?: Held[] };
     const held = body.subjects ?? [];
@@ -262,8 +246,8 @@ describe("a step that opened and closed entirely inside the gap", () => {
   });
 
   it("seats the whole closed turn from the step GET, the only door to it", async () => {
-    // The gap's shape: no frame of this turn arrived, so the store holds nothing for it and
-    // the pane's own read is what fills it.
+    // The gap's shape: no frame of this turn arrived, so the store holds nothing for it and the
+    // pane's own read is what fills it.
     expect(runTurns(runID)).toEqual([]);
 
     requestStepTranscript(runID, PATH);
@@ -272,8 +256,8 @@ describe("a step that opened and closed entirely inside the gap", () => {
       expect(stepRead(runID, PATH)?.state).toBe("ready");
     });
     expect(stepReads()).toEqual([`/api/runs/${runID}/steps/root/step-b`]);
-    // Equality against the server's own log is the claim, so an entry seated at the wrong
-    // position fails here: the closer included, and the turn reads settled.
+    // Equality against the server's own log is the claim, so an entry seated at the wrong position
+    // fails here: the closer included, and the turn reads settled.
     expect(heldFold()).toEqual(serverFold());
     expect(runTurnHoles(runID)).toEqual([]);
   });
@@ -284,13 +268,13 @@ describe("a step that opened and closed entirely inside the gap", () => {
       expect(stepRead(runID, PATH)?.state).toBe("ready");
     });
 
-    // The pairing is the claim rather than either half: the answer certifies no open turn of
-    // this path, and the store minted no ref for one.
+    // The pairing is the claim rather than either half: the answer certifies no open turn of this
+    // path, and the store minted no ref for one.
     expect(stepAnswer().subject).toEqual([]);
     expect(hasSubject("run_turn", runTurnRef())).toBe(false);
 
-    // So the digest has nothing to ask about for this turn, and a closed step cannot be
-    // named by one.
+    // So the digest has nothing to ask about for this turn, and a closed step cannot be named by
+    // one.
     await _revalidateForTest(ctx());
     expect(digests.flatMap((d) => d.held.map((h) => h.ref))).not.toContain(runTurnRef());
   });
@@ -302,8 +286,8 @@ describe("a step that opened and closed entirely inside the gap", () => {
     });
 
     requestStepTranscript(runID, PATH);
-    // Asserted after the second call, which is the only place a refetch would show: the
-    // answer is already settled, so the pane's read fires once for the step.
+    // Asserted after the second call, which is the only place a refetch would show: the answer is
+    // already settled, so the pane's read fires once for the step.
     expect(stepReads()).toHaveLength(1);
   });
 });
@@ -324,8 +308,8 @@ describe("a pane opened by reload while a step streams", () => {
     });
 
     expect(hasSubject("run_turn", runTurnRef())).toBe(true);
-    // The VERSION is read off the answer rather than written twice: the store mints its own
-    // stamp from the entries it adopted, and this is the claim that the two agree.
+    // The VERSION is read off the answer rather than written twice: the store mints its own stamp
+    // from the entries it adopted, and this is the claim that the two agree.
     await _revalidateForTest(ctx());
     expect(digests).toHaveLength(1);
     expect(digests[0]?.held).toEqual([
@@ -344,20 +328,20 @@ describe("a pane opened by reload while a step streams", () => {
 
     await _revalidateForTest(ctx());
 
-    // The stamp the step GET left is what the digest names, and the read asks past the newest
-    // `seq` this client holds rather than for the whole turn.
+    // The stamp the step GET left is what the digest names, and the read asks past the newest `seq`
+    // this client holds rather than for the whole turn.
     expect(digests[0]?.changed).toEqual([
       { kind: "run_turn", ref: runTurnRef(), version: `${TURN}:3` },
     ]);
     expect(rangeReads()).toEqual([`/api/runs/${runID}/turns/${TURN}?after=2`]);
 
-    // The oracle is the server's own log: the sealed entry at the position its `seq` claims,
-    // the tail gone with it, and the turn still open.
+    // The oracle is the server's own log: the sealed entry at the position its `seq` claims, the
+    // tail gone with it, and the turn still open.
     await vi.waitFor(() => {
       expect(heldFold()).toEqual(serverFold());
     });
-    // Asserted AFTER the answer landed as well, because a seat that refused the answer's
-    // first entry re-asks and the count is the one place that second read shows.
+    // Asserted AFTER the answer landed as well, because a seat that refused the answer's first
+    // entry re-asks and the count is the one place that second read shows.
     expect(rangeReads()).toHaveLength(1);
     expect(runTurnHoles(runID)).toEqual([]);
   });
@@ -371,9 +355,9 @@ describe("a pane opened by reload while a step streams", () => {
 
     rereadStepTranscript(runID, PATH);
 
-    // The step GET is the run's other whole-turn read and answers the same tails, so the same
-    // rule holds through it: the tail this client holds sealed into the entry the answer
-    // carries, and must not survive beside it.
+    // The step GET is the run's other whole-turn read and answers the same tails, so the same rule
+    // holds through it: the tail this client holds sealed into the entry the answer carries, and
+    // must not survive beside it.
     await vi.waitFor(() => {
       expect(heldFold()).toEqual(serverFold());
     });

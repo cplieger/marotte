@@ -14,11 +14,8 @@ import (
 
 const identityProbeTTL = time.Minute
 
-// Identity tracks the account that owns live agent sessions. It is safe for
-// concurrent use. The zero value is inert.
-//
-// Unlike Kiro Crew's stamp-only status poll, every observation acts on a
-// change, so one shared baseline cannot consume a signal another path needs.
+// Identity tracks the account that owns live agent sessions. Safe for concurrent use; the zero value is inert.
+// Every observation acts on a change, so no shared baseline can consume another path's signal.
 type Identity struct {
 	retire func()
 	probe  func(context.Context) (string, error)
@@ -27,15 +24,13 @@ type Identity struct {
 	lastProbe   time.Time
 	fingerprint string
 	mu          sync.Mutex
-	// absentProbes counts consecutive empty readings after a known identity. One
-	// is a transient (whoami answers signed-out whenever its JSON lacks `email`,
-	// which a credential refresh can do for one reading); the second retires.
+	// absentProbes counts consecutive empty readings after a known identity. One is transient (a credential refresh can
+	// drop `email` for a reading); the second retires.
 	absentProbes int
 }
 
-// NewIdentity returns an identity registrar backed by kiro-cli whoami.
-// retire must be non-nil because silently missing it would leave live bridges
-// attached to the previous account.
+// NewIdentity returns an identity registrar backed by kiro-cli whoami. retire must be non-nil, or live bridges stay
+// on the previous account.
 func NewIdentity(cliPath func() string, env func() []string, retire func()) *Identity {
 	if retire == nil {
 		panic("auth: identity retire callback is nil")
@@ -49,10 +44,8 @@ func NewIdentity(cliPath func() string, env func() []string, retire func()) *Ide
 	}
 }
 
-// Observe adopts fp and retires live sessions when a known identity changes.
-// Empty means absent: it never replaces the last known baseline, and it retires
-// only once the NEXT probe is still empty, so one transient signed-out reading
-// does not stop every idle bridge and the workflow steps they host.
+// Observe adopts fp and retires live sessions when a known identity changes. Empty never replaces the baseline and
+// retires only when the next probe is empty too, so one transient reading does not stop every bridge and step.
 func (id *Identity) Observe(fp string) {
 	if id == nil {
 		return
@@ -82,9 +75,8 @@ func (id *Identity) Observe(fp string) {
 	}
 }
 
-// SignedOut records a sign-out marotte performed itself, so there is no reading
-// to debounce: a clean `kiro-cli logout` exit is the answer, and the live
-// sessions retire at once. Absent still never becomes the baseline.
+// SignedOut records a sign-out marotte performed: there is no reading to debounce, so live sessions retire at once.
+// Absent still never becomes the baseline.
 func (id *Identity) SignedOut() {
 	if id == nil {
 		return
@@ -153,12 +145,8 @@ func probeIdentity(ctx context.Context, cliPath func() string, env func() []stri
 	return identityFingerprint(&info), nil
 }
 
-// identityFingerprint hashes the allowlisted identity fields, and ONLY those, so a
-// field upstream adds cannot silently start retiring bridges. An identity with none
-// of them fingerprints as absent.
-// Takes a pointer because the struct is 112 bytes and this is a read-only hash;
-// gocritic's hugeParam is the mechanical line, and every caller has an addressable
-// value to hand.
+// identityFingerprint hashes only the allowlisted identity fields, so an upstream addition cannot start retiring
+// bridges; none of them fingerprints as absent. A pointer because the struct is 112 bytes (gocritic hugeParam).
 func identityFingerprint(info *WhoamiResponse) string {
 	if info.Email == "" && info.AccountType == "" && info.StartURL == "" && info.Region == "" {
 		return ""

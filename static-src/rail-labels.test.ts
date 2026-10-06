@@ -1,19 +1,13 @@
-// What a rail row says, pinned string by string. NOT a `*.node.test.ts`: that suffix
-// is for a test needing genuine Node capabilities, not for a pure subject that
-// happens not to want a browser.
-//
-// EXPECTATIONS ARE HARDCODED, including a second copy of every clause the module
-// composes. Deriving them from the module's own tables would make the assertion
-// `f(x) === f(x)` — the outcome sentence would agree with itself whatever it said,
-// and a table edit would pass silently. The copies below are the assertion.
+// What a rail row says, pinned string by string. NOT a `*.node.test.ts`: that suffix is for a test
+// needing genuine Node capabilities, not for a pure subject that happens not to want a browser.
 import { describe, it, expect } from "vitest";
 
 import { markerLabel, railLabel, type MarkerSubject } from "./rail-labels.js";
 import type { TurnOutcome } from "./turns.js";
 
-/** Every member of the wire union, so the sweeps below are a partition rather
- *  than a sample. Spelled out here for the same reason as the clauses: importing a
- *  list from the module under test proves nothing about its completeness. */
+/** Every member of the wire union, so the sweeps below are a partition rather than a sample.
+ *  Spelled out here for the same reason as the clauses: importing a list from the module under
+ *  test proves nothing about its completeness. */
 const ALL_OUTCOMES: TurnOutcome[] = [
   "running",
   "completed",
@@ -24,8 +18,8 @@ const ALL_OUTCOMES: TurnOutcome[] = [
   "failed",
 ];
 
-/** The sentence each outcome contributes to a TOOLTIP, hardcoded. `completed`
- *  contributes nothing, which is the rule the whole design rests on. */
+/** The sentence each outcome contributes to a TOOLTIP, hardcoded. `completed` contributes
+ *  nothing, which is the rule the whole design rests on. */
 const TOOLTIP_CLAUSE: Record<TurnOutcome, string> = {
   running: "This turn is still running",
   completed: "",
@@ -54,8 +48,8 @@ function subject(over: Partial<MarkerSubject> = {}): MarkerSubject {
 }
 
 describe("a marker's tooltip names its state", () => {
-  // One row per outcome, both triggers, with the transient flags off — so every
-  // entry in both tables above is asserted exactly once against a full string.
+  // One row per outcome, both triggers, with the transient flags off — so every entry in both
+  // tables above is asserted exactly once against a full string.
   const cases: {
     name: string;
     subject: MarkerSubject;
@@ -158,9 +152,9 @@ describe("a marker's tooltip names its state", () => {
   }
 
   it("falls back to the turn number when a user turn has no first line", () => {
-    // A user turn CAN reach this: the server records `first_line` from the opening
-    // message, and an empty prompt or a whitespace-only one leaves it blank. Saying
-    // "Agent-initiated turn" there would be a claim about the trigger that is false.
+    // A user turn CAN reach this: the server records `first_line` from the opening message, and an
+    // empty prompt or a whitespace-only one leaves it blank. Saying "Agent-initiated turn" there
+    // would be a claim about the trigger that is false.
     expect(markerLabel(subject({ first_line: "   " }), { pending: false, hit: false })).toEqual({
       tooltip: "Turn 14",
       ariaLabel: "Go to turn 14",
@@ -190,9 +184,9 @@ describe("a marker's transient state", () => {
   });
 
   it("keeps both transient facts out of the accessible NAME", () => {
-    // The name is read on every focus, so it stays the turn's identity plus its
-    // durable state. Pending is a fetch in flight and a hit belongs to a search the
-    // reader started; neither is a property of the turn.
+    // The name is read on every focus, so it stays the turn's identity plus its durable state.
+    // Pending is a fetch in flight and a hit belongs to a search the reader started; neither is a
+    // property of the turn.
     expect(markerLabel(s, { pending: true, hit: true }).ariaLabel).toBe("Go to turn 14, failed");
   });
 });
@@ -211,8 +205,8 @@ describe("the marker vocabulary is total over TurnOutcome", () => {
 
   it("names the state for every outcome except completed", () => {
     // The case that fails when the wire adds an eighth outcome — the same guard
-    // `turn-outcome-css.test.ts` gives the stylesheet. A value with no clause would
-    // paint a marker whose only channel is colour, which is where this started.
+    // `turn-outcome-css.test.ts` gives the stylesheet. A value with no clause would paint a marker
+    // whose only channel is colour, which is where this started.
     for (const outcome of ALL_OUTCOMES) {
       const label = markerLabel(subject({ outcome, first_line: "do the thing" }), {
         pending: false,
@@ -232,9 +226,9 @@ describe("the marker vocabulary is total over TurnOutcome", () => {
   });
 
   it("composes every combination of the two transient flags, for every outcome", () => {
-    // The cross-product, expectations built from the test's OWN clause tables. It
-    // is the reachability half: any combination a live rail can produce composes
-    // into exactly these strings, in this order.
+    // The cross-product, expectations built from the test's OWN clause tables. It is the
+    // reachability half: any combination a live rail can produce composes into exactly these
+    // strings, in this order.
     for (const outcome of ALL_OUTCOMES) {
       for (const agentInitiated of [false, true]) {
         for (const pending of [false, true]) {
@@ -276,9 +270,9 @@ describe("the rail's own accessible name", () => {
   });
 
   it("says nothing about a set it shows whole", () => {
-    // Promising a row per turn is the claim to avoid, in both directions: a rail
-    // showing every turn has nothing to disclose, and one that somehow reports MORE
-    // shown than the session holds must not state a count either.
+    // Promising a row per turn is the claim to avoid, in both directions: a rail showing every turn
+    // has nothing to disclose, and one that somehow reports MORE shown than the session holds must
+    // not state a count either.
     expect(railLabel(6, 6)).toBe("Turn timeline");
     expect(railLabel(7, 6)).toBe("Turn timeline");
   });

@@ -5,21 +5,12 @@ import (
 	"testing"
 )
 
-// liveRefusalTitle is the string that motivated the door rule, verbatim from
-// /config/chats/c-9917935fff16574cef206f8acc09a592.json's "name" field on the live
-// instance. It is 77 characters plus KAS's own ellipsis, which is exactly what Ete
-// produces at its 80-rune cap — so it arrives UNDER the rune cap and only a shape
-// rule can stop it.
+// liveRefusalTitle is a real refusal adopted as a chat name: 77 characters plus KAS's own
+// ellipsis, exactly Ete's 80-rune cap, so it arrives UNDER the rune cap.
 const liveRefusalTitle = "I need more context to generate a title. Could you share the user's first mes..."
 
-// The refusal above is what the model said when KAS asked it to title a conversation
-// whose first prompt was the single word "test". marotte cannot fix KAS's guard, so the
-// door's job is to refuse the answer, and asserting the reason per case is what stops a
-// later edit collapsing the rules into one unhelpful string.
-//
-// The three measured live agent titles at the bottom are the over-filtering guard: a
-// rule that starts refusing one of them has been tightened past usefulness, because
-// they are exactly what this channel exists to deliver.
+// The per-case reason stops a later edit collapsing the rules into one string. The live
+// agent titles at the bottom guard against over-filtering.
 func TestTitleRefusal(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -27,17 +18,13 @@ func TestTitleRefusal(t *testing.T) {
 		want  string
 	}{
 		{
-			// The live case, and the reason the rule exists at all. It breaks two
-			// rules at once, so the sentence-break rule is red-checked against the
-			// under-cap case below rather than against this one.
+			// It breaks two rules at once, so the sentence-break rule is checked on the case below.
 			name:  "the_live_refusal_is_refused",
 			title: liveRefusalTitle,
 			want:  refusalTruncated,
 		},
 		{
-			// Under the rune cap, so no other rule sees it. KAS's sanitize strips
-			// only TRAILING punctuation, which is why a prose reply arrives still
-			// carrying its internal sentence break.
+			// Under the rune cap; KAS strips only TRAILING punctuation, so the break survives.
 			name:  "a_multi_sentence_title_under_the_rune_cap",
 			title: "I cannot title this. Please provide the first message",
 			want:  refusalMultiSentence,
@@ -49,8 +36,7 @@ func TestTitleRefusal(t *testing.T) {
 			want:  refusalMultiSentence,
 		},
 		{
-			// The terminators are not Latin-only: the model answers about the
-			// user's own message and can follow its language.
+			// Not Latin-only: the model can follow the user's language.
 			name:  "an_ideographic_full_stop_is_a_sentence_break",
 			title: "。 more context please",
 			want:  refusalMultiSentence,
@@ -61,9 +47,7 @@ func TestTitleRefusal(t *testing.T) {
 			want:  refusalTooManyWords,
 		},
 		{
-			// The word cap is inclusive at 12: refusing a title that sits exactly
-			// on it would discard a legitimately descriptive agent title, and 12 is
-			// already double upstream's own 3-to-6-word instruction.
+			// Inclusive at 12, already double upstream's own 3-to-6-word instruction.
 			name:  "exactly_twelve_words_is_adopted",
 			title: "one two three four five six seven eight nine ten eleven twelve",
 			want:  "",
@@ -84,16 +68,13 @@ func TestTitleRefusal(t *testing.T) {
 			want:  refusalTooLong,
 		},
 		{
-			// KAS's placeholder is well-SHAPED; what disqualifies it is whose
-			// placeholder it is. Its own arm is what keeps the two facts apart.
+			// Well-shaped; its own arm keeps "placeholder" apart from the shape rules.
 			name:  "kas_s_placeholder_is_refused_as_a_placeholder",
 			title: KASDefaultSessionTitle,
 			want:  refusalKASPlaceholder,
 		},
 		{
-			// A trailing period with nothing after it is not a sentence BREAK, and
-			// KAS's sanitize would have stripped it anyway. Refusing it here would
-			// be a second rule for a shape upstream already handles.
+			// A trailing period is not a BREAK, and KAS's sanitize strips it anyway.
 			name:  "a_trailing_period_alone_is_not_a_break",
 			title: "Fix the retry test.",
 			want:  "",
@@ -109,9 +90,8 @@ func TestTitleRefusal(t *testing.T) {
 		{name: "a_live_agent_title_sentence_case", title: "Safari ResizeObserver loop in marotte", want: ""},
 		{name: "a_live_agent_title_seven_words", title: "Fix Race Condition In Marotte Page Titles", want: ""},
 		{
-			// The sentence-break scan needs a three-rune window, so a shorter title
-			// has no bound to find. Unreachable from the focus door, which refuses
-			// an empty title first, but both doors call this from another package.
+			// The scan needs a three-rune window. Unreachable from the focus door, but both doors
+			// call this from another package.
 			name:  "a_title_too_short_to_hold_a_sentence_break",
 			title: "Go",
 			want:  "",
@@ -127,10 +107,8 @@ func TestTitleRefusal(t *testing.T) {
 	}
 }
 
-// Both doors run this before any rule, so a title carrying ANSI, a hidden rune or a
-// newline is compared and stored in its clean form rather than verbatim. The stored
-// rung needs it as much as the live one: KAS persisted that string and nothing on the
-// way in bounded or sanitized it.
+// Both doors run this before any rule, so a title is compared and stored clean. The stored
+// rung needs it too: KAS persisted that string unsanitized.
 func TestSanitizeTitle(t *testing.T) {
 	tests := []struct {
 		name string
@@ -142,18 +120,14 @@ func TestSanitizeTitle(t *testing.T) {
 		{name: "an_embedded_newline_becomes_a_space", raw: "Release\ncheck", want: "Release check"},
 		{name: "surrounding_whitespace_goes", raw: "  Release check  ", want: "Release check"},
 		{
-			// A bidi override renders the title reversed. sanitize.Output runs
-			// first and DELETES a hidden rune, so it never reaches displayText's
-			// replace-with-a-space policy — the title keeps the reversed text and
-			// loses the control that caused it, which is why the reversal below
-			// reads as ordinary words rather than as two extra spaces.
+			// sanitize.Output DELETES a hidden rune before displayText's replace-with-space, so the
+			// reversed text reads as ordinary words with no extra spaces.
 			name: "a_bidi_override_is_deleted",
 			raw:  "Run \u202Ednuof-eman\u202C now",
 			want: "Run dnuof-eman now",
 		},
 		{
-			// The bound the rune cap then refuses: nothing on the wire limits this
-			// field, so an unbounded string must not reach a chat record or a log.
+			// Nothing on the wire limits this field.
 			name: "an_unbounded_title_is_capped_and_marked",
 			raw:  strings.Repeat("x", 700),
 			want: strings.Repeat("x", maxDisplayTextBytes) + "...",

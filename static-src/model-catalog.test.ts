@@ -1,10 +1,3 @@
-// The catalog fetch POLICY, tested where app.ts could not be: the verdict
-// mapping, the retry bound and the exhaustion settle were the one untested part
-// of this change, and both previous rounds' defects were found in exactly those
-// three decisions.
-//
-// The module takes its reader and its two sinks as parameters, so every case
-// here drives real production code with no DOM and no endpoint.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { readVerdict, refreshCatalog } from "./model-catalog.js";
@@ -23,8 +16,7 @@ interface Recorder {
   reads: number;
 }
 
-/** A refresh whose reads are scripted. The last entry repeats, so a loop that
- *  keeps asking keeps getting the same answer rather than running off the end. */
+/** Scripted reads; the last entry repeats so a looping caller never runs off the end. */
 function recorder(script: readonly (CatalogAnswer | null)[]): Recorder {
   const applied: CatalogAnswer[] = [];
   const phases: CatalogPhase[] = [];
@@ -51,11 +43,6 @@ function recorder(script: readonly (CatalogAnswer | null)[]): Recorder {
 
 describe("the catalog verdict mapping", () => {
   it("treats an empty catalog as a real answer, not a failure to retry", () => {
-    // A verdict decides whether to keep ASKING. Whether a LIST replaces a cached
-    // vocabulary is a separate per-list rule at the sink, and conflating the two
-    // fails in both directions: as a verdict gate, an empty models list withholds
-    // the PHASE too and the picker says "loading" forever; with no rule at all, an
-    // empty answer clears a populated catalog.
     expect(readVerdict("empty")).toBe("usable");
   });
 
@@ -85,9 +72,6 @@ describe("refreshCatalog", () => {
   });
 
   it("issues no second read for an EMPTY catalog", async () => {
-    // `_kiro/config/template` is a pure cache read that triggers no model
-    // refresh, so a second call re-reads the same empty cache: looping on it
-    // would be hammering with no convergence.
     const r = recorder([answer("empty")]);
 
     await refreshCatalog(r.deps);
@@ -106,15 +90,10 @@ describe("refreshCatalog", () => {
 
     expect(r.reads).toBe(2);
     expect(r.applied).toEqual([answer("ready")]);
-    // "unavailable" is never reported on the way: the loop is still working on it,
-    // and a settled failure line over a live retry is a claim it has to take back.
     expect(r.phases).toEqual(["ready"]);
   });
 
   it("never applies an unavailable answer, so a degraded read replaces nothing", async () => {
-    // The vocabulary write is what this protects: `unavailableTemplate` emits an
-    // empty effort list BY CONSTRUCTION, so a login-triggered fetch that degrades
-    // used to replace the tiers a successful boot fetch had already landed.
     const r = recorder([answer("unavailable")]);
 
     const done = refreshCatalog(r.deps);
@@ -138,9 +117,6 @@ describe("refreshCatalog", () => {
   });
 
   it("bounds the retry: a transient failure cannot exceed the attempt ceiling", async () => {
-    // A `null` read is transient (network, decode), and the 180s budget admits
-    // about three ~50s attempts — the attempt ceiling is the guard against a
-    // pathologically fast failure turning that budget into hundreds of requests.
     const r = recorder([null]);
 
     const done = refreshCatalog(r.deps);
@@ -164,8 +140,6 @@ describe("refreshCatalog", () => {
   });
 
   it("lets a RESET restart a live loop instead of being refused by it", async () => {
-    // A login is exactly the new information that may have fixed the read;
-    // refusing it means it contributes nothing until the 180s loop exhausts.
     const first = recorder([answer("unavailable")]);
     const login = recorder([answer("ready")]);
 
@@ -174,8 +148,6 @@ describe("refreshCatalog", () => {
 
     expect(login.applied).toEqual([answer("ready")]);
     expect(login.phases).toEqual(["ready"]);
-    // The aborted loop reports NOTHING: the new one owns the answer, and a settle
-    // here would flash "couldn't load" over a catalog that just arrived.
     await vi.advanceTimersByTimeAsync(200_000);
     await done;
     expect(first.phases).toEqual([]);

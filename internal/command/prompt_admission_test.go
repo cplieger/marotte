@@ -1,10 +1,5 @@
 package command
 
-// The early-ack prompt: admission decided synchronously, the turn on its own
-// goroutine, and the ordered release handoff into the empty-turn recovery.
-// The registry's own semantics (waits, wakes, holder sources) are tested in
-// internal/agent; these tests pin the HANDLER's orchestration against them.
-
 import (
 	"context"
 	"encoding/json"
@@ -150,6 +145,12 @@ func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, marotte.ChatID
 	return AdmissionAcquired
 }
 
+func (a *scriptedAdmission) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
+
+func (a *scriptedAdmission) TryReserveTurnFenced(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+	return a.TryReserveTurn(c, s)
+}
+
 func (a *scriptedAdmission) TryReserveTurn(_ marotte.ChatID, _ marotte.TurnOpenSource) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -178,7 +179,7 @@ func (a *scriptedAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnO
 // admissionTurnID is the one turn the scripted admission opens.
 const admissionTurnID = "t-1"
 
-func (a *scriptedAdmission) OpenTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource, *marotte.EntryPrompt, func(*marotte.Chat)) (string, error) {
+func (a *scriptedAdmission) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, error) {
 	a.rec.add("openTurn")
 	return admissionTurnID, nil
 }
@@ -204,9 +205,11 @@ func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, string) bool {
 	return false
 }
 
+func (a *scriptedAdmission) StopRequestedAfter(marotte.ChatID, string) bool { return false }
+
 func (a *scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
 
-func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string) {
+func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 	a.rec.add("abandon")
 }
 
@@ -290,7 +293,6 @@ func TestCmdPrompt_AcksBeforeOpenBridgeAndTurnCompletion(t *testing.T) {
 	if !ack.Accepted || ack.MessageID != "m-1" {
 		t.Errorf("ack = %+v, want accepted with the message id", ack)
 	}
-	// The gate is still closed, so the ack provably did not wait for the spawn.
 	if n := host.rec.indexOf("call"); n != -1 {
 		t.Error("the ACP call ran before the ack was released to the client")
 	}
@@ -517,8 +519,6 @@ func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
 	var competitor AdmissionOutcome
 	competitorGotBridge := false
 	host.admission.afterReservationRelease = func() {
-		// The injected pause: a competing prompt lands after the goroutine's
-		// releases and before the recovery's re-reserve.
 		competitor = host.admission.ReserveTurnForPrompt(context.Background(), "c1", 0)
 		competitorGotBridge = host.bridge.TryAcquireForPrompt()
 	}
@@ -534,8 +534,6 @@ func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
 	if !competitorGotBridge {
 		t.Fatal("the competing prompt could not take the bridge slot in the pause")
 	}
-	// The recovery's own try must have been refused, and the refusal abandons:
-	// no session teardown, no retry call.
 	if got := host.rec.snapshot(); host.rec.indexOf("tryReserve") == -1 {
 		t.Fatalf("the recovery never tried to re-reserve; log = %v", got)
 	}
@@ -594,3 +592,21 @@ func TestCmdPrompt_IdempotentRetryReplaysTheAck(t *testing.T) {
 		t.Errorf("turns opened = %d, want 1: the refused attempt wrote nothing and the retry opened the turn", opened)
 	}
 }
+
+// promptJoin is a LifecycleAccess whose in-flight count a test can join on:
+// CmdPrompt acks before its turn runs, so a test asserting on the turn's
+// effects waits for the goroutine to deregister first. TurnContext matches the
+// production derivation (detached from the request, so the goroutine survives
+// the handler's return).
+type promptJoin struct{ wg sync.WaitGroup }
+
+func (l *promptJoin) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(reqCtx))
+}
+func (l *promptJoin) InflightAdd(delta int) { l.wg.Add(delta) }
+func (l *promptJoin) InflightDone()         { l.wg.Done() }
+func (l *promptJoin) Draining() bool        { return false }
+
+// join blocks until every in-flight turn has deregistered. Safe to call after
+// CmdPrompt returned: the registration is synchronous, before the ack.
+func (l *promptJoin) join() { l.wg.Wait() }

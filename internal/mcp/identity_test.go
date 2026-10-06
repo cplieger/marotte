@@ -1,14 +1,8 @@
 package mcp
 
-// D81: one identity grammar, one writer.
-//
-// Three doors reach a server identity — Validate (a name), ParseServerID (a URL
-// path segment) and paste.go's sanitizeName (a repairer) — and each used to state
-// the charset itself, with three comments claiming they matched. These tests are
-// what make the claim mechanical: the shared half is asserted per row against
-// EVERY door, and the two deliberate differences (the id's bound, the id's
-// tolerance of a leading digit) are asserted as differences rather than left to
-// be rediscovered as drift.
+// One identity grammar, one writer: Validate (a name), ParseServerID (a path segment) and
+// sanitizeName (a repairer) all derive from the shared rune predicates, and these tests hold them
+// together.
 
 import (
 	"strconv"
@@ -86,7 +80,7 @@ func nameDoorTable() []nameDoorCase {
 	}
 }
 
-// TestNameDoorsAgree is D81's mechanical claim: the two rejecting doors agree on
+// TestNameDoorsAgree — the two rejecting doors agree on
 // the shared charset for every row, and disagree ONLY where a difference is
 // stated in the table.
 func TestNameDoorsAgree(t *testing.T) {
@@ -199,15 +193,8 @@ func TestGeneratedIDsPassTheirOwnDoor(t *testing.T) {
 	}
 }
 
-// TestValidateNameIsTheRunePredicates is D81's real claim, stated as a PROPERTY over
-// generated input rather than as a table of hand-written expectations.
-//
-// The table above catches a change to a character it happens to list. It cannot
-// catch a grammar EXTENSION that updates one writer and not another, which is the
-// drift that mattered while a regexp, the rune predicates and a hard-coded grammar
-// string each spelled the charset independently. This asserts the only thing that
-// makes them one writer: ValidateName's accepted language IS what the predicates
-// generate, for every candidate rapid can build.
+// TestValidateNameIsTheRunePredicates states the grammar as a PROPERTY over generated input, which
+// catches a change to a character no table lists.
 func TestValidateNameIsTheRunePredicates(t *testing.T) {
 	// The in-charset alphabet includes runes that are legal mid-name and illegal as a
 	// LEAD (a digit, an underscore, a hyphen), so the lead rule is probed by an
@@ -259,9 +246,8 @@ func TestValidateNameIsTheRunePredicates(t *testing.T) {
 	})
 }
 
-// TestNameGrammarSaysWhatTheBoundIs keeps the human-readable half honest. It used to
-// carry its own hard-coded 63, so raising NameMaxLen told the user an old rule; the
-// message is built from the constant now.
+// TestNameGrammarSaysWhatTheBoundIs keeps the human-readable half honest: the
+// message must be built from NameMaxLen, or raising it tells the user an old rule.
 func TestNameGrammarSaysWhatTheBoundIs(t *testing.T) {
 	got := nameGrammar()
 	if !strings.Contains(got, strconv.Itoa(NameMaxLen)) {

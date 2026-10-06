@@ -12,10 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// termCreateMsgArgs builds a terminal/create request with EXPLICIT control over
-// whether `args` is present, which the shared termCreateMsg cannot express (it
-// omits the key for an empty slice — and the presence of that key is the whole
-// decision under test).
+// termCreateMsgArgs builds a terminal/create with explicit control over whether `args`
+// is present, which termCreateMsg cannot express.
 func termCreateMsgArgs(t *testing.T, id int64, command string, args *[]string) *marotte.RPCResponse {
 	t.Helper()
 	params := map[string]any{"command": command}
@@ -34,10 +32,7 @@ func waitForTermExit(t *testing.T, h *Runtime, msg *marotte.RPCResponse) string 
 	return term.rawOutput()
 }
 
-// ACP's CreateTerminalRequest is {command, args?} and KAS leaves args UNSET, putting
-// the whole command LINE in command. exec.Command takes that entire string as the
-// executable path, so anything with a space fails `not found in $PATH` — no flags, no
-// pipelines, no redirection. An absent args therefore runs through a shell.
+// KAS leaves args unset and puts the whole line in command, so an absent args runs through a shell.
 func TestTermCreate_AbsentArgsRunsTheCommandLineThroughAShell(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -68,14 +63,11 @@ func TestTermCreate_AbsentArgsRunsTheCommandLineThroughAShell(t *testing.T) {
 	}
 }
 
-// The gate is PRESENCE, not length: {"command":"prog","args":[]} says "exec prog with
-// no arguments", a different statement from omitting the field. A length test
-// collapses the two and hands a program name carrying a metacharacter to bash.
+// The gate is presence, not length: `"args":[]` execs prog with no arguments.
 func TestTermCreate_PresentArgsExecsDirectly(t *testing.T) {
 	t.Run("EmptyArgsIsStillDirectExec", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-		// A shell would print an empty line for this; a direct exec cannot find
-		// a program by this name and produces nothing at all.
+		// A shell would print an empty line; a direct exec finds no such program and prints nothing.
 		empty := []string{}
 		h.translateACPEvent("c1", termCreateMsgArgs(t, 1, "echo hi", &empty))
 		h.agentTerms.mu.Lock()
@@ -97,8 +89,7 @@ func TestTermCreate_PresentArgsExecsDirectly(t *testing.T) {
 	})
 }
 
-// A create failure that logs nothing leaves NO server-side trace — no line, no event,
-// no tab — so the agent's own tool result is the only party that ever learns.
+// A create failure that logs nothing leaves no server-side trace.
 func TestTermCreate_EveryFailurePathLogsAndAnswers(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -156,13 +147,10 @@ func TestTermCreate_EveryFailurePathLogsAndAnswers(t *testing.T) {
 	}
 }
 
-// terminal_exited broadcast before the output it describes paints the exit footer
-// above the line that produced it. The pipe is caller-owned, so Wait runs FIRST and
-// the drain is bounded from the moment the process actually exited.
+// terminal_exited must follow its output; Wait runs first and the drain is bounded from exit.
 func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	// A write immediately before exit is the shape that raced: the pump has to
-	// be given no time at all, and the exit must still sort last.
+	// A write immediately before exit is the shape that raced.
 	got := waitForTermExit(t, h, termCreateMsgArgs(t, 1, `printf 'root\n'`, nil))
 	if got != "root\n" {
 		t.Fatalf("ring = %q, want %q", got, "root\n")
@@ -198,17 +186,14 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 	}
 }
 
-// The live stream carries PLAIN text plus spans, and the ORDER of the two sanitizers is what
-// makes that possible. sanitize.Output is SanitizeUnicode(StripANSI(s)), so calling it here
-// would delete every escape before the parser saw one and every chunk would arrive unstyled.
-// SanitizeUnicode alone keeps the hidden-Unicode defence and leaves the escapes for the
-// parser, whose own guarantee is that no ESC survives into the text.
+// The live stream carries plain text plus spans: sanitize.Output strips ANSI before the
+// parser, so only SanitizeUnicode may run here.
 func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
 	emit := h.agentTerms.emitter(t.Context(), term, "t1", "c1")
 
-	// A real zerolog console line with a zero-width space smuggled into it.
+	// A real zerolog console line with a zero-width space smuggled in.
 	emit("\x1b[90m1:47AM\x1b[0m \u200b\x1b[32mINF\x1b[0m ok\n")
 
 	got := terminalOutputPayloads(t, h)
@@ -260,9 +245,7 @@ func terminalOutputPayloads(t *testing.T, h *Runtime) []marotte.TerminalOutputPa
 	return out
 }
 
-// The wire's Offset is the base a client subtracts from the ABSOLUTE span offsets it
-// receives, so it must be the parser's own UTF-16 count: a byte length kept beside it
-// rebases every live span onto the wrong character as soon as output is non-ASCII.
+// The wire Offset must be the parser's UTF-16 count, or non-ASCII output rebases spans onto the wrong character.
 func TestTerminalEmitter_OffsetIsTheUTF16BaseOfEachChunk(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
@@ -292,10 +275,8 @@ func TestTerminalEmitter_OffsetIsTheUTF16BaseOfEachChunk(t *testing.T) {
 	}
 }
 
-// KAS puts no output on a successful terminal-backed tool_call_update AND releases
-// the terminal about 3ms after creating it, before reporting the result, so any
-// design that looks the terminal up at completion loses every time. The retired
-// record, evicted at the turn boundary, is what makes the later adoption possible.
+// KAS releases the terminal ~3ms after creating it and puts no output on the completion,
+// so only the retired record, evicted at the turn boundary, makes adoption possible.
 func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	h.translateACPEvent("c1", termCreateMsgArgs(t, 1, `printf '\033[31mfail\033[0m\n'`, nil))
@@ -318,25 +299,20 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 		t.Errorf("spans = %+v, want one red span", spans)
 	}
 
-	// KAS can send more than one terminal status frame per tool call and adoption runs
-	// on each, so a consuming read makes the second report the output as missing.
+	// KAS can send several status frames per tool call, so a consuming read loses the second.
 	if _, _, ok := h.agentTerms.Output(termID); !ok {
 		t.Error("the second read found nothing: adoption is not idempotent," +
 			" so a duplicate completed frame logs a false 'output missing'")
 	}
 
-	// Every tool call in the turn has settled by the boundary, so a record still here
-	// has had its chance. The boundary is the closing turn's id, published by the
-	// winning closer, and a record spawned with no turn open belongs to the next close.
+	// The boundary is the closing turn's id; a record spawned with no turn open belongs to the next close.
 	h.agentTerms.CloseTurn("c1", "t-next")
 	if _, _, ok := h.agentTerms.Output(termID); ok {
 		t.Error("the record survived the turn boundary, so it grows with the session")
 	}
 }
 
-// A command that printed nothing is a different fact from a lost record, and only the
-// second is worth a warning. The translate layer's diagnostic keys on this boolean, so
-// a silent `mkdir -p` reporting as missing files a false alarm every turn.
+// A silent command is known, not missing; the translate diagnostic keys on this boolean.
 func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	h.translateACPEvent("c1", termCreateMsgArgs(t, 1, "true", nil))
@@ -368,8 +344,7 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 	})
 }
 
-// Deleting a chat is the one removal path that must NOT retire: no transcript is left
-// to adopt into, and the next turn boundary that would evict the bytes never comes.
+// Deleting a chat must not retire: nothing is left to adopt into, and no boundary would evict it.
 func TestKillForChat_DropsRetiredOutput(t *testing.T) {
 	at := bareTerminals()
 	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
@@ -405,13 +380,10 @@ func onlyTermID(t *testing.T, h *Runtime) string {
 	return ids[0]
 }
 
-// KAS releases a terminal a few milliseconds after creating it, well inside a
-// command's lifetime, so the retire and adoption paths read the ring while the pump
-// is still writing it. Both must take the terminal's own lock: this releases and
-// adopts against a live writer, which is a data race under -race if either is not.
+// Retire and adoption read the ring while the pump writes it; both must take the terminal's lock (-race).
 func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	// A steady writer, so the pump is certainly mid-flight when the release lands.
+	// A steady writer, so the pump is mid-flight when the release lands.
 	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
 		`i=0; while [ $i -lt 400 ]; do printf 'line %s\n' "$i"; i=$((i+1)); done; sleep 0.5`, nil))
 	term := singleTerm(t, h)
@@ -434,8 +406,7 @@ func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.
 	waitClosed(t, term.done, "terminal")
 }
 
-// withTerminalGroupGrace shortens the group wait for one test. Not parallel-safe:
-// it writes the package var awaitExit reads.
+// withTerminalGroupGrace shortens the group wait for one test. Not parallel-safe: it writes a package var.
 func withTerminalGroupGrace(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := terminalGroupGrace
@@ -449,15 +420,12 @@ func TestTerminalGroupGrace_IsTwoSeconds(t *testing.T) {
 	}
 }
 
-// EOF is not guaranteed after the process exits: a grandchild holding the write end
-// (`some-daemon &`) keeps the pipe open once the head is gone. Closing the READ end is
-// what releases the pump — a plain timeout leaves it blocked on Read for as long as
-// the grandchild lives, and the exit event is then never broadcast at all.
+// A grandchild holding the write end keeps the pipe open past exit; closing the READ end
+// is what releases the pump and lets the exit broadcast.
 func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *testing.T) {
 	logs := captureLogs(t) // not parallel: swaps the slog default
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	// The head prints and exits immediately; `sleep` inherits the write end and
-	// holds it far past the grace.
+	// The head prints and exits; `sleep` inherits the write end past the grace.
 	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
 		`sleep 30 & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
@@ -466,9 +434,7 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	waitClosed(t, term.done, "terminal exit")
 	elapsed := time.Since(start)
 
-	// Bounded by ONE grace, not the grandchild's lifetime and not the sum of the two
-	// waits. This is the only fixture where the group wait and the drain bound the
-	// same grandchild, so a regression to sequencing shows up here (~2s against ~4s).
+	// Bounded by ONE grace: a regression to sequencing the group wait and the drain shows here (~2s vs ~4s).
 	if elapsed > terminalDrainGrace+time.Second {
 		t.Errorf("exit took %v, want it bounded near ONE %v grace: either the reader was "+
 			"never force-closed, or the group wait and the drain were sequenced rather "+
@@ -477,23 +443,19 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	if !strings.Contains(logs.String(), "output still open after exit") {
 		t.Errorf("no line about the forced release\nlogs: %s", logs.String())
 	}
-	// The head's own line still had to reach the wire before the exit.
+	// The head's own line still reached the wire before the exit.
 	if got := term.rawOutput(); !strings.Contains(got, "head done") {
 		t.Errorf("ring = %q, want the head's line: the drain dropped it", got)
 	}
 }
 
-// The command's process group must be observed empty before the agent is told the
-// command finished, so "the command is gone" is a fact rather than a signal that was
-// sent. The grandchild here holds nothing (its descriptors closed), so the drain
-// reaches EOF at once and only the group wait can delay the exit. The line is DEBUG:
-// a daemon left running on purpose reaches it every exit and nobody acts on it.
+// The process group must be observed empty before the exit is reported. The grandchild
+// holds no descriptors, so only the group wait can delay the exit.
 func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) {
 	logs := captureLogs(t) // not parallel: swaps the slog default
 	withTerminalGroupGrace(t, 300*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	// `sleep` joins the head's group and outlives it, with its inherited pipe ends
-	// closed so the drain cannot be what delays the exit.
+	// `sleep` joins the head's group and outlives it, with its pipe ends closed.
 	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
 		`sleep 30 >/dev/null 2>&1 </dev/null & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
@@ -550,9 +512,7 @@ func terminalExitedPayloads(t *testing.T, h *Runtime) []marotte.TerminalExitedPa
 	return out
 }
 
-// TestTerminalExited_CleanExitCarriesTheExitCode: the client picks its footer off
-// exactly one of exit_code and signal, so an exit carrying neither leaves the tab
-// reading as still running.
+// TestTerminalExited_CleanExitCarriesTheExitCode pins exactly one of exit_code and signal; neither reads as still running.
 func TestTerminalExited_CleanExitCarriesTheExitCode(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	h.translateACPEvent("c1", termCreateMsgArgs(t, 1, "true", nil))
@@ -583,13 +543,11 @@ func TestTerminalExited_CleanExitCarriesTheExitCode(t *testing.T) {
 	}
 }
 
-// TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap: outputByteLimit is the
-// AGENT's number, so it may only shrink the ring — honouring a larger one lets a
-// request choose how much memory one terminal holds.
+// TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap pins that outputByteLimit may only shrink the ring.
 func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	id := int64(1)
-	// Twice the app's cap, printing more than the cap so the ring must drop something.
+	// Twice the app's cap, printing more than the cap.
 	msg := &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, map[string]any{
 		"command":         "yes a | head -n 40000",
 		"outputByteLimit": 2 * outputBufferLimit,
@@ -610,9 +568,7 @@ func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
 	}
 }
 
-// Eviction is by equality on the turn id: a turn's close takes that turn's records
-// and leaves a record another turn owns alone, so one turn's boundary cannot take the
-// bytes a completion in another turn is still coming to adopt.
+// Eviction is by turn-id equality: one turn's close must not take another turn's records.
 func TestCloseTurn_EvictsOnlyTheClosingTurnsRecords(t *testing.T) {
 	t.Parallel()
 	at := bareTerminals()
@@ -639,10 +595,7 @@ func TestCloseTurn_EvictsOnlyTheClosingTurnsRecords(t *testing.T) {
 	}
 }
 
-// A chunk that renders to nothing must not become an event: a read can land on output
-// made only of characters the sanitizer deletes (bidi and zero-width controls, which
-// agent output carries), and each one would put a no-op frame on every SSE connection
-// and an empty span base into the transcript.
+// A chunk that renders to nothing (only bidi or zero-width controls) must not become an event.
 func TestTerminalEmitter_AChunkThatRendersToNothingIsNotBroadcast(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
@@ -654,7 +607,7 @@ func TestTerminalEmitter_AChunkThatRendersToNothingIsNotBroadcast(t *testing.T) 
 		t.Errorf("emitter broadcast %d terminal_output payloads for text the sanitizer deletes,"+
 			" want 0: %+v", len(got), got)
 	}
-	// A renderable chunk still goes out, or the guard is a mute button, not a filter.
+	// A renderable chunk still goes out.
 	emit("visible")
 	got := terminalOutputPayloads(t, h)
 	if len(got) != 1 {
@@ -665,10 +618,7 @@ func TestTerminalEmitter_AChunkThatRendersToNothingIsNotBroadcast(t *testing.T) 
 	}
 }
 
-// The teardown line is logged only when something was torn down: an operator needs to
-// tell "cancel killed the running command" from "cancel found nothing to kill", and a
-// line that fires either way answers neither. No t.Parallel — captureLogs swaps the
-// process-global slog default.
+// The teardown line is logged only when something was torn down. No t.Parallel: captureLogs swaps the slog default.
 func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 	const wantLine = "interrupt: killed the turn's terminals"
 
@@ -703,9 +653,8 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 	})
 }
 
-// A refusal the bridge would not take is the one case that wedges the turn: Bridge.Call
-// carries no client-side deadline, so an unanswered request waits forever and this log
-// line is its only trace. No t.Parallel — captureLogs swaps the slog default.
+// An undeliverable refusal wedges the turn (Bridge.Call has no deadline), so the log line
+// is its only trace. No t.Parallel: captureLogs swaps the slog default.
 func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 	const wantLine = "terminal refusal could not be delivered"
 	id := int64(77)
@@ -732,7 +681,7 @@ func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 	})
 }
 
-// turnStub is a controllable current-turn reader. A chat absent from the map is idle.
+// turnStub is a controllable current-turn reader; a chat absent from the map is idle.
 type turnStub struct {
 	cur map[marotte.ChatID]string
 }
@@ -742,8 +691,7 @@ func (s *turnStub) read(chatID marotte.ChatID) (string, bool) {
 	return turn, ok
 }
 
-// stageTerminal registers a terminal the way termCreate does: read the chat's current
-// turn through production code (turnOf), then insert.
+// stageTerminal registers a terminal the way termCreate does, reading the turn through turnOf.
 func stageTerminal(h *Runtime, id string, chatID marotte.ChatID) {
 	turn := h.agentTerms.turnOf(chatID)
 	h.agentTerms.mu.Lock()
@@ -754,11 +702,8 @@ func stageTerminal(h *Runtime, id string, chatID marotte.ChatID) {
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], id)
 }
 
-// TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals: the registry's own turn count
-// was advanced from the PROMPT path only, so no wire-started turn ever moved it — an
-// agent-initiated turn spawning `npm run dev` shared its count with the next prompted turn,
-// and cancelling that prompt killed a background process nobody asked to stop. Nothing here
-// names the registry's boundary on purpose: the WINNING closer publishes it, whoever opened.
+// TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals pins that cancelling a prompt
+// never kills a background process a wire-started turn spawned.
 func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	ctx := t.Context()
@@ -767,8 +712,8 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	h.stageWireTurn(t, "c1")
 	stageTerminal(h, "agent-bg", "c1")
 
-	// It ends on the wire's own bracket — no prompt wrapper anywhere on this path.
-	h.coord.WireTurnEnd(ctx, "c1", marotte.StopReasonEndTurn, "")
+	// It ends on the wire's own bracket.
+	h.coord.WireTurnEnd(ctx, "c1", marotte.StopReasonEndTurn)
 
 	// The user's next turn, with a command of its own.
 	h.stagePromptTurn(t, "c1")
@@ -787,9 +732,7 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	}
 }
 
-// TestKillForTurn_ScopedToTheOpenTurn pins the interrupt gate's scope: a cancel
-// kills the CURRENT turn's terminals and leaves a background command an earlier
-// turn started alone. The boundary is one turn id giving way to the next.
+// TestKillForTurn_ScopedToTheOpenTurn pins that a cancel kills only the current turn's terminals.
 func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 	turns := &turnStub{cur: map[marotte.ChatID]string{"c1": "t7", "c2": "t3"}}
 	at := newAgentTerminals(nil, nil, nil, turns.read)
@@ -830,8 +773,7 @@ func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 	}
 }
 
-// TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals (the
-// overwhelmingly common case) touches nothing.
+// TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals touches nothing.
 func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
 	at := newAgentTerminals(nil, nil, nil, (&turnStub{}).read) // every chat idle
 	at.KillForTurn("c1")                                       // must not panic or create entries

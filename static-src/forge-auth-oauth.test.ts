@@ -1,7 +1,3 @@
-// Tests for the device sign-in: the start, the poll, Cancel, and
-// renderDevicePrompt's CSP-safe el()-built DOM (the user_code lands in a
-// <code>, a verification_uri is only ever an anchor when it is http(s), and an
-// attacker-controlled uri is inert text, never parsed as HTML).
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import type * as ForgeActions from "./actions/forge.js";
 import type * as ApiClient from "./api-client.js";
@@ -294,11 +290,9 @@ describe("renderDevicePrompt", () => {
     const host = document.createElement("div");
     renderDevicePrompt(host, start({ verification_uri: evil }));
 
-    // Non-http(s) "uri" => no anchor at all.
     expect(host.querySelector("a")).toBeNull();
-    // The payload is never parsed as HTML — no injected element leaks in.
+    // The payload is never parsed as HTML: no injected element leaks in.
     expect(host.querySelector("img")).toBeNull();
-    // It appears verbatim as text inside the intro paragraph.
     const p = host.querySelector("p");
     expect(p?.textContent).toContain(evil);
   });
@@ -308,7 +302,6 @@ describe("renderDevicePrompt", () => {
     renderDevicePrompt(host, start({ verification_uri: "javascript:alert(1)" }));
 
     expect(host.querySelector("a")).toBeNull();
-    // The would-be uri is rendered as plain text, not a clickable link.
     expect(host.querySelector("p")?.textContent).toContain("javascript:alert(1)");
   });
 

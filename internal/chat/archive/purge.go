@@ -26,16 +26,14 @@ type purgeOutcome int
 
 const (
 	purgeSkipped purgeOutcome = iota // already gone; counted as neither
-	purgeKept                        // newer than the cutoff
-	purgePurged                      // removed
-	purgeErr                         // stat/remove failed
+	purgeKept
+	purgePurged
+	purgeErr
 )
 
-// PurgeResult reports one pass, and is what the scheduler times its next wake-up
-// from. NextDeadline is the earliest instant a chat this pass KEPT ON AGE becomes
-// purgeable, zero when the pass has nothing to wait for. Only age-kept chats
-// contribute: an exempt chat's age deadline is already past, so a timer aimed at
-// it would spin.
+// PurgeResult reports one pass; the scheduler times its next wake-up from it. NextDeadline is the
+// earliest instant a chat kept ON AGE becomes purgeable, zero when none. An exempt chat contributes
+// none: its age deadline is already past, so a timer aimed at it would spin.
 type PurgeResult struct {
 	NextDeadline time.Time
 	Purged       int
@@ -43,12 +41,8 @@ type PurgeResult struct {
 	Errors       int
 }
 
-// Purge deletes chats whose last activity is older than maxAge, and reports the
-// pass so the caller can time the next one.
-//
-// It scans the MAIN chat directory: "archived" is computed from age against the
-// retention window, never stored, so live and expired chats share a directory
-// and only the age test plus the exemptions separate them.
+// Purge deletes chats whose last activity is older than maxAge. Live and expired chats share the
+// main directory; only the age test and the exemptions separate them.
 func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	dir := s.store.Dir()
 	entries, err := os.ReadDir(dir)
@@ -106,18 +100,14 @@ func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 	return valid
 }
 
-// purgeOne removes a single chat when its last activity is older than cutoff.
-// The returned deadline is non-zero only for a chat kept by AGE; an exempt chat
-// contributes none (see PurgeResult). Holds the per-chat mutex across the
-// stat+remove so a concurrent mutate cannot race the delete.
+// purgeOne removes a single chat when its last activity is older than cutoff. The deadline is
+// non-zero only for a chat kept by age. Holds the per-chat mutex across stat+remove so a concurrent
+// mutate cannot race the delete.
 func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Time, maxAge time.Duration) (purgeOutcome, time.Time) {
-	// A live bridge means active work; retention is about abandoned work.
 	if s.isLive != nil && s.isLive(marotte.ChatID(entry.name)) {
 		return purgeKept, time.Time{}
 	}
-	// An open tab with no bridge is the reader the age test cannot see, because
-	// reading stamps nothing. Checked BEFORE the record lock to keep the lock order
-	// acyclic: the coordinator's operation lock precedes a chat record lock
+	// Checked BEFORE the record lock: the coordinator's operation lock precedes a chat record lock
 	// everywhere else.
 	if s.hasOpenTab != nil && s.hasOpenTab(marotte.ChatID(entry.name)) {
 		return purgeKept, time.Time{}
@@ -136,9 +126,7 @@ func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Ti
 	// Capture the chain BEFORE the remove: onPurge fires once the file is gone and
 	// the session ids are no longer readable.
 	refTime, chain, drafting := s.purgeReferenceTime(entry, info.ModTime())
-	// An unsent draft is invisible to the age test: Store.SetDraft deliberately
-	// does not stamp UpdatedAt, or a 600ms autosave would push the cutoff out a
-	// whole window per keystroke.
+	// Store.SetDraft does not stamp UpdatedAt, so a draft is invisible to the age test.
 	if drafting {
 		m.Unlock()
 		return purgeKept, time.Time{}
@@ -166,13 +154,9 @@ func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Ti
 	return purgePurged, time.Time{}
 }
 
-// purgeReferenceTime returns the time a purge decision ages from, the chat's
-// session chain, and whether it holds an unsent draft, from ONE projected read.
-// Caller holds the per-chat mutex.
-//
-// UpdatedAt, falling back to file mtime only when the chat cannot be read: mtime
-// moves for reasons that are not activity, so aging from it resets its own clock.
-// An unreadable chat reports no draft.
+// purgeReferenceTime returns, from one projected read, the time a purge ages from, the session
+// chain, and whether a draft is unsent. Caller holds the per-chat mutex. Falls back to the file
+// mtime only for an unreadable chat: mtime moves for reasons that are not activity.
 func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string, drafting bool) {
 	h, err := s.store.LoadRetentionHeader(marotte.ChatID(entry.name))
 	if err != nil {
@@ -206,22 +190,27 @@ type PurgeScheduler struct {
 	triggerCh chan struct{}
 	stopCh    chan struct{}
 	done      chan struct{}
+	// sidePasses run on every wake whatever the chat retention says, each reading
+	// its own setting; their deadlines and counts merge into the chat pass's.
+	sidePasses []func(context.Context) PurgeResult
 	// idleWait is the back-off for a pass with nothing to wait for. Owned by the
 	// loop goroutine alone, so it needs no lock.
 	idleWait time.Duration
 	once     sync.Once
-	started  bool
 	mu       sync.Mutex
+	started  bool
 }
 
-// NewPurgeScheduler builds a scheduler that purges against retention().
-func NewPurgeScheduler(svc *Service, retention func() time.Duration) *PurgeScheduler {
+// NewPurgeScheduler builds a scheduler that purges against retention(), plus any
+// side passes run on the same wake-ups.
+func NewPurgeScheduler(svc *Service, retention func() time.Duration, sidePasses ...func(context.Context) PurgeResult) *PurgeScheduler {
 	return &PurgeScheduler{
-		svc:       svc,
-		retention: retention,
-		triggerCh: make(chan struct{}, 1),
-		stopCh:    make(chan struct{}),
-		done:      make(chan struct{}),
+		svc:        svc,
+		retention:  retention,
+		sidePasses: sidePasses,
+		triggerCh:  make(chan struct{}, 1),
+		stopCh:     make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -296,17 +285,20 @@ func stopTimer(t *time.Timer) {
 // re-evaluating beats waiting.
 const purgeBudget = 5 * time.Minute
 
-// purgeAndReschedule runs one purge pass (when retention is positive) and always
-// returns an armed timer: a nil timer channel leaves Trigger as the loop's only
-// wake-up, and its one production caller is Start.
+// purgeAndReschedule runs one purge pass (the chat pass when retention is positive, every side pass
+// always) and always returns an armed timer: a nil timer channel would leave Trigger as the loop's
+// only wake-up.
 func (p *PurgeScheduler) purgeAndReschedule(ctx context.Context) (timer *time.Timer, timerC <-chan time.Time) {
 	retention := p.retention()
 	var res PurgeResult
+	purgeCtx, purgeCancel := context.WithTimeout(ctx, purgeBudget)
 	if retention > 0 {
-		purgeCtx, purgeCancel := context.WithTimeout(ctx, purgeBudget)
 		res = p.svc.Purge(purgeCtx, retention)
-		purgeCancel()
 	}
+	for _, pass := range p.sidePasses {
+		res = mergePurgeResults(res, pass(purgeCtx))
+	}
+	purgeCancel()
 	wait := p.armWait(retention, res)
 	slog.Debug("chat purge scheduled", "in", wait, "retention", retention,
 		"purged", res.Purged, "kept", res.Kept, "has_deadline", !res.NextDeadline.IsZero())
@@ -328,21 +320,38 @@ const (
 // exempt chat's mtime-derived deadline is permanently past), and an idle pass
 // backs off, since only an unobserved change can answer it differently.
 func (p *PurgeScheduler) armWait(retention time.Duration, res PurgeResult) time.Duration {
+	if !res.NextDeadline.IsZero() {
+		p.idleWait = 0
+		return min(max(time.Until(res.NextDeadline), minWait), maxWait)
+	}
 	if retention <= 0 {
 		// Keep-forever: re-check on the ceiling so turning retention back on takes
 		// effect within one interval.
 		p.idleWait = 0
 		return maxWait
 	}
-	if !res.NextDeadline.IsZero() {
-		p.idleWait = 0
-		return min(max(time.Until(res.NextDeadline), minWait), maxWait)
-	}
 	if res.Purged > 0 {
 		p.idleWait = 0
 	}
 	p.idleWait = nextIdleWait(p.idleWait)
 	return p.idleWait
+}
+
+func mergePurgeResults(a, b PurgeResult) PurgeResult {
+	out := PurgeResult{
+		Purged: a.Purged + b.Purged,
+		Kept:   a.Kept + b.Kept,
+		Errors: a.Errors + b.Errors,
+	}
+	switch {
+	case a.NextDeadline.IsZero():
+		out.NextDeadline = b.NextDeadline
+	case b.NextDeadline.IsZero() || a.NextDeadline.Before(b.NextDeadline):
+		out.NextDeadline = a.NextDeadline
+	default:
+		out.NextDeadline = b.NextDeadline
+	}
+	return out
 }
 
 // nextIdleWait doubles an idle wait, starting at idleBase and capped at maxWait.

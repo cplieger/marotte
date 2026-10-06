@@ -14,9 +14,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// storeWith returns a store holding one chat whose one turn carries the tool_call
-// and, when res is non-nil, its tool_result, both appended through the store so
-// the store's own bound runs before the preview ever sees them.
+// storeWith returns a store holding one chat whose turn carries the tool_call and, if res is non-nil, its
+// tool_result, appended through the store so its bound runs first.
 func storeWith(t *testing.T, call marotte.EntryToolCall, res *marotte.EntryToolResult) *Store {
 	t.Helper()
 	s, _ := newTestStore(t)
@@ -32,8 +31,7 @@ func storeWith(t *testing.T, call marotte.EntryToolCall, res *marotte.EntryToolR
 	return s
 }
 
-// windowedCall serves the newest transcript page and returns its one tool call's
-// previewed halves: the create's payload, and the result's when one was seeded.
+// windowedCall serves the newest page and returns its one tool call's previewed halves.
 func windowedCall(t *testing.T, call marotte.EntryToolCall, res *marotte.EntryToolResult) (marotte.EntryToolCall, marotte.EntryToolResult) {
 	t.Helper()
 	page := getPage(t, storeWith(t, call, res), "c1", "")
@@ -73,9 +71,8 @@ func settled(output string) *marotte.EntryToolResult {
 	return &marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: output}
 }
 
-// TestTranscript_SmallToolCallIsSentWhole is the case the preview must not
-// touch: the great majority of tool calls are small, and paying a second round
-// trip for one would make the ladder cost more than it saves.
+// TestTranscript_SmallToolCallIsSentWhole pins that most calls are small, and a second round trip for them would cost more
+// than the ladder saves.
 func TestTranscript_SmallToolCallIsSentWhole(t *testing.T) {
 	in := marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{"command":"ls"}`)}
 	call, res := windowedCall(t, in, settled("all done\n"))
@@ -93,9 +90,7 @@ func TestTranscript_SmallToolCallIsSentWhole(t *testing.T) {
 	}
 }
 
-// TestTranscript_BigOutputIsWindowedFromBothEnds pins where the cut is: a
-// command's first lines say what it did and its last say how it ended, so a
-// prefix would lose the error.
+// TestTranscript_BigOutputIsWindowedFromBothEnds pins that the last lines say how a command ended, so a prefix loses the error.
 func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 	var b strings.Builder
 	for i := range 400 {
@@ -115,9 +110,8 @@ func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true for a windowed output")
 	}
-	// output_bytes is what the REVEAL will fetch, which is the persisted length,
-	// because the store bounded this output before the preview ever saw it. The
-	// original is on Truncated, and only there.
+	// output_bytes is what the reveal fetches, the persisted length after the store's bound; the original is on
+	// Truncated only.
 	if got.Truncated == nil || got.Truncated.OutputBytes != len(full) {
 		t.Errorf("truncated = %+v, want OutputBytes = %d (the length before the store cut it)",
 			got.Truncated, len(full))
@@ -137,9 +131,8 @@ func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 	}
 }
 
-// TestTranscript_OneEnormousLineIsStillBounded is the case a line budget alone
-// cannot reach, and the one that leaves the tail unbounded without it: the live
-// volume holds a 9.1 MB single message and a 3.8 MB single message.
+// TestTranscript_OneEnormousLineIsStillBounded pins that a line budget alone misses single multi-megabyte messages, which real
+// chats hold (9.1 MB, 3.8 MB).
 func TestTranscript_OneEnormousLineIsStillBounded(t *testing.T) {
 	full := strings.Repeat("y", 200_000)
 	_, got := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled(full))
@@ -152,9 +145,8 @@ func TestTranscript_OneEnormousLineIsStillBounded(t *testing.T) {
 	}
 }
 
-// TestTranscript_PreviewedOutputCarriesNoSpans pins the documented trade: spans
-// are absolute UTF-16 offsets into the whole output, so a windowed output ships
-// plain and the bulk brings the styled text back with them.
+// TestTranscript_PreviewedOutputCarriesNoSpans pins that spans are absolute UTF-16 offsets into the whole output, so a
+// windowed output ships plain and the bulk brings them back.
 func TestTranscript_PreviewedOutputCarriesNoSpans(t *testing.T) {
 	_, got := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute},
 		&marotte.EntryToolResult{
@@ -166,13 +158,10 @@ func TestTranscript_PreviewedOutputCarriesNoSpans(t *testing.T) {
 	}
 }
 
-// TestTranscript_OversizeDiffIsDroppedWholesale pins why a diff is never
-// truncated: it is a before/after pair the client runs its own line diff over,
-// so half a pair renders hunks describing an edit nobody made.
+// TestTranscript_OversizeDiffIsDroppedWholesale pins that a diff is a before/after pair the client diffs, so half a pair shows
+// an edit nobody made.
 func TestTranscript_OversizeDiffIsDroppedWholesale(t *testing.T) {
-	// Sized between the two budgets, so the STORE keeps both diffs and the
-	// PREVIEW is the layer that drops one. The store's own drop is
-	// TestStoreBound_OversizeDiffIsDroppedNotTruncated.
+	// Between the two budgets, so the preview drops it (the store's drop is TestStoreBound_OversizeDiffIsDroppedNotTruncated).
 	half := previewBudget.diffBytes
 	_, got := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Edit", Kind: marotte.ToolKindEdit},
 		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{
@@ -190,9 +179,8 @@ func TestTranscript_OversizeDiffIsDroppedWholesale(t *testing.T) {
 	}
 }
 
-// TestTranscript_InputKeepsItsSmallMembers is what stops the preview blanking a
-// card's claim line: `pickFilePath` and `extractSubtitle` read the small members
-// while the bulk is one of them (a write's whole `text`).
+// TestTranscript_InputKeepsItsSmallMembers pins that the card's claim line reads the small members while the bulk is one
+// member.
 func TestTranscript_InputKeepsItsSmallMembers(t *testing.T) {
 	in, err := json.Marshal(map[string]any{
 		"path":        "internal/app/main.go",
@@ -203,8 +191,7 @@ func TestTranscript_InputKeepsItsSmallMembers(t *testing.T) {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
 	got, _ := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite, Input: in}, nil)
-	// Over BOTH budgets, so the store dropped `text` first and the preview found
-	// nothing left to cut. Either layer keeps the claim line, which is the point.
+	// Over both budgets: the store dropped `text` first. Either way the claim line stays.
 	if got.Truncated == nil || got.Truncated.InputBytes != len(in) {
 		t.Errorf("truncated = %+v, want InputBytes = %d", got.Truncated, len(in))
 	}
@@ -223,19 +210,14 @@ func TestTranscript_InputKeepsItsSmallMembers(t *testing.T) {
 	}
 }
 
-// The per-member cap does not bound the OBJECT, so there is a second one.
-//
-// An input over budget only in aggregate used to pass through whole: forty members
-// of 3 KiB each is 120 KiB with nothing over the 4 KiB member cap, and `has_full`
-// would say the transcript carried the input entire — so the bound `ToolCall.HasFull`
-// documents was a bound on the shape of the bulk rather than on its size. The
-// largest members go first, so the small ones the claim line reads survive.
+// The per-member cap does not bound the object: forty 3 KiB members passed whole while `has_full` claimed the input
+// entire. The largest members go first, so the claim line's small ones survive.
 func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	members := map[string]any{
 		"path":    "internal/app/main.go",
 		"command": "go build ./...",
 	}
-	// Each member fits the per-member cap; together they are far over the object's.
+	// Each member fits its cap; together they are far over.
 	for i := range 40 {
 		members["blob"+strconv.Itoa(i)] = strings.Repeat("B", 3_000)
 	}
@@ -253,9 +235,7 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	if !got.HasFull {
 		t.Fatal("has_full = false for an input the transcript did not carry whole")
 	}
-	// The budget is a BOUND on the marshalled bytes, not a target near them. It used
-	// to be asserted at 2x, which a sum-of-contents accounting satisfied while the
-	// object json.Marshal produced ran over by every quote, colon and comma.
+	// The budget bounds the marshalled bytes, quotes, colons and commas included.
 	if len(got.Input) > previewBudget.inputTotal {
 		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget by %d: the "+
 			"aggregate cut charged the members' contents and not the JSON around them",
@@ -265,7 +245,7 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	if err := json.Unmarshal(got.Input, &kept); err != nil {
 		t.Fatalf("preview input is not an object: %s", got.Input)
 	}
-	// The claim line's members are the smallest, so they are the last to go.
+	// The claim line's members are the smallest, so the last to go.
 	if kept["path"] != "internal/app/main.go" {
 		t.Errorf("path = %v, want it kept: the aggregate cut took a claim-line member "+
 			"before the blobs", kept["path"])
@@ -275,16 +255,10 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	}
 }
 
-// The aggregate budget bounds the MARSHALLED object, and this is the fixture that
-// tells that apart from bounding the sum of its members' contents.
-//
-// Many tiny members is where JSON's own syntax dominates: two quotes, a colon and a
-// separating comma is four bytes a member, so an accounting that charges only
-// len(key)+len(value) under-counts by 4N — here about half the budget again. The
-// 40-fat-member fixture above cannot see it, because one member is 3 KiB, so the cut
-// stops a whole member short of the budget and the error hides in that granularity.
+// The aggregate budget bounds the marshalled object, not the members' contents: with many tiny members JSON syntax
+// adds four bytes each, which the fat-member fixture hides in its granularity.
 func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
-	// Enough one-byte values that the old accounting believed the object fit.
+	// Enough one-byte values that a contents-only count thinks the object fits.
 	const members = 4_000
 	obj := make(map[string]any, members)
 	for i := range members {
@@ -306,8 +280,7 @@ func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
 			"commas around them", len(got.Input), previewBudget.inputTotal,
 			len(got.Input)-previewBudget.inputTotal)
 	}
-	// And it is not bounded by dropping everything: the budget still has to fit a
-	// claim line's worth of members, or "bounded" would be satisfied by "empty".
+	// Not satisfied by dropping everything: a claim line's worth must fit.
 	var kept map[string]any
 	if err := json.Unmarshal(got.Input, &kept); err != nil {
 		t.Fatalf("preview input is not an object: %s", got.Input)
@@ -319,15 +292,11 @@ func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
 	}
 }
 
-// The cut is DETERMINISTIC, or a card gains and loses fields between reloads.
-//
-// Map iteration order is randomised, so without an explicit tie-break the members
-// dropped from an over-budget object would differ per request for the same input —
-// two reads of one transcript disagreeing about what a tool call's input was.
+// The cut is deterministic, or map order would make a card's fields change between reloads.
 func TestTranscript_TheAggregateCutIsTheSameEveryTime(t *testing.T) {
 	members := make(map[string]json.RawMessage, 40)
 	for i := range 40 {
-		// Same size, so only the tie-break can order them.
+		// Same size, so only the tie-break orders them.
 		members["m"+strconv.Itoa(i)] = json.RawMessage(`"` + strings.Repeat("B", 3_000) + `"`)
 	}
 	first := ""
@@ -348,10 +317,9 @@ func TestTranscript_TheAggregateCutIsTheSameEveryTime(t *testing.T) {
 	}
 }
 
-// TestToolBulk_ServesTheWholeCall is the other half of the ladder.
+// TestToolBulk_ServesTheWholeCall is the ladder's other half.
 func TestToolBulk_ServesTheWholeCall(t *testing.T) {
-	// Between the two budgets: the store keeps this whole, the preview cuts it,
-	// so the ladder's second rung has something to serve.
+	// Between the budgets: the store keeps it whole, the preview cuts it.
 	full := strings.Repeat("q", previewBudget.outputBytes+1_000)
 	in := json.RawMessage(`{"command":"build"}`)
 	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Input: in},
@@ -388,8 +356,7 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 	}
 }
 
-// TestToolBulk_Rejections pins the boundary: an unknown call and a malformed id
-// answer differently, because one is a miss and the other is a bad request.
+// TestToolBulk_Rejections pins that an unknown call is a miss, a malformed id a bad request.
 func TestToolBulk_Rejections(t *testing.T) {
 	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled("ok"))
 	cases := []struct {
@@ -428,28 +395,16 @@ func TestToolBulk_RejectsNonGet(t *testing.T) {
 	}
 }
 
-// escapedValue is a JSON string value whose bytes are n copies of c, unescaped.
-//
-// Built by hand rather than with json.Marshal, because Marshal is what escapes: a
-// fixture routed through it — or through the chat store, which writes with
-// MarshalIndent — arrives already expanded and cannot see an accounting that measures
-// the raw bytes. That is also why the shipped budget held by accident: the only
-// caller reads values the store escaped on the way to disk, the same shape as the
-// retention header's key folding.
+// escapedValue is a JSON string value of n copies of c, unescaped. Built by hand: json.Marshal and the store both
+// escape, which hid an accounting that measured raw bytes.
 func escapedValue(c byte, n int) json.RawMessage {
 	return json.RawMessage(`"` + strings.Repeat(string(c), n) + `"`)
 }
 
-// The aggregate budget charges what ESCAPING costs, not what the raw bytes measure.
-//
-// encoding/json expands `<`, `>` and `&` to a six-byte `\u00xx` escape on the way
-// out, so an object whose raw members sum to a third of the budget marshals to twice
-// it. The reachable shapes are ordinary: a write tool's HTML or JSX content, a bash
-// command carrying `&&`. The two fixtures above cannot see this — theirs are built
-// from `strings.Repeat("B", …)` and small integers, neither of which escapes.
+// The aggregate budget charges what escaping costs: `<`, `>` and `&` become six-byte `\u00xx`, so a third of the
+// budget raw marshals to twice it. Ordinary inputs (HTML or JSX, `&&` in a command) hit this.
 func TestPreviewInput_TheAggregateBudgetChargesWhatEscapingCosts(t *testing.T) {
-	// Each member fits the per-member cap escaped (3,602 of 4,096) and the ten of
-	// them fit the object budget RAW (6 KiB of 16 KiB) while marshalling to 36 KiB.
+	// Each member fits its cap escaped (3,602 of 4,096); the ten fit the budget raw (6 of 16 KiB) and marshal to 36 KiB.
 	obj := map[string]json.RawMessage{"path": json.RawMessage(`"internal/app/page.tsx"`)}
 	for i := range 10 {
 		obj["chunk"+strconv.Itoa(i)] = escapedValue('<', 600)
@@ -458,8 +413,7 @@ func TestPreviewInput_TheAggregateBudgetChargesWhatEscapingCosts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
-	// json.Marshal escaped the fixture on the way in, so hand the function the
-	// unescaped spelling a writer other than encoding/json would produce.
+	// json.Marshal escaped the fixture, so pass the unescaped spelling another writer would produce.
 	unescaped := unescapeUnicode(t, raw)
 	if len(unescaped) <= previewBudget.inputMember {
 		t.Fatalf("Setup: fixture is %d bytes, needs to exceed %d or previewInput returns "+
@@ -490,17 +444,13 @@ func TestPreviewInput_TheAggregateBudgetChargesWhatEscapingCosts(t *testing.T) {
 	}
 }
 
-// The per-MEMBER cap charges escaping too, and it is the half that decides whether
-// one member can blow the budget on its own.
-//
-// Measured against a member of the same raw size that does NOT escape, so the cap is
-// shown to key on what the value costs marshalled rather than on its length.
+// The per-member cap charges escaping too, measured against an unescaping member of the same raw size.
 func TestPreviewInput_TheMemberCapChargesWhatEscapingCosts(t *testing.T) {
 	obj := map[string]json.RawMessage{
 		"path": json.RawMessage(`"internal/app/page.tsx"`),
-		// 1,002 raw bytes, 6,002 marshalled: over the 4 KiB member cap.
+		// 1,002 raw bytes, 6,002 marshalled: over the 4 KiB cap.
 		"escaped": escapedValue('&', 1_000),
-		// 3,102 either way: under it, and larger raw than the member above.
+		// 3,102 either way: under it, though larger raw.
 		"plain": escapedValue('x', 3_100),
 	}
 	raw, err := json.Marshal(obj)
@@ -532,17 +482,10 @@ func TestPreviewInput_TheMemberCapChargesWhatEscapingCosts(t *testing.T) {
 	}
 }
 
-// The EARLY-OUT gate charges escaping too, which is what makes the three measures
-// one measure: a gate on `len(raw)` over budgets that count what encoding/json
-// writes lets an object under the per-member cap RAW return before either budget
-// sees it, and 4,010 bytes of unescaped `<` marshal to roughly 24 KiB.
-//
-// Not reachable through the one production caller, which reads store values already
-// escaped by encoding/json: this pins the budgets agreeing, not a live leak.
+// The early-out gate charges escaping too: 4,010 raw bytes of `<` marshal to about 24 KiB. The production caller's
+// values are already escaped, so this pins the budgets agreeing, not a live leak.
 func TestPreviewInput_TheEarlyOutGateChargesWhatEscapingCosts(t *testing.T) {
-	// One member of 4,000 unescaped `<`: 24,006 bytes marshalled, well over both
-	// budgets, and 4,010 bytes raw — inside the 4,096-byte per-member cap, so the
-	// gate is what decides whether anything is measured at all.
+	// One 4,000-`<` member: 24,006 bytes marshalled, 4,010 raw, inside the member cap, so the gate decides.
 	unescaped := json.RawMessage(`{"text":"` + strings.Repeat("<", 4_000) + `"}`)
 	if len(unescaped) > previewBudget.inputMember {
 		t.Fatalf("Setup: fixture is %d raw bytes, over the %d-byte cap already, so the "+
@@ -567,15 +510,10 @@ func TestPreviewInput_TheEarlyOutGateChargesWhatEscapingCosts(t *testing.T) {
 	}
 }
 
-// An input already in its wire form must go through unchanged, which is the
-// property that lets the gate convert before it measures: the single production
-// caller hands over store-read values, and re-measuring them must not start
-// trimming inputs that were within budget.
+// An already-escaped input within budget passes unchanged, so the gate can convert before measuring.
 func TestPreviewInput_AnAlreadyEscapedInputWithinBudgetIsUntouched(t *testing.T) {
-	// 400 escaped `<`, about 2,411 wire bytes — deliberately UNDER the 4,096-byte
-	// gate, which is the only size that can exercise the pass-through and which the
-	// setup guard below enforces. The escapes must not be counted twice into
-	// something over it.
+	// 400 escaped `<`, about 2,411 wire bytes, under the 4,096-byte gate (the setup guard enforces it); escapes must not
+	// count twice.
 	obj := map[string]string{"text": strings.Repeat("<", 400)}
 	wire, err := json.Marshal(obj)
 	if err != nil {
@@ -592,8 +530,7 @@ func TestPreviewInput_AnAlreadyEscapedInputWithinBudgetIsUntouched(t *testing.T)
 	}
 }
 
-// unescapeUnicode turns the `\u00xx` escapes json.Marshal wrote back into their one
-// raw byte, so a fixture can carry the unescaped spelling of `<`, `>` and `&`.
+// unescapeUnicode turns json.Marshal's `\u00xx` escapes back into raw bytes for fixtures.
 func unescapeUnicode(t *testing.T, raw json.RawMessage) json.RawMessage {
 	t.Helper()
 	s := string(raw)
@@ -607,8 +544,7 @@ func unescapeUnicode(t *testing.T, raw json.RawMessage) json.RawMessage {
 	return out
 }
 
-// TestPreviewEntry_LeavesASmallEntryAlone pins the copy-on-write: the
-// conversations that were never the problem pay one decode and no re-encode.
+// TestPreviewEntry_LeavesASmallEntryAlone pins copy-on-write: a small entry costs one decode and no re-encode.
 func TestPreviewEntry_LeavesASmallEntryAlone(t *testing.T) {
 	e := entryOf("t-1", "", "tc1:result", marotte.EntryKindToolResult,
 		marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "two lines\nhere\n"})
@@ -619,10 +555,9 @@ func TestPreviewEntry_LeavesASmallEntryAlone(t *testing.T) {
 	}
 }
 
-// TestPreviewOutput_CutsOnARuneBoundary: a byte cut through a multi-byte rune
-// would put a replacement glyph on screen.
+// TestPreviewOutput_CutsOnARuneBoundary pins that a mid-rune cut would show a replacement glyph.
 func TestPreviewOutput_CutsOnARuneBoundary(t *testing.T) {
-	// One long line of 3-byte runes, so every candidate byte cut lands mid-rune.
+	// One long line of 3-byte runes, so every byte cut is mid-rune.
 	full := strings.Repeat("\u4e16", 20_000)
 	got, cut := boundOutput(full, previewBudget)
 	if !cut {

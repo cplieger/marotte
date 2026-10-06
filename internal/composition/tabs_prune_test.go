@@ -1,13 +1,5 @@
 package composition
 
-// The load-time prune, and what its resolver decides per kind.
-//
-// It runs ONCE, at load, before the listener serves anything. The live integrity
-// mechanism is the membership coordinator; this exists for the crash that landed
-// between a chat write and its tab write. Calling it periodically would be
-// treating recovery as a substitute for ordering, and it would also race the
-// coordinator, which is the only other writer of this store.
-
 import (
 	"path/filepath"
 	"testing"
@@ -17,17 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
-// TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest is the whole resolver
-// as one table, because every arm is a DECISION rather than a default:
-//
-//   - a chat tab resolves against the chat store, since a chat that is gone cannot
-//     be opened and its tab is a row that can only fail;
-//   - an editor tab is left alone, because a missing file is not a reason to close
-//     a tab the reader opened — a branch switch that removes a file for a minute
-//     would otherwise cost them their place;
-//   - a run tab is left alone for the same shape of reason: a finished run is still
-//     reviewable from History;
-//   - a singleton always resolves.
+// TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest is the whole resolver as one table,
+// every arm a decision: only a chat tab resolves against the chat store.
 func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 	chatStore, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
 	if err != nil {

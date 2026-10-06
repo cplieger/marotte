@@ -1,9 +1,5 @@
 package command
 
-// The certification rule on the three command-path emitters: a frame carries the
-// stamp of the projection it completes, the broadcasts run AFTER the save, and one
-// Mutate that emits two chat-projection frames stamps only the last.
-
 import (
 	"context"
 	"os/exec"
@@ -43,11 +39,9 @@ func chatStamps(evts []marotte.ServerEvent) []marotte.ServerEvent {
 	return out
 }
 
-// The last-frame rule: with a draft to clear, draft_changed follows the header
-// frame and is the ONLY chat-stamped frame. A client that lost the stream before
-// draft_changed would otherwise hold the sent text in its composer at a version
-// the digest calls unchanged. The turn_open itself travels as the registry's
-// turn_opened, not from here.
+// TestSettleComposerOnPrompt_OnlyDraftChangedCarriesTheStamp: draft_changed follows the header
+// frame and is the ONLY chat-stamped frame, or a client that lost draft_changed would hold the sent
+// text at a version the digest calls unchanged.
 func TestSettleComposerOnPrompt_OnlyDraftChangedCarriesTheChatStamp(t *testing.T) {
 	store, bus, _ := storeAndBus(t)
 	seedEmptyChat(t, store, "c1")

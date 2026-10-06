@@ -1,18 +1,15 @@
-// ---------------------------------------------------------------------------
-// The PRs tab's one-shot focus request: a notification naming a pull request
-// lands on that pull request's row. A file of its own because git-prs-tab.test.ts
-// fakes the timers and stubs `preserveGitScroll`, and this behaviour is a claim
-// about REAL frames and that module's own rAF scroll restore.
-// ---------------------------------------------------------------------------
+// A notification naming a pull request lands on its row. Its own file because the claims are about real frames and
+// `preserveGitScroll`'s own rAF restore, which git-prs-tab.test.ts fakes and stubs.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import { prIdentity } from "./push-subject.js";
 
-/** Cache-buster for the re-imports below: `vi.resetModules()` does not
- *  re-evaluate a module in Browser Mode, and every case needs a fresh
- *  `pendingFocus` slot. */
+/**
+ * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode; each case needs a fresh
+ * `pendingFocus` slot.
+ */
 let bootSeq = 0;
 
 const apiGetTyped = vi.fn();
@@ -63,7 +60,6 @@ vi.mock("@cplieger/ui-primitives/dialog", () => ({
 
 const FORGE_ID = "github:github.com";
 
-/** The canonical ids of cplieger/one, cplieger/two and cplieger/three. */
 const REPO_IDS = {
   one: "v1.63706c69656765722f6f6e65",
   two: "v1.63706c69656765722f74776f",
@@ -114,8 +110,7 @@ function pr(number: number, repo: RepoRow): Record<string, unknown> {
   };
 }
 
-/** Answer the inventory read immediately: one PR per repo, #1 in cplieger/one and
- *  #2 in every other. */
+/** One PR per repo: #1 in cplieger/one, #2 in every other. */
 function routeAPI(rows: readonly RepoRow[] = repos): void {
   ensureForges.mockImplementation(() =>
     Promise.resolve({ forges: [forge], kinds: ["github"] as const }),
@@ -153,8 +148,7 @@ async function load(): Promise<typeof ModPRs> {
   )) as typeof ModPRs;
 }
 
-/** The identity a row of cplieger/`repo` carries, keyed on its repository id as
- *  the server mints the subject. */
+/** Keyed on the repository id, as the server mints the subject. */
 function identityFor(repo: keyof typeof REPO_IDS, number: number): string {
   return prIdentity(FORGE_ID, REPO_IDS[repo], number);
 }
@@ -169,8 +163,7 @@ async function frames(n: number): Promise<void> {
   }
 }
 
-/** Poll `check` once a frame until it answers, bounded. Asserts on the way out
- *  either way, so a case whose whole subject is a poll still states one. */
+/** Bounded, and asserts on the way out, so a case whose subject is a poll still states one. */
 async function until(check: () => boolean, what: string, max = 30): Promise<void> {
   for (let i = 0; i < max; i++) {
     if (check()) {
@@ -181,9 +174,7 @@ async function until(check: () => boolean, what: string, max = 30): Promise<void
   expect(check(), what).toBe(true);
 }
 
-/** Poll `check` once a frame until it answers or `ms` pass. A smooth scroll moves
- *  on the compositor's clock, and with the frame-rate limit lifted thirty frames
- *  can be over before it has moved a pixel. */
+/** A smooth scroll moves on the compositor's clock; with the frame-rate limit lifted thirty frames can pass before it moves. */
 async function untilMs(check: () => boolean, what: string, ms: number): Promise<void> {
   const deadline = performance.now() + ms;
   while (!check() && performance.now() < deadline) {
@@ -223,9 +214,7 @@ beforeEach(async () => {
   ensureForges.mockReset();
   const { _resetForTest } = await import("./git-prs-state.js");
   _resetForTest();
-  // The real `#git-view` scroll container, tall content above the mount, so a
-  // scroll into view has somewhere to go and `preserveGitScroll` has a scrollTop
-  // to save and restore.
+  // Tall content above the mount, so a scroll into view has somewhere to go and `preserveGitScroll` a scrollTop to keep.
   document.body.innerHTML = `
     <div id="git-view" style="position:fixed;top:0;left:0;inline-size:600px;block-size:200px;overflow-y:auto">
       <div style="block-size:600px"></div>
@@ -241,8 +230,7 @@ describe("requestPRFocus", { timeout: testTimeoutFor(framesBudgetMs(30)) }, () =
     await refreshPRs();
 
     const identity = identityFor("two", 2);
-    // The PREMISE: the attribute exists and carries `prIdentity`'s spelling, which
-    // is the tab's ONE DOM row identity.
+    // The premise: the attribute carries `prIdentity`'s spelling, the tab's one DOM row identity.
     expect(rowFor(identity)).not.toBeNull();
 
     requestPRFocus(identity);
@@ -250,13 +238,12 @@ describe("requestPRFocus", { timeout: testTimeoutFor(framesBudgetMs(30)) }, () =
       () => rowFor(identity)?.classList.contains("deep-link-flash") === true,
       "the named row was marked",
     );
-    // ONE row, and it is that one: nothing else in the pane is marked.
+    // One row, and that one.
     expect(mount().querySelectorAll(".deep-link-flash")).toHaveLength(1);
   });
 
   it("keys the row on the repository id, whatever the listing's display path", async () => {
-    // The server names the repository by its canonical id, so a listing that spells
-    // the path differently from the clone's remote still holds the notified row.
+    // The server names the repository by its canonical id, so a differently spelled path still holds the notified row.
     routeAPI([{ repo_id: REPO_IDS.two, full_name: "CPlieger/Two" }]);
     const { refreshPRs, requestPRFocus } = await load();
     await refreshPRs();
@@ -280,8 +267,7 @@ describe("requestPRFocus", { timeout: testTimeoutFor(framesBudgetMs(30)) }, () =
 
     const identity = identityFor("two", 2);
     requestPRFocus(identity);
-    // The force-open reaches the disclosure through the PAINT, which is why
-    // `requestPRFocus` repaints rather than only scheduling a frame.
+    // The force-open reaches the disclosure through the paint, which is why `requestPRFocus` repaints.
     await until(
       () => toggleFor("two")?.getAttribute("aria-expanded") === "true",
       "the section holding the request opened",
@@ -291,15 +277,13 @@ describe("requestPRFocus", { timeout: testTimeoutFor(framesBudgetMs(30)) }, () =
       "the row inside it was marked",
     );
 
-    // And the request wrote no `readerToggled` entry, so the next paint returns the
-    // section to where the reader left it.
+    // The request wrote no `readerToggled` entry, so the next paint restores the reader's arrangement.
     await refreshPRs();
     expect(toggleFor("two")?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("scrolls a resident, painted tab with no refresh of its own", async () => {
-    // The case a paint-driven-only reading loses: on a second notification the tab
-    // is already open on prs with rows painted, so nothing else would paint.
+    // A second notification with the tab already painted: nothing else would paint.
     routeAPI();
     const { refreshPRs, requestPRFocus } = await load();
     await refreshPRs();
@@ -324,19 +308,15 @@ describe("requestPRFocus", { timeout: testTimeoutFor(framesBudgetMs(30)) }, () =
     await until(() => ensureForges.mock.calls.length === 1, "one healing refresh went out");
     await frames(10);
 
-    // Bounded to one refresh per request, and the reader is left on the PRs tab
-    // with no selection — never an error and never a wrong row.
+    // One refresh per request, and the reader is left on the PRs tab with no selection, never a wrong row.
     expect(ensureForges).toHaveBeenCalledTimes(1);
     expect(mount().querySelectorAll(".deep-link-flash")).toHaveLength(0);
     expect(mount().querySelector(".git-multirepo-error")).toBeNull();
   });
 
   it("survives preserveGitScroll's own scroll restore", async () => {
-    // `preserveGitScroll` saves `#git-view`'s scrollTop and restores it in its own
-    // requestAnimationFrame, which is its last statement. The focus attempt is
-    // registered AFTER that call returns, so it is second in the frame's list and
-    // the restore runs first. Registered before it, the restore would undo the
-    // scroll one frame later — and the assertion below is what fails then.
+    // `preserveGitScroll` restores scrollTop in its own rAF. The focus attempt registers after that call returns, so the
+    // restore runs first; registered before, the restore would undo the scroll a frame later.
     routeAPI();
     const { refreshPRs, requestPRFocus } = await load();
     await refreshPRs();

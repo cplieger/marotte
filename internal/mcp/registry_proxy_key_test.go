@@ -32,20 +32,8 @@ func TestSearchCacheKey_ByteIdenticalForOrdinaryQueries(t *testing.T) {
 	}
 }
 
-// A query carrying ':' or '\' must not be able to spell another (query, limit)
-// pair's key. The pre-keyenc "%s|%d" form happened to stay injective, but only
-// because the one separator-bearing field sat FIRST and the trailing field was
-// a clamped digit run — the boundary was recoverable as "the last '|'". That is
-// an accident of field order and of `limit`'s alphabet, not a property of the
-// key: the number of BOUNDARIES in the old key varied with untrusted input, so
-// appending a third component or moving `limit` ahead of `q` would have made
-// two distinct searches share one cache entry. keyenc escapes the query's
-// reserved characters, so the key carries exactly one boundary whatever the
-// query contains, and both assertions below hold irrespective of the clamp.
-//
-// Consequence of a collapse: one client is served the cached upstream body of a
-// different search for up to registryCacheTTL, and because the entry is shared,
-// so is every other client.
+// TestSearchCacheKey_UntrustedQueryCannotForgeAnotherKey: a query carrying ':' or '\' must not
+// spell another (query, limit) pair's key.
 func TestSearchCacheKey_UntrustedQueryCannotForgeABoundary(t *testing.T) {
 	t.Parallel()
 

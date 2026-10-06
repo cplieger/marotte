@@ -1,24 +1,13 @@
-// The exec view's model: delegated work, as a tree of nodes over time.
-//
-// A workflow run, a subagent, and an `orchestrate_subagent` pipeline share this
-// shape rather than KAS's `NodeStateSchema`, so nothing below names a workflow.
-// Each consumer writes an adapter folding its own source into `ExecRun` (the
-// workflow's is `run-exec-source.ts`); the panes never learn where a node came
-// from.
-//
-// Deliberately not the wire shape of anything, and a third representation
-// alongside `run-store.ts`'s verbatim KAS state: this one is derived on read,
-// held by nobody, and answers only what a pane draws.
+// The exec view's model: delegated work as a tree of nodes over time. Workflow runs, subagents and
+// pipelines each fold into `ExecRun` through an adapter (`run-exec-source.ts`); derived on read,
+// held by nobody, and the wire shape of nothing.
 
 import type { ExecState } from "./status.js";
 
-/** What KIND of node this is: glyph and reading. `group` is the catch-all for a
- *  container the source has no better word for, so an adapter for an unseen
- *  source has a legal value rather than inventing one the CSS has no rule for. */
+/** What KIND of node this is. `group` is the catch-all, so an unseen source has a legal value. */
 export type ExecKind = "step" | "sequence" | "repeat" | "parallel" | "watch" | "group";
 
-/** One labelled fact about a node, for the detail pane's identity list. A LIST
- *  rather than named fields, because the interesting facts differ per source. */
+/** One labelled fact for the identity list; a list because the facts differ per source. */
 export interface ExecFact {
   label: string;
   value: string;
@@ -28,9 +17,8 @@ export interface ExecFact {
 
 /** A node of the execution tree. */
 export interface ExecNode {
-  /** Stable, instance-unique address: the tree's react key, the selection key, and
-   *  the key a transcript is filed under (a repeat's second iteration must differ
-   *  from its first, which a node ID alone cannot do). */
+  /** Stable, instance-unique address: react key, selection key and transcript key (a repeat's
+   *  iterations must differ, which a node ID cannot). */
   path: string;
   /** What the row says: the step's own name, not its path. */
   label: string;
@@ -50,9 +38,8 @@ export interface ExecNode {
   output?: string;
   /** Named artifacts the node published. */
   artifacts?: Record<string, string>;
-  /** Whether this node can host a live transcript. False for a container, and for
-   *  a leaf whose source streams nothing — lets the detail pane say "there is no
-   *  transcript here" rather than "none has arrived yet". */
+  /** Whether this node can host a live transcript, so the pane can say "none here" rather than
+   *  "none yet". */
   transcript?: boolean;
 }
 
@@ -64,20 +51,15 @@ export interface ExecRun {
   /** The overall state, NOT derivable from the nodes: a run can be `paused` with
    *  every node settled, and only the source knows its own answer. */
   state: ExecState;
-  /** The tree's roots. A list, so a source with several top-level nodes needs no
-   *  synthetic parent. */
+  /** The tree's roots, a list so several top-level nodes need no synthetic parent. */
   nodes: ExecNode[];
   /** What this execution was asked to do. */
   inputs?: Record<string, string>;
   /** One line about why the execution wants a person, pre-composed by the adapter. */
   alert?: { kind: "input" | "paused" | "stopped" | "failed"; text: string };
-  /** The node the page should open on when the reader has not clicked one.
-   *
-   *  A run has ONE door meaning "the run", so the page follows the work. A
-   *  subagent expansion has one door PER delegate, so a stage's link means "open
-   *  THIS stage" and landing on a sibling would answer a question nobody asked.
-   *  Honoured as a pre-registered pick: naming a node also stops the auto-follow,
-   *  as a click does. Absent is the workflow's shape. */
+  /** The node to open on before a click. A subagent expansion has one door PER delegate, so a
+   *  stage's link opens THAT stage; naming a node stops the auto-follow like a click. Absent for
+   *  a workflow run. */
   focus?: string;
   /** Whether anything is still moving, so the page knows to run its clock. */
   live: boolean;
@@ -108,9 +90,8 @@ export interface ExecCounters {
   total: number;
   done: number;
   failed: number;
-  /** The 1-based position of the running leaf, or 0 when none is. The RUNNING one
-   *  rather than `done + 1`: a skipped leaf would shift the count and a parallel
-   *  node has several in flight. */
+  /** The 1-based position of the RUNNING leaf, or 0 (a skipped leaf or a parallel node breaks
+   *  `done + 1`). */
   current: number;
 }
 
@@ -133,9 +114,7 @@ export function counters(nodes: readonly ExecNode[]): ExecCounters {
   return { total: ls.length, done, failed, current };
 }
 
-/** Elapsed ms between two ISO stamps, counting to NOW when the end is absent and
- *  the start is not. Zero for anything unusable, so a caller can treat 0 as "no
- *  duration to show" rather than testing three cases. */
+/** Elapsed ms between two ISO stamps, to NOW when only the end is absent; 0 when unusable. */
 export function elapsed(start: string | undefined, end: string | undefined): number {
   if (start === undefined || start === "") {
     return 0;
@@ -151,11 +130,8 @@ export function elapsed(start: string | undefined, end: string | undefined): num
   return Math.max(0, to - from);
 }
 
-/** The execution's own window: earliest start to latest end, or to now while
- *  anything is still going.
- *
- *  Derived from the LEAVES, not a root node's stamps: a source may not stamp its
- *  containers at all, and the leaves are what a timeline draws. */
+/** The execution's window, earliest start to latest end (or now). From the LEAVES: a source may
+ *  not stamp its containers. */
 export interface ExecWindow {
   from: number;
   to: number;
@@ -183,7 +159,6 @@ export function window(nodes: readonly ExecNode[], live: boolean): ExecWindow | 
   if (live) {
     to = Math.max(to, Date.now());
   }
-  // A floor of 1ms so a run that starts and finishes in one clock tick still
-  // divides by something and its bars have a width.
+  // A 1ms floor so a one-tick run still divides and its bars have a width.
   return { from, to, span: Math.max(1, to - from) };
 }

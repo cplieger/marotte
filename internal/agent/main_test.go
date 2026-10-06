@@ -6,11 +6,8 @@ import (
 	"time"
 )
 
-// The heal ladder is parked past any test run. UP rather than down because nothing
-// WAITS on it: it installs an untracked timer, so at the production delay it outlives
-// its own test and re-attempts against an unrelated test's fixture. A test that needs
-// it to FIRE lowers the base itself. The cancel-retry ladder's base is a per-Runs
-// field instead, parked by buildTestHub on each runtime it builds.
+// The heal ladder is parked past any test run: its untracked timer would outlive its test.
+// A test that needs it to fire lowers the base.
 func TestMain(m *testing.M) {
 	healBaseDelay = time.Hour
 	root, err := os.MkdirTemp("", "marotte-agent-chats-")

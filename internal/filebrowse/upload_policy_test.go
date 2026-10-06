@@ -47,14 +47,8 @@ func productOf(t *testing.T, name string, factors [][]byte) int {
 	return got
 }
 
-// The client duplicates two upload constants it cannot fetch: the per-file
-// byte ceiling and the composer's target directory. Both are compile-time
-// facts with no runtime input, so an endpoint to report them would be a
-// request per boot to learn numbers that cannot change without a rebuild.
-// This test is what makes the duplication safe: Go stays the single
-// definition and a change on either side fails CI here rather than surfacing
-// as a 413 the client should have predicted, or an upload landing somewhere
-// the attachment path does not name.
+// TestUploadPolicyMatchesClient: the client duplicates two compile-time upload constants (the
+// per-file ceiling and the composer's target directory), and this keeps the copies equal.
 func TestUploadPolicyMatchesClient(t *testing.T) {
 	src, err := os.ReadFile(clientPolicyPath)
 	if err != nil {
@@ -73,13 +67,8 @@ func TestUploadPolicyMatchesClient(t *testing.T) {
 		}
 	})
 
-	// The pre-flight's budget is a DERIVED number, and this is the half of the
-	// contract that lives on the Go side: maxUploadSize bounds the whole
-	// MULTIPART BODY (http.MaxBytesReader in handleUpload), and multipart
-	// framing is part of that body, so a client that accepted a file of exactly
-	// maxUploadSize was promising a request the server must refuse. What has to
-	// hold is that the client enforces something strictly SMALLER, by a margin
-	// that covers the framing.
+	// The pre-flight budget is DERIVED: maxUploadSize bounds the whole multipart body, so the
+	// per-file ceiling leaves room for part overhead.
 	t.Run("pre-flight budget is below the whole-request ceiling", func(t *testing.T) {
 		if !clientTotalRe.Match(src) {
 			t.Fatalf("no MAX_UPLOAD_TOTAL_BYTES derivation in %s (pattern %s): the client must "+
@@ -92,9 +81,6 @@ func TestUploadPolicyMatchesClient(t *testing.T) {
 				clientPolicyPath, clientReserveRe)
 		}
 		reserve := productOf(t, "MULTIPART_RESERVE_BYTES", m[1:])
-		// A part costs a boundary line plus two headers, and the longest legal
-		// filename is 255 bytes; 64 KiB covers that for every file the client
-		// will send in one request, with room to spare.
 		const minReserve = 64 * 1024
 		if reserve < minReserve {
 			t.Errorf("MULTIPART_RESERVE_BYTES = %d, want at least %d to cover multipart framing",
@@ -112,11 +98,6 @@ func TestUploadPolicyMatchesClient(t *testing.T) {
 			t.Fatalf("no UPLOADS_DIR literal in %s (pattern %s)",
 				clientPolicyPath, clientDirRe)
 		}
-		// Both spellings clean to the same path, which is the property that
-		// matters: the client's target and the server's default must name one
-		// directory. The client's must be absolute for a second reason of its
-		// own (it doubles as the attachment path prefix), so compare the
-		// cleaned forms rather than the raw strings.
 		got := filepath.Clean("/" + string(m[1]))
 		want := filepath.Clean("/" + marotte.DefaultUploadDir)
 		if got != want {

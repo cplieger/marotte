@@ -1,39 +1,14 @@
 // The observers `init()` wires, and the module-scope boot.
-//
-// A separate file from scroll.test.ts because these paths can only be reached
-// by replacing a global BEFORE the module is imported: the singleton is built at
-// import and captures `ResizeObserver` and `document.readyState` there. Every
-// test here therefore re-imports the module against a fresh DOM
-// (`vi.resetModules()` + `await import()`), which is the same discipline
-// platform.pwa.test.ts needs for its module-scope constants.
-//
-// A harness-built scroller has no real overflow and no box changes of its own, so
-// with the real one the resize half of this module is unobservable: nothing
-// models a layout change. The fake below is a recorder plus a trigger — it is
-// the layout engine's role in the contract, not the module's, so faking it does
-// not hide the code under test.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type * as ScrollModule from "./scroll.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
- */
+/** Cache-buster for the re-imports below. */
 let bootSeq = 0;
 
-// The module builds its singleton against $.messages / $.messagesWrap at import
-// and reads $.scrollBottom in init; ids are created on demand so a cleared body
-// yields a fresh element set for the next import.
+// The module builds its singleton against $.messages / $.messagesWrap at import and reads
+// $.scrollBottom in init; ids are created on demand so a cleared body yields a fresh element set
+// for the next import.
 vi.mock("./dom.js", () => ({
   $: new Proxy(
     {},
@@ -86,13 +61,9 @@ class FakeResizeObserver {
   }
 }
 
-/** The live-edge publisher's trigger.
- *
- *  Faked for the same reason the ResizeObserver is: the real one reports a
- *  THRESHOLD CROSSING computed from real boxes, and this harness has no overflow
- *  and no layout, so the platform would never deliver an entry for the sentinel.
- *  Only `isIntersecting` is modelled, because that is the whole of what the
- *  callback reads. */
+/** The live-edge publisher's trigger. Faked for the same reason the ResizeObserver is: the real
+ *  one reports a THRESHOLD CROSSING computed from real boxes, and this harness has no overflow
+ *  and no layout, so the platform would never deliver an entry for the sentinel. */
 class FakeIntersectionObserver {
   static instances: FakeIntersectionObserver[] = [];
   readonly targets = new Set<Element>();
@@ -112,8 +83,7 @@ class FakeIntersectionObserver {
   disconnect(): void {
     this.targets.clear();
   }
-  /** Deliver a batch, the way the platform coalesces several crossings into one
-   *  callback. */
+  /** Deliver a batch, the way the platform coalesces several crossings into one callback. */
   fire(entries: readonly { isIntersecting: boolean }[]): void {
     this.cb(
       entries as unknown as IntersectionObserverEntry[],
@@ -122,8 +92,8 @@ class FakeIntersectionObserver {
   }
 }
 
-/** Inside the test body, never at module scope: `unstubGlobals` is on, so a
- *  stub installed at collection time is restored before the first test runs. */
+/** Inside the test body, never at module scope: `unstubGlobals` is on, so a stub installed at
+ *  collection time is restored before the first test runs. */
 function stubResizeObserver(): void {
   FakeResizeObserver.instances.length = 0;
   FakeIntersectionObserver.instances.length = 0;
@@ -131,11 +101,10 @@ function stubResizeObserver(): void {
   vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
 }
 
-/** The scroller's boxes are faked with writable properties — the same level
- *  scroll.test.ts chose. Real layout is not the subject here: these tests are
- *  arithmetic over three numbers, and an element sized by the harness rather
- *  than by the app's stylesheet would measure whatever the harness happened to
- *  produce. */
+/** The scroller's boxes are faked with writable properties — the same level scroll.test.ts
+ *  chose. Real layout is not the subject here: these tests are arithmetic over three numbers,
+ *  and an element sized by the harness rather than by the app's stylesheet would measure
+ *  whatever the harness happened to produce. */
 function fakeGeometry(
   el: HTMLElement,
   init: {
@@ -163,13 +132,10 @@ function fakeGeometry(
       state.scrollTop = v;
     },
   });
-  // `scrollTo` has to be shadowed alongside the metrics, or the faked scrollTop
-  // is bypassed entirely: production reaches the live edge through
-  // `scrollEl.scrollTo({top, behavior})`, and in a real browser that is the
-  // platform's own method writing a real scroll position — which stays 0 on an
-  // element with no overflow, so every pin assertion read 0. An instance
-  // assignment shadows the prototype method (a `delete` would not); the helper
-  // keeps one source of truth for the number under test.
+  // `scrollTo` has to be shadowed alongside the metrics, or the faked scrollTop is bypassed
+  // entirely: production reaches the live edge through `scrollEl.scrollTo({top, behavior})`, and in
+  // a real browser that is the platform's own method writing a real scroll position — which stays 0
+  // on an element with no overflow, so every pin assertion read 0.
   el.scrollTo = ((arg?: number | ScrollToOptions, y?: number): void => {
     const top = typeof arg === "number" ? y : arg?.top;
     if (top !== undefined) {
@@ -179,28 +145,28 @@ function fakeGeometry(
   return state;
 }
 
-/** The reader's own scroll, in the two events a device produces: the INPUT that
- *  says WHOSE scroll it is, then the `scroll` the browser delivers. A bare `scroll`
- *  event is the PLATFORM's shape — a `content-visibility` clamp — which the
- *  controller deliberately refuses to read as intent. */
+/** The reader's own scroll, in the two events a device produces: the INPUT that says WHOSE
+ *  scroll it is, then the `scroll` the browser delivers. A bare `scroll` event is the PLATFORM's
+ *  shape — a `content-visibility` clamp — which the controller deliberately refuses to read as
+ *  intent. */
 function readerScroll(el: HTMLElement): void {
-  // The wheel's DIRECTION is the one that would have brought the reader to where the
-  // fixture has already put them: the controller enters Reading from the aim of the
-  // input, never from the position alone.
+  // The wheel's DIRECTION is the one that would have brought the reader to where the fixture has
+  // already put them: the controller enters Reading from the aim of the input, never from the
+  // position alone.
   const atEdge = el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
   el.dispatchEvent(new WheelEvent("wheel", { deltaY: atEdge ? 1 : -1 }));
   el.dispatchEvent(new Event("scroll"));
 }
 
-/** Drain the MutationObserver microtask, the queued animation frame, and a
- *  smooth scroll's deferred write. */
+/** Drain the MutationObserver microtask, the queued animation frame, and a smooth scroll's
+ *  deferred write. */
 async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 25));
 }
 
-/** Drain the same queues without depending on `setTimeout`, which a fake-timer
- *  test has replaced. Animation frames run on the real clock
- *  captured at its own import, so they still land. */
+/** Drain the same queues without depending on `setTimeout`, which a fake-timer test has
+ *  replaced. Animation frames run on the real clock captured at its own import, so they still
+ *  land. */
 async function settleFrames(): Promise<void> {
   for (let i = 0; i < 3; i++) {
     await new Promise<void>((r) => {
@@ -213,40 +179,39 @@ async function settleFrames(): Promise<void> {
 
 interface Harness {
   scroll: typeof ScrollModule;
-  /** The CONTENT observer: the view's children, and the reads its callback makes.
-   *  It touches no document style. */
+  /** The CONTENT observer: the view's children, and the reads its callback makes. It touches no
+   *  document style. */
   ro: FakeResizeObserver;
-  /** The GUTTER observer: the scroller's own box, and the one write that reaches
-   *  a shared ancestor. */
+  /** The GUTTER observer: the scroller's own box, and the one write that reaches a shared
+   *  ancestor. */
   gutter: FakeResizeObserver;
   /** The live-edge publisher, whose entries the mutation path consumes. */
   io: FakeIntersectionObserver;
   messagesEl: HTMLElement;
   scrollEl: HTMLElement;
-  /** Every `addEventListener` on the scroller since just before the module was
-   *  imported. */
+  /** Every `addEventListener` on the scroller since just before the module was imported. */
   listeners: MockInstance<typeof EventTarget.prototype.addEventListener>;
-  /** A row the transcript already held when the controller was built, when the
-   *  test asked for one. */
+  /** A row the transcript already held when the controller was built, when the test asked for
+   *  one. */
   existingRow: HTMLElement | null;
 }
 
-/** A module instance whose observers are the fakes above, against a DOM no
- *  previous instance holds a reference to. */
+/** A module instance whose observers are the fakes above, against a DOM no previous instance
+ *  holds a reference to. */
 async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Harness> {
   stubResizeObserver();
   document.body.replaceChildren();
   document.documentElement.style.removeProperty("--scrollbar-w");
-  // Built before the import so the scroller can be spied on: the mocked registry
-  // hands out whatever is already in the document under that id.
+  // Built before the import so the scroller can be spied on: the mocked registry hands out whatever
+  // is already in the document under that id.
   const messages = document.createElement("div");
   messages.id = "messages";
   const wrap = document.createElement("div");
   wrap.id = "messagesWrap";
   let existingRow: HTMLElement | null = null;
   if (opts.withExistingRow === true) {
-    // A transcript that already has content, which is the ordinary case on a
-    // reload of an open chat.
+    // A transcript that already has content, which is the ordinary case on a reload of an open
+    // chat.
     existingRow = document.createElement("div");
     messages.appendChild(existingRow);
   }
@@ -258,9 +223,9 @@ async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Ha
     /* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`
   )) as typeof ScrollModule;
   const scrollEl = scroll.getScrollEl();
-  // TWO ResizeObservers, in construction order: the content one, then the gutter
-  // one. Attributed by construction site rather than by target, so a regression
-  // that moves a callback between them names the observer it moved to.
+  // TWO ResizeObservers, in construction order: the content one, then the gutter one. Attributed by
+  // construction site rather than by target, so a regression that moves a callback between them
+  // names the observer it moved to.
   expect([
     FakeResizeObserver.instances.length,
     FakeIntersectionObserver.instances.length,
@@ -282,23 +247,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// ---------------------------------------------------------------------------
-// The GUTTER observer: the scroller's own box, and the one write that reaches a
-// shared ancestor. It is a second observer because css/13-messages.css reads
-// `--scrollbar-w` in this scroller's own `padding-inline`.
-// ---------------------------------------------------------------------------
+// The GUTTER observer: the scroller's own box, and the one write that reaches a shared ancestor. It
+// is a second observer because css/13-messages.css reads `--scrollbar-w` in this scroller's own
+// `padding-inline`.
 describe("the gutter observer", () => {
   it("watches the scroller alone", async () => {
-    // The box whose reserved gutter is being published, and nothing else: an
-    // observation carrying every turn card as well is what made the write
-    // undeliverable.
+    // The box whose reserved gutter is being published, and nothing else: an observation carrying
+    // every turn card as well is what made the write undeliverable.
     const h = await freshModule();
     expect([h.gutter.targets.has(h.scrollEl), h.gutter.targets.size]).toEqual([true, 1]);
   });
 
   it("keeps the write out of the content observer", async () => {
-    // The content observer reads and follows; it may not invalidate style for the
-    // whole document, or every card it also carries is re-laid-out mid-frame.
+    // The content observer reads and follows; it may not invalidate style for the whole document,
+    // or every card it also carries is re-laid-out mid-frame.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, {
       scrollHeight: 500,
@@ -316,10 +278,9 @@ describe("the gutter observer", () => {
   });
 
   it("re-measures the reserved gutter when the scroller's box changes", async () => {
-    // The width the transcript's inline-END inset gives back. It is read off the
-    // real element, so a box that changes between two frames has to be read
-    // again — a window listener read the pre-relayout value, which is the defect
-    // the observer replaced.
+    // The width the transcript's inline-END inset gives back. It is read off the real element, so a
+    // box that changes between two frames has to be read again; a window listener would read the
+    // pre-relayout value.
     const h = await freshModule();
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
     fakeGeometry(h.scrollEl, {
@@ -335,9 +296,9 @@ describe("the gutter observer", () => {
   });
 
   it("writes nothing inside the resize delivery itself", async () => {
-    // The whole of the fix: a write landing in the callback produces a new
-    // observation of a box this loop has already delivered, which Chromium
-    // reports as an undelivered notification. A frame later it is deliverable.
+    // A write landing in the callback produces a new observation of a box
+    // this loop has already delivered, which Chromium reports as an undelivered notification. A
+    // frame later it is deliverable.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, {
       scrollHeight: 500,
@@ -353,10 +314,9 @@ describe("the gutter observer", () => {
   });
 
   it("writes the gutter once across a resize storm", async () => {
-    // Same width twice must cost one style invalidation, not two: a browser-zoom
-    // or overlay-scrollbar change moves this box repeatedly and every write
-    // invalidates the whole document's style. The single frame slot is the first
-    // saving; the change-guard is the second.
+    // Same width twice must cost one style invalidation, not two: a browser-zoom or
+    // overlay-scrollbar change moves this box repeatedly and every write invalidates the whole
+    // document's style. The single frame slot is the first saving; the change-guard is the second.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, {
       scrollHeight: 500,
@@ -374,8 +334,8 @@ describe("the gutter observer", () => {
   });
 
   it("leaves no scheduled write behind when the controller is reset", async () => {
-    // A parked or disposed view may not write document style a frame after it
-    // stopped being the transcript.
+    // A parked or disposed view may not write document style a frame after it stopped being the
+    // transcript.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, {
       scrollHeight: 500,
@@ -391,18 +351,12 @@ describe("the gutter observer", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The CONTENT observer: the view's children, the reads its callback makes, and
-// the re-pin. It writes no document style at all.
-// ---------------------------------------------------------------------------
+// The CONTENT observer: the view's children, the reads its callback makes, and the re-pin. It
+// writes no document style at all.
 describe("the content resize observer", () => {
   it("releases Reading when the content shrinks to where the reader already is", async () => {
-    // Collapsing a delegate's card: its body goes to `height: 0`, so the
-    // document now ENDS at the reader. No node was inserted or removed, no
-    // gesture was made, and a shrink need not move `scrollTop` — so before the
-    // revalidation nothing re-asked the question and the resume control stayed up
-    // over a transcript with nothing below it, counting the collapsed card's own
-    // blocks as what the reader was behind.
+    // Collapsing a delegate's card: its body goes to `height: 0`, so the document now ENDS at the
+    // reader.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
@@ -413,16 +367,13 @@ describe("the content resize observer", () => {
     ]).toEqual(["reading", false]);
 
     g.scrollHeight = 1500;
-    // Past READER_CONTROL_MS (300), or the reader still owns the scroller and the
-    // layout's answer does not get to overrule theirs.
+    // Past READER_CONTROL_MS (300), or the reader still owns the scroller and the layout's answer
+    // does not get to overrule theirs.
     now.mockReturnValue(1400);
     h.ro.fire();
 
-    // NOT inside the delivery. The transition releases `deferWhileReading`'s queue,
-    // and those payloads mutate the very children this observer carries, so it is
-    // deferred a frame. Asserted BEFORE the wait as well as after, because the
-    // ordering is the point: a release that ran synchronously would satisfy the
-    // second half on its own.
+    // NOT inside the delivery. The transition releases `deferWhileReading`'s queue, and those
+    // payloads mutate the very children this observer carries, so it is deferred a frame.
     expect(h.scroll.readingState()).toBe("reading");
     await settleFrames();
     expect([
@@ -431,27 +382,73 @@ describe("the content resize observer", () => {
     ]).toEqual(["following", true]);
   });
 
+  it("does not release an in-band parked reader when content grows inside the band", async () => {
+    // Growth below the reader only carries the end further away, so a size change may release
+    // Reading only when it brought the end TO the reader.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    g.scrollTop = 1470;
+    h.scrollEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -30 }));
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    expect(h.scroll.readingState()).toBe("reading");
+
+    g.scrollHeight = 2020;
+    now.mockReturnValue(1400);
+    h.ro.fire();
+    await settleFrames();
+
+    expect([h.scroll.readingState(), g.scrollTop]).toEqual(["reading", 1470]);
+  });
+
+  it("releases a parked reader when a shrink undoes growth that landed during their gesture", async () => {
+    // The gesture window refuses the release, but the growth it saw is still the baseline the next
+    // frame compares against: missing it leaves the end 30px away before and after the collapse, so
+    // the collapse reads as no change at all.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    g.scrollTop = 1470;
+    h.scrollEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -30 }));
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    expect(h.scroll.readingState()).toBe("reading");
+
+    g.scrollHeight = 2020;
+    now.mockReturnValue(1100);
+    h.ro.fire();
+    await settleFrames();
+    expect(h.scroll.readingState()).toBe("reading");
+
+    g.scrollHeight = 2000;
+    now.mockReturnValue(1400);
+    h.ro.fire();
+    await settleFrames();
+
+    expect(h.scroll.readingState()).toBe("following");
+  });
+
   it("leaves Reading alone while a gesture is still in flight", async () => {
-    // The debounce window is the reader's answer outranking the layout's, and it
-    // is also what keeps a smooth `jumpTo` from being undone: its intermediate
-    // scroll events refresh the window all the way to the landing.
+    // The debounce window is the reader's answer outranking the layout's, and it is also what keeps
+    // a smooth `jumpTo` from being undone: its intermediate scroll events refresh the window all
+    // the way to the landing.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     vi.spyOn(Date, "now").mockReturnValue(1000);
     readerScroll(h.scrollEl);
     g.scrollHeight = 1500;
     h.ro.fire();
-    // Waited out, or the assertion would be satisfied by the deferral rather than by
-    // the gesture window it is about.
+    // Waited out, or the assertion would be satisfied by the deferral rather than by the gesture
+    // window it is about.
     await settleFrames();
     expect(h.scroll.readingState()).toBe("reading");
   });
 
   it("never declares the reader Reading from a size change", async () => {
-    // ONE-DIRECTIONAL. Following pins to the ANCHOR, not the document bottom, so
-    // tall evidence rendering below the pin legitimately leaves the controller
-    // hundreds of pixels from the end — a demotion here would switch the
-    // auto-scroll off mid-turn. Only a reader's INPUT may enter Reading.
+    // ONE-DIRECTIONAL. Following pins to the ANCHOR, not the document bottom, so tall evidence
+    // rendering below the pin legitimately leaves the controller hundreds of pixels from the end —
+    // a demotion here would switch the auto-scroll off mid-turn.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 600, clientHeight: 500, scrollTop: 100 });
     expect(h.scroll.readingState()).toBe("following");
@@ -463,8 +460,8 @@ describe("the content resize observer", () => {
   });
 
   it("re-pins the reader to the live edge when the box shrinks under them", async () => {
-    // The composer growing or the shell panel opening leaves the reader Following
-    // but no longer AT the edge, and no DOM mutation says so.
+    // The composer growing or the shell panel opening leaves the reader Following but no longer AT
+    // the edge, and no DOM mutation says so.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     h.ro.fire();
@@ -473,19 +470,16 @@ describe("the content resize observer", () => {
   });
 
   it("does not release a parked reader when content grows before the deferred apply", async () => {
-    // The deferral's own hazard, and the one axis a reader-input guard cannot see:
-    // the transcript appends BELOW the reader between the delivery and the frame
-    // after it. No input, no scroll event, and the edge sentinel does not cross its
-    // margin either, so nothing invalidates a measurement carried forward — the
-    // apply has to take its own.
+    // The deferral's own hazard, and the one axis a reader-input guard cannot see: the transcript
+    // appends BELOW the reader between the delivery and the frame after it.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    // Parked ON the live edge, which `setUserScrolledUp` is the one door to: it marks
-    // no input, so the reader does not own the scroller when the apply runs.
+    // Parked ON the live edge, which `setUserScrolledUp` is the one door to: it marks no input, so
+    // the reader does not own the scroller when the apply runs.
     h.scroll.setUserScrolledUp(true);
-    // Past READER_CONTROL_MS (300) at the delivery AND at the apply, so the release
-    // this refuses is the one the reader window would have allowed.
+    // Past READER_CONTROL_MS (300) at the delivery AND at the apply, so the release this refuses is
+    // the one the reader window would have allowed.
     now.mockReturnValue(1400);
     h.ro.fire();
 
@@ -495,10 +489,9 @@ describe("the content resize observer", () => {
   });
 
   it("does not release a parked reader who has scrolled away, however long the frame took", async () => {
-    // The same refusal on the reader's axis, and it holds for the same reason rather
-    // than for a timing one: a throttled frame is ~1016ms, so the reader's 300ms
-    // window opens and closes inside ONE deferral and only the position it left
-    // behind is still true at the apply.
+    // The same refusal on the reader's axis, and it holds for the same reason rather than for a
+    // timing one: a throttled frame is ~1016ms, so the reader's 300ms window opens and closes
+    // inside ONE deferral and only the position it left behind is still true at the apply.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
@@ -509,43 +502,33 @@ describe("the content resize observer", () => {
     now.mockReturnValue(1500);
     g.scrollTop = 400;
     readerScroll(h.scrollEl);
-    // Past 1500 + 300, so `readerInControl()` is false again by the time the apply
-    // runs and the geometry is the only thing left refusing.
+    // Past 1500 + 300, so `readerInControl()` is false again by the time the apply runs and the
+    // geometry is the only thing left refusing.
     now.mockReturnValue(2600);
     await settleFrames();
     expect(h.scroll.readingState()).toBe("reading");
   });
 });
 
-// ---------------------------------------------------------------------------
-// What `init()` wires. These paths run once, at construction, and the assertions
-// are about the registrations themselves because that is where their behaviour
-// lives: a scroll listener that is not passive, an observer that ignores the
-// inside of a row, or a transcript whose existing rows were never registered are
-// all invisible to any assertion about a single mutation.
-// ---------------------------------------------------------------------------
+// What `init()` wires.
 describe("what init wires", () => {
   it("registers the scroll listener as passive", async () => {
-    // The transcript is the app's hottest scroller: a non-passive listener makes
-    // the browser wait for this handler before it may scroll. Nothing in the harness
-    // models that, so the registration is the observable.
+    // The transcript is the app's hottest scroller: a non-passive listener makes the browser wait
+    // for this handler before it may scroll. Nothing in the harness models that, so the
+    // registration is the observable.
     const h = await freshModule();
     const scrollRegistrations = h.listeners.mock.calls.filter((c) => c[0] === "scroll");
     expect(scrollRegistrations.map((c) => c[2])).toEqual([{ passive: true }]);
   });
 
   it("watches the rows the transcript already had", async () => {
-    // A reload of an open chat renders the resident transcript before this module
-    // is imported, so the rows that are already there have to be picked up at
-    // construction rather than waiting for the next mutation.
     const h = await freshModule({ withExistingRow: true });
     expect(h.ro.targets.has(h.existingRow!)).toBe(true);
   });
 
   it("wires the End key on the document, not on the transcript", async () => {
-    // The keyboard half of the resume control has to work while the focus is
-    // anywhere that is not a text field, which is why it is registered on the
-    // document.
+    // The keyboard half of the resume control has to work while the focus is anywhere that is not a
+    // text field, which is why it is registered on the document.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     h.scroll.setUserScrolledUp(true);
@@ -554,11 +537,9 @@ describe("what init wires", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The transcript's mutation observer. Streaming does not append rows — it grows
-// the text inside the row that is already there — so the observer has to watch
-// the whole subtree and the character data, not just the child list.
-// ---------------------------------------------------------------------------
+// The transcript's mutation observer. Streaming does not append rows — it grows the text inside the
+// row that is already there — so the observer has to watch the whole subtree and the character
+// data, not just the child list.
 describe("the transcript's mutation observer", () => {
   it("scrolls for a change nested inside a row", async () => {
     const h = await freshModule();
@@ -573,8 +554,8 @@ describe("the transcript's mutation observer", () => {
   });
 
   it("scrolls when a row's text grows", async () => {
-    // The streaming case: a chunk extends an existing text node and no element
-    // is added or removed anywhere.
+    // The streaming case: a chunk extends an existing text node and no element is added or removed
+    // anywhere.
     const h = await freshModule();
     const row = document.createElement("div");
     const text = document.createTextNode("half a sen");
@@ -589,19 +570,7 @@ describe("the transcript's mutation observer", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The mutation path's LICENCE TO MEASURE, which it does not have.
-//
-// A MutationObserver callback runs mid-task with the DOM already dirty, so every
-// scroll-metric read in it forces a synchronous layout of the whole transcript —
-// and `reveal.ts` drives one per animation frame while a turn streams, over a
-// subtree measured at 353 tool cards. The reader's own state is derived from a
-// value PUBLISHED by the IntersectionObserver and the scroll listener instead.
-//
-// The observable is the read itself, counted through the same faked accessors the
-// rest of this file installs. Asserting a state transition could not see the
-// defect: the answer is the same either way, and what changed is who paid for it.
-// ---------------------------------------------------------------------------
 describe("what the mutation callback may read", () => {
   /** Count reads of the scroller's three layout metrics while `run` executes. */
   function countMetricReads(el: HTMLElement): { reads: () => number; stop: () => void } {
@@ -643,8 +612,8 @@ describe("what the mutation callback may read", () => {
     h.messagesEl.appendChild(row);
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     vi.spyOn(Date, "now").mockReturnValue(1000);
-    // A real gesture parks the reader — and publishes the edge state, which is
-    // what the callback below is entitled to consume.
+    // A real gesture parks the reader — and publishes the edge state, which is what the callback
+    // below is entitled to consume.
     readerScroll(h.scrollEl);
     expect(h.scroll.readingState()).toBe("reading");
     await settle();
@@ -661,17 +630,17 @@ describe("what the mutation callback may read", () => {
   });
 
   it("still promotes to Following when the observer publishes the edge", async () => {
-    // The other half of the same contract: giving up the read may not give up the
-    // release. Driven through the ResizeObserver, which measures directly — the
-    // publisher's own path is the describe block below.
+    // The other half of the same contract: giving up the read may not give up the release. Driven
+    // through the ResizeObserver, which measures directly — the publisher's own path is the
+    // describe block below.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     readerScroll(h.scrollEl);
     expect(h.scroll.readingState()).toBe("reading");
 
-    // The content shrinks to where the reader already is, and a gesture-free
-    // publish says the edge is in view again. Past READER_CONTROL_MS (300).
+    // The content shrinks to where the reader already is, and a gesture-free publish says the edge
+    // is in view again. Past READER_CONTROL_MS (300).
     g.scrollHeight = 1500;
     now.mockReturnValue(1400);
     h.ro.fire();
@@ -681,26 +650,17 @@ describe("what the mutation callback may read", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The live-edge PUBLISHER: the IntersectionObserver over the `.transcript-edge`
-// marker.
-//
-// Its callback is delivered after layout, so the geometry it carries is free —
-// and it is the only trigger for a shrink that brings the edge back into view
-// without a mutation or a gesture behind it. What the cases below drive is the
-// callback itself: which entry it believes, what it publishes, and the fact that
-// the mutation path then consumes that value instead of measuring.
-// ---------------------------------------------------------------------------
+// The live-edge PUBLISHER: the IntersectionObserver over the `.transcript-edge` marker.
 describe("the live-edge publisher", () => {
   it("watches a zero-height marker at the end of the attached view", async () => {
-    // A marker rather than the view itself: an IntersectionObserver reports a
-    // threshold crossing, and a view many viewports tall crosses nothing.
+    // A marker rather than the view itself: an IntersectionObserver reports a threshold crossing,
+    // and a view many viewports tall crosses nothing.
     const h = await freshModule();
     const marker = h.messagesEl.querySelector(".transcript-edge");
     expect(marker).not.toBeNull();
     expect(h.io.targets.has(marker!)).toBe(true);
-    // Rooted on the scroller, with the same slack `isAtBottom` allows expressed
-    // as room BELOW the scrollport.
+    // Rooted on the scroller, with the same slack `isAtBottom` allows expressed as room BELOW the
+    // scrollport.
     expect([h.io.options?.root, h.io.options?.rootMargin]).toEqual([
       h.scrollEl,
       "0px 0px 100px 0px",
@@ -708,9 +668,8 @@ describe("the live-edge publisher", () => {
   });
 
   it("releases Reading when it publishes the edge, with no gesture and no mutation", async () => {
-    // A card collapsing above the reader: the document now ends where they
-    // already are. Nothing scrolls, and the marker re-entering the scrollport is
-    // the only signal that says so.
+    // A card collapsing above the reader: the document now ends where they already are. Nothing
+    // scrolls, and the marker re-entering the scrollport is the only signal that says so.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
@@ -723,9 +682,8 @@ describe("the live-edge publisher", () => {
   });
 
   it("believes the LAST entry of a batch", async () => {
-    // The platform coalesces crossings, so a batch is a history and only its
-    // final state is the answer. Reading entries[0] would promote on the first
-    // half of this case and be wrong twice.
+    // The platform coalesces crossings, so a batch is a history and only its final state is the
+    // answer. Reading entries[0] would promote on the first half of this case and be wrong twice.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
@@ -741,13 +699,10 @@ describe("the live-edge publisher", () => {
   });
 
   it("stops watching the marker on detach, and watches it again on attach", async () => {
-    // `detach` promises the parked view can never produce a callback, and the edge
-    // observer was the one view observer it left connected: the marker rides with
-    // the outgoing view, parking that view sets `content-visibility: hidden`, the
-    // marker stops being rendered, and the callback fires `isIntersecting: false`
-    // from a subtree nobody is reading. Harmless on every path traced — which is
-    // exactly why the wrong record is the defect: it is the sentence the next editor
-    // trusts when they add a fifth observer.
+    // `detach` promises the parked view can never produce a callback, and the edge observer was the
+    // one view observer it left connected: the marker rides with the outgoing view, parking that
+    // view sets `content-visibility: hidden`, the marker stops being rendered, and the callback
+    // fires `isIntersecting: false` from a subtree nobody is reading.
     const h = await freshModule();
     const marker = h.messagesEl.querySelector(".transcript-edge");
     expect(h.io.targets.has(marker!)).toBe(true);
@@ -764,11 +719,9 @@ describe("the live-edge publisher", () => {
   });
 
   it("keeps a publish the gesture window blocked, for the next mutation to use", async () => {
-    // The published value is STATE, not an event: a publish that arrives while
-    // the reader's own gesture still outranks the layout may not be lost, and the
-    // mutation that follows has to act on it rather than measure. The geometry
-    // here still says NOT at the edge, so a mutation path that measured would
-    // stay Reading.
+    // The published value is STATE, not an event: a publish that arrives while the reader's own
+    // gesture still outranks the layout may not be lost, and the mutation that follows has to act
+    // on it rather than measure.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const row = document.createElement("div");
@@ -791,11 +744,9 @@ describe("the live-edge publisher", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The per-child observers. A child is watched because a code block expanding or
-// an image loading changes ITS box without changing the scroller's, and the
-// bookkeeping is what stops the registration set drifting from the transcript.
-// ---------------------------------------------------------------------------
+// The per-child observers. A child is watched because a code block expanding or an image loading
+// changes ITS box without changing the scroller's, and the bookkeeping is what stops the
+// registration set drifting from the transcript.
 describe("the per-child resize observers", () => {
   it("observes each child of the transcript as it arrives", async () => {
     const h = await freshModule();
@@ -806,8 +757,8 @@ describe("the per-child resize observers", () => {
   });
 
   it("stops observing a child that leaves", async () => {
-    // Not tidiness: an observer holding a removed turn keeps it alive for as long
-    // as the chat is open.
+    // Not tidiness: an observer holding a removed turn keeps it alive for as long as the chat is
+    // open.
     const h = await freshModule();
     const a = document.createElement("div");
     h.messagesEl.appendChild(a);
@@ -829,9 +780,8 @@ describe("the per-child resize observers", () => {
   });
 
   it("does not re-observe a child it is already watching", async () => {
-    // `observe()` on a live target re-delivers an entry for it, so re-registering
-    // every resident turn on every streamed chunk is a callback storm, not a
-    // no-op.
+    // `observe()` on a live target re-delivers an entry for it, so re-registering every resident
+    // turn on every streamed chunk is a callback storm, not a no-op.
     const h = await freshModule();
     const a = document.createElement("div");
     h.messagesEl.appendChild(a);
@@ -844,8 +794,8 @@ describe("the per-child resize observers", () => {
   });
 
   it("observes a child that comes back", async () => {
-    // Reconciliation can move a row out and put the same node back; the
-    // bookkeeping has to forget it in between or it is never watched again.
+    // Reconciliation can move a row out and put the same node back; the bookkeeping has to forget
+    // it in between or it is never watched again.
     const h = await freshModule();
     const a = document.createElement("div");
     h.messagesEl.appendChild(a);
@@ -858,11 +808,8 @@ describe("the per-child resize observers", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// One scroll per frame. Each chunk's small delta is what makes the motion read
-// as continuous; two writes in one frame are the stutter the module's header
-// comment is about.
-// ---------------------------------------------------------------------------
+// One scroll per frame. Each chunk's small delta is what makes the motion read as continuous; two
+// writes in one frame are the stutter the module's header comment is about.
 describe("the auto-scroll frame guard", () => {
   it("coalesces two triggers in the same frame into one scroll", async () => {
     const h = await freshModule();
@@ -887,13 +834,9 @@ describe("the auto-scroll frame guard", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The reader's control window stops the auto-scroll fighting a gesture still in
-// flight. Its end is EXCLUSIVE: a chunk arriving on the deadline arrives after the
-// gesture, and must move the transcript. Both cases GROW the document, because at
-// the live edge the suppressed write and the one that lands are the same number and
-// a fixture that does not grow it cannot fail.
-// ---------------------------------------------------------------------------
+// The reader's control window stops the auto-scroll fighting a gesture still in flight. Its end is
+// EXCLUSIVE: a chunk arriving on the deadline arrives after the gesture, and must move the
+// transcript.
 describe("the reader's control window", () => {
   it("scrolls a chunk that arrives exactly at the end of the window", async () => {
     const h = await freshModule();
@@ -901,8 +844,7 @@ describe("the reader's control window", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     readerScroll(h.scrollEl);
     expect(h.scroll.readingState()).toBe("following");
-    // READER_CONTROL_MS is 300, so 1300 is the first instant no longer inside the
-    // gesture.
+    // READER_CONTROL_MS is 300, so 1300 is the first instant no longer inside the gesture.
     now.mockReturnValue(1300);
     g.scrollHeight = 3000;
     h.messagesEl.appendChild(document.createElement("div"));
@@ -923,24 +865,20 @@ describe("the reader's control window", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Pagination's furniture and its safety net. The load is asynchronous — the
-// skeleton's disappearance is what marks it complete — so both the completion
-// path and the timeout that has to exist because a fetch can simply never land
-// are reachable only from here.
-// ---------------------------------------------------------------------------
+// Pagination's furniture and its safety net. The load is asynchronous — the skeleton's
+// disappearance is what marks it complete — so both the completion path and the timeout that has to
+// exist because a fetch can simply never land are reachable only from here.
 describe("pagination's skeleton", () => {
-  /** Wire a fetcher and park the reader at the top so the scroll listener asks
-   *  for a page. */
+  /** Wire a fetcher and park the reader at the top so the scroll listener asks for a page. */
   function startLoad(h: Harness, load: () => void): void {
     h.scroll.setLoadMore(load, true);
     readerScroll(h.scrollEl);
   }
 
   it("prepends the skeleton when there is no button left to replace", async () => {
-    // The button is consumed by the first fetch and nothing puts it back, so the
-    // second fetch of a session has nothing to swap and must place the skeleton
-    // itself — otherwise a reader waiting for an older page sees no sign of it.
+    // The button is consumed by the first fetch and nothing puts it back, so the second fetch of a
+    // session has nothing to swap and must place the skeleton itself — otherwise a reader waiting
+    // for an older page sees no sign of it.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     startLoad(h, () => undefined);
@@ -952,9 +890,9 @@ describe("pagination's skeleton", () => {
   });
 
   it("waits for the skeleton to go before restoring the reader", async () => {
-    // The page arrives in more than one mutation: the rows land, then the
-    // skeleton goes. Compensating on the first mutation restores against a
-    // height the page had not finished growing to.
+    // The page arrives in more than one mutation: the rows land, then the skeleton goes.
+    // Compensating on the first mutation restores against a height the page had not finished
+    // growing to.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     startLoad(h, () => undefined);
@@ -970,8 +908,8 @@ describe("pagination's skeleton", () => {
 });
 
 describe("pagination's safety timeout", () => {
-  /** The load-more window is 15s; only the module's own timer is faked, so
-   *  the real observers and frames keep running. */
+  /** The load-more window is 15s; only the module's own timer is faked, so the real observers
+   *  and frames keep running. */
   function useLoadTimeout(): void {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   }
@@ -987,8 +925,7 @@ describe("pagination's safety timeout", () => {
 
     vi.advanceTimersByTime(15_000);
     await settleFrames();
-    // The furniture goes, and the reader is not stuck: the next scroll to the
-    // top asks again.
+    // The furniture goes, and the reader is not stuck: the next scroll to the top asks again.
     expect(document.getElementById("load-more-skeleton")).toBeNull();
     g.scrollTop = 0;
     readerScroll(h.scrollEl);
@@ -996,9 +933,9 @@ describe("pagination's safety timeout", () => {
   });
 
   it("does not move the reader when it gives up", async () => {
-    // The transcript can have grown from streaming while the fetch hung, so the
-    // height delta the completion path would apply is real — and applying it
-    // here would jump a reader whose page never arrived.
+    // The transcript can have grown from streaming while the fetch hung, so the height delta the
+    // completion path would apply is real — and applying it here would jump a reader whose page
+    // never arrived.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     useLoadTimeout();
@@ -1012,9 +949,9 @@ describe("pagination's safety timeout", () => {
   });
 
   it("does not fire after the page has landed", async () => {
-    // The timer belongs to ONE load. Left armed, it expires in the middle of a
-    // LATER fetch and clears its in-flight flag, which is how two fetches end up
-    // in the air at once and a page lands twice.
+    // The timer belongs to ONE load. Left armed, it expires in the middle of a LATER fetch and
+    // clears its in-flight flag, which is how two fetches end up in the air at once and a page
+    // lands twice.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const load = vi.fn();
@@ -1025,8 +962,8 @@ describe("pagination's safety timeout", () => {
     g.scrollHeight = 1400;
     await settleFrames();
 
-    // One second short of the first load's window, then a second fetch — so the
-    // first load's deadline falls INSIDE the second load's flight.
+    // One second short of the first load's window, then a second fetch — so the first load's
+    // deadline falls INSIDE the second load's flight.
     vi.advanceTimersByTime(14_000);
     g.scrollTop = 0;
     readerScroll(h.scrollEl);
@@ -1035,8 +972,8 @@ describe("pagination's safety timeout", () => {
 
     vi.advanceTimersByTime(2_000);
     await settleFrames();
-    // The second fetch is still the one in flight: its furniture is untouched and
-    // nothing else may be started.
+    // The second fetch is still the one in flight: its furniture is untouched and nothing else may
+    // be started.
     g.scrollTop = 0;
     readerScroll(h.scrollEl);
     expect([
@@ -1046,17 +983,15 @@ describe("pagination's safety timeout", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The module-scope boot. Importing before the document is ready must not build
-// the controller against a transcript that is not in the DOM yet.
-// ---------------------------------------------------------------------------
+// The module-scope boot. Importing before the document is ready must not build the controller
+// against a transcript that is not in the DOM yet.
 describe("the deferred boot", () => {
   afterEach(() => {
     Reflect.deleteProperty(document, "readyState");
   });
 
-  /** Everything freshModule does except reaching into the module afterwards: the
-   *  point of these two tests is what the IMPORT alone did. */
+  /** Everything freshModule does except reaching into the module afterwards: the point of these
+   *  two tests is what the IMPORT alone did. */
   function stageDocument(): void {
     stubResizeObserver();
     document.body.replaceChildren();
@@ -1071,9 +1006,9 @@ describe("the deferred boot", () => {
   }
 
   it("wires the transcript on import when the document is already parsed", async () => {
-    // The ordinary case: the bundle runs after the document has been parsed, and
-    // nothing will fire DOMContentLoaded again — so deferring here would leave
-    // the transcript unwired until some other module happened to call in.
+    // The ordinary case: the bundle runs after the document has been parsed, and nothing will fire
+    // DOMContentLoaded again — so deferring here would leave the transcript unwired until some
+    // other module happened to call in.
     expect(document.readyState).toBe("complete");
     stageDocument();
     (await import(/* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`)) as typeof ScrollModule;

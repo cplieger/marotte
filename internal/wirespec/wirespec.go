@@ -1,14 +1,11 @@
 // Package wirespec is the single source of truth for marotte's wire contract: the
-// registered wire types, the enums, the TS-name and path-name overrides, and the
-// SSE event→decoder table cmd/wire-codegen feeds into wiregen to emit
+// registered wire types, the enums, the TS-name and path-name overrides, and the SSE
+// event-to-decoder table cmd/wire-codegen feeds into wiregen to emit
 // static-src/wire/{types,decoders,registry}.gen.ts.
 //
-// wiregen is a BUILD-TIME-ONLY dependency: this package is imported by
-// cmd/wire-codegen and by tests, never by the server runtime, or go/packages and
-// golang.org/x/tools would enter the server binary.
-//
-// There is deliberately NO endpoint table: marotte generates neither a typed client
-// nor Go path constants, so one here would be an unverified copy of the routing.
+// Build-time only: imported by cmd/wire-codegen and tests, never the server, or
+// go/packages would enter the binary. No endpoint table: nothing generates a typed client
+// or path constants, so one would be an unverified copy of the routing.
 package wirespec
 
 import (
@@ -35,21 +32,20 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ToolDisclosed](),
 	wiregen.TypeRef[marotte.ToolDenialRule](),
 	wiregen.TypeRef[marotte.ToolDenial](),
+	wiregen.TypeRef[marotte.ToolOffload](),
+	wiregen.TypeRef[marotte.ToolInteraction](),
 	wiregen.TypeRef[marotte.TextSpan](),
 	wiregen.TypeRef[marotte.ToolTruncation](),
 	wiregen.TypeRef[marotte.ToolCall](),
-	// A REST response, after ToolDiff and TextSpan, which it references. No
-	// `Payload` suffix, so the SSE-binding test exempts it by construction.
+	// A REST response, after ToolDiff and TextSpan. No `Payload` suffix, so the SSE-binding
+	// test exempts it.
 	wiregen.TypeRef[marotte.ToolCallBulk](),
 	wiregen.TypeRef[marotte.PlanEntry](),
 	wiregen.TypeRef[marotte.CodeReference](),
 	wiregen.TypeRef[marotte.RefusalInfo](),
 	wiregen.TypeRef[marotte.Attachment](),
-	// The turn entry log: the envelope, the open-entry shape and the sixteen
-	// payloads. Each payload after the types it references (ToolCall's sub-types,
-	// PlanEntry, RefusalInfo, CodeReference, Attachment above; FileChange is
-	// registered below, so EntryTurnClose sits after it). No `Payload` suffix: these
-	// are entry payloads, not SSE payloads, and the binding test keys on the suffix.
+	// The turn entry log: the envelope, the open-entry shape and the payloads, each after the
+	// types it references (EntryTurnClose after FileChange below). No `Payload` suffix.
 	wiregen.TypeRef[marotte.Entry](),
 	wiregen.TypeRef[marotte.OpenEntry](),
 	wiregen.TypeRef[marotte.EntryPrompt](),
@@ -74,14 +70,16 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.SessionMode](),
 	wiregen.TypeRef[marotte.SessionModel](),
 	wiregen.TypeRef[marotte.SessionEffortLevel](),
-	// Registered so the pre-session catalog fetch reads a GENERATED decoder rather
-	// than an unchecked cast: `modes` was read as `d.modes.length` with nothing
-	// behind the claim, so `modes: null` was a TypeError inside the boot path.
+	// Registered so the pre-session catalog fetch reads a generated decoder, not a cast.
 	wiregen.TypeRef[marotte.ConfigTemplateResponse](),
+	// Before ChatHeader, which holds it.
+	wiregen.TypeRef[marotte.QueuedPrompt](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
 	wiregen.TypeRef[marotte.ApprovalFile](),
+	wiregen.TypeRef[marotte.PermissionWatch](),
 	wiregen.TypeRef[marotte.FileChange](),
+	wiregen.TypeRef[marotte.TurnThroughput](),
 	wiregen.TypeRef[marotte.EntryTurnClose](),
 	wiregen.TypeRef[marotte.ConnectedPayload](),
 	wiregen.TypeRef[marotte.SubjectStamp](),
@@ -97,6 +95,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TurnClosedPayload](),
 	wiregen.TypeRef[marotte.SteerQueuedPayload](),
 	wiregen.TypeRef[marotte.AgentNoticePayload](),
+	wiregen.TypeRef[marotte.SystemNoticePayload](),
 	// Before the two types that reference it.
 	wiregen.TypeRef[marotte.TabSubject](),
 	wiregen.TypeRef[marotte.TabsChangedPayload](),
@@ -144,9 +143,13 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.PolicyErrorPayload](),
 	wiregen.TypeRef[marotte.SafetyProperty](),
 	wiregen.TypeRef[marotte.SafetyStatusPayload](),
+	wiregen.TypeRef[marotte.KnowledgeIndexingPayload](),
 	wiregen.TypeRef[marotte.SafetyPropertiesPayload](),
 	wiregen.TypeRef[marotte.GovernanceFeatures](),
 	wiregen.TypeRef[marotte.GovernanceStatePayload](),
+	wiregen.TypeRef[marotte.GovernanceLock](),
+	wiregen.TypeRef[marotte.GovernanceMCPRegistry](),
+	wiregen.TypeRef[marotte.GovernanceRegistryServer](),
 	wiregen.TypeRef[marotte.ToolJob](),
 	wiregen.TypeRef[marotte.ToolRateLimit](),
 	wiregen.TypeRef[marotte.ToolInfo](),
@@ -159,11 +162,15 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ToolRemoveResponse](),
 	wiregen.TypeRef[marotte.ToolsJobsResponse](),
 	wiregen.TypeRef[marotte.ToolCatalogInfo](),
+	// GET /api/slash-commands and GET /api/steering/issues.
+	wiregen.TypeRef[marotte.SlashArgument](),
+	wiregen.TypeRef[marotte.SlashCommand](),
+	wiregen.TypeRef[marotte.SlashCommandsResponse](),
+	wiregen.TypeRef[marotte.SteeringIssue](),
+	wiregen.TypeRef[marotte.SteeringIssuesResponse](),
 	wiregen.TypeRef[marotte.Recipe](),
 	wiregen.TypeRef[marotte.RecipesResponse](),
-	// GET /api/sessions. Registered so the History picker reads the per-list
-	// verdicts through a decoder: they had no client reader at all, so "nothing to
-	// resume" and "the read failed" rendered identically.
+	// GET /api/sessions, so the History picker can tell "nothing to resume" from a failed read.
 	wiregen.TypeRef[marotte.ResumableSession](),
 	wiregen.TypeRef[marotte.WorkflowRun](),
 	wiregen.TypeRef[marotte.SessionListResponse](),
@@ -175,27 +182,25 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunRetriedResponse](),
 	wiregen.TypeRef[marotte.RunLaunchRequest](),
 	wiregen.TypeRef[marotte.RunLaunchedResponse](),
-	// A request shape the client composes: generated rather than hand-mirrored, so
-	// a field rename cannot land on one side only.
+	// A request the client composes, generated so a rename cannot land on one side only.
 	wiregen.TypeRef[marotte.RunAnswerRequest](),
+	wiregen.TypeRef[marotte.RunExtendRequest](),
+	wiregen.TypeRef[marotte.RunFinishLoopRequest](),
 	wiregen.TypeRef[marotte.RunStartedPayload](),
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
 	wiregen.TypeRef[marotte.RunInputNeededPayload](),
 	wiregen.TypeRef[marotte.RunInputSettledPayload](),
-	// GET /api/runs/{id}'s `open_asks`. No `Payload` suffix, so the SSE-binding test
-	// exempts it: it is a read reply rather than an event payload.
+	// GET /api/runs/{id}'s `open_asks`, a read reply, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.RunOpenAsk](),
-	// GET /api/runs/{id}/steps/{path...}. No field carries omitempty, so `state` is
-	// a REQUIRED TypeScript field and a reader cannot invent "assume ready".
+	// GET /api/runs/{id}/steps/{path...}. No omitempty, so `state` is REQUIRED in TypeScript.
 	wiregen.TypeRef[marotte.RunStepTranscript](),
 	wiregen.TypeRef[marotte.ToolJobChangedPayload](),
 	wiregen.TypeRef[marotte.ToolJobOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
 	wiregen.TypeRef[marotte.TerminalOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalExitedPayload](),
-	// GET /api/settings. Every field is required on both sides (no omitempty),
-	// which is what lets the client hold no defaults of its own.
+	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
 	// The list envelopes after the rows and parts they hold.
@@ -238,9 +243,9 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[forges.PollResult](),
 	wiregen.TypeRef[forges.Detection](),
 	wiregen.TypeRef[auth.WhoamiResponse](),
-	// The search replies. Each embeds textsearch.Tally, which wiregen flattens
-	// into the reply's own fields, so `scanned`/`matched`/`truncated` are REQUIRED
-	// on every one and a client cannot read an absent count as zero.
+	wiregen.TypeRef[auth.LoginOptions](),
+	// The search replies embed textsearch.Tally, which wiregen flattens, so
+	// `scanned`/`matched`/`truncated` are REQUIRED on every one.
 	wiregen.TypeRef[chat.Hit](),
 	wiregen.TypeRef[chat.SearchResult](),
 	wiregen.TypeRef[chat.Match](),
@@ -261,47 +266,44 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[server.KiroDocsResponse](),
 }
 
-// wireEnums names the string enums to emit; values are auto-discovered from each
-// type's const block in the registered types' packages.
+// wireEnums names the string enums to emit; values are auto-discovered from each type's
+// const block. Each is a vocabulary a client branch or wording table must cover TOTALLY,
+// so one generated union makes a missing arm a compile error in both languages.
 var wireEnums = map[string]wiregen.EnumDef{
 	"ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
 	"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
-	// The rule producing it is implemented in BOTH languages, so a hand-written
-	// client union would be a second enumeration of one vocabulary.
+	// The rule producing it is implemented in BOTH languages.
 	"TurnOutcome": {},
-	// Five client surfaces BRANCH on it, and those branches must be total over the
-	// vocabulary.
+	// turn_close.failure_kind; the turn notice's remedy button branches on it.
+	"FailureKind": {},
+	// Five client surfaces branch on it.
 	"TurnSeverity": {},
-	// The entry dispatcher's switch over the seventeen kinds must be total, and the
-	// decoder rejects a kind the client has no arm for.
+	// The entry dispatcher's switch; the decoder rejects a kind with no arm.
 	"EntryKind": {},
-	// The revert's cause, so the client's wording record is keyed on the generated
-	// union and a second cause is a compile error on both sides.
+	// The revert's cause, keying the client's wording record.
 	"TurnRevertCause": {},
-	// The banner says who switched the mode, so the client's copy switch over it
-	// must be total.
+	// The banner says who switched the mode.
 	"ModeSwitchSource": {},
+	// The client words a KAS repin's reason, so its wording table must be total.
+	"ModelSwitchReason": {},
 	// turn_open.source, spelled once for both languages.
-	"TurnOpenSourceName": {},
-	"SafetyStatus":       {},
+	"TurnOpenSourceName":      {},
+	"SafetyStatus":            {},
+	"KnowledgeIndexingPhase":  {},
+	"KnowledgeIndexingStatus": {},
 	// The client's label switch over it must be TOTAL.
 	"SteerOrigin": {},
-	// The renderer BRANCHES on it — a not-delivered steer renders as a different
-	// note from a delivered one — and absence is a third answer that branch has to
-	// keep, so a hand-written union would be a second enumeration of one vocabulary.
+	// The renderer branches on it, and absence is a third answer.
 	"SteerState": {},
-	// The client WORDS it rather than branching on it, and the wording table has
-	// to be TOTAL over the vocabulary: a reason with no clause renders the bare
-	// state, so the note reads as if nothing had gone wrong. A generated union is
-	// what makes `Record<SteerReason, string>` fail to compile on a reason nobody
-	// worded, which a hand-written union of one language cannot do.
+	// Worded, not branched on: `Record<SteerReason, string>` fails on an unworded reason.
 	"SteerReason": {},
 	// The dock's row controls branch on it, so the branch must be total.
-	"SteerRowState":   {},
+	"SteerRowState": {},
+	// The toast colour is chosen by it, so the client fold must be total.
+	"NoticeLevel":     {},
 	"RunProgressKind": {},
-	// Registered for the same reason: the client folds over both status
-	// vocabularies, and every fold must stay total.
+	// The client folds over both status vocabularies.
 	"RunStatus":     {},
 	"RunNodeStatus": {},
 	// Registered for CatalogState's reason below.
@@ -309,43 +311,39 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"DecisionKind":           {},
 	"SettledBy":              {},
 	"AlwaysAllowBlock":       {},
-	// So the ten kinds have ONE definition across both languages. It was a
-	// hand-written union in tabs.ts, so a kind added server-side reached a client
-	// switch with no case for it and no build error anywhere, and TabSubject.kind
-	// now fails the generated decoder at the boundary instead.
+	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
 	"TabKind": {},
-	// The spec page labels a segment by its role, so an unknown one fails the
-	// decoder at the boundary rather than rendering an unlabelled segment.
+	// The composer's placeholder and the + menu's radio branch on it.
+	"InterruptMode": {},
+	// The spec page labels a segment by its role.
 	"SpecDocRole": {},
-	// The client BRANCHES on the verdict to decide whether to retry and what to
-	// say, so a value it has no case for is the failure the type prevents.
+	// The client branches on the verdict to decide whether to retry and what to say.
 	"CatalogState":  {},
 	"CatalogReason": {},
 	// Registered for CatalogState's reason: the History picker branches on it.
 	"ReadState": {},
-	// The client's branch over it must be TOTAL: "marotte could not ask" has to
-	// render a retry rather than a sign-in prompt.
+	// "marotte could not ask" must render a retry, not a sign-in prompt.
 	"WhoamiState": {},
 	"Transport":   {},
-	// A hit names the span it landed in, and the client resolves each kind to a
-	// different rendered surface, so the decoder is strict: a kind the client has
-	// no arm for fails the reply rather than resolving to no element.
+	// Each kind resolves to a different rendered surface; the decoder is strict.
 	"SegmentKind": {},
 	// The client branches on it to say "wait" or "narrow the query".
 	"RegistryFailureReason": {},
-	// The client BRANCHES on it — a directory row navigates the browser, a name
-	// row opens the editor, a content row opens it at a line — and the decoder is
-	// strict, so a kind the client has no arm for fails the reply rather than
-	// rendering a row nothing can open.
+	// Directory, name and content rows open differently; the decoder is strict.
 	"FileMatchKind": {},
+	// The MCP panel treats "user" as marotte's own row and words every other origin.
+	"Origin": {}, // marotte.Origin → MCPOrigin
 	// The preview toolbar maps a hint onto its width radios, so the map is total.
 	"PreviewPreset":     {},
 	"PreviewHintSource": {},
+	// The slash menu disables prompt and steering rows mid-turn.
+	"SlashCommandKind": {},
 }
 
 // enumTSNames renames an enum on the TypeScript side.
 var enumTSNames = map[string]string{
-	"Kind": "ForgeKind", // forges.Kind → ForgeKind in TS
+	"Kind":   "ForgeKind", // forges.Kind → ForgeKind in TS
+	"Origin": "MCPOrigin", // a bare Origin reads ambiguously beside SteerOrigin
 }
 
 // pathNameOverrides pins the snake_case path for a name whose acronym cluster
@@ -388,10 +386,12 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "run_input_settled", TypeName: "RunInputSettledPayload"},
 	{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 	{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
+	{EventType: "knowledge_indexing", TypeName: "KnowledgeIndexingPayload"},
 	{EventType: "tool_job_changed", TypeName: "ToolJobChangedPayload"},
 	{EventType: "tool_job_output", TypeName: "ToolJobOutputPayload"},
 	{EventType: "steer_queued", TypeName: "SteerQueuedPayload"},
 	{EventType: "agent_notice", TypeName: "AgentNoticePayload"},
+	{EventType: "system_notice", TypeName: "SystemNoticePayload"},
 	// The agent-terminal trio.
 	{EventType: "terminal_created", TypeName: "TerminalCreatedPayload"},
 	{EventType: "terminal_output", TypeName: "TerminalOutputPayload"},
@@ -410,20 +410,15 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "forge_inventory", TypeName: "InventoryChangedPayload"},
 }
 
-// Registry returns the fully-populated wiregen registry: the generator options plus
-// the declarative tables above.
-//
-// The tables are CLONED rather than aliased: the generator is free to reorder or
-// extend what it is given, and this package's own tests call Registry() twice.
+// Registry returns the fully-populated wiregen registry: the generator options plus the
+// tables above, CLONED because the generator may reorder or extend what it is given.
 func Registry() *wiregen.Registry {
 	r := wiregen.NewRegistry(
 		wiregen.WithValidatorsImport("../validators.js"),
-		// Library-owned generated output: Generate rewrites it next to the
-		// hand-written source on every run. Never hand-edit it.
+		// Library-owned generated output, rewritten on every run. Never hand-edit it.
 		wiregen.WithValidatorsFile("../validators.ts"),
 		wiregen.WithBusImport("../bus.js"),
-		// The property test iterates the emitted ARBITRARY_BY_TYPE, so a wire
-		// type added here cannot reach the wire without one.
+		// The property test iterates ARBITRARY_BY_TYPE, so a new wire type needs an arbitrary.
 		wiregen.WithArbitrariesFile("arbitraries.gen.ts"),
 		wiregen.WithHeaderComment("// CODE-GENERATED by cmd/wire-codegen, DO NOT EDIT.\n\n"),
 	)

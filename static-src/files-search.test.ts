@@ -1,12 +1,8 @@
-// Find in files: the request it builds, the honesty of its note, and the
-// second-press escape hatch that is the a11y justification for overriding Ctrl-F
-// at all.
+// Find in files: the request, the note's honesty, and the second-press escape hatch that justifies overriding Ctrl-F.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import type { FileMatch, FileSearchResult } from "./wire/types.gen.js";
 
-/** The wire, as the test controls it: what the server would have answered. A
- *  fixture typed as the reply so a case cannot build one the decoder refuses by
- *  accident; the one case that wants a refusal forges it deliberately. */
+/** Typed as the reply so a case cannot build one the decoder refuses by accident. */
 const apiGet = vi.fn<(url: string, signal?: AbortSignal) => Promise<unknown>>();
 const openAtLine = vi.fn();
 const activateBrowser = vi.fn();
@@ -28,9 +24,7 @@ vi.mock("./api-client.js", () => ({
       this.ctrl = null;
     }
   },
-  // The production shape, over the wire fixture above: a fixture passes through
-  // the REAL generated decoder, so a reply the bundle cannot read collapses to
-  // null here exactly as it does in production.
+  // Through the real generated decoder, so an unreadable reply collapses to null as in production.
   apiGetTyped: async (
     url: string,
     decoder: (v: unknown) => unknown,
@@ -50,21 +44,18 @@ vi.mock("./api-client.js", () => ({
 vi.mock("./navigate.js", () => ({
   openAtLine: (path: string, line?: number) => openAtLine(path, line),
 }));
-// ICON_CLOSE_UI is inert: search-shell.ts imports it, so ESM linking needs the name.
+// ICON_CLOSE_UI is inert: search-shell.ts imports it.
 vi.mock("./icons.js", () => ({ fileIcon: () => "<svg></svg>", ICON_CLOSE_UI: "<svg></svg>" }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
-// The whole tab store, inert. Complete rather than the two names this module reads,
-// because Browser Mode links ESM for real and tabs.ts drags a dozen modules behind
-// it — a partial factory here fails the whole file's COLLECTION rather than one case.
+// The whole tab store: Browser Mode links ESM for real and tabs.ts drags a dozen modules behind it.
 vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   getActiveTabId: () => activeTabID,
   getActiveTabKind: () => activeTabKind,
 }));
-// keys.ts's only non-bus dependency, so its real listener can be installed below.
+// keys.ts's only non-bus dependency, so its real listener can be installed.
 vi.mock("./modals.js", () => ({ closeTopModal: () => false, openModal: vi.fn() }));
 
-/** The tab the bar opens over, and the kind the type-ahead gate reads. */
 let activeTabID = "files-a";
 let activeTabKind: string | null = "files";
 
@@ -86,8 +77,6 @@ const {
   _filesSearchResults,
 } = mod;
 
-/** A reply whose `matched` defaults to the row count: nothing cut unless a case
- *  says so. */
 function result(over: Partial<FileSearchResult> = {}): FileSearchResult {
   const matches = over.matches ?? [];
   return { matches, scanned: 0, matched: matches.length, truncated: false, ...over };
@@ -105,7 +94,6 @@ function ctrlF(): KeyboardEvent {
   return new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true });
 }
 
-/** Let the debounce fire and the awaited fetch settle. */
 async function settle(): Promise<void> {
   await vi.advanceTimersByTimeAsync(150);
   await Promise.resolve();
@@ -113,11 +101,7 @@ async function settle(): Promise<void> {
 
 let searchPath = "workspace/src";
 
-// The fixture DOM and the wiring are built ONCE, because the module attaches its
-// lazily-built bar to this DOM and keeps a reference to it — exactly as it does
-// against the real files view, which also outlives every open and close. Tearing
-// the body down per test would leave that reference pointing at a detached node,
-// which is a property of the fixture rather than of the module.
+// Built once: the module keeps a reference to its lazily built bar, as against the real files view.
 beforeAll(() => {
   document.body.innerHTML = `
     <div class="fb-list-wrap">
@@ -125,9 +109,7 @@ beforeAll(() => {
     </div>
     <button type="button" id="find-btn" aria-pressed="false"></button>`;
   initFilesSearch({ getSearchPath: () => searchPath, activateBrowser, openFolder });
-  // keys.ts's REAL document listener, installed once (it guards against a second
-  // install), so the `?` case below measures the actual interaction rather than a
-  // stand-in for it. It acts only on Escape, a bare `?` and Ctrl chords.
+  // keys.ts's real document listener, so the `?` case measures the real interaction.
   initKeyboardShortcuts({
     newChat: vi.fn(),
     toggleShell: vi.fn(),
@@ -155,10 +137,7 @@ beforeEach(() => {
   activeTabID = "files-a";
   activeTabKind = "files";
   resetFilesSearch();
-  // This fixture loads no stylesheet, so `.hidden` paints nothing and a closed bar
-  // keeps whatever focus the previous case left in its field. The real one is
-  // display:none, which the engine blurs — so the blur restores the state a closed
-  // bar is actually in, rather than papering over a production behaviour.
+  // No stylesheet loads, so a closed bar keeps focus; the blur restores what display:none would.
   if (document.activeElement instanceof HTMLElement) {
     document.activeElement.blur();
   }
@@ -211,8 +190,7 @@ describe("hitKey", () => {
   });
 
   it("separates hits whose paths differ only where a colon falls", () => {
-    // A colon is a legal filename character, which is why the composite goes
-    // through keyenc instead of a template literal.
+    // A colon is a legal filename character, hence keyenc.
     const a = hitKey({ path: "/w/a:1", excerpt: "", kind: "content", line: 2 });
     const b = hitKey({ path: "/w/a", excerpt: "", kind: "content", line: 12 });
     expect(a).not.toBe(b);
@@ -257,11 +235,7 @@ describe("the search bar", () => {
     expect(openAtLine).toHaveBeenCalledWith("/workspace/src/a.go", 12);
   });
 
-  // --- The note is the reply's tally through the shared grammar -----------
-  //
-  // The words are copy.ts's and pinned there; what these cases pin is which FACTS
-  // this surface hands it, because a scan that stopped or a list that was cut
-  // has to be stated over an answer the reader would otherwise read as whole.
+  // The words are copy.ts's; these pin which facts this surface hands it.
 
   async function noteFor(res: FileSearchResult): Promise<string | null | undefined> {
     apiGet.mockResolvedValue(res);
@@ -365,7 +339,7 @@ describe("the search bar", () => {
     input().value = "two";
     input().dispatchEvent(new Event("input"));
     await settle();
-    // The first query's answer arrives last. It must not land.
+    // The first query's answer arrives last and must not land.
     releaseFirst?.();
     await settle();
 
@@ -417,12 +391,7 @@ describe("the search bar", () => {
     expect(apiGet.mock.calls.at(-1)?.[0]).toContain("include=*.go");
   });
 
-  // --- Name hits -------------------------------------------------------
-  //
-  // KIND decides the row's SHAPE and where it goes, and the kind is a registered
-  // wire enum: the generated decoder refuses a value this bundle has no arm for,
-  // so the untrusted-wire question is answered at the boundary rather than in the
-  // row.
+  // Kind decides a row's shape and destination; it is a registered wire enum, so the decoder refuses an unknown value.
 
   async function search(matches: FileMatch[]): Promise<HTMLElement[]> {
     apiGet.mockResolvedValue(result({ scanned: 1, matches }));
@@ -439,8 +408,7 @@ describe("the search bar", () => {
     ]);
     expect(row?.querySelector(".fb-search-lineno")).toBeNull();
     expect(row?.querySelector(".fb-search-excerpt")).toBeNull();
-    // The label is hitLabel's, unchanged by the kind: this fixture's search path
-    // is rootless, so nothing strips and the absolute form is the honest answer.
+    // The label is hitLabel's; this search path is rootless, so the absolute form is honest.
     expect(row?.querySelector(".fb-name")?.textContent).toBe("/workspace/src/cover-book.png");
   });
 
@@ -458,15 +426,12 @@ describe("the search bar", () => {
     ]);
     row?.click();
     expect(openFolder).toHaveBeenCalledWith("/workspace/src/notebook-dir");
-    // A folder is not a file: reaching the editor here would open a directory.
+    // A folder is not a file: the editor would open a directory.
     expect(openAtLine).not.toHaveBeenCalled();
   });
 
   it("refuses a reply naming a kind this bundle does not know, rather than rendering a row nothing can open", async () => {
-    // A kind added server-side that this bundle has never heard of. It is a
-    // registered enum, so the decoder fails the whole reply and the surface
-    // reports it as a search that could not be run — a row for it could reach
-    // neither the folder door nor the editor honestly.
+    // An unknown kind fails the whole reply, reported as a search that could not run.
     apiGet.mockResolvedValue({
       matches: [{ path: "/workspace/src/book.bin", excerpt: "", kind: "sigil", line: 0 }],
       scanned: 1,
@@ -488,8 +453,7 @@ describe("the search bar", () => {
       { path: "/workspace/src/book.md", excerpt: "", kind: "name", line: 0 },
       { path: "/workspace/src/book.md", excerpt: "a book here", kind: "content", line: 7 },
     ]);
-    // matchLines starts at line 1, so a name hit's line 0 cannot collide with a
-    // content hit for the same path: two rows, keyed distinctly, no dedupe.
+    // matchLines starts at 1, so a name hit's line 0 cannot collide with a content hit.
     expect(name).not.toBe(content);
     expect(name?.querySelector(".fb-search-lineno")).toBeNull();
     expect(content?.querySelector(".fb-search-lineno")?.textContent).toBe(":7");
@@ -538,12 +502,7 @@ describe("the Ctrl-F hotkey", () => {
 });
 
 describe("a tab switch", () => {
-  // This bar was the one search surface that survived a tab switch — the
-  // transcript's and the editor's have closed on it for as long as they have
-  // existed. So the browser kept a stale hit list and a stale query where its
-  // directory listing belongs, and the next visit to the file browser opened in
-  // search mode. Reported as a chat's search being inherited by the files tab,
-  // because that is the gesture that exposes it.
+  // The bar now closes on leaving the browser, as the transcript's and editor's do.
   function leaveBrowser(): void {
     bus.emitBus(bus.BUS_TAB_CHANGED, { to: "c-1", kind: "chat" });
   }
@@ -578,11 +537,7 @@ describe("a tab switch", () => {
   });
 
   it("does NOT close when the switch is ARRIVING at the tab that owns the bar", () => {
-    // openFilesSearch activates the files tab before it opens the bar, and the tab
-    // store announces that switch from a batched effect — so a subscriber keyed on
-    // "any change" would fire after the open landed and shut the bar the user just
-    // asked for. Keying on the owning tab's IDENTITY is what makes the order
-    // irrelevant: the arriving emit names the very tab the bar was recorded against.
+    // The tab switch is announced from a batched effect after the open, so the teardown keys on identity.
     openFilesSearch();
     expect(_isFilesSearchOpen()).toBe(true);
     bus.emitBus(bus.BUS_TAB_CHANGED, { to: activeTabID, kind: "files" });
@@ -590,9 +545,7 @@ describe("a tab switch", () => {
   });
 
   it("DOES close on a switch to another FILES tab, which the kind test could not see", () => {
-    // Two browsers are one subject apiece now, so `kind: "files"` no longer means
-    // "arriving where the bar already is": tab B would inherit A's query and hit
-    // list while its own directory sat hidden behind them.
+    // Two browsers are two subjects: tab B must not inherit A's query.
     openFilesSearch();
     expect(_isFilesSearchOpen()).toBe(true);
     bus.emitBus(bus.BUS_TAB_CHANGED, { to: "files-b", kind: "files" });
@@ -600,9 +553,7 @@ describe("a tab switch", () => {
   });
 
   it("resets nothing for an owner nobody recorded, so an empty strip is left alone", () => {
-    // getActiveTabId() answers "" on an empty strip. A bar opened in that state has
-    // no owner to compare against, and tearing it down on the first activation that
-    // follows would be a behaviour this change invented.
+    // An empty strip answers ""; a bar opened then has no owner, so no teardown fires.
     activeTabID = "";
     openFilesSearch();
     expect(_isFilesSearchOpen()).toBe(true);
@@ -615,26 +566,18 @@ describe("a tab switch", () => {
     closeFilesSearch();
     input().value = "Foo";
     bus.emitBus(bus.BUS_TAB_CHANGED, { to: "files-b", kind: "files" });
-    // resetFilesSearch would have cleared the field; the owner is "" so nothing ran.
     expect(input().value).toBe("Foo");
   });
 });
 
-// Item 5: the bar's third door, and the only one that is neither a click nor a
-// chord. What a synthetic KeyboardEvent CANNOT do is insert text — no engine types
-// for a dispatched event — so "the character lands in the field" is measured as the
-// two conditions the platform needs for it: the field holds focus during this
-// keydown, and the default was not prevented. Appending the character by hand is
-// exactly what would lose a dead key or an IME composition.
+// A synthetic KeyboardEvent inserts no text, so "the character lands" is measured as focus at keydown.
 describe("type-to-search", () => {
-  /** Drive the handler directly, as app.ts's document listener does. */
   function typeAhead(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
     const e = new KeyboardEvent("keydown", { key, cancelable: true, ...init });
     handleFilesTypeAhead(e);
     return e;
   }
 
-  /** Through the real document, so keys.ts's listener runs first. */
   function pressOnDocument(key: string): void {
     document.body.dispatchEvent(
       new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
@@ -715,36 +658,25 @@ describe("type-to-search", () => {
   });
 
   it("does not re-open a bar that is already open", () => {
-    // The observable is the SELECTION, not the text: `openFilesSearch` ends in
-    // shell.focus(), whose select() would leave the whole query highlighted, so the
-    // next character the reader typed would REPLACE what they had typed so far
-    // instead of extending it. Nothing clears the field, so asserting on `value`
-    // passes with the guard deleted.
+    // Observed as the selection: `shell.focus()` selects, so the next character would replace the query.
     openFilesSearch();
     input().value = "Foo";
     input().setSelectionRange(3, 3);
-    // Focus legitimately leaves the field while the bar is open — a hit row is a tab
-    // stop with its own Enter/Space handling — so the focus guard above does not
-    // cover this case and the open test is the one doing the work.
+    // A hit row is a tab stop, so focus leaves the field while open; the open test does the work.
     input().blur();
     typeAhead("b");
     expect([input().selectionStart, input().selectionEnd]).toEqual([3, 3]);
   });
 
   it("does not open when no browser is BOUND, which would search the mounts root", () => {
-    // FEAT-004 answers "" for the search root between a files tab's activation and
-    // the lazy refresh()'s bind. This door is what makes that window reachable on a
-    // bare keystroke, so the guard is the same test the query itself makes.
+    // The search root answers "" between activation and the lazy bind.
     searchPath = "";
     typeAhead("b");
     expect(_isFilesSearchOpen()).toBe(false);
   });
 
   it("never sees a bare ?, because keys.ts stops the event for the shortcuts sheet", () => {
-    // keys.ts calls stopImmediatePropagation so the `?` is not ALSO typed into the
-    // composer while the sheet opens; that stops every later document listener on
-    // the same node, and this handler is one of them. Correct, and undocumented
-    // until now: `?` cannot open the file search.
+    // keys.ts calls stopImmediatePropagation so `?` is not typed into the composer, which also stops this handler.
     shortcutsSheet.mockClear();
     pressOnDocument("?");
     expect(shortcutsSheet).toHaveBeenCalledTimes(1);

@@ -1,17 +1,13 @@
-// ---------------------------------------------------------------------------
-// Whether this tab shows the pull-request list: the git view on screen, its
-// Pull requests panel the active one, and the page visible. The two elements'
-// `hidden` class is the one state every way in and out of the list writes
-// (tabs.ts `showView`, git-tabs.ts), so it is observed rather than mirrored.
-// ---------------------------------------------------------------------------
+// Whether this tab shows the PR list: the git view on screen, its PRs panel active, the page visible. The `hidden`
+// class is the one state every way in and out writes, so it is observed rather than mirrored.
 
-/** How often a list on screen says so again: one poll interval, the cadence the
- *  watch holds the poller at. */
+/** One poll interval, the cadence the watch holds the poller at. */
 const WATCH_RENEW_MS = 60_000;
 
-/** This page's name in every watch. The SSE-Client tag is the browser
- *  profile's, shared by its sibling pages, so the server keys a viewer on the
- *  tag and this name together. */
+/**
+ * This page's name in every watch. The SSE-Client tag is the profile's, shared by sibling pages, so the server keys a
+ * viewer on the tag and this name together.
+ */
 export const VIEW_PAGE = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
   b.toString(16).padStart(2, "0"),
 ).join("");

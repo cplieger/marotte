@@ -6,16 +6,8 @@ import (
 	"unicode"
 )
 
-// TestSanitizeRule_RejectsC1Controls closes the gap the Unicode-17 currency
-// sweep surfaced: isCtrl was `r < 0x20 || r == 0x7f`, which covers C0 and DEL and
-// lets the whole C1 block (U+0080-U+009F) through, so 32 of unicode.Cc's 65
-// members passed a gate whose own doc says it rejects control characters.
-//
-// The direction of the gap is why it matters. This is a REFUSE gate, so a missed
-// rune fails OPEN and the token lands in permissions.yaml. U+0085 NEXT LINE is
-// the worst of the 32: many renderers treat it as a line break, so a capability
-// or match pattern carrying one displays in the permissions editor as two lines
-// while the stored rule is one — and the rule governs every later tool call.
+// TestSanitizeRule_RejectsC1Controls asserts that the C1 block (U+0080-U+009F) must be refused as C0 and DEL
+// are, since a miss fails open into permissions.yaml.
 func TestSanitizeRule_RejectsC1Controls(t *testing.T) {
 	for _, r := range []rune{0x0080, 0x0085, 0x009B, 0x009F} {
 		t.Run(runeName(r), func(t *testing.T) {

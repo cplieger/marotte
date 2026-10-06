@@ -1,4 +1,3 @@
-// Tests for notify.ts action configuration and error paths.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -10,15 +9,8 @@ vi.mock("../api-client.js", () => ({
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds, and this pair is the record of
-  // the two times the graph reaching this factory has widened. `apiGetTyped` is how
-  // tabs-sync reads `GET /api/tabs`, and other modules reached through it import
-  // `apiGet`. `apiGetOrError` came later: `run-store.ts`, `runtime-health.ts` and
-  // `editor-openers.ts` all import it statically, so once one of them entered this
-  // graph the whole FILE stopped collecting — a partial factory links for real, and
-  // a missing name is a `SyntaxError` at import rather than a failing assertion.
-  // Nothing here calls any of them; the same key is in every sibling factory in this
-  // directory for that reason, whether or not that file's graph reaches it today.
+  // Inert: present only so real-ESM linking succeeds. Kept in every sibling factory, since a
+  // missing name is a link-time `SyntaxError` for the whole file once the graph reaches it.
   apiGetTyped: vi.fn(),
   apiGetOrError: vi.fn(),
 }));
@@ -71,12 +63,8 @@ describe("registerPush", () => {
   });
 
   it("throws when serviceWorker not supported", async () => {
-    // Production asks `"serviceWorker" in navigator`, so the absence has to be
-    // real: an own `undefined` shadow still answers TRUE to `in`, and a `delete`
-    // on the instance removes nothing because the property is an accessor on
-    // Navigator.prototype. Taking it off the PROTOTYPE for the duration is the
-    // only shape that expresses "this browser does not have it", and it is put
-    // back in the finally.
+    // Production asks `"serviceWorker" in navigator`, and the property is an accessor on
+    // Navigator.prototype, so only removing it there (restored in finally) makes it absent.
     const proto = Object.getPrototypeOf(navigator) as object;
     const orig = Object.getOwnPropertyDescriptor(proto, "serviceWorker");
     Reflect.deleteProperty(proto, "serviceWorker");
@@ -109,16 +97,13 @@ describe("registerPush", () => {
   });
 
   it("rolls back toggle on failure", async () => {
-    // Create a toggle element
     const toggle = document.createElement("input");
     toggle.type = "checkbox";
     toggle.id = "notify-toggle";
     toggle.checked = true;
     document.body.appendChild(toggle);
 
-    // The action's rollback dispatches a custom event; the UI layer
-    // listens and unchecks the toggle. Wire that listener here so the
-    // test exercises the public contract instead of poking internals.
+    // The rollback dispatches a custom event; wire the UI's listener to test the public contract.
     const onFailed = (): void => {
       toggle.checked = false;
     };

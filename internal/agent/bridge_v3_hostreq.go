@@ -1,8 +1,6 @@
-// v3 (KAS) host-mediated client requests.
-//
-// The kiro-cli relay consumes the access-token request when started with
-// --auth-method cli. KAS still sends _kiro/terminal/shell_type during session
-// creation and _kiro/openExternalUrl when an MCP server needs browser OAuth.
+// v3 host-mediated client requests. _kiro/terminal/shell_type still arrives from KAS's workflow
+// step reloads and must be answered (KAS fails the load on -32603); _kiro/openExternalUrl
+// arrives for MCP browser OAuth.
 
 package agent
 
@@ -47,7 +45,7 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID marott
 		})
 		return
 	}
-	// Ack first so the agent's OAuth redirect is not blocked on the UI.
+	// Ack first so the agent's OAuth redirect does not wait on the UI.
 	in.respondBridge(ctx, chatID, msg, map[string]any{"success": true}, nil)
 	in.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, chatID, marotte.OpenExternalURLPayload{URL: p.URL}))
 }
@@ -64,5 +62,5 @@ func isSafeExternalURL(u string) bool {
 }
 
 func kiroShellTypeResult() map[string]any {
-	return map[string]any{"shellType": "bash"}
+	return map[string]any{"shellType": marotte.HostShellType}
 }

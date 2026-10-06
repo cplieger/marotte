@@ -1,70 +1,32 @@
-// ---------------------------------------------------------------------------
-// Run-input card: a workflow STEP asked a question and its run is parked until
-// somebody answers it. Rendered in the interaction dock, which owns the queue,
-// the settle-once guard and the two hosts this card appears in.
-//
-// It renders in BOTH the launching chat's composer dock and the run tab's,
-// because one Decision carrying `chatID` and `runID` matches both hosts' own
-// matchers — which is the requirement: a run launched from a conversation asks
-// its question in that conversation, and a reader who has the run's tab open
-// answers it there.
-//
-// TWO answers, and the second is the reason this card is not `user-input.ts`
-// with a different heading:
-//
-//   - SEND ANSWER hands the step the reader's words. It is a `session/prompt`
-//     addressed to the paused step's own session, which KAS reroutes back into
-//     the run.
-//   - CONTINUE WITHOUT ANSWERING re-drives the step with KAS's DEFAULT
-//     continuation instead. It exists for the post-restart case: the ask
-//     registry is in memory, so a container restart leaves the run parked with
-//     the question text gone, and a reader cannot answer what they cannot read.
-//     Without it that run's only recourse would be cancelling work one sentence
-//     from finishing.
-//
-// No focus trap, like every other dock card: the question is about work in the
-// transcript, and the reader is meant to leave and come back.
-// ---------------------------------------------------------------------------
+// Run-input card: a workflow STEP asked a question and its run is parked until somebody answers it.
+// Rendered in the interaction dock, which owns the queue, the settle-once guard and the two hosts
+// this card appears in.
 
 import { el } from "@cplieger/reactive";
 import { askActions, askEditor, askHead, RUN_INPUT_FALLBACK } from "./dock-ask.js";
+import { wireTouchComposer } from "./composer-touch.js";
 import type { RunInputNeededPayload } from "./types.js";
 
 /** `null` is "continue without answering"; a string is the answer. */
 type SubmitFn = (text: string | null) => void;
 
-/** Hand the question to the agent that launched this run. Rejects when the
- *  hand-off did not go out, which is what re-enables the button. */
+/** Hand the question to the agent that launched this run. Rejects when the hand-off did not go
+ *  out, which is what re-enables the button. */
 type DeferFn = () => void | Promise<void>;
 
-/** Build the dock card for one parked workflow step.
- *
- *  The reporter is threaded through rather than parked in module state, for
- *  `buildUserInputCard`'s reason and it is a correctness requirement rather than
- *  a style choice: the dock keeps an ANSWERED card on screen for the length of its
- *  advance animation, so two cards coexist, and a module-level reporter would be
- *  overwritten by the incoming one — after which the outgoing card's buttons would
- *  answer the INCOMING decision, which `settle`'s membership guard cannot catch
- *  because that decision is legitimately still queued.
- *
- *  `held` is the text a previous send is still holding for this ask, or "": the dock
- *  splices the card before the answer goes out, so a retryable refusal re-offers the
- *  question and this is what stops the box coming back empty. Seeded rather than
- *  restored, because the card is a fresh element each time.
- *
- *  `onDefer`'s PRESENCE is the chat-parented discriminator at this boundary: the
- *  card never learns a chat id, and a deferral never routes through `onSubmit`,
- *  because the two verbs disagree — skip lets the step proceed with no answer,
- *  while a deferral leaves the ask open and asks somebody else. */
+/** Build the dock card for one parked workflow step. `onDefer`'s PRESENCE is the chat-parented
+ *  discriminator at this boundary: the card never learns a chat id, and a deferral never routes
+ *  through `onSubmit`, because the two verbs disagree — skip lets the step proceed with no
+ *  answer, while a deferral leaves the ask open and asks somebody else. */
 export function buildRunInputCard(
   payload: RunInputNeededPayload,
   held: string,
   onSubmit: SubmitFn,
   onDefer?: DeferFn,
 ): HTMLElement {
-  // An EMPTY question is the post-restart case rather than a malformed frame, so
-  // it gets a sentence of its own instead of a blank heading. Shared with the
-  // dock's own one-line label so the card and the run card's alert agree.
+  // An EMPTY question is the post-restart case rather than a malformed frame, so it gets a sentence
+  // of its own instead of a blank heading. Shared with the dock's own one-line label so the card
+  // and the run card's alert agree.
   const { body } = askHead(payload.question === "" ? RUN_INPUT_FALLBACK : payload.question);
 
   const who = stepLabel(payload);
@@ -73,7 +35,6 @@ export function buildRunInputCard(
   }
   if (payload.question === "") {
     // Says WHY there is nothing to read, so an empty card does not look broken.
-    // The run is genuinely parked and genuinely answerable; only the text is gone.
     body.appendChild(
       el(
         "p",
@@ -99,17 +60,20 @@ export function buildRunInputCard(
   send.addEventListener("click", () => {
     const text = input.value.trim();
     if (text === "") {
-      // Focus rather than a refusal message: the box IS the instruction, and
-      // "continue without answering" is a separate button rather than what an
-      // empty send means.
+      // Focus rather than a refusal message: the box IS the instruction, and "continue without
+      // answering" is a separate button rather than what an empty send means.
       input.focus();
       return;
     }
     onSubmit(text);
   });
 
-  // Cmd/Ctrl+Enter rather than bare Enter: an answer to a step is prose that may
-  // want paragraphs, which is the same call the composer's textarea makes.
+  // Return is always a new line here, so the touch label says so.
+  input.enterKeyHint = "enter";
+  wireTouchComposer(input);
+
+  // Cmd/Ctrl+Enter rather than bare Enter: an answer to a step is prose that may want paragraphs,
+  // which is the same call the composer's textarea makes.
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -122,12 +86,10 @@ export function buildRunInputCard(
   if (onDefer !== undefined) {
     actions.appendChild(deferButton(onDefer));
   } else if (payload.node_id !== "") {
-    // WITHHELD on an ask with no node id, because the verb behind it cannot be
-    // addressed: `set_step_status` takes a node and refuses 400 without one, so the
-    // button could only ever produce an error toast — with the card already spliced
-    // by the dock's settle, which leaves the reader worse off than not offering it.
-    // Such an ask is still ANSWERABLE (the answer is addressed by session, not by
-    // node), so Send stays and only the waive is gone.
+    // WITHHELD on an ask with no node id, because the verb behind it cannot be addressed:
+    // `set_step_status` takes a node and refuses 400 without one, so the button could only ever
+    // produce an error toast — with the card already spliced by the dock's settle, which leaves the
+    // reader worse off than not offering it.
     const skip = el(
       "button",
       { type: "button", className: "btn-small" },
@@ -146,15 +108,11 @@ export function buildRunInputCard(
   return el("div", { className: "dock-card dock-run-input" }, body, editor, actions);
 }
 
-/** Ask the launching agent instead, on a CHAT-PARENTED ask. The node-id gate
- *  above is Continue's alone — a deferral is addressed by CHAT, so an ask carrying
- *  no node id still gets one.
- *
- *  Hand-rolled rather than `withAsyncFeedback`, which restores the label after
- *  ~1200ms: this is a durable hand-off state that has to last the card's life,
- *  because the ask stays open and a reader who comes back needs to see that the
- *  agent was already asked. No CSS either — `css/40-a11y.css` floors `:disabled`,
- *  and a disabled button still receives hover, so the tooltip keeps working. */
+/** Ask the launching agent instead, on a CHAT-PARENTED ask. The node-id gate above is Continue's
+ *  alone — a deferral is addressed by CHAT, so an ask carrying no node id still gets one.
+ *  Hand-rolled rather than `withAsyncFeedback`, which restores the label after ~1200ms: this is
+ *  a durable hand-off state that has to last the card's life, because the ask stays open and a
+ *  reader who comes back needs to see that the agent was already asked. */
 function deferButton(onDefer: DeferFn): HTMLButtonElement {
   const b = el(
     "button",
@@ -167,8 +125,8 @@ function deferButton(onDefer: DeferFn): HTMLButtonElement {
       "so you can still answer it yourself.",
   );
   b.addEventListener("click", () => {
-    // The re-entrancy guard, and it is FIRST: the label only changes once the
-    // hand-off resolves, so without it a second click posts a second prompt.
+    // The re-entrancy guard, and it is FIRST: the label only changes once the hand-off resolves, so
+    // without it a second click posts a second prompt.
     b.disabled = true;
     void Promise.resolve(onDefer()).then(
       () => {
@@ -187,12 +145,7 @@ function deferButton(onDefer: DeferFn): HTMLButtonElement {
   return b;
 }
 
-/** Which step is asking, as one line, or "" when the frame could not name one.
- *
- *  Both fields are legitimately absent: KAS puts the node id on the notification
- *  only when the caller is a step, and the agent name only when the step declared
- *  one. A run blocked by an unnameable step is still blocked, so the row is
- *  omitted rather than filled with a placeholder. */
+/** Which step is asking, as one line, or "" when the frame could not name one. */
 function stepLabel(p: RunInputNeededPayload): string {
   if (p.agent_name !== "" && p.node_id !== "") {
     return `${p.agent_name} \u00b7 step ${p.node_id}`;

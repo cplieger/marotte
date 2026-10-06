@@ -1,8 +1,6 @@
-/** What a scan reports beside its matches: the TypeScript twin of Go's
- *  `textsearch.Tally`, structural so every reply that embeds it satisfies it.
- *  `scanned` is how many units the scan read, `matched` how many rows the list
- *  would hold had nothing cut it (the list is cut iff `matched` exceeds its
- *  length), `truncated` that the scan did not read everything it was asked to. */
+/** What a scan reports beside its matches: the TypeScript twin of Go's `textsearch.Tally`.
+ *  `scanned` is units read, `matched` the rows the list would hold uncut (cut iff it exceeds the
+ *  length), `truncated` that the scan did not read everything asked of it. */
 export interface Tally {
   readonly scanned: number;
   readonly matched: number;
@@ -93,12 +91,9 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** The counter over a NAVIGABLE list: `here` is the 1-based cursor in it, `total`
- *  its length, `matched` the server's whole-chat count, rendered as `· N in chat`
- *  whenever it is passed. `3 of 12 · 347 in chat`. Whether the second figure is
- *  worth showing is the caller's call, made by passing it or not: the function
- *  renders two facts it was handed and infers nothing from their equality. An
- *  empty list is an `EmptyState` and `emptyNote`'s to render. */
+/** The counter over a NAVIGABLE list: `here` is the 1-based cursor, `total` its length, `matched`
+ *  the server's whole-chat count, rendered as `· N in chat` whenever passed (`3 of 12 · 347 in
+ *  chat`). Infers nothing from equality. An empty list is `emptyNote`'s. */
 export function cursorCount(here: number, total: number, matched?: number): string {
   const cursor = `${num(here)} of ${num(total)}`;
   return matched === undefined ? cursor : `${cursor} · ${num(matched)} in chat`;

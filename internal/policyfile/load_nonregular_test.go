@@ -88,10 +88,9 @@ func TestLoad_BoundsTheFileBeforeAllocating(t *testing.T) {
 	}
 }
 
-// TestLoad_MissingFileIsStillTheEmptyCase guards the branch the OpenRegular swap
-// moved: the ENOENT arm used to key on os.IsNotExist over os.ReadFile's error and
-// now keys on fs.ErrNotExist over the library's, which must still mean "no rules
-// yet" rather than a failure the handler surfaces as an unparseable policy.
+// TestLoad_MissingFileIsStillTheEmptyCase — the ENOENT arm keys on fs.ErrNotExist
+// over OpenRegular's error, which must mean "no rules yet" rather than a failure
+// the handler surfaces as an unparseable policy.
 func TestLoad_MissingFileIsStillTheEmptyCase(t *testing.T) {
 	f, err := Load(filepath.Join(t.TempDir(), "nothing", filename))
 	if err != nil {

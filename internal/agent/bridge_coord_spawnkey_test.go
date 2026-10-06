@@ -7,11 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// bridgeSpawnKey's fields are both validator-restricted today (ids.ValidChatID
-// and ids.ValidIdent), so a colon-free join is already unambiguous and the
-// encoded key must stay byte-identical to the plain concatenation. That
-// identity is the whole reason this adoption is free: it is a pure encoding
-// change with no length, log-readability or comparison surprise.
+// TestBridgeSpawnKey_ByteIdenticalForValidatedFields pins that validated fields encode to the plain concatenation.
 func TestBridgeSpawnKey_ByteIdenticalForValidatedFields(t *testing.T) {
 	t.Parallel()
 
@@ -38,12 +34,8 @@ func TestBridgeSpawnKey_ByteIdenticalForValidatedFields(t *testing.T) {
 	}
 }
 
-// The key must stay injective even for field values the current validators
-// reject, because that is the whole point of encoding rather than trusting an
-// alphabet: widening ids.ValidIdent (a model id taken verbatim from an upstream
-// catalog) is an edit in another package that would not look like it touched
-// key encoding. A collapse here makes singleflight hand one caller another
-// caller's bridge — a chat talking to a session started for a different model.
+// TestBridgeSpawnKey_DistinctPairsNeverCollapse pins injectivity even for values today's
+// validators reject: a collapse hands one caller another model's bridge.
 func TestBridgeSpawnKey_DistinctPairsNeverCollapse(t *testing.T) {
 	t.Parallel()
 
@@ -57,14 +49,11 @@ func TestBridgeSpawnKey_DistinctPairsNeverCollapse(t *testing.T) {
 	}{
 		// The pair a plain ':' join would collapse.
 		{"boundary moves across the colon", "c", "1:m", "c:1", "m", ":"},
-		// The pair the pre-keyenc 0x00 join would collapse, were 0x00 ever
-		// reachable through either field.
+		// The pair a 0x00 join would collapse.
 		{"boundary moves across the NUL", "c", "1\x00m", "c\x001", "m", "\x00"},
-		// A literal backslash next to a separator: escaping must not
-		// reintroduce the ambiguity it exists to remove.
+		// Escaping next to a separator must not reintroduce the ambiguity.
 		{"escape adjacent to a separator", `a\`, "b:c", `a\:b`, "c", ":"},
-		// The empty model override is a real value (bare restart / auto), so it
-		// must not alias a chat id that ends in the separator.
+		// The empty override is a real value and must not alias a chat id ending in the separator.
 		{"empty override distinct from separator-suffixed chat", "c1:", "", "c1", ":", ":"},
 	}
 

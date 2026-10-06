@@ -1,25 +1,8 @@
-// ---------------------------------------------------------------------------
-// The error copy for `runs.answer_input`, which is the one run action whose
-// server sentence is worth more than any fixed string.
-//
-// The refusal that actually happens is a 409: the server claims the ask BEFORE it
-// sends, so a second surface answering one gets "that question has already been
-// answered, or the step it belonged to has moved on" — which tells the reader their
-// answer was not needed rather than that it failed, and there is nothing for them
-// to redo.
-//
-// A static `error` string does not REPLACE that sentence, it PREFIXES it
-// (`emitErrorToast` builds `${spec}: ${err.message}`), which is the opposite of what
-// it looks like and is why the defect is a contradiction rather than a loss: the
-// toast asserted a failure and then explained that nothing needed sending.
-//
-// The other half is why a fixed sentence is still needed: `@cplieger/fetch` fills
-// `message` either way, with the literal `HTTP <status>` when the body was empty or
-// unparseable, and with a browser sentence about a fetch on a transport failure
-// (`status === 0`). So the presence of the field proves nothing and both empty cases
-// have to be recognised — the second of which is what the prefix was leaking as
-// "…to the step: HTTP 500".
-// ---------------------------------------------------------------------------
+// The error copy for `runs.answer_input`. The real refusal is a 409 whose server sentence says
+// the answer was not needed. A static `error` string PREFIXES the server message
+// (`emitErrorToast`: `${spec}: ${err.message}`), contradicting it; and `@cplieger/fetch` fills
+// `message` with `HTTP <status>` or a browser sentence (status 0) when there is none, so both
+// empty cases must be recognised.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
@@ -84,8 +67,7 @@ describe("runs.answer_input error copy", () => {
   });
 
   it("falls back when the body carried no sentence", async () => {
-    // fetch's own placeholder, not a server message: showing `HTTP 500` to a reader
-    // is worse than the fixed sentence, because it reads like a value they can act on.
+    // fetch's placeholder, not a server message: `HTTP 500` reads like a value the reader can act on.
     const msg = await answerAgainst(() => new Response("", { status: 500 }));
     expect(msg).toBe(FALLBACK);
   });

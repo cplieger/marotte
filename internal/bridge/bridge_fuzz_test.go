@@ -8,12 +8,9 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 )
 
-// FuzzValidSessionID exercises the ACP session-id path-traversal
-// validation gate with arbitrary byte sequences. The invariant: for
-// any s where validSessionID(s)==true, s must not contain '/', '\\',
-// '\x00', "..", and must satisfy 1 <= len(s) <= 128.
+// FuzzValidSessionID fuzzes the session-id path-traversal gate: an accepted s has no '/', '\\', '\x00' or "..",
+// and 1 <= len(s) <= 128.
 func FuzzValidSessionID(f *testing.F) {
-	// Seed corpus from TestValidSessionID.
 	seeds := []string{
 		"", "abc-123", "01HXY8B6N9",
 		"../../../etc/passwd", "sess/with/slash",
@@ -31,7 +28,6 @@ func FuzzValidSessionID(f *testing.F) {
 		if !result {
 			return // rejected — no invariant to check
 		}
-		// Accepted: verify invariants.
 		if len(s) == 0 || len(s) > 128 {
 			t.Errorf("validSessionID(%q) = true but len=%d", s, len(s))
 		}
@@ -53,12 +49,9 @@ func FuzzValidSessionID(f *testing.F) {
 	})
 }
 
-// FuzzValidIdent exercises the agent/model identifier validation gate
-// with arbitrary byte sequences. The invariant: for any s where
-// validIdent(s)==true, s must match ^[A-Za-z0-9_.-]{1,128}$ AND s[0]
-// is not '.' or '-' AND s is not all-dots.
+// FuzzValidIdent fuzzes the agent/model identifier gate: an accepted s matches ^[A-Za-z0-9_.-]{1,128}$, does not
+// start with '.' or '-', and is not all dots.
 func FuzzValidIdent(f *testing.F) {
-	// Seed corpus from TestValidIdent.
 	seeds := []string{
 		"", "kiro_default", "kiro-planner", "my.custom.agent",
 		"Claude3_5", "a", "kiro..planner",
@@ -76,7 +69,6 @@ func FuzzValidIdent(f *testing.F) {
 		if !result {
 			return // rejected — no invariant to check
 		}
-		// Accepted: verify invariants.
 		if s == "" {
 			return // empty is explicitly allowed
 		}

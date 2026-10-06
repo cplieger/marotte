@@ -1,20 +1,15 @@
-// ---------------------------------------------------------------------------
-// Tests for refusal.ts — the model-refusal callout (kiro-cli 2.13 contract).
-// syncRefusal(wrap, refusal, rewindTo) mounts/removes the callout off the RESOLVED
-// refusal (messages.ts owns that precedence); the Rewind CTA routes the turn's own
-// prompt through the injected handler and the switch CTA dispatches
-// chat.switch_model. Store and the action are mocked; assertions are on the
-// rendered DOM + dispatches.
-// ---------------------------------------------------------------------------
+// Tests for refusal.ts — the model-refusal callout (kiro-cli 2.13 contract). syncRefusal(wrap,
+// refusal, rewindTo) mounts/removes the callout off the RESOLVED refusal (messages.ts owns that
+// precedence); the Rewind CTA routes the turn's own prompt through the injected handler and the
+// switch CTA dispatches chat.switch_model.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("./store.js", () => ({ getActive: vi.fn() }));
 vi.mock("./actions/chat.js", () => ({
   switchModel: { dispatch: vi.fn() },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened this graph and these
+  // names are imported somewhere in it. No case here calls them.
   get: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
@@ -28,8 +23,8 @@ import type { EntryPrompt, Session } from "./types.js";
 const mockGetActive = vi.mocked(getActive);
 const mockSwitch = vi.mocked(switchModel.dispatch);
 
-/** The turn's own trigger — what the callout's Rewind addresses, so KAS drops the
- *  refused request along with everything after it. */
+/** The turn's own trigger — what the callout's Rewind addresses, so KAS drops the refused
+ *  request along with everything after it. */
 function prompt(id = "m1"): EntryPrompt {
   return { id, text: "write me a thing" };
 }
@@ -75,10 +70,10 @@ describe("syncRefusal", () => {
     expect(wrap.querySelectorAll(".refusal-callout").length).toBe(1);
   });
 
-  // Both CTAs are the app's SHARED small button, so the class pair is the whole
-  // skin: `.refusal-btn` declares nothing of its own (13-messages.css carries the
-  // reasoning), and dropping `btn-small` here would leave two unstyled buttons in
-  // the callout with no rule anywhere to notice.
+  // Both CTAs are the app's SHARED small button, so the class pair is the whole skin:
+  // `.refusal-btn` declares nothing of its own (13-messages.css carries the reasoning), and
+  // dropping `btn-small` here would leave two unstyled buttons in the callout with no rule anywhere
+  // to notice.
   it("gives every CTA the shared btn-small skin", () => {
     const wrap = document.createElement("div");
     syncRefusal(wrap, { recommended_model: "model-x" }, prompt());
@@ -99,9 +94,8 @@ describe("syncRefusal", () => {
     expect(onRewind).toHaveBeenCalledWith(target);
   });
 
-  // A turn KAS opened on its own carries no user message, and a revert may only
-  // address one — so there is no address to offer and the row keeps whatever else
-  // the refusal earned.
+  // A turn KAS opened on its own carries no user message, and a revert may only address one — so
+  // there is no address to offer and the row keeps whatever else the refusal earned.
   it("withholds the rewind CTA for a turn with no prompt of its own", () => {
     const wrap = document.createElement("div");
     syncRefusal(wrap, { recommended_model: "model-x" }, undefined);
@@ -109,9 +103,9 @@ describe("syncRefusal", () => {
     expect(labels).toEqual(["Switch to model-x"]);
   });
 
-  // The target moves when a turn is added or removed, so a mounted callout has to
-  // be rebound rather than left holding the first paint's closure — and the button
-  // withdraws when the turn stops having a prompt at all.
+  // The target moves when a turn is added or removed, so a mounted callout has to be rebound rather
+  // than left holding the first paint's closure — and the button withdraws when the turn stops
+  // having a prompt at all.
   it("rebinds the rewind target on a later sync, and withdraws the CTA when it goes", () => {
     const wrap = document.createElement("div");
     const onRewind = vi.fn();
@@ -140,8 +134,6 @@ describe("syncRefusal", () => {
   });
 
   // The explanation is the SERVICE's sentence, and this callout is where it lands.
-  // It used to be folded into the open assistant entry, so it rendered as the
-  // model's own prose glued to the end of whatever it had been saying.
   it("renders the explanation inside the callout, between the header and the CTAs", () => {
     const wrap = document.createElement("div");
     syncRefusal(
@@ -156,9 +148,9 @@ describe("syncRefusal", () => {
     expect(kids).toEqual(["refusal-header", "refusal-explanation", "refusal-actions"]);
   });
 
-  // Point 4's old-record path: `explanation` is omitempty on the wire, so a refusal
-  // recorded before it was carried decodes without one. The paragraph is WITHHELD
-  // rather than placeheld, and the header's own wording still says what happened.
+  // Point 4's old-record path: `explanation` is omitempty on the wire, so a refusal recorded before
+  // it was carried decodes without one. The paragraph is WITHHELD rather than placeheld, and the
+  // header's own wording still says what happened.
   it("withholds the explanation paragraph when the record carries none", () => {
     const wrap = document.createElement("div");
     syncRefusal(wrap, { category: "safety" }, prompt());
@@ -171,16 +163,16 @@ describe("syncRefusal", () => {
     ]);
   });
 
-  // An empty string is the same absence: KAS omits the field and displayText can
-  // reduce a whitespace-only sentence to "", so both have to read the same way.
+  // An empty string is the same absence: KAS omits the field and displayText can reduce a
+  // whitespace-only sentence to "", so both have to read the same way.
   it("withholds the explanation paragraph for an empty explanation", () => {
     const wrap = document.createElement("div");
     syncRefusal(wrap, { explanation: "" }, prompt());
     expect(wrap.querySelector(".refusal-explanation")).toBeNull();
   });
 
-  // Service-supplied prose, so it may never be parsed as markup. el() writes it
-  // through textContent; the tags below have to survive as characters.
+  // Service-supplied prose, so it may never be parsed as markup. el() writes it through
+  // textContent; the tags below have to survive as characters.
   it("renders the explanation as text, never as markup", () => {
     const wrap = document.createElement("div");
     const text = "Refused: <img src=x onerror=alert(1)> **not bold**";

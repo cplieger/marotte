@@ -1,16 +1,7 @@
 package prewarm
 
-// Coverage for Runner.Run orchestration + the NewRunner constructor, plus the two
-// installOne arms that matter. installOne takes npmBin as a PARAMETER, so those two
-// pass a fake script rather than the real npm: the properties worth pinning there
-// are its argv (no lifecycle scripts, no global tree) and its staging tree's
-// lifecycle, all of which a stand-in observes. Nothing here spawns real npm.
-//
-// These live in-package so the in-flight set (p.mu / p.running) is
-// reachable directly; the Store side of the seam — that
-// mcp.Store.EnabledServers reports exactly the enabled servers as
-// ServerInfo — is pinned by TestEnabledServers_FeedsPrewarmLister in
-// package mcp.
+// Runner.Run orchestration, NewRunner, and installOne's two arms that matter, driven through a fake
+// npm script since npmBin is a parameter: its argv (no lifecycle scripts) and its throwaway tree.
 
 import (
 	"context"
@@ -179,17 +170,8 @@ func TestRun_SkipsWhenNpmMissingButDoesNotLatch(t *testing.T) {
 	}
 }
 
-// A dead context must not acquire an install slot, even with every slot free.
-// This is the property the slot CHANNEL could not hold: `select` picks at random
-// among ready cases, so a cancelled pass raced the free slot and won it about
-// half the time, starting an install for work whose caller had already given up.
-// semaphore.Weighted tests the context before its fast path, so the refusal is
-// decided rather than drawn.
-//
-// It is asserted over a batch because a single draw proves nothing about a coin:
-// the channel shape passes one attempt half the time, and 64 (2^-64) is where
-// "it never installs" stops being luck. queue is called directly rather than
-// through Run so the assertion needs no handshake with a goroutine.
+// TestQueue_DeadContextNeverTakesASlot: a dead context must not acquire an install slot even with
+// every slot free, which a select over a slot channel could not hold.
 func TestQueue_DeadContextNeverTakesASlot(t *testing.T) {
 	const attempts = 64
 
@@ -227,22 +209,11 @@ func TestQueue_DeadContextNeverTakesASlot(t *testing.T) {
 // unspawnableNpm is an absolute path no exec can resolve, so an install fails
 // before a process starts. Tests that only exercise queue's slot accounting pass
 // it as argv[0] rather than clearing PATH: Run threads its own probe's answer to
-// installOne, so PATH no longer decides what gets spawned.
+// installOne, so PATH does not decide what gets spawned.
 const unspawnableNpm = "/nonexistent/npm"
 
-// Every slot is given back after an install, so capacity does not leak across
-// passes: a runner that has put twice its cap through queue must still be able
-// to take the cap at once. This guards the conversion rather than the defect —
-// the slot channel released too — and it is the assertion a dropped
-// `defer p.sem.Release(1)` fails.
-//
-// An unspawnable npm path is what keeps installOne out of scope: the install
-// fails before any process runs, and the acquire/release pair is all that
-// executes. Stated as a PATH-independent absolute path rather than an empty PATH
-// because Run now threads its probe's answer through as argv[0], so PATH no
-// longer decides what installOne spawns. Each wait carries its own budget so a
-// leaked slot reports the leak instead of parking the package's test binary on
-// an acquire that can never succeed.
+// TestQueue_ReleasesEverySlot: every slot is given back, so a runner that has put twice its cap
+// through queue can still take the cap at once.
 func TestQueue_ReleasesEverySlot(t *testing.T) {
 	p := NewRunner(t.Context(), fakeLister{})
 	for i := range maxConcurrentInstalls * 2 {
@@ -261,16 +232,8 @@ func TestQueue_ReleasesEverySlot(t *testing.T) {
 	}
 }
 
-// TestInstallOne_WarmsTheCacheWithoutRunningLifecycleScripts is the whole point of
-// the shape the package comment measures, and it is the one property here worth a
-// spawn: prewarm must not execute a package's code. `--ignore-scripts` is what
-// stops it (verified against npm 11.16: a postinstall marker is written without the
-// flag and not with it), and the ABSENCE of `-g` is what makes that safe rather
-// than merely quiet — a half-built global tree would be a thing the spawn could
-// still find and run.
-//
-// installOne takes npmBin as a parameter, so the fake is passed in rather than
-// staged on PATH; nothing here depends on the ambient environment.
+// TestInstallOne_WarmsTheCacheWithoutRunningLifecycleScripts asserts that prewarm must not execute a package's
+// code; `--ignore-scripts` is what stops it.
 func TestInstallOne_WarmsTheCacheWithoutRunningLifecycleScripts(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "argv")
 	// Records argv and, separately, what the working directory looked like — the

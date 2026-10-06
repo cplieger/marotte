@@ -1,11 +1,7 @@
-// Recursive file search: GET /api/files/search. Matches an entry's NAME as well as a
-// file's CONTENTS, name ahead of content; lexical and index-free like internal/chat's
-// two searches, on the same textsearch kernel.
-//
-// Confinement is inherited from the resolved ROOT and never re-derived: every open is
-// one NAME against the parent's descriptor with O_NOFOLLOW (openChild), Sensitive.Blocks
-// runs on EVERY entry because an os.Root cannot deny a sub-path, and resolvePath is
-// NOT re-run per entry — EvalSymlinks can return a different mount and re-root it.
+// Recursive file search (GET /api/files/search), names ahead of contents, lexical and index-free on
+// the textsearch kernel. Confinement is inherited from the resolved ROOT: every open is one name
+// against the parent's descriptor with O_NOFOLLOW, Sensitive.Blocks runs on every entry, and
+// resolvePath is NOT re-run per entry, since EvalSymlinks could re-root it.
 
 package filebrowse
 
@@ -23,7 +19,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -56,36 +51,20 @@ const (
 	// searchReadBudget bounds the bytes the read fan-out can hold at once, so
 	// searchWorkers full reads never exceed it.
 	searchReadBudget = 4 << 20
-	// maxSearchFileSize is how much of ONE file is read: a file past it is
-	// read to the ceiling and the answer says it was cut (Tally.Truncated),
-	// because the head of a large file is still worth searching. A hit that
-	// straddles the cut is lost with the tail.
+	// maxSearchFileSize is how much of ONE file is read; past it the head is still searched and
+	// Tally.Truncated says so. A hit straddling the cut is lost.
 	maxSearchFileSize = searchReadBudget / searchWorkers
 	// searchExcerptRadius is how much of a long line surrounds the match. A
 	// minified bundle is one line, so the excerpt has to be windowed even
 	// though the unit is a line.
 	searchExcerptRadius = 80
-	// searchReadDirChunk bounds one ReadDir call's allocation whatever the
-	// directory holds, and gives cancellation somewhere to land — a
-	// whole-directory ReadDir(-1) reads every entry before the first check.
-	// Same number as atomicfile.WalkDirInRoot's batch.
+	// searchReadDirChunk bounds one ReadDir call's allocation and gives cancellation somewhere to
+	// land; atomicfile.WalkDirInRoot's batch size.
 	searchReadDirChunk = 256
 )
 
 // searchWorkers matches chat.searchWorkers: the bound is disk, not CPU.
 const searchWorkers = 8
-
-const (
-	// searchDirFlags opens a directory for the walk. O_DIRECTORY makes a
-	// non-directory swapped in under a directory's name a refusal, O_NOFOLLOW
-	// refuses a symlink AT that name, and O_NONBLOCK keeps a FIFO planted
-	// there from parking the walk in open(2) forever. O_CLOEXEC so a walk in
-	// flight cannot leak a descriptor into a bridge spawn.
-	searchDirFlags = os.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_CLOEXEC
-	// searchFileFlags is the same open for a leaf, which may legitimately be
-	// any file type; the type is refused off the DESCRIPTOR, never the name.
-	searchFileFlags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_CLOEXEC
-)
 
 // errSearchBinary marks a candidate rejected by the binary sniff. It is not a
 // failure and never logged: a match inside a binary is noise the reader cannot
@@ -152,9 +131,7 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// `case=1` only when asked, and anything else reads as insensitive — the
-	// exact rule handleSearch already applies to the transcript search, so the
-	// two boxes cannot disagree about what the checkbox means.
+	// The exact case rule the transcript search applies, so the two checkboxes agree.
 	sc := newFileScan(r.Context(), needle, q.Get("case") == "1", include, exclude, h.sensitive)
 	for _, root := range roots {
 		if !sc.addRoot(root) {
@@ -191,13 +168,9 @@ func (h *Handler) searchRoots(w http.ResponseWriter, reqPath string) (roots []lo
 	return []loc{l}, true
 }
 
-// parseGlobs flattens repeated and comma-separated pattern parameters, and
-// rejects a malformed one.
-//
-// Rejecting rather than ignoring, because path.Match answers "no match" for a
-// bad pattern: an unparseable include would silently match nothing and an
-// unparseable exclude would silently exclude nothing, and both look identical to
-// a search that simply found nothing.
+// parseGlobs flattens repeated and comma-separated pattern parameters and rejects a malformed one,
+// because path.Match answers "no match" for a bad pattern and the search would silently find
+// nothing.
 func parseGlobs(raw []string) (patterns []string, err error) {
 	for _, entry := range raw {
 		for pat := range strings.SplitSeq(entry, ",") {
@@ -214,11 +187,8 @@ func parseGlobs(raw []string) (patterns []string, err error) {
 	return patterns, nil
 }
 
-// matchGlob applies ONE pattern: one with no "/" matches the BASENAME, because
-// path.Match's `*` does not cross "/" and `*.go` must mean any .go file; one
-// with a "/" matches the path relative to the SEARCH ROOT (not the mount), so
-// `deep/*.go` means what is under the folder in front of the reader. There is
-// no `**`, which would need a glob dependency.
+// matchGlob applies ONE pattern: without "/" it matches the BASENAME (path.Match's `*` does not
+// cross "/"), with "/" the path relative to the SEARCH ROOT. No `**`.
 func matchGlob(pattern, rel string) bool {
 	subject := rel
 	if !strings.Contains(pattern, "/") {
@@ -237,13 +207,9 @@ func matchAnyGlob(patterns []string, rel string) bool {
 	return false
 }
 
-// searchDir is one directory the walk is inside: the open handle that PINS it
-// plus the two coordinate spaces its children are named in.
-//
-// The handle is the security-relevant field: every child is opened as a
-// single name against it, so nothing below this point re-resolves a path
-// and no ancestor swap can redirect a read. Its cost is one descriptor per
-// level of descent, bounded by maxSearchDepth.
+// searchDir is one directory the walk is inside: the open handle that PINS it, against which every
+// child is opened by name so no ancestor swap can redirect a read, plus its children's two
+// coordinate spaces. One descriptor per level, bounded by maxSearchDepth.
 type searchDir struct {
 	f *os.File
 	// abs is the container-absolute path, for the response and the denylist.
@@ -268,13 +234,8 @@ type searchCandidate struct {
 	abs  string
 }
 
-// fileScan carries one search's accounting. Hoisting the walk onto named
-// methods (rather than a deeply-nested recursive closure) keeps the
-// handler's control flow flat and each method inside gocognit's ceiling.
-//
-// Every field is owned by the WALK goroutine; the read fan-out collects into
-// a pre-sized local slice by index, so a worker touches no shared state and
-// the scan needs neither mutex nor atomic.
+// fileScan carries one search's accounting. Every field is owned by the WALK goroutine; the read
+// fan-out collects into a pre-sized slice by index, so the scan needs no mutex or atomic.
 type fileScan struct {
 	ctx       context.Context
 	include   []string
@@ -323,14 +284,10 @@ func nameFirst(k FileMatchKind) int {
 	return 0
 }
 
-// noteNameMatch records a NAME hit for an entry classify ADMITTED, so a hit's path is
-// one the listing shows: classify has already refused every excluded glob and
-// sensitive path a name row must not disclose.
-//
-// The include gate is re-applied for a DIRECTORY because classify deliberately does
-// not: an `include=*.go` over directories would prune every one and the walk would
-// never reach a Go file. It opens nothing, and it runs BEFORE the file-budget
-// pre-accept check, so a candidate that budget refuses still keeps its name row.
+// noteNameMatch records a NAME hit for an entry classify admitted, so excluded and sensitive paths
+// never surface as name rows. The include gate is re-applied for a directory (classify skips it so
+// includes cannot prune the walk), before the file-budget check, so a budget-refused candidate
+// keeps its name row.
 func (s *fileScan) noteNameMatch(d searchDir, name string, isDir bool) {
 	if !s.nameMatches(name) {
 		return
@@ -346,11 +303,8 @@ func (s *fileScan) noteNameMatch(d searchDir, name string, isDir bool) {
 	s.collect([]FileMatch{{Path: abs, Kind: kind}}, 1)
 }
 
-// capped reports whether the walk should stop at the entry in hand: the request
-// was cancelled, or the reply is full. A full reply marks the answer truncated,
-// because that entry and everything after it go unread. The reply cap counts
-// ROWS, since it bounds the response size. It is never consulted before a
-// ReadDir: only the read can say whether anything was left to skip.
+// capped reports whether the walk stops at the entry in hand: the request was cancelled or the
+// reply (which counts ROWS) is full, which marks the answer truncated.
 func (s *fileScan) capped() bool {
 	if s.ctx.Err() != nil {
 		return true
@@ -362,83 +316,10 @@ func (s *fileScan) capped() bool {
 	return false
 }
 
-// openChild opens one child of an already-open directory BY NAME, refusing a
-// symlink at that name.
-//
-// openat(2) against a directory descriptor resolves exactly one component,
-// so no ancestor is named and none can be substituted; the kernel refuses a
-// symlink at the final component under O_NOFOLLOW, which no check-then-open
-// sequence can do without a race. dirfd comes through SyscallConn so it
-// stays valid for the duration of the call even though the read fan-out uses
-// it from another goroutine.
-//
-// name must be a single component.
-func openChild(dir *os.File, name, displayPath string, flags int) (*os.File, error) {
-	conn, err := dir.SyscallConn()
-	if err != nil {
-		return nil, err
-	}
-	var fd int
-	var openErr error
-	if ctlErr := conn.Control(func(dirFD uintptr) {
-		for {
-			fd, openErr = syscall.Openat(int(dirFD), name, flags, 0)
-			if !errors.Is(openErr, syscall.EINTR) {
-				return
-			}
-		}
-	}); ctlErr != nil {
-		return nil, ctlErr
-	}
-	if openErr != nil {
-		return nil, &os.PathError{Op: "openat", Path: displayPath, Err: openErr}
-	}
-	return os.NewFile(uintptr(fd), displayPath), nil
-}
-
-// openSearchRoot walks from the mount's own root handle down to the search
-// root, one component at a time, refusing a symlink at every step.
-//
-// loc carries an already symlink-RESOLVED path (resolvePath), so a
-// component of it that is a symlink now was substituted after that
-// resolution. Opening the root by path would hand that swap back, because
-// an os.Root follows a link whose target stays in its mount.
-//
-// The final component is opened without O_DIRECTORY: a root that is a FILE
-// is a single-file search, served by the same endpoint.
-func openSearchRoot(l loc) (*os.File, error) {
-	dir, err := l.m.root.OpenFile(".", searchDirFlags, 0)
-	if err != nil {
-		return nil, err
-	}
-	rel := l.rel()
-	if rel == "." {
-		return dir, nil
-	}
-	names := strings.Split(rel, "/")
-	for i, name := range names {
-		if name == "" || name == "." || name == ".." {
-			_ = dir.Close()
-			return nil, fmt.Errorf("filebrowse: search root %q has a non-component segment %q", l.abs, name)
-		}
-		flags := searchDirFlags
-		if i == len(names)-1 {
-			flags = searchFileFlags
-		}
-		child, childErr := openChild(dir, name, filepath.Join(l.m.dir, filepath.Join(names[:i+1]...)), flags)
-		_ = dir.Close()
-		if childErr != nil {
-			return nil, childErr
-		}
-		dir = child
-	}
-	return dir, nil
-}
-
 // addRoot enqueues one search root and everything under it. Returns false to
 // stop the whole scan.
 func (s *fileScan) addRoot(l loc) bool {
-	f, err := openSearchRoot(l)
+	f, err := openPinnedRoot(l)
 	if err != nil {
 		// A root that cannot be opened contributes nothing, and on the "/" fan-out
 		// the other mounts still answer — so the reply would otherwise present a
@@ -462,7 +343,7 @@ func (s *fileScan) addRoot(l loc) bool {
 }
 
 // searchRootFile searches a root that turned out to be a file, from the
-// descriptor openSearchRoot already holds — so the reopen this walk exists to
+// descriptor openPinnedRoot already holds — so the reopen this walk exists to
 // avoid does not sneak back in at the root.
 func (s *fileScan) searchRootFile(f *os.File, abs string, info os.FileInfo) bool {
 	if !info.Mode().IsRegular() {
@@ -477,14 +358,10 @@ func (s *fileScan) searchRootFile(f *os.File, abs string, info os.FileInfo) bool
 	return true
 }
 
-// walkDir consumes an already-open directory handle: chunked enumeration, each
-// chunk's candidates read and its subdirectories descended, the handle closed on
-// the way out after everything opened against it. A directory past the directory
-// budget is refused before it is listed, and the refusal is what Truncated reports.
-//
-// Entries arrive in DIRECTORY order, sorted only within a chunk: a global order
-// over an untrusted directory means holding its whole inventory, so WHICH files a
-// spent budget included is not stable on a directory larger than one chunk.
+// walkDir consumes an already-open directory handle in chunks, reading each chunk's candidates and
+// descending its subdirectories, and closes it after everything opened against it. A directory past
+// the budget is refused before it is listed. Order is per chunk only, so which files a spent budget
+// included is not stable on a large directory.
 func (s *fileScan) walkDir(d searchDir) bool {
 	defer func() { _ = d.f.Close() }()
 	if s.dirs >= maxSearchDirs {
@@ -517,12 +394,8 @@ func (s *fileScan) walkDir(d searchDir) bool {
 	}
 }
 
-// consumeChunk applies every gate to one chunk of directory entries, then reads
-// the files it accepted and descends into the directories it accepted.
-//
-// Files before subdirectories, so the candidates are read while d's handle is
-// held at its shallowest and the fan-out is not competing with a descent for
-// descriptors.
+// consumeChunk gates one chunk of entries, then reads the accepted files before descending, so the
+// fan-out does not compete with a descent for descriptors.
 func (s *fileScan) consumeChunk(d searchDir, entries []fs.DirEntry) bool {
 	var cands []searchCandidate
 	var subdirs []string
@@ -576,14 +449,10 @@ const (
 	entryName
 )
 
-// classify applies every gate to one directory entry: the sensitive-path denial,
-// then the globs, then the entry type. A symlink is never followed (an in-mount
-// directory link would cycle until a cap absorbs it, a file link would report one
-// content under two names; fs.WalkDir makes the same choice), but its NAME still
-// matches, because the listing shows it. The size ceiling is deliberately not a
-// gate: fs.DirEntry.Info answers it with an lstat of the PATHNAME, the one path
-// resolution this walk exists to have removed, so the read is bounded off the
-// descriptor in readSearchFile instead.
+// classify applies every gate to one entry: sensitive-path denial, globs, then entry type. A
+// symlink is never followed (a directory link would cycle, a file link duplicate a result) but its
+// name still matches. Size is not a gate here: DirEntry.Info would lstat the PATHNAME;
+// readSearchFile bounds the read off the descriptor.
 func (s *fileScan) classify(d searchDir, e fs.DirEntry) (verdict entryVerdict, name string) {
 	name = e.Name()
 	abs, srel := d.child(name)
@@ -591,10 +460,8 @@ func (s *fileScan) classify(d searchDir, e fs.DirEntry) (verdict entryVerdict, n
 		return entrySkip, name
 	}
 	if e.IsDir() {
-		// An exclude prunes a DIRECTORY as well as a file, which is what makes
-		// `exclude=node_modules` skip the tree instead of matching nothing. An
-		// include stays files-only: applied here, `include=*.go` would prune
-		// every directory and the search would never reach a Go file.
+		// An exclude prunes directories too (`exclude=node_modules`); an include stays files-only
+		// or it would prune every directory.
 		if matchAnyGlob(s.exclude, srel) {
 			return entrySkip, name
 		}
@@ -621,14 +488,10 @@ func (s *fileScan) descend(d searchDir, name string) bool {
 		slog.Debug("filebrowse: search depth cap reached", "path", logsafe.Field(abs))
 		return true
 	}
-	f, err := openChild(d.f, name, abs, searchDirFlags)
+	f, err := openChild(d.f, name, abs, pinnedDirFlags)
 	if err != nil {
-		// A directory that vanished under the walk is normal on a tree the agent
-		// is writing to, and so is one replaced by a symlink or a non-directory
-		// between the ReadDir that classified it and this open — the refusal IS
-		// the guarantee. Anything else (a permission wall, an I/O error) means the
-		// whole subtree went unread, which is what Truncated says: the operator
-		// gets the reason from the log, the caller gets told the answer is partial.
+		// A directory that vanished or was swapped under the walk is normal; the refusal is the
+		// guarantee. Anything else lost the whole subtree, which Truncated reports.
 		if !errors.Is(err, fs.ErrNotExist) && !isSwapRefusal(err) {
 			s.truncated = true
 			slog.Warn("filebrowse: search opendir failed", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
@@ -638,20 +501,9 @@ func (s *fileScan) descend(d searchDir, name string) bool {
 	return s.walkDir(searchDir{f: f, abs: abs, srel: srel, depth: d.depth + 1})
 }
 
-// isSwapRefusal reports whether err is the kernel refusing an open because the
-// name no longer holds what the walk classified: a symlink under O_NOFOLLOW
-// (ELOOP), or a non-directory under O_DIRECTORY (ENOTDIR).
-func isSwapRefusal(err error) bool {
-	return errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR)
-}
-
-// readChunk reads one chunk's candidates and folds their hits into the scan.
-//
-// Parallel because the bound is disk, not CPU — the same reasoning and the same
-// degree as chat.SearchAll. Each worker collects into its own index of a
-// pre-sized slice, so the fan-out needs no mutex, and every open goes through
-// d's descriptor, which is why the fan-out has to finish before walkDir closes
-// it.
+// readChunk reads one chunk's candidates in parallel (the bound is disk, as in chat.SearchAll),
+// each worker into its own slot of a pre-sized slice. Every open uses d's descriptor, so the
+// fan-out must finish before walkDir closes it.
 func (s *fileScan) readChunk(d searchDir, cands []searchCandidate) {
 	if len(cands) == 0 {
 		return
@@ -699,13 +551,10 @@ func (s *fileScan) collect(hits []FileMatch, matched int) {
 	s.matched += matched
 }
 
-// readCandidate opens one candidate against its directory's descriptor and reads
-// it. The shape is taken off THAT descriptor: a mode read from the pathname again
-// describes whatever currently wears the name, not what is about to be read. A
-// refusal there is the kernel keeping the walk's classification honest, and
-// logSearchReadError says which refusals are losses.
+// readCandidate opens one candidate against its directory's descriptor and takes the file's shape
+// off THAT descriptor; a refusal there is the kernel keeping the walk's classification honest.
 func (s *fileScan) readCandidate(dir *os.File, c searchCandidate) candidateRead {
-	f, err := openChild(dir, c.name, c.abs, searchFileFlags)
+	f, err := openChild(dir, c.name, c.abs, pinnedFileFlags)
 	if err != nil {
 		return candidateRead{unread: logSearchReadError(c.abs, err)}
 	}
@@ -736,14 +585,9 @@ func (s *fileScan) readHits(f *os.File, abs string, size int64) candidateRead {
 	return candidateRead{hits: hits, matched: matched, partial: partial}
 }
 
-// readSearchFile reads one candidate from an OPEN descriptor: the binary sniff
-// prefix first and on its own, then the rest only if the file is text, and no
-// more than maxSearchFileSize in all. partial reports that the file held more.
-//
-// The two-step read is the point. A binary costs the sniff window rather than
-// the whole per-file ceiling, so eight workers cannot each be holding 512 KiB of
-// bytes that were never going to be reported. Reading the file whole and then
-// asking whether it was binary is the same answer at 64x the memory and the I/O.
+// readSearchFile reads one candidate from an OPEN descriptor: the binary sniff prefix first, the
+// rest only for text, at most maxSearchFileSize in all; partial reports that more was there. A
+// binary costs the sniff window, not the per-file ceiling.
 func readSearchFile(ctx context.Context, f *os.File, size int64) (data string, partial bool, err error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", false, ctxErr
@@ -762,10 +606,8 @@ func readSearchFile(ctx context.Context, f *os.File, size int64) (data string, p
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", false, ctxErr
 	}
-	// The REST from the same descriptor, into the one buffer the scan then reads
-	// as a string, so a worker never holds a second copy of a file. One byte past
-	// the ceiling: that byte is what says the file was cut, and it is dropped
-	// rather than scanned.
+	// The rest from the same descriptor into one buffer; one byte past the ceiling says the file
+	// was cut and is not scanned.
 	var text strings.Builder
 	text.Grow(int(min(size, maxSearchFileSize)) + 1)
 	text.Write(sniff)
@@ -790,10 +632,8 @@ func (s *fileScan) results() FileSearchResult {
 			cmp.Compare(a.Line, b.Line),
 		)
 	})
-	// RANK-AWARE: it cuts the tail of the list the comparator just ordered, so a
-	// query with more than maxSearchMatches name hits answers name rows only, and
-	// Matched > len(Matches) is what says so. No content quota, because a sorted
-	// truncated list must not drop a higher-ranked row to keep a lower-ranked one.
+	// Rank-aware: cutting the sorted tail can leave name rows only, and Matched > len(Matches) says
+	// so; a quota would drop a higher-ranked row.
 	if len(flat) > maxSearchMatches {
 		flat = flat[:maxSearchMatches]
 	}
@@ -810,18 +650,9 @@ func (s *fileScan) results() FileSearchResult {
 	}
 }
 
-// logSearchReadError records why a candidate contributed nothing, and reports
-// whether that was a LOSS. The two answers come from one switch because they are
-// one judgement: the Debug cases are SKIPS the search chose or expected, and
-// anything reaching Warn is a file the search meant to read and could not.
-//
-// ErrNotRegular covers the FIFO, device node and socket refused off the
-// descriptor (which is also what keeps /proc special files out, something an
-// os.Root explicitly does not do), ELOOP and ENOTDIR are the kernel refusing a
-// name that was swapped after the walk classified it, and a vanished file is the
-// ordinary consequence of searching a tree the agent is writing to. A cancelled
-// request is neither: the handler discards the body, so nothing is reported at
-// all.
+// logSearchReadError records why a candidate contributed nothing and reports whether that was a
+// LOSS (Warn) rather than an expected skip (Debug): ErrNotRegular (FIFOs, devices, /proc specials),
+// ELOOP and ENOTDIR from a swapped name, and a vanished file are skips.
 func logSearchReadError(abs string, err error) (lost bool) {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
@@ -869,12 +700,8 @@ func firstHit(needle textsearch.Needle, text string) (textsearch.Hit, bool) {
 	return textsearch.Hit{}, false
 }
 
-// excerptLine renders one matching line for a result row: the trailing CR of a
-// CRLF file dropped, and the line windowed around the match when it is long
-// enough that shipping it whole would cost more than it tells. The window is
-// placed at the hit's RUNE index into the original line, so a fold that changes
-// byte length cannot move it off the match; the ellipsis is the U+2026 the
-// transcript search uses.
+// excerptLine renders one matching line: a CRLF's CR dropped, and a long line windowed around the
+// match at its RUNE index so a fold cannot move it off the hit; the ellipsis is U+2026.
 func excerptLine(seg string, hitRune int) string {
 	runes := []rune(strings.TrimRight(seg, "\r"))
 	start := max(hitRune-searchExcerptRadius, 0)

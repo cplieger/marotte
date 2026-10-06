@@ -1,14 +1,5 @@
-// ---------------------------------------------------------------------------
-// What the reader is told when a retry lands.
-//
-// The action used to be built by `runControl`, which answers `{ok:true}` for every
-// verb: no success notification, no refetch, and a reply whose outcome was thrown
-// away. So a retry that reset five nodes and one that reset none produced the same
-// silence, and the second is exactly what "I pressed Retry and nothing happened"
-// looks like from the outside. These cases pin all three halves of the fix — the
-// outcome is decoded, reported through the channel it deserves, and followed by a
-// refetch.
-// ---------------------------------------------------------------------------
+// What the reader is told when a retry lands: the outcome is decoded, reported through the
+// channel it deserves, and followed by a refetch. A zero-node retry must not be silent.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
@@ -19,9 +10,8 @@ const m = vi.hoisted(() => ({
   controlsInvalidated: [] as string[],
 }));
 
-// The action itself is NOT mocked: its decode / notify / onSuccess wiring is the
-// subject, so it runs for real over a canned HTTP response installed through
-// `configureApi`'s fetch seam. Mocking the action would test nothing.
+// The action is NOT mocked: its decode / notify / onSuccess wiring is the subject, run over a
+// canned response through `configureApi`'s fetch seam.
 
 vi.mock("../toast.js", () => ({
   success: vi.fn(),
@@ -40,6 +30,7 @@ vi.mock("../run-store.js", () => ({
 
 import { configure, configureApi } from "@cplieger/actions";
 import { retryRun } from "./runs.js";
+import { configureSubjectNotice } from "./subject.js";
 import { error as toastError, success as toastSuccess } from "../toast.js";
 
 /** Answer the next fetch with a 2xx body, or with a JSON error envelope. */
@@ -70,12 +61,9 @@ beforeEach(() => {
   m.result.err = undefined;
   m.invalidated.length = 0;
   m.controlsInvalidated.length = 0;
-  // Re-armed per test: configureApi REPLACES the library's private fetch instance,
-  // and no reset hook is exported, so each case installs its own answer.
+  // Re-armed per test: configureApi REPLACES the library's fetch and exports no reset.
   stubFetch();
-  // The notifier the app wires at boot, so a REFUSAL's sentence is observable
-  // rather than silently dropped by the library's headless default — which is how
-  // the "…: internal error" prefix went unnoticed in the first place.
+  // The app's boot notifier, so a refusal's sentence is observable (the headless default drops it).
   configure({
     success: (msg) => {
       toastSuccess(msg);
@@ -84,6 +72,16 @@ beforeEach(() => {
       toastError(msg);
     },
   });
+  configureSubjectNotice(
+    (_subject, msg, level) => {
+      if (level === "success") {
+        toastSuccess(msg);
+      } else {
+        toastError(msg);
+      }
+    },
+    () => "",
+  );
 });
 
 describe("retrying a run", () => {
@@ -96,9 +94,7 @@ describe("retrying a run", () => {
     expect(vi.mocked(toastError)).not.toHaveBeenCalled();
   });
 
-  // THE DEFECT. A zero-node retry is a first-class outcome upstream and a no-op from
-  // the reader's seat, and it used to be reported exactly like a five-node one:
-  // silently. Reporting it as a success would be the same defect wearing a toast.
+  // A zero-node retry is a no-op from the reader's seat; reporting it as a success is the defect.
   it("does not report a retry that reset NOTHING as a success", async () => {
     m.result.current = { status: "aborted", retried_node_ids: [] };
     await retryRun.dispatch("wf_1");
@@ -108,9 +104,7 @@ describe("retrying a run", () => {
     expect(said).toContain("Nothing to retry");
   });
 
-  // The success path used to trigger no refetch, deliberately: the row was left to
-  // be repainted by a `run_progress` frame. A no-op retry produces no such frame, so
-  // on exactly the outcome the reader most needs to see, the screen never moved.
+  // A no-op retry produces no `run_progress` frame, so only this refetch moves the screen.
   it("refetches the run AND its affordance, even after a no-op", async () => {
     for (const nodes of [["phase-c"], []]) {
       m.invalidated.length = 0;
@@ -122,10 +116,7 @@ describe("retrying a run", () => {
     }
   });
 
-  // The refusal reads as the SERVER's own sentence, `answerRunInput`'s rule. A
-  // static `error` string does not replace the server's message, it PREFIXES it —
-  // so before this the reader saw "Couldn't retry the run: internal error", which
-  // asserts a failure and then explains nothing.
+  // The refusal reads as the SERVER's sentence alone (`answerRunInput`'s rule).
   it("shows a refusal as the server's sentence alone", async () => {
     const sentence = "Workflow wf_1 is not registered. Load or create it first.";
     m.result.err = { status: 409, body: { error: sentence } };
@@ -133,16 +124,11 @@ describe("retrying a run", () => {
 
     expect(res).toBeNull();
     expect(m.invalidated).toEqual([]);
-    // Exactly the sentence, with nothing in front of it. A static `error` string
-    // does not replace the server's message, it PREFIXES it — measured, and the
-    // opposite of what it looks like — so "Couldn't retry the run: <sentence>"
-    // asserts a failure and then explains that the reader must do something else.
+    // Exactly the sentence: a static `error` string PREFIXES the server's message.
     expect(vi.mocked(toastError)).toHaveBeenCalledWith(sentence);
   });
 
-  // A transport failure has no server sentence, so the fallback is what the reader
-  // gets. It must still name the verb rather than leaking the library's own
-  // placeholder.
+  // No server sentence on a transport failure: the fallback names the verb, not the placeholder.
   it("falls back to naming the verb when there is no server sentence", async () => {
     m.result.err = { status: 500, body: {} };
     await retryRun.dispatch("wf_1");
@@ -150,8 +136,7 @@ describe("retrying a run", () => {
     expect(vi.mocked(toastError)).toHaveBeenCalledWith("Could not retry the run");
   });
 
-  // A 2xx whose body is not an outcome must fail at the boundary rather than
-  // reaching the notification as `undefined` and reporting "Retrying NaN steps".
+  // A non-outcome 2xx fails at the boundary rather than reporting "Retrying NaN steps".
   it("rejects a 2xx body that is not an outcome, and still says something", async () => {
     m.result.current = { ok: true };
     const res = await retryRun.dispatch("wf_1");
@@ -159,10 +144,7 @@ describe("retrying a run", () => {
     expect(res).toBeNull();
     expect(vi.mocked(toastSuccess)).not.toHaveBeenCalled();
     expect(m.invalidated).toEqual([]);
-    // The negatives alone would leave this path indistinguishable from the second
-    // unacceptable failure mode — a refusal the reader never sees — on the one path
-    // where the HTTP reply is well-formed and its CONTENT is not. A decode failure
-    // carries no server sentence, so the fallback has to name the verb.
+    // A decode failure carries no server sentence, so the fallback must name the verb.
     expect(vi.mocked(toastError)).toHaveBeenCalledWith("Could not retry the run");
   });
 });

@@ -1,5 +1,3 @@
-// Closing a pull request: the hidden row, the Undo window and the close it sends.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
 import { prIdentity } from "./push-subject.js";
@@ -71,7 +69,6 @@ beforeEach(resetPRsTab);
 afterEach(restorePRsTab);
 
 describe("closing a pull request", () => {
-  /** The undo window a Close holds before the close is sent. */
   const WINDOW_MS = 8000;
 
   function row(n: number): HTMLElement | null {
@@ -94,7 +91,6 @@ describe("closing a pull request", () => {
     return r?.querySelector(".git-pr-row-status[role='status']")?.textContent ?? "";
   }
 
-  /** The PR numbers every close dispatch named, in order. */
   async function closed(): Promise<number[]> {
     const { closePR } = await actions();
     return vi.mocked(closePR.dispatch).mock.calls.map((c) => c[0].pr_number);
@@ -292,7 +288,6 @@ describe("closing a pull request", () => {
     expect(await closed()).toEqual([7]);
   });
 
-  /** The git view on screen, its PR panel shown, the mount inside it. */
   function stageView(): HTMLElement {
     document.body.innerHTML = `
       <div id="git-view" data-tab-view>

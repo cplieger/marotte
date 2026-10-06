@@ -1,8 +1,5 @@
 package git
 
-// Tested against real repositories, not fakes: every predicate here answers a
-// question about git's own on-disk state.
-
 import (
 	"context"
 	"encoding/json"
@@ -56,8 +53,6 @@ func behindClone(t *testing.T) (workDir, repoDir string) {
 	runGit(t, workDir, "clone", "-q", remote, "work")
 	repoDir = filepath.Join(workDir, "work")
 
-	// The clone is left un-fetched: measuring `behind` is the pass's own job, so a
-	// fixture that fetched for it would hide a missing fetch.
 	writeCommit(t, seed, "upstream.txt", "from upstream\n", "add upstream file")
 	runGit(t, seed, "push", "-q", bare, "HEAD:main")
 	runGit(t, bare, "update-server-info")
@@ -75,7 +70,6 @@ func TestPullAll_FastForwardsARepoThatIsOnlyBehind(t *testing.T) {
 	if got.Verdict != verdictPulled {
 		t.Fatalf("verdict = %q (reason %q, detail %q), want pulled", got.Verdict, got.Reason, got.Detail)
 	}
-	// Assert on the tree, not on the word the verdict used.
 	if _, err := os.Stat(filepath.Join(repoDir, "upstream.txt")); err != nil {
 		t.Errorf("upstream file absent after a pulled verdict: %v", err)
 	}
@@ -109,7 +103,6 @@ func TestPullAll_BlocksADivergedRepoAndNamesTheCommitCount(t *testing.T) {
 	if !strings.Contains(got.Detail, "1 local commit") {
 		t.Errorf("detail = %q, want it to name the one local commit", got.Detail)
 	}
-	// Blocked means untouched: the incoming file must NOT be on disk.
 	if _, err := os.Stat(filepath.Join(repoDir, "upstream.txt")); err == nil {
 		t.Error("a blocked repo was pulled anyway")
 	}
@@ -203,7 +196,6 @@ func TestPullOne_CarriesAVerdictWhenTheBudgetIsAlreadySpent(t *testing.T) {
 // The same invariant one layer out: every discovered repo carries a verdict.
 func TestPullAll_EveryRowCarriesAVerdict(t *testing.T) {
 	workDir, _ := behindClone(t)
-	// A non-repo beside the clone, which discovery skips.
 	if err := os.Mkdir(filepath.Join(workDir, "notrepo"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -294,8 +286,6 @@ func TestWorktreeState_ReportsARealMergeConflict(t *testing.T) {
 	writeCommit(t, dir, "shared.txt", "theirs\n", "theirs")
 	runGit(t, dir, "checkout", "main")
 	writeCommit(t, dir, "shared.txt", "ours\n", "ours")
-	// Expected to fail: the conflicted index it leaves behind is the fixture. The
-	// output is read so a merge that failed for another reason reports as itself.
 	out, err := gitCmd(t.Context(), dir, "merge", "other")
 	if err == nil {
 		t.Fatalf("merge succeeded; the fixture produced no conflict:\n%s", out)

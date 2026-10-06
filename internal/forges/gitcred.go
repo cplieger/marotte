@@ -199,12 +199,10 @@ func (m *Manager) recordHelperValue(ctx context.Context, ids map[string]bool, va
 	}
 }
 
-// reconcileHelper makes Marotte's helper the answer for url in the global git
-// config. Git consults helpers in order and an empty value resets the list, so
-// a connected origin gets the pair "" then want after whatever is configured
-// before it. Every owned value goes, with the empty value directly before it;
-// want empty removes the pair. The key is rewritten only when the result
-// differs.
+// reconcileHelper makes Marotte's helper the answer for url in the global git config. Git consults
+// helpers in order and an empty value resets the list, so a connected origin gets "" then want
+// after whatever precedes it; every owned value goes with the empty value before it, and want empty
+// removes the pair.
 func reconcileHelper(ctx context.Context, url, want string, owned func(string) bool) error {
 	key := "credential." + url + ".helper"
 	have, err := gitHelperValues(ctx, key)

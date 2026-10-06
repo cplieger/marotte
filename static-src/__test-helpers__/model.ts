@@ -1,12 +1,6 @@
-// The typed fixture module: one factory per model type, each taking a partial and
-// returning a FULL value with NO CAST anywhere in this file.
-//
-// That ban is the whole mechanism. A `Session` built with `as unknown as Session` is
-// invisible to the type checker, so a field added to the type reddens nothing and
-// every hand-built fixture silently carries `undefined` where production reads a
-// value — the compile-green run-red class. A factory that RETURNS the type makes the
-// same addition one compile error in one file, which is why the drift guard for the
-// TYPE half is `npm run typecheck:tests` rather than a test.
+// One factory per model type, each returning a FULL value with NO CAST in this file: a cast
+// fixture hides a newly added field from the type checker, a factory makes it one compile error
+// here (`npm run typecheck:tests`).
 import type { RunState } from "../run-store.js";
 import type { ServerEvent, Session, TurnState } from "../types.js";
 import type { Turn } from "../turns.js";
@@ -48,10 +42,8 @@ export function makeServerEvent(over: Partial<ServerEvent> = {}): ServerEvent {
   return { type: "chat_updated", ...over };
 }
 
-/** One turn as the transcript projects it. Each body entry's `turn` and `seq` are
- *  DERIVED from its position, so `entries[i].seq === i` holds by construction over the
- *  `turn_open` this turn's own state prepends (sse-adapter.ts states that invariant:
- *  "the store's invariant, so the length answers it"). */
+/** One turn as the transcript projects it. Body entries' `turn` and `seq` are DERIVED from
+ *  position, so `entries[i].seq === i` holds by construction over the prepended `turn_open`. */
 export function makeTurn(over: TurnOverrides = {}): Turn {
   const { body = [], ...rest } = over;
   const id = rest.id ?? "t-1";

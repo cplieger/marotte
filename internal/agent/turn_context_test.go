@@ -1,9 +1,6 @@
 package agent
 
-// Coverage for Runtime.TurnContext, the lifecycle seam command handlers reach for
-// instead of the runtime's raw shutdown context. These four cases moved here from
-// internal/command with the derivation itself: the runtime is what knows its own
-// lifetime, so this is where the property lives.
+// Runtime.TurnContext, the lifecycle seam command handlers use instead of the shutdown context.
 
 import (
 	"context"
@@ -20,12 +17,8 @@ func hubOnLifetime(t *testing.T) (*Runtime, context.CancelFunc) {
 	return h, cancel
 }
 
-// TestTurnContext_SurvivesRequestCancel is the regression test for the
-// mid-turn-disconnect bug: a client drop cancels the prompt POST's request
-// context, but the turn's context (which the bridge Call runs under) must NOT be
-// cancelled — otherwise the Call aborts, prompt_failed fires before
-// EmitTurnEndedWithStats, and the assistant buffer is lost while kiro-cli keeps
-// running the turn.
+// TestTurnContext_SurvivesRequestCancel pins that a client drop cancels the POST context, but the turn's context must survive
+// or the Call aborts and the reply is lost while kiro-cli keeps running.
 func TestTurnContext_SurvivesRequestCancel(t *testing.T) {
 	h, cancelLifetime := hubOnLifetime(t)
 	defer cancelLifetime()
@@ -34,7 +27,7 @@ func TestTurnContext_SurvivesRequestCancel(t *testing.T) {
 	turnCtx, cleanup := h.lifecycle.TurnContext(reqCtx)
 	defer cleanup()
 
-	// Simulate a mid-turn client disconnect.
+	// A mid-turn client disconnect.
 	reqCancel()
 
 	select {
@@ -47,9 +40,7 @@ func TestTurnContext_SurvivesRequestCancel(t *testing.T) {
 	}
 }
 
-// TestTurnContext_CancelsOnShutdown verifies runtime shutdown still tears the turn
-// down — cancellation must move from the request context to the runtime's lifetime,
-// not disappear entirely.
+// TestTurnContext_CancelsOnShutdown pins that cancellation moves to the runtime's lifetime rather than disappearing.
 func TestTurnContext_CancelsOnShutdown(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -65,10 +56,7 @@ func TestTurnContext_CancelsOnShutdown(t *testing.T) {
 	}
 }
 
-// TestTurnContext_CancelsOnAppLifetimeEnd is the case that only exists because
-// the runtime's lifetime is now a parameter rather than a context.Background() it
-// invented: ending the APP's lifetime must reach a turn, without App.Shutdown
-// having to remember to call Runtime.Shutdown first.
+// TestTurnContext_CancelsOnAppLifetimeEnd pins that ending the app's lifetime reaches a turn without Runtime.Shutdown.
 func TestTurnContext_CancelsOnAppLifetimeEnd(t *testing.T) {
 	h, cancelLifetime := hubOnLifetime(t)
 
@@ -85,9 +73,7 @@ func TestTurnContext_CancelsOnAppLifetimeEnd(t *testing.T) {
 	}
 }
 
-// TestTurnContext_CleanupCancels verifies the returned cleanup cancels the turn
-// context (normal handler-return teardown, and unregisters the lifetime
-// AfterFunc so it can't leak).
+// TestTurnContext_CleanupCancels pins that cleanup cancels the turn context and unregisters the AfterFunc.
 func TestTurnContext_CleanupCancels(t *testing.T) {
 	h, cancelLifetime := hubOnLifetime(t)
 	defer cancelLifetime()
@@ -101,8 +87,7 @@ func TestTurnContext_CleanupCancels(t *testing.T) {
 	}
 }
 
-// TestTurnContext_PreservesValues verifies request-scoped values survive the
-// WithoutCancel detachment (only cancellation is severed, not values).
+// TestTurnContext_PreservesValues pins that WithoutCancel severs cancellation, not values.
 func TestTurnContext_PreservesValues(t *testing.T) {
 	h, cancelLifetime := hubOnLifetime(t)
 	defer cancelLifetime()

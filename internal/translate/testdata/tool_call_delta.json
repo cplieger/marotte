@@ -197,7 +197,13 @@
     },
     {
       "name": "a title and kind refinement, which KAS sends on some updates and not others",
-      "before": { "id": "c1", "title": "Running: x", "kind": "other", "status": "pending", "ts": 1 },
+      "before": {
+        "id": "c1",
+        "title": "Running: x",
+        "kind": "other",
+        "status": "pending",
+        "ts": 1
+      },
       "delta": {
         "message_id": "m1",
         "tool_call_id": "c1",
@@ -234,7 +240,13 @@
     },
     {
       "name": "a refusal marks the card on the frame that settles it",
-      "before": { "id": "c1", "title": "Update Workflow", "kind": "other", "status": "in_progress", "ts": 1 },
+      "before": {
+        "id": "c1",
+        "title": "Update Workflow",
+        "kind": "other",
+        "status": "in_progress",
+        "ts": 1
+      },
       "delta": {
         "message_id": "m1",
         "tool_call_id": "c1",
@@ -271,6 +283,63 @@
         "ts": 1,
         "duration_ms": 12,
         "declined": true
+      }
+    },
+    {
+      "name": "an offloaded output's file attaches once, on the frame that settles the call",
+      "before": {
+        "id": "c1",
+        "title": "Run Command",
+        "kind": "execute",
+        "status": "in_progress",
+        "ts": 1
+      },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "status": "completed",
+        "offload": {
+          "path": "/config/home/.kiro/sessions/ab12/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt",
+          "total_chars": 48213
+        }
+      },
+      "after": {
+        "id": "c1",
+        "title": "Run Command",
+        "kind": "execute",
+        "status": "completed",
+        "ts": 1,
+        "offload": {
+          "path": "/config/home/.kiro/sessions/ab12/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt",
+          "total_chars": 48213
+        }
+      }
+    },
+    {
+      "name": "a later frame leaves the offload standing",
+      "before": {
+        "id": "c1",
+        "title": "Run Command",
+        "kind": "execute",
+        "status": "completed",
+        "ts": 1,
+        "offload": {
+          "path": "/config/home/.kiro/sessions/ab12/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt",
+          "total_chars": 48213
+        }
+      },
+      "delta": { "message_id": "m1", "tool_call_id": "c1", "duration_ms": 12 },
+      "after": {
+        "id": "c1",
+        "title": "Run Command",
+        "kind": "execute",
+        "status": "completed",
+        "ts": 1,
+        "duration_ms": 12,
+        "offload": {
+          "path": "/config/home/.kiro/sessions/ab12/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt",
+          "total_chars": 48213
+        }
       }
     }
   ]

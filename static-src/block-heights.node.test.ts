@@ -1,9 +1,6 @@
-// What a range of a turn's ENTRIES is worth in pixels, on its own.
-//
-// In the NODE project because the arithmetic is pure: the measurement lives at the drop, so
-// this module answers with no DOM at all — and that placement is its own assertion, since a
-// DOM import anywhere in this graph would throw at module load rather than drift. Every case
-// states the whole cache and the whole turn, so no number here is inherited from a fixture.
+// What a range of a turn's ENTRIES is worth in pixels. In the NODE project because the
+// arithmetic is pure, and a DOM import in this graph would throw at load. Every case
+// states the whole cache and turn.
 import { describe, it, expect } from "vitest";
 
 import {
@@ -18,20 +15,18 @@ import type { EntryRange } from "./block-window.js";
 import type { Turn } from "./turns.js";
 import type { Entry } from "./types.js";
 
-/** THE PREMISE for every number below: the table is TIER-KEYED, and this project has no
- *  `document` and no `matchMedia`, so `tierNow`'s fallback arm resolves to FINE. Read off the
- *  table so a retune moves the assertions with it. */
+/**
+ * THE PREMISE for every number below: the table is TIER-KEYED and this project has no
+ * `document` or `matchMedia`, so `tierNow` resolves to FINE. Read off the table.
+ */
 const FINE = ENTRY_ESTIMATE_PX.fine;
 
 /** The flex `gap` (`--sp-3`) `.turn-body` puts between the entries it holds, which no child's
  *  own height carries. A literal, because that CSS rule is what the token shadows. */
 const GAP_PX = 12;
 
-// --- Fixtures ---------------------------------------------------------------
-//
-// A `Turn` is built directly rather than projected: this module reads `id` and `body` alone,
-// and a projection would put `turns.ts`'s rules between a case and its subject. `body` is the
-// entries PAST the `turn_open`, and the space rests on `body[i].seq === i + 1`.
+// A `Turn` is built directly (this module reads `id` and `body` alone); `body` is the
+// entries past the `turn_open`, with `body[i].seq === i + 1`.
 
 function entry(
   seq: number,
@@ -110,9 +105,10 @@ function turn(id: string, body: readonly Entry[]): Turn {
   };
 }
 
-/** Everything the turn holds, priced as a TAIL spacer: nothing is mounted, so the spacer
- *  stands in for every ordinal it has. Its answer carries the boundary gap on top of the
- *  boxes' own heights whenever it prices at least one box. */
+/**
+ * Everything the turn holds, priced as a TAIL spacer: nothing is mounted. It carries the
+ * boundary gap whenever it prices at least one box.
+ */
 function stood(t: Turn, lane = ""): number {
   return spacerHeight(t, { from: 0, to: 0 }, "tail", lane);
 }
@@ -138,10 +134,8 @@ function pipeline(stages: number): Entry[] {
 
 describe("the premise this file's numbers rest on", () => {
   it("resolves the FINE tier, with no document and no matchMedia to read", () => {
-    // The ABSENCE is the condition `tierNow`'s fallback arm keys on, asserted rather than
-    // assumed because a runtime that grew either global would move four of the nine prices
-    // silently — Node has already grown a `navigator` this way. The PRICE then proves the arm
-    // landed on fine, through `thinking`, one of the entries the two tiers disagree about.
+    // The ABSENCE is what `tierNow`'s fallback keys on, asserted because Node already grew a
+    // `navigator`. The price proves the arm landed on fine, through `thinking`.
     const g = globalThis as { readonly document?: unknown; readonly matchMedia?: unknown };
     expect({ document: g.document, matchMedia: g.matchMedia }).toEqual({
       document: undefined,
@@ -166,9 +160,7 @@ describe("what one entry is worth", () => {
   });
 
   it("prices an EMPTY text entry at nothing, its gap included", () => {
-    // A released steer's carry mounts an `is-empty` row, which is `display: none`. It costs no
-    // gap either: `gap` counts an ITEM rather than a height, so a spacer standing for no box
-    // replaces no gap and answers zero outright.
+    // A released steer's carry mounts a `display: none` row and costs no gap (`gap` counts items).
     expect(stood(turn("t", [text(1, { body: "" })]))).toBe(0);
   });
 
@@ -185,9 +177,7 @@ describe("what one entry is worth", () => {
   });
 
   it("prices a steer at its note, and a steer_ack as agent prose", () => {
-    // The two halves of one exchange, priced differently on purpose: the note is a dock-shaped
-    // box (head plus one text line plus padding) while the acknowledgement is agent content at
-    // its own position, so it mounts a prose row like any other.
+    // The note is a dock-shaped box; the acknowledgement mounts a prose row at its own position.
     expect(stood(turn("t", [entry(1, "steer", { text: "wait", origin: "user" })]))).toBe(
       62 + GAP_PX,
     );
@@ -232,9 +222,8 @@ describe("what a tool call MOUNTS AS", () => {
   });
 
   it("prices a call whose RESULT carries the run id at the run card too", () => {
-    // The wire carries no `workflow_id` on the call today, so the result's is the id every
-    // resident run card is derived from — and the price has to follow the same join or a run
-    // is reserved a tool row and mounts a card.
+    // The wire carries no `workflow_id` on the call, so the result's id is the join; otherwise
+    // a run is reserved a tool row and mounts a card.
     const t = turn("t", [call(1, { id: "c1" }), result(2, "c1", { run: "wf-1" })]);
     expect(stood(t)).toBe(71 + GAP_PX);
   });
@@ -246,10 +235,8 @@ describe("what a tool call MOUNTS AS", () => {
   });
 
   it("prices a PIPELINE DRIVER at the box it mounts, not at a tool row", () => {
-    // Its entry mounts a `.subagent-container`, which RESTS at the same height a card does:
-    // the collapsed body holding its stages is out of layout. `Orchestrate Sub-agent` is
-    // deliberately absent from the delegate predicate — one title with two owners makes a
-    // classification unpredictable — so this is what stops a driver falling through to 38.
+    // A driver mounts a `.subagent-container` resting at a card's height. `Orchestrate
+    // Sub-agent` is absent from the delegate predicate, so this keeps a driver off 38.
     expect(stood(turn("t", [call(1, { id: DRIVER_ID, title: "Orchestrate Sub-agent" })]))).toBe(
       71 + GAP_PX,
     );
@@ -265,26 +252,21 @@ describe("what a tool call MOUNTS AS", () => {
   });
 
   it("prices a `Sub-agent:`-TITLED call with no stage id at a full card", () => {
-    // The control that keeps this keyed on the ID rather than the title. Measured over the
-    // chat files on one live volume, 392 of 393 delegate invocations carry the `Sub-agent:`
-    // prefix while only 369 carry the `_stage_` id shape; the rest look like this and are
-    // seated at the TOP LEVEL, where they cost a whole card.
+    // Keyed on the ID, not the title: some delegate invocations lack the `_stage_` id shape
+    // and sit at the TOP LEVEL, where they cost a whole card.
     const id = `invoke_subagent_${DRIVER_ID}-sub-agent-start`;
     const t = turn("t", [call(1, { id, title: "Sub-agent: wf-coder", subtask: "sub-flat" })]);
     expect(stood(t)).toBe(71 + GAP_PX);
   });
 
   it("prices a whole PIPELINE at ONE card, its three stages included", () => {
-    // The container rests at one card's height whatever it holds, so the pipeline's price is
-    // its DRIVER's alone. A stage names its driver in its own tool-call id, which is the join
-    // this reads — and being worth nothing, a stage is not a box, so it adds no gap either.
+    // A pipeline's price is its DRIVER's alone; a stage names its driver in its call id, is
+    // not a box, and adds no gap.
     expect(stood(turn("t", pipeline(3)))).toBe(71 + GAP_PX);
   });
 
   it("prices a PROMOTED single-stage pipeline at one card too", () => {
-    // One stage, so the renderer promotes its card to where the container would have gone and
-    // the two entries' prices are swapped against that — 71 at the driver, 0 at the stage. What
-    // is exact is the pipeline's TOTAL, which is one card either way.
+    // One stage: the renderer promotes its card, swapping the two prices; the TOTAL is exact.
     expect(stood(turn("t", pipeline(1)))).toBe(71 + GAP_PX);
   });
 
@@ -353,9 +335,7 @@ describe("which ordinals a spacer stands in for", () => {
   });
 
   it("charges K−1 gaps between the boxes it replaces PLUS the boundary one", () => {
-    // Two gap terms, and the boundary one is what the parent no longer supplies: the spacer
-    // sits under `.turn`, which declares no `gap`, where the boxes it replaces sat inside
-    // `.turn-body`'s gapped column.
+    // The boundary gap: the spacer sits under the gapless `.turn`.
     expect(spacerHeight(four(), { from: 0, to: 1 }, "tail", "")).toBe(4 * 38 + 3 * GAP_PX + GAP_PX);
   });
 });
@@ -367,9 +347,8 @@ describe("what a drop measured", () => {
   });
 
   it("prefers the ROW measurement for a prose run the window held whole", () => {
-    // A row's own height already carries whatever sat between its entries, so nothing is added
-    // on top of a measurement covering the range being priced. The key is the run's FIRST seq;
-    // ordinal 0 is the `turn_open`, so a body-leading run starts at 1.
+    // A row's measurement already includes its inner gaps. Keyed on the run's FIRST seq;
+    // ordinal 0 is the `turn_open`.
     const run: EntryRange = { from: 1, to: 3 };
     recordRowHeight("m-row", run, 500);
     expect(stood(turn("m-row", [text(1), text(2)]))).toBe(500 + GAP_PX);
@@ -383,9 +362,7 @@ describe("what a drop measured", () => {
   });
 
   it("refuses a row measurement taken over a DIFFERENT range than the run", () => {
-    // The row was dropped under a PARTIAL window, so it measured that slice alone — one entry of
-    // a run that now spans two — and answering the whole run with it would price the rest at
-    // zero. Its `from` matches, so the RANGE is what refuses it rather than the key.
+    // A row dropped under a PARTIAL window measured one slice, so the RANGE refuses it.
     recordRowHeight("m-part", { from: 1, to: 2 }, 500);
     expect(stood(turn("m-part", [text(1), text(2)]))).toBe(48 + GAP_PX);
   });

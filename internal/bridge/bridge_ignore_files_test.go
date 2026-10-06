@@ -10,14 +10,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The agent-ignore list reaches KAS at the CONNECTION door, and this drives the
-// real call rather than simulating it: the agent-side ignore tests all run
-// against fake bridges, so none of them reaches this path.
-//
-// It asserts on the RAW request bytes because the defect class is a
-// fire-and-forget notification that never leaves the process, costing every new
-// connection its whole ignore enforcement. The notification precedes
-// session/new, so a returned Start means the fake has already logged it.
+// The agent-ignore list reaches KAS at the connection door through the real call, asserted on raw request bytes: a
+// notification that never leaves the process costs a connection all ignore enforcement. It precedes session/new,
+// so a returned Start means it was logged.
 func TestStart_SendsTheAgentIgnoreFileList(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
@@ -51,10 +46,7 @@ func TestStart_SendsTheAgentIgnoreFileList(t *testing.T) {
 	}
 }
 
-// NIL or EMPTY sends NOTHING, and that is the fail mode rather than an omission:
-// `{files: []}` CLEARS the list in KAS, so a bridge whose settings could not be
-// read must leave KAS enforcing whatever it was last told instead of disabling
-// enforcement it cannot re-derive.
+// Nil or empty sends nothing: `{files: []}` clears the list in KAS, so an unreadable setting keeps the last list.
 func TestStart_SendsNoIgnoreFilesFrameWithoutAList(t *testing.T) {
 	cases := []struct {
 		name    string

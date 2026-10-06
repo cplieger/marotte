@@ -1,18 +1,6 @@
-// ---------------------------------------------------------------------------
-// "Is everything this chat started actually over?"
-//
-// The predicate exists because a chat's TURN ending is not the same fact as a chat's
-// WORK ending: `run_workflow` returns as soon as the run is created, so the launching
-// turn concludes, `thinking` clears, and the run carries on. Every case below is one
-// of the three reasons a cue must wait, plus the one property `agent-finished-cue.ts`
-// hangs its whole release on — that every read is TRACKED, so an effect over
-// `chatSettled` re-runs when the last outstanding thing ends.
-//
-// The dock is mocked down to `hasPendingDecision` (its own suite owns the queue), but
-// the mock keeps a real signal behind it: what is under test here is that
-// `chatOutstanding` subscribes to whatever that read touches, and a plain boolean
-// would silently pass a version of the predicate that had stopped subscribing.
-// ---------------------------------------------------------------------------
+// "Is everything this chat started actually over?": the three reasons a cue must wait, plus
+// the property `agent-finished-cue.ts` releases on, that every read is TRACKED. The dock is
+// mocked with a real signal behind it, so a predicate that stopped subscribing fails.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { signal, touch, effect } from "@cplieger/reactive";
@@ -50,9 +38,7 @@ const { chatOutstanding, chatSettled } = await import("./chat-settled.js");
 const store = await import("./store.js");
 const runStore = await import("./run-store.js");
 
-// A row with `provisional` unset and `turn_open` absent: `statesNoLiveness` reads a
-// provisional row as LIVE, so a fixture that left it out would report every chat's
-// turn as running and no case could tell the turn term from the others.
+// `provisional` unset and `turn_open` absent: a provisional row reads as LIVE.
 function makeSession(id: string): Session {
   return {
     id,
@@ -98,9 +84,8 @@ describe("chatSettled", () => {
     expect(chatSettled("c1")).toBe(false);
   });
 
-  // The case the whole predicate exists for. A parked run's `executing` is false here
-  // (it is the store-eviction question), so a predicate reading that instead would
-  // report a chat waiting on a person as finished.
+  // A parked run's `executing` is false, so reading that would call a chat waiting on a person
+  // finished.
   it("is false while a run this chat launched is PARKED", () => {
     runStore.noteRunLive("wf-a", "c1", false);
     expect(chatSettled("c1")).toBe(false);
@@ -137,9 +122,7 @@ describe("chatSettled", () => {
     expect(chatSettled("c2")).toBe(false);
   });
 
-  // A manual or scheduled launch is parentless, so its lease names no chat and it may
-  // not hold anyone's cue. Its own outcome travels on the run's tab dot and its own
-  // push, not on a chat's.
+  // A parentless run names no chat and holds nobody's cue.
   it("is unmoved by a PARENTLESS run", () => {
     runStore.noteRunLive("wf-parentless", "", true);
     expect(chatSettled("c1")).toBe(true);
@@ -176,11 +159,8 @@ describe("chatOutstanding names the reason", () => {
   });
 });
 
-// THE PROPERTY THE RELEASE DEPENDS ON. `agent-finished-cue.ts` re-fires a parked cue
-// from a plain effect rather than a second event wire, which only works because every
-// term here is a tracked read. An untracked `get()` for the turn term, or a dock
-// predicate that stopped touching its queue version, leaves the cue parked forever
-// with nothing observable at the raise site.
+// The release depends on every term being a tracked read: an untracked one leaves a cue
+// parked forever, invisibly.
 describe("every term is a tracked read", () => {
   function watch(chatID: string): { settled: boolean[]; dispose: () => void } {
     const settled: boolean[] = [];
@@ -220,10 +200,7 @@ describe("every term is a tracked read", () => {
     w.dispose();
   });
 
-  // The empty-id case has no early return in production on purpose: a branch that
-  // skipped the three reads would leave a calling effect subscribed to nothing, so a
-  // later state change could never wake it. Asserted through the inventory, whose
-  // version the empty-id path still touches.
+  // The empty-id path still touches the inventory's version, so a later change can wake it.
   it("subscribes even for a chat with nothing to read", () => {
     const w = watch("");
     const before = w.settled.length;

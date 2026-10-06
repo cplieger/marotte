@@ -1,18 +1,8 @@
-// ---------------------------------------------------------------------------
-// Transcript search: the server pre-pass that makes the DOM search honest.
-//
-// find-in-chat.ts highlights and lands in the DOM, which needs real nodes. What
-// the DOM cannot do is ENUMERATE: non-resident pages, rows `content-visibility`
-// has skipped, and hidden or collapsed subtrees are all invisible to a walker.
-// So enumeration asks the server (session-wide, no window), and a collapse hides
-// nothing because BOTH halves are the server's: the count, and the step list
-// Enter walks (find-in-chat.ts's `stepOrder`). The reveal below lifts a folded
-// turn so the walker can MARK its hit; it is a convenience for the landing.
-//
-// The answer is the server's whole envelope (`SearchResult`, tally included),
-// handed to the caller as decoded. This module keeps only what other surfaces
-// read off it: the hit turns for the rail and the folded rows.
-// ---------------------------------------------------------------------------
+// Transcript search: the server pre-pass that makes the DOM search honest. find-in-chat.ts
+// highlights in the DOM, which cannot ENUMERATE unmounted, skipped or collapsed content, so
+// the server owns both the count and the step list Enter walks; the reveal below lifts a
+// folded turn so the walker can MARK its hit. The answer is the server's whole envelope;
+// this module keeps only the hit turns other surfaces read.
 
 import { apiGetTyped } from "./api-client.js";
 import { openForSearch, clearSearchOpened } from "./fold-state.js";
@@ -24,11 +14,11 @@ import type { Hit, SearchResult } from "./wire/types.gen.js";
  *  nothing matched, nothing cut. */
 const EMPTY_ANSWER: SearchResult = { matches: [], scanned: 0, matched: 0, truncated: false };
 
-/** The on-demand body build for ONE hit's turn, injected by messages.ts at mount (a
- *  static import back would cycle: messages.ts imports this module for the folded rows'
- *  hit counts). Inert until wired. The hit's ENTRY crosses rather than a position inside
- *  the turn, because the ordinal the build pins on is that entry's `seq`, which only the
- *  projection on the other side can resolve. */
+/**
+ * The on-demand body build for ONE hit's turn, injected by messages.ts (a static import
+ * would cycle); inert until wired. The hit's ENTRY crosses, since only the projection can
+ * resolve its `seq`.
+ */
 let buildRevealedTurn: (chatID: string, turnID: string, entryID?: string) => Promise<void> = () =>
   Promise.resolve();
 
@@ -55,9 +45,10 @@ let hitTurns = new Set<number>();
 /** Hits per turn number, so a folded row can advertise what is inside it rather
  *  than hiding it. */
 let countsByTurn = new Map<number, number>();
-/** The chat the standing search ran in, so its reveal is released where it was taken:
- *  the close path names whichever chat is ACTIVE, and a chat switch with the find box
- *  open closes against the new one. */
+/**
+ * The chat the standing search ran in, so its reveal is released there: the close path
+ * may run after a chat switch.
+ */
 let searchedChatID = "";
 
 export function searchHitTurns(): ReadonlySet<number> {
@@ -68,13 +59,11 @@ export function searchHitCount(turn: number): number {
   return countsByTurn.get(turn) ?? 0;
 }
 
-/** Run the server search and reveal every turn holding a hit BEFORE the DOM
- *  pass: the walker prunes hidden subtrees, so a folded turn's hit is invisible
- *  to it until the fold is lifted.
- *
- *  Three answers. An envelope is the server's; `EMPTY_ANSWER` answers an empty
- *  question (no chat, blank query); `null` means the FETCH failed, so the caller
- *  keeps what was standing rather than claiming "no matches". */
+/**
+ * Run the server search and reveal every hit's turn BEFORE the DOM pass, which prunes
+ * hidden subtrees. An envelope is the server's; `EMPTY_ANSWER` answers an empty question;
+ * `null` means the FETCH failed, so the caller keeps its standing answer.
+ */
 export async function runServerSearch(
   chatID: string,
   query: string,
@@ -91,11 +80,8 @@ export async function runServerSearch(
     `/api/chats/${encodeURIComponent(chatID)}/search?q=${encodeURIComponent(query)}${flag}`,
     decodeSearchResult,
   );
-  // A null is a failed fetch or a reply the decoder refused, already logged
-  // centrally. Leave the previous reveal in place rather than collapsing turns
-  // out from under a reader mid-search. `null` travels OUT for the same reason:
-  // the caller's own standing answer, cursor and ownership are what keep the
-  // reader's walk whole across the failure.
+  // A failed fetch (logged centrally): keep the previous reveal and return `null`, so the
+  // reader's walk stays whole.
   if (d === null) {
     return null;
   }
@@ -109,9 +95,7 @@ export async function runServerSearch(
     countsByTurn.set(h.turn, (countsByTurn.get(h.turn) ?? 0) + 1);
   }
 
-  // Open by the TURN the matched entry names, which every hit carries: a fold is a
-  // turn's, and `turn_id` is the same id the fold set, the card's reconcile key and
-  // the store all key on, so no join resolves it.
+  // Open by the hit's `turn_id`, the same id the fold set, the card and the store key on.
   const revealTurns = new Set<string>();
   for (const h of hits) {
     if (h.turn_id !== "") {
@@ -121,11 +105,8 @@ export async function runServerSearch(
   for (const id of revealTurns) {
     openForSearch(chatID, id);
   }
-  // A revealed turn may be a STUB whose body text the DOM walker cannot
-  // mark until it exists. Build each one through the transcript's on-demand
-  // entry point BEFORE the repaint below — the builds land under still-folded
-  // cards (invisible), yield between block batches, and must complete before
-  // this function resolves because the caller re-runs the walker on resolution.
+  // A revealed STUB has no body to mark yet, so each is built (under its folded card) and
+  // completes before this resolves, since the caller re-runs the walker on resolution.
   for (const id of revealTurns) {
     await buildWalkTurn(chatID, id);
   }
@@ -135,37 +116,30 @@ export async function runServerSearch(
   return d;
 }
 
-/** Drop the reveal and the hit marks.
- *
- *  A search must not permanently rearrange the transcript as a side effect, so turns opened
- *  BY SEARCH re-fold here. Turns the reader opened by hand carry a persisted override and are
- *  left alone. Keyed on the chat this module SEARCHED and takes no chat argument: the box
- *  closes AFTER a tab change has moved the active id, so an active-keyed teardown re-folded
- *  nothing and left the searched chat's turns open. */
+/**
+ * Drop the reveal and the hit marks. Turns opened BY SEARCH re-fold; hand-opened turns keep
+ * their override. Keyed on the chat this module SEARCHED, with no argument, because the box
+ * closes after a tab change moved the active id.
+ */
 export function resetServerSearch(): void {
   hitTurns = new Set<number>();
   countsByTurn = new Map<number, number>();
   const searched = searchedChatID;
   searchedChatID = "";
-  // Unconditional: the reveal is over whatever the fold set says. Inside the
-  // branch below the grants would outlive a `searchOpened` some other path
-  // emptied first, with no gesture left to end them.
+  // Unconditional: inside the branch below, grants would outlive a `searchOpened` emptied
+  // elsewhere.
   endWalkReveal(searched);
   if (searched !== "" && clearSearchOpened(searched)) {
-    // The re-fold is a shape change too: turns the reveal opened fold back, and
-    // the ones it pinned resident past the paint's block budget unmount
+    // The re-fold is a shape change: revealed turns fold and pinned ordinals unmount
     // (`block-window.ts`).
     bumpMessages(searched, "shape");
   }
 }
 
 /**
- * Reveal ONE hit's turn on demand: open it for search, build the body around the
- * hit's own entry, and repaint. What hit NAVIGATION runs before it can select anything,
- * mirroring `runServerSearch`'s reveal per turn — needed again there because a
- * hit can be paged in AFTER the search ran (its turn arrived as a folded stub
- * the original reveal never saw), and a reader can re-fold a revealed turn and
- * then step onto its hit. Idempotent on an already-revealed turn.
+ * Reveal ONE hit's turn on demand (open, build around the hit's entry, repaint) before
+ * navigation selects it: a hit's turn can arrive after the search ran, or be re-folded by
+ * the reader. Idempotent.
  */
 export async function revealHitTurn(chatID: string, hit: Hit): Promise<void> {
   if (chatID === "" || hit.turn_id === "") {

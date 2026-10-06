@@ -24,16 +24,12 @@ func TestBuildACPArgs(t *testing.T) {
 	}
 }
 
-// kiro-cli REFUSES --model and --effort alongside --agent-engine=v3 and exits
-// before answering initialize:
+// kiro-cli refuses --model and --effort alongside --agent-engine=v3 and exits before initialize:
 //
 //	error: the following arguments are not supported with --agent-engine=v3: --model, --effort
 //
-// So emitting either does not merely fail to take effect, it kills the bridge —
-// which is what made every model switch fall back to a restart that also died.
-// The initial values go over session/set_config_option instead
-// (applyInitialModel / applyInitialEffort). Measured against kiro-cli 2.17.0
-// and 2.18.0; `-v` is the only other flag v3 accepts.
+// Emitting either kills the bridge, so the initial values go over session/set_config_option. Measured on kiro-cli
+// 2.17.0 and 2.18.0; `-v` is the only other flag v3 accepts.
 func TestBuildACPArgs_OmitsFlagsV3Refuses(t *testing.T) {
 	refused := []string{"--model", "--effort", "--agent", "--trust-all-tools", "--trust-tools"}
 	for _, engine := range []string{"", "v3"} {

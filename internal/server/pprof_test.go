@@ -10,10 +10,8 @@ import (
 	"testing"
 )
 
-// pprofRequest drives the gated handler the way a caller reaches it, with the
-// full /debug/pprof/ path intact — pprof.Index derives the profile name from that
-// prefix, so a test that stripped it would exercise a different code path than
-// the mount does.
+// pprofRequest drives the gated handler with the full /debug/pprof/ path intact, which
+// pprof.Index derives the profile name from.
 func pprofRequest(t *testing.T, path, remote, host string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -24,8 +22,7 @@ func pprofRequest(t *testing.T, path, remote, host string) *httptest.ResponseRec
 	return rec
 }
 
-// The goroutine dump is the reason D116 mounts anything at all, so it is the one
-// asserted end to end rather than through the index page.
+// TestPprof_GoroutineDumpAnswersOnLoopback asserts the goroutine dump end to end.
 func TestPprof_GoroutineDumpAnswersOnLoopback(t *testing.T) {
 	rec := pprofRequest(t, pprofPath+"goroutine?debug=2", "127.0.0.1:54321", "localhost:9847")
 	if rec.Code != http.StatusOK {
@@ -35,8 +32,7 @@ func TestPprof_GoroutineDumpAnswersOnLoopback(t *testing.T) {
 	if !strings.Contains(body, "goroutine") {
 		t.Errorf("body does not look like a goroutine dump: %.200s", body)
 	}
-	// ?debug=2 is the plain-text form, which is what makes this fetchable by an
-	// agent inside the container with no pprof tooling.
+	// ?debug=2 is plain text, fetchable inside the container with no pprof tooling.
 	if !strings.Contains(body, "runtime.") && !strings.Contains(body, ".go:") {
 		t.Errorf("body carries no stack frames: %.400s", body)
 	}
@@ -53,34 +49,15 @@ func TestPprof_IndexAnswersOnLoopback(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "goroutine") {
 		t.Errorf("index does not list the goroutine profile: %.400s", rec.Body.String())
 	}
-	// The 1.27 profile is reached by name off this same index, so its absence
-	// here is how a toolchain that dropped it would first read.
+	// The 1.27 profile is reached by name off this index; a toolchain dropping it shows here.
 	if !strings.Contains(rec.Body.String(), "goroutineleak") {
 		t.Errorf("index does not list the goroutineleak profile: %.400s", rec.Body.String())
 	}
 }
 
-// goroutineleak, the POSITIVE claim, which nothing here asserted.
-//
-// Go 1.27 made the goroutine-leak profile generally available and pprof.Index
-// derives the profile name from the request path, so the endpoint arrived with
-// the toolchain rather than with a registration — which is exactly why it needs
-// a test: nothing in this package mentions the name, so there is no compile
-// error and no missing symbol if a future toolchain drops it or renames it. The
-// only evidence the wire claim in pprof.go holds is a request.
-//
-// The three forms are asserted separately because an operator and a tool consume
-// different ones: ?debug=1 is the text summary an agent inside the container
-// reads with curl, ?debug=2 is the full stack form, and the bare path is the
-// gzipped protobuf `go tool pprof <url>` fetches.
-//
-// The COUNT is deliberately not asserted as nonzero. Detection is
-// reachability-based, so a leak the test planted would have to become
-// unreachable and survive a GC cycle to be reported, and pprof.go's own note
-// says `total 0` is not a statement that nothing leaked — the useful reading is
-// a diff across an operation. What is deterministic, and what this pins, is that
-// the endpoint answers through the mount and that its header line is the
-// documented `goroutineleak profile: total <n>` shape.
+// TestPprof_GoroutineLeakProfileAnswersOnLoopback pins that goroutineleak answers through the
+// mount in all three forms (nothing in the package names it, so only a request proves it).
+// The count is not asserted: detection is reachability-based.
 func TestPprof_GoroutineLeakProfileAnswersOnLoopback(t *testing.T) {
 	t.Run("debug=1 is the text summary", func(t *testing.T) {
 		rec := pprofRequest(t, pprofPath+"goroutineleak?debug=1", "127.0.0.1:54321", "localhost:9847")
@@ -119,9 +96,7 @@ func TestPprof_GoroutineLeakProfileAnswersOnLoopback(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("code = %d, want 200: %.200s", rec.Code, rec.Body.String())
 		}
-		// pprof serialises to a gzipped protobuf. Decompressing is the cheapest
-		// proof this is a real profile rather than an index page or an error
-		// body that happened to answer 200.
+		// Decompressing proves a real profile rather than an index page answering 200.
 		zr, err := gzip.NewReader(rec.Body)
 		if err != nil {
 			t.Fatalf("body is not the gzipped protobuf go tool pprof expects: %v", err)
@@ -132,8 +107,7 @@ func TestPprof_GoroutineLeakProfileAnswersOnLoopback(t *testing.T) {
 		}
 	})
 
-	// Behind the SAME gate as every other profile, which is the security half:
-	// a leak profile names every function on every parked stack.
+	// Behind the SAME gate: a leak profile names every function on every parked stack.
 	t.Run("refused off loopback", func(t *testing.T) {
 		rec := pprofRequest(t, pprofPath+"goroutineleak?debug=2", "10.0.0.5:1", "localhost:9847")
 		if rec.Code != http.StatusForbidden {
@@ -145,9 +119,7 @@ func TestPprof_GoroutineLeakProfileAnswersOnLoopback(t *testing.T) {
 	})
 }
 
-// The gate, case by case. Both ends have to be loopback, and browser or proxy
-// provenance is refused on top — a dump names every function on every stack, so
-// this is a map of the process rather than a status page.
+// TestPprof_RefusesEverythingButAnInContainerCaller pins the gate case by case.
 func TestPprof_RefusesEverythingButAnInContainerCaller(t *testing.T) {
 	cases := map[string]struct {
 		remote, host string
@@ -184,9 +156,7 @@ func TestPprof_RefusesEverythingButAnInContainerCaller(t *testing.T) {
 	}
 }
 
-// The two expensive profiles are deliberately absent, and a 404 from Index is how
-// that reads on the wire. Pinned so re-adding one is a decision rather than a
-// drive-by: each holds the server for its sample window, caller-controlled.
+// TestPprof_HoldTheServerProfilesAreNotMounted pins CPU and Trace absent (a 404 from Index).
 func TestPprof_HoldTheServerProfilesAreNotMounted(t *testing.T) {
 	for _, name := range []string{"profile", "trace"} {
 		t.Run(name, func(t *testing.T) {
@@ -198,13 +168,8 @@ func TestPprof_HoldTheServerProfilesAreNotMounted(t *testing.T) {
 	}
 }
 
-// A refusal must not leak the profile, and it must say that THIS endpoint
-// declined it.
-//
-// The middleware is shared with the kiro-cli repair hook, and the refusal is the
-// whole of what a rejected caller is told: a profile request answered with "the
-// kiro-cli repair hook is loopback-only" is a correct status with a wrong answer,
-// and it sends the operator to retry a path they never called.
+// TestPprof_RefusalNamesProfilesAndCarriesNoProfileData pins that a refusal leaks no profile
+// and names this endpoint.
 func TestPprof_RefusalNamesProfilesAndCarriesNoProfileData(t *testing.T) {
 	rec := pprofRequest(t, pprofPath+"goroutine?debug=2", "10.0.0.5:1", "localhost:9847")
 	if rec.Code != http.StatusForbidden {

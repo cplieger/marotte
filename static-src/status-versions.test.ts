@@ -1,12 +1,5 @@
-// The status card names WHICH build it is talking to, on both of its first two
-// lines: the marotte version on the connected line, the kiro-cli version on the
-// agent-runtime line.
-//
-// The pair arrives after the card is painted (the server spawns a `--version`
-// subprocess to answer it, and the transport reports `connected` within
-// milliseconds of boot), so the interesting behaviour is entirely about the LATE
-// arrival — a version that lands after the last status change still has to reach
-// both lines, and neither line may claim a version it does not have.
+// The status card names WHICH build it is talking to, on both of its first two lines: the marotte
+// version on the connected line, the kiro-cli version on the agent-runtime line.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -19,8 +12,8 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: (path: string) => mocks.apiGetOrError(path),
 }));
 
-// The banner stack and the login modal are the degraded path's collaborators;
-// this file only ever drives the healthy one.
+// The banner stack and the login modal are the degraded path's collaborators; this file only ever
+// drives the healthy one.
 vi.mock("./banner-stack.js", () => ({
   showBanner: vi.fn(),
   clearBannerCodes: vi.fn(),
@@ -33,17 +26,9 @@ vi.mock("@cplieger/ui-primitives/announce", () => ({ announce: vi.fn() }));
 const { setStatus, initStatusVersions, refreshRuntimeLine } = await import("./status.js");
 const { loadVersions, getVersions, _resetVersionsForTest } = await import("./versions.js");
 
-/** The footer as `static/index.html` authors it, minus what no writer here touches.
- *
- *  `#account-btn` is REQUIRED: `setStatus` writes its `data-tooltip` (the connection
- *  state is the trigger's DESCRIPTION now, where it used to be the dot's flipping
- *  `aria-label`), and `dom.ts`'s `byId` throws `Missing element: #account-btn`
- *  without it — five cases in this file call `setStatus`.
- *
- *  It needs NO `#st-auth-sep`: `status.ts` never reaches `setAuthLine`, whose only
- *  callers are in `settings.ts`. `#user-email` is not required by any writer this
- *  file exercises either; it is here because the fixture's job is to model the real
- *  markup. */
+/** The footer as `static/index.html` authors it, minus what no writer here touches. It needs NO
+ *  `#st-auth-sep`: `status.ts` never reaches `setAuthLine`, whose only callers are in
+ *  `settings.ts`. */
 function card(): void {
   document.body.innerHTML = `
     <button type="button" id="account-btn">
@@ -70,14 +55,7 @@ beforeEach(() => {
   mocks.apiGetOrError.mockResolvedValue({ ok: true, body: {} });
 });
 
-/** What `GET /api/version` really answers for `kiro_cli`.
- *
- *  The server hands over the RAW `kiro-cli --version` stdout, and that binary
- *  prints its own name first — measured on the live install, `kiro-cli 2.20.2`.
- *  Every case below uses this rather than a bare number, because a fixture
- *  carrying the tidy value is a premise the backend does not hold: with it, a
- *  consumer that forgets to strip the name still passes here and renders
- *  `kiro-cli kiro-cli 2.20.1 ready` in the app. */
+/** What `GET /api/version` really answers for `kiro_cli`. */
 const KIRO_VERSION_STDOUT = "kiro-cli 2.20.1";
 
 describe("the status card's version lines", () => {
@@ -105,8 +83,8 @@ describe("the status card's version lines", () => {
   });
 
   it("keeps a version off the disconnected line", async () => {
-    // The line describes THIS page's socket; naming a build beside "disconnected"
-    // would claim knowledge of a server it has just lost contact with.
+    // The line describes THIS page's socket; naming a build beside "disconnected" would claim
+    // knowledge of a server it has just lost contact with.
     initStatusVersions();
     mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
@@ -127,9 +105,8 @@ describe("the status card's version lines", () => {
   });
 
   it("leaves a degraded reason exactly as the server worded it", async () => {
-    // Every non-ready line is the server's own wording rendered verbatim, and a
-    // version appended to `kiro-cli installing` would name the pin rather than
-    // anything running.
+    // Every non-ready line is the server's own wording rendered verbatim, and a version appended to
+    // `kiro-cli installing` would name the pin rather than anything running.
     initStatusVersions();
     mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
@@ -151,15 +128,14 @@ describe("the status card's version lines", () => {
 
   it("drops the program name kiro-cli prints beside its version", async () => {
     // Both consumers already supply the word: the ready line reads
-    // `kiro-cli <build> ready` and Settings → About labels the row `kiro-cli`.
     mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
     expect(getVersions().kiroCli).toBe("2.20.1");
   });
 
   it("keeps a build string that does not carry the program name", async () => {
-    // A fork, or a future --version that prints the bare number. The strip is
-    // that one exact token, not a hunt for a version-shaped substring.
+    // A fork, or a future --version that prints the bare number. The strip is that one exact token,
+    // not a hunt for a version-shaped substring.
     mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: "2.99.0-rc1" });
     await loadVersions();
     expect(getVersions().kiroCli).toBe("2.99.0-rc1");

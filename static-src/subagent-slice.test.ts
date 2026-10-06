@@ -1,19 +1,6 @@
-// ---------------------------------------------------------------------------
-// The group projection over the entry log: one delegate is one LANE, its
-// invocation is a `tool_call` in the ISSUER's lane, and a pipeline's stages come
-// out of one window scan.
-//
-// Pure, so these are value assertions with no DOM. What they pin is the half that
-// reads as a working page until it is wrong in a specific way: which member an
-// entry lands in, which turn a lane is said to live in (the tail subscribes on
-// that turn), and whose liveness a member reports.
-//
-// The stage/driver join is this module's too, and it is pinned here rather than at a
-// consumer: it is read off the tool-call ID's shape (`invoke_subagent_<driver>_stage_<name>`)
-// rather than off any wire field, so it is exactly the kind of parse that breaks
-// silently — a pipeline whose join fails renders as an unrelated single delegate,
-// which looks like a working page.
-// ---------------------------------------------------------------------------
+// The group projection as pure values: which member an entry lands in, which turn a lane lives in,
+// whose liveness a member reports, and the stage/driver join parsed from the tool-call ID
+// (`invoke_subagent_<driver>_stage_<name>`), which breaks silently into an unrelated delegate.
 
 import { describe, it, expect } from "vitest";
 import {
@@ -240,13 +227,8 @@ describe("one walk answers for every member", () => {
     }
   });
 
-  // The join reads the FIRST separator: split on the last and this stage resolves to a
-  // driver that does not exist, so the pipeline renders as one unrelated delegate. A
-  // driver id is machine-minted and a stage NAME is author-supplied, so the separator can
-  // only appear on the RIGHT — measured on the live volume, every driver half is a
-  // `toolu_bdrk_*` id and stage names carry underscores freely. Both halves of the parse
-  // are asserted here as well as the grouping they decide, because the two overlap on one
-  // production line and one case is enough for it.
+  // The join reads the FIRST separator: driver ids are machine-minted, stage names author-supplied,
+  // so only the right half can contain one.
   it("groups a stage whose name contains the separator", () => {
     expect(pipelineOf("invoke_subagent_orc_1_stage_run_stage_two")).toBe("orc_1");
     expect(stageName("invoke_subagent_orc_1_stage_run_stage_two")).toBe("run_stage_two");
@@ -282,7 +264,7 @@ describe("a member's entries are its lane's, uncopied", () => {
 
   // Nothing is copied and no lane is cleared: a view renders the REAL turn with the
   // delegate's uuid as its root, so the slice hands back the store's own objects with
-  // their lane intact. A copy with the lane stripped is what the old projection did.
+  // their lane intact.
   it("hands back the store's own entries with their lane intact", () => {
     const src = pipeline();
     const stored = src.turns.get("t1")?.entries[4];

@@ -1,16 +1,4 @@
-// ---------------------------------------------------------------------------
 // The ONE reader of `GET /api/config-template`.
-//
-// Two readers of that endpoint used to seed the same surfaces, so every boot and
-// every transport gap cost two utility-bridge round trips. Collapsing them into
-// one has exactly one way to go wrong: a seed the deleted reader carried and the
-// survivor does not. Both of those seeds are pinned here.
-//
-// The retry POLICY is model-catalog.test.ts's subject, including the single
-// in-flight slot that makes a second caller on one gap free; the real
-// `refreshCatalog` is used rather than mocked so this file exercises the wiring
-// that reaches it.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ConfigTemplateResponse } from "./wire/types.gen.js";
@@ -26,8 +14,8 @@ vi.mock("./api-client.js", () => ({
   }),
 }));
 
-// The four sinks, recorded rather than driven: each owns its own behaviour, and
-// what this file decides is which of them the one reader still reaches.
+// The four sinks, recorded rather than driven: each owns its own behaviour, and what this file
+// decides is which of them the one reader still reaches.
 const mockSetCatalogEfforts = vi.fn();
 const mockSetCatalogModes = vi.fn();
 const mockSetPickerModels = vi.fn();
@@ -43,10 +31,9 @@ vi.mock("./picker.js", () => ({
 }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: mockRefreshContextUI }));
 
-// The store's context-size table is REAL: the seed's whole mechanism is that the
-// table is filled from the model descriptions this same answer carried, so a mock
-// of it would pin the wiring and not the seed. `{ spy: true }` calls through, so
-// only "which chat is active" is controlled, in `beforeEach`.
+// The store's context-size table is REAL: the seed's whole mechanism is that the table is filled
+// from the model descriptions this same answer carried, so a mock of it would pin the wiring and
+// not the seed.
 vi.mock("./store.js", { spy: true });
 
 const store = await import("./store.js");
@@ -58,8 +45,8 @@ function catalog(over: Partial<ConfigTemplateResponse> = {}): ConfigTemplateResp
   return { catalog: "ready", modes: [], models: [], effort_levels: [], ...over };
 }
 
-/** One model whose description states its window, which is the only place a
- *  context size is stated on this wire. */
+/** One model whose description states its window, which is the only place a context size is
+ *  stated on this wire. */
 function model(id: string, description = "200k context"): ConfigTemplateResponse["models"][number] {
   return { id, name: id, description };
 }
@@ -89,8 +76,8 @@ beforeEach(() => {
   reads.length = 0;
   reply = null;
   vi.mocked(store.getActive).mockReturnValue(undefined);
-  // The table is module state shared with the real store, so each case starts from
-  // an empty one; reassigning the export is not available, hence the per-key wipe.
+  // The table is module state shared with the real store, so each case starts from an empty one;
+  // reassigning the export is not available, hence the per-key wipe.
   for (const k of Object.keys(MODEL_CONTEXT_SIZES)) {
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- the keys ARE dynamic: they are model ids a case just landed.
     delete MODEL_CONTEXT_SIZES[k];
@@ -115,10 +102,9 @@ describe("the one catalog reader", () => {
   });
 
   it("seeds the active chat's context size from the descriptions it just landed", async () => {
-    // The first seed carried over from the deleted reader. Nothing else fills this:
-    // `usage_update` has no emit site in any KAS build marotte has run against, so
-    // every chat file persists `context_size: 0` and the client derives it from the
-    // model's description string.
+    // The first seed carried over from the deleted reader. Nothing else fills this: `usage_update`
+    // has no emit site in any KAS build marotte has run against, so every chat file persists
+    // `context_size: 0` and the client derives it from the model's description string.
     const active = session();
     vi.mocked(store.getActive).mockReturnValue(active);
     reply = catalog({ models: [model("m-big", "200k context")] });
@@ -142,8 +128,8 @@ describe("the one catalog reader", () => {
   });
 
   it("moves the picker's highlight to the ACTIVE chat's model", async () => {
-    // The second seed carried over. Passing "" leaves the highlight wherever it
-    // was, which is right before a session exists and wrong once one does.
+    // The second seed carried over. Passing "" leaves the highlight wherever it was, which is right
+    // before a session exists and wrong once one does.
     vi.mocked(store.getActive).mockReturnValue(session({ model: "m-big" }));
     reply = catalog({ models: [model("m-big"), model("m-small")] });
 
@@ -162,10 +148,9 @@ describe("the one catalog reader", () => {
   });
 
   it("never replaces a landed vocabulary with an EMPTY list", async () => {
-    // An empty list is the absence of a vocabulary rather than a value, and each
-    // list arrives empty on its own — the effort tiers ride the model, and KAS
-    // resolves its model list asynchronously, so a merely cold cache reports ready
-    // with nothing in it.
+    // An empty list is the absence of a vocabulary rather than a value, and each list arrives empty
+    // on its own — the effort tiers ride the model, and KAS resolves its model list asynchronously,
+    // so a merely cold cache reports ready with nothing in it.
     reply = catalog();
 
     await fetchCatalog();
@@ -185,5 +170,37 @@ describe("the one catalog reader", () => {
     const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
     expect(models?.[0]?.has_effort).toBe(true);
     expect(models?.[0]?.default_effort_level).toBe("high");
+  });
+
+  it("carries whether the model's thinking can be turned off", async () => {
+    reply = catalog({
+      models: [
+        { id: "m-think", name: "Think", thinking_toggleable: true },
+        { id: "m-fixed", name: "Fixed" },
+      ],
+    });
+
+    await fetchCatalog();
+
+    // The slider's Off stop keys on this field alone.
+    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    expect(models?.[0]?.thinking_toggleable).toBe(true);
+    expect(models?.[1]?.thinking_toggleable).toBeUndefined();
+  });
+
+  it("carries whether the model starts with thinking off", async () => {
+    reply = catalog({
+      models: [
+        { id: "m-off", name: "Off", thinking_toggleable: true, thinking_default_off: true },
+        { id: "m-on", name: "On", thinking_toggleable: true },
+      ],
+    });
+
+    await fetchCatalog();
+
+    // The slider reads this when the chat chose nothing and the session reported nothing.
+    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    expect(models?.[0]?.thinking_default_off).toBe(true);
+    expect(models?.[1]?.thinking_default_off).toBeUndefined();
   });
 });

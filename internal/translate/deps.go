@@ -61,10 +61,9 @@ type TurnBoundary interface {
 	// whose own end never arrived.
 	WireTurnStart(ctx context.Context, chatID marotte.ChatID)
 	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op
-	// when none is open. `details` is the wire's own account of the stop, empty on
-	// every build that sends none, and the only channel that could explain a
-	// `stopReason: "error"` turn.
-	WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason, details string)
+	// when none is open. The wire carries no stop prose, so the failure reason is
+	// the outcome's own default.
+	WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason)
 	// ReviseTurnBinding re-targets routing on an agent-initiated frame: a new
 	// wire_turn_start turn takes own and the prompt's turn drops back to pending.
 	ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID)
@@ -83,12 +82,9 @@ type SentSteers interface {
 	SteerResends(chatID marotte.ChatID, steerID string) []string
 }
 
-// SteerBuffer is the host's record of KAS's steering buffer and of the user's own
-// steers. The host needs telling because nothing can read that buffer back.
-//
-// A SECOND narrow role beside SentSteers rather than a widening of it: an origin is
-// TTL'd, while a waiting steer's lifetime is KAS's buffer, which no clock this process
-// holds can predict, so one type answering both would have to pick one lifetime.
+// SteerBuffer is the host's record of KAS's steering buffer and of the user's own steers:
+// nothing can read that buffer back. Separate from SentSteers because the lifetimes differ
+// (a TTL'd origin vs KAS's buffer).
 type SteerBuffer interface {
 	// SteerWaiting folds steering_queued; true means an agent row the caller broadcasts.
 	SteerWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
@@ -118,6 +114,9 @@ type ChatRecords interface {
 	// EmptyCompactions is how many empty-summary compaction entries the chat's log
 	// holds, which numbers the next one's id.
 	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
+	// DepartedName is the name a chat had when its record was deleted, for a notice
+	// its bridge raises before teardown; false for a chat that was not deleted.
+	DepartedName(id marotte.ChatID) (string, bool)
 }
 
 // Roles is the wiring-time role set: the host names which of its interfaces
@@ -152,11 +151,15 @@ type Roles struct {
 	// HookStatus reports whether hook status display is on.
 	HookStatus HookStatusReader
 	// Catalog is where a live config_option_update's model list lands.
-	Catalog    ModelCatalog
-	MCP        MCPRecorder
-	Governance GovernanceAccess
-	RunOrigin  RunOriginAccess
-	RunBounds  RunBoundsAccess
+	Catalog ModelCatalog
+	// Slash is the workspace slash-menu catalog; SteeringIssues KAS's steering
+	// configuration issues. Either may be nil.
+	Slash          SlashCatalog
+	SteeringIssues SteeringIssues
+	MCP            MCPRecorder
+	Governance     GovernanceAccess
+	RunOrigin      RunOriginAccess
+	RunBounds      RunBoundsAccess
 	// TurnInterrupt ends a turn kiro-cli abandoned without answering.
 	TurnInterrupt TurnInterruptAccess
 	// Metering is the per-turn accounting a turn_completion frame writes.
@@ -173,14 +176,13 @@ type Broadcaster interface {
 // PendingPermAdder registers an unanswered decision for reconnect replay.
 type PendingPermAdder interface {
 	PendingPermsAdd(requestID int64, evt marotte.ServerEvent)
+	// PendingPermsWithdraw retires the chat's ask for toolCallID, which KAS
+	// stopped waiting on, reporting whether one was pending.
+	PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool
 }
 
-// Responder answers a server-to-client ACP request on the chat's bridge.
-//
-// The one role here that writes to the wire rather than the event bus: a request
-// marotte declines to process still has to be answered, since KAS's sendRequest
-// carries no timeout and an unanswered ask strands the tool batch until teardown.
-// A chat with no bridge is not an error, so an implementation reports nil for it.
+// Responder answers a server-to-client ACP request on the chat's bridge: a declined request
+// must still be answered (KAS's sendRequest has no timeout). A chat with no bridge reports nil.
 type Responder interface {
 	BridgeRespond(ctx context.Context, chatID marotte.ChatID, requestID int64, result any, err error) error
 }
@@ -215,49 +217,56 @@ type TerminalReader interface {
 	Output(terminalID string) (text string, spans []marotte.TextSpan, ok bool)
 }
 
-// GovernanceAccess caches the latest governance state so GET /api/governance can
-// serve it with no chat open.
+// GovernanceAccess is the runtime's governance cache: the account profile, the MCP
+// registry and the administrator rules it composes into the lock map.
 type GovernanceAccess interface {
-	// SetGovernance replaces the cached governance state.
-	SetGovernance(state marotte.GovernanceStatePayload)
+	// SetGovernance replaces the cached account profile.
+	SetGovernance(ctx context.Context, state marotte.GovernanceStatePayload)
+	// SetMCPRegistry replaces the organization's MCP registry; nil means no registry.
+	SetMCPRegistry(ctx context.Context, registry *marotte.GovernanceMCPRegistry)
+	// PolicyChanged reports a policy notification's errors, so the administrator
+	// rules are read again and a fatal administration error fails them closed.
+	// reloaded marks a completed reload, whose errors are the whole set.
+	PolicyChanged(ctx context.Context, errs []marotte.PolicyErrorItem, reloaded bool)
 }
 
 // MCPRecorder groups MCP server state tracking methods.
 type MCPRecorder interface {
 	// RecordConnected marks a server connected and replaces what it advertises
-	// (tools, prompts, resources) wholesale; any of the three may be nil.
-	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo)
-	RecordOAuth(ctx context.Context, serverName, oauthURL string)
-	RecordInitFailure(ctx context.Context, serverName, errMsg string)
-	// RecordDisabled reports a server KAS says is off. Kept only when marotte
-	// never configured it, so it cannot resurrect one the user switched off.
-	RecordDisabled(ctx context.Context, serverName string)
-	SignalReady()
+	// (tools, prompts, resources, resource templates) wholesale; any may be nil.
+	RecordConnected(ctx context.Context, serverName string, src marotte.MCPSource, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo, templates []marotte.MCPResourceTemplateInfo)
+	RecordOAuth(ctx context.Context, serverName string, src marotte.MCPSource, oauthURL string)
+	RecordInitFailure(ctx context.Context, serverName string, src marotte.MCPSource, errMsg string)
+	// RecordDisabled reports a server KAS says is off. Never recorded for the
+	// entry marotte owns, so it cannot resurrect one the user switched off.
+	RecordDisabled(ctx context.Context, serverName string, src marotte.MCPSource)
 }
 
 // Translator holds the package's stateful translate logic, one field per role.
 type Translator struct {
-	bus           Broadcaster
-	chats         ChatRecords
-	turns         TurnAccess
-	runs          RunAppender
-	bracket       TurnBoundary
-	lines         LineRecorder
-	steers        SentSteers
-	steerBuffer   SteerBuffer
-	pendingPerms  PendingPermAdder
-	respond       Responder
-	push          Pusher
-	sessions      SessionResolver
-	terminals     TerminalReader
-	hookStatus    HookStatusReader
-	catalog       ModelCatalog
-	mcp           MCPRecorder
-	governance    GovernanceAccess
-	runOrigin     RunOriginAccess
-	runBounds     RunBoundsAccess
-	turnInterrupt TurnInterruptAccess
-	metering      TurnMetering
+	bus            Broadcaster
+	chats          ChatRecords
+	turns          TurnAccess
+	runs           RunAppender
+	bracket        TurnBoundary
+	lines          LineRecorder
+	steers         SentSteers
+	steerBuffer    SteerBuffer
+	pendingPerms   PendingPermAdder
+	respond        Responder
+	push           Pusher
+	sessions       SessionResolver
+	terminals      TerminalReader
+	hookStatus     HookStatusReader
+	catalog        ModelCatalog
+	slash          SlashCatalog
+	steeringIssues SteeringIssues
+	mcp            MCPRecorder
+	governance     GovernanceAccess
+	runOrigin      RunOriginAccess
+	runBounds      RunBoundsAccess
+	turnInterrupt  TurnInterruptAccess
+	metering       TurnMetering
 	// steps maps a workflow step's ACP session id to its run and node, fed from the
 	// wire (node_start) and from an inspect read.
 	steps   *stepRegistry
@@ -267,29 +276,31 @@ type Translator struct {
 // New constructs a Translator over the roles the host supplies.
 func New(r *Roles, opts ...Option) *Translator {
 	t := &Translator{
-		bus:           r.Bus,
-		chats:         r.Chats,
-		turns:         r.Turns,
-		runs:          r.Runs,
-		bracket:       r.Bracket,
-		lines:         r.Lines,
-		steers:        r.Steers,
-		steerBuffer:   r.SteerBuffer,
-		pendingPerms:  r.PendingPerms,
-		respond:       r.Respond,
-		push:          r.Push,
-		sessions:      r.Sessions,
-		terminals:     r.Terminals,
-		hookStatus:    r.HookStatus,
-		catalog:       r.Catalog,
-		workDir:       r.WorkDir,
-		mcp:           r.MCP,
-		governance:    r.Governance,
-		runOrigin:     r.RunOrigin,
-		runBounds:     r.RunBounds,
-		turnInterrupt: r.TurnInterrupt,
-		metering:      r.Metering,
-		steps:         newStepRegistry(),
+		bus:            r.Bus,
+		chats:          r.Chats,
+		turns:          r.Turns,
+		runs:           r.Runs,
+		bracket:        r.Bracket,
+		lines:          r.Lines,
+		steers:         r.Steers,
+		steerBuffer:    r.SteerBuffer,
+		pendingPerms:   r.PendingPerms,
+		respond:        r.Respond,
+		push:           r.Push,
+		sessions:       r.Sessions,
+		terminals:      r.Terminals,
+		hookStatus:     r.HookStatus,
+		catalog:        r.Catalog,
+		slash:          r.Slash,
+		steeringIssues: r.SteeringIssues,
+		workDir:        r.WorkDir,
+		mcp:            r.MCP,
+		governance:     r.Governance,
+		runOrigin:      r.RunOrigin,
+		runBounds:      r.RunBounds,
+		turnInterrupt:  r.TurnInterrupt,
+		metering:       r.Metering,
+		steps:          newStepRegistry(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -315,6 +326,8 @@ type RunOriginAccess interface {
 	// IsScheduled reports whether a run was launched by a schedule, keyed by
 	// workflow id because a parentless run's frames carry no topic.
 	IsScheduled(workflowID string) bool
+	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
+	RunLabel(workflowID string) string
 	// RunNotice CONSUMES the oldest finished run whose completion notice KAS queued
 	// into chatID's steering buffer, answering its id and the instant it finished
 	// (Unix ms). False when no such run is recorded, in which case the notice is
@@ -326,24 +339,14 @@ type RunOriginAccess interface {
 // forward. Detection belongs here (the step's frames pass through this package) while
 // the bound belongs on the host, which owns the bridges and the only stop verb.
 type RunBoundsAccess interface {
-	// RunMadeProgress reports that a run's step did something observable, so
-	// the run's idle window may be rolled forward.
-	//
-	// FIRE-AND-FORGET and idempotent: it is called once per step frame,
-	// so it must be cheap, and it must no-op for a run with no lease, a
-	// parked run and a run this process is not bounding. Keyed on the RUN
-	// rather than the node, because the window is a property of the run —
-	// a node id would invite a per-node window nothing enforces.
+	// RunMadeProgress reports that a run's step did something observable, so its idle window may
+	// roll forward. Called per step frame: cheap, idempotent, a no-op for an unbounded run. Keyed
+	// on the RUN, because the window is the run's.
 	RunMadeProgress(workflowID string)
 }
 
-// TurnInterruptAccess carries the terminal signals that arrive without a response
-// frame. Same split as RunBoundsAccess: detection belongs here (the sentinel arrives
-// as an assistant text chunk), termination on the host, which owns the in-flight
-// prompt's cancel func. reason travels because only the detector knows which
-// sentinel matched. Advisory: the host may decline if no turn is in flight, and a
-// compaction failure does not prove the turn ended, so the host bounds silence
-// before it interrupts.
+// TurnInterruptAccess carries terminal signals that arrive without a response frame: detected
+// here, terminated on the host. Advisory; a compaction failure does not prove the turn ended.
 type TurnInterruptAccess interface {
 	CompactionFailed(chatID marotte.ChatID, detail string)
 	InterruptTurn(chatID marotte.ChatID, reason string)

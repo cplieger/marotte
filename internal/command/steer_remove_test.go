@@ -1,9 +1,5 @@
 package command
 
-// What the delete, discard, turn-end and cancel commands DO with the record's
-// answers: which RPCs go out, in which order, on which context, and what the
-// reader is told. The record's own transitions are pinned in internal/agent.
-
 import (
 	"context"
 	"encoding/json"
@@ -14,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -286,122 +281,53 @@ func TestCmdSteerRemove_AConsumedTargetStillResubmitsTheKeptRows(t *testing.T) {
 	}
 }
 
-// The turn closed under the op: EndOp answers that end, and the op resolves it
-// under the lock it still holds, whether the end landed before the resend or
-// after it.
-func TestCmdSteerRemove_ATurnThatClosedUnderTheOpHandsTheRowsToTheTurnEnd(t *testing.T) {
-	for _, tc := range []struct {
-		removeRes SteerOpResult
-		name      string
-	}{
-		{name: "before the resend"},
-		{name: "after the resend", removeRes: SteerOpResult{Resend: &SteerSend{ID: "steer-p", Text: "kept"}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			b := newSteerBridge()
-			q := clearingQueue()
-			q.removeRes = tc.removeRes
-			q.opEnd = &SteerTurnEnd{TurnID: "t1"}
+// TestCmdSteerRemove_ATurnThatClosedUnderTheOpEndsThroughEndOp: EndOp answers the end and the op
+// resolves it under the lock it still holds, whether the end landed before the resend or after.
+func TestCmdSteerRemove_ATurnThatClosedUnderTheOpEndsTheOpBeforeTheUnlock(t *testing.T) {
+	b := newSteerBridge()
+	q := clearingQueue()
 
-			body, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
-			if err != nil {
-				t.Fatalf("CmdSteerRemove = %v, want success", err)
-			}
-			if got := body.(map[string]any); got["deleted"] != "steer-b" {
-				t.Errorf("body = %v, want deleted steer-b", got)
-			}
-			q.waitUnlocked(t)
-			log := q.callLog()
-			end, rows, unlock := slices.Index(log, "end-op"), slices.Index(log, "job-rows"), slices.Index(log, "unlock")
-			if end < 0 || rows < end || unlock < rows {
-				t.Errorf("record calls = %v, want end-op, then the turn end's rows, then unlock", log)
-			}
-		})
+	if _, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
+		t.Fatalf("CmdSteerRemove = %v, want success", err)
+	}
+	log := q.callLog()
+	end, unlock := slices.Index(log, "end-op"), slices.Index(log, "unlock")
+	if end < 0 || unlock < end || slices.Contains(log, "job-rows") {
+		t.Errorf("record calls = %v, want end-op before unlock and no end resolved by the op", log)
 	}
 }
 
-// Discard all ends its op the same way: a turn that closed under the clear is
-// resolved before the lock is released.
-func TestCmdSteerClear_ATurnThatClosedUnderTheClearIsResolved(t *testing.T) {
+// A stale bind that ended the op's channel settled the op's rows; the op routes
+// them into the started prompt before it unlocks.
+func TestCmdSteerClear_AStaleBindUnderTheClearRoutesBeforeTheUnlock(t *testing.T) {
 	b := newSteerBridge()
 	q := clearingQueue()
 	q.discardRes = SteerOpResult{Reason: SteerRefuseNoReply}
-	q.opEnd = &SteerTurnEnd{TurnID: "t1"}
+	q.reroute = true
+	q.parked = []string{"steer-w"}
+	host := &promptHolderHost{hostDouble: removeHost(b), turn: "t-p"}
 
-	_, err := CmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
+	_, err := CmdSteerClear(t.Context(), steerRolesOf(host, NewSteerLedger(), q), clearReq("c1"))
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 (body %s)", statusOf(err), errText(err))
 	}
-	q.waitUnlocked(t)
 	log := q.callLog()
-	if end, rows := slices.Index(log, "end-op"), slices.Index(log, "job-rows"); end < 0 || rows < end || slices.Index(log, "unlock") < rows {
-		t.Errorf("record calls = %v, want end-op, then the turn end's rows, then unlock", log)
+	end, route, unlock := slices.Index(log, "end-op"), slices.Index(log, "route steer-w"), slices.Index(log, "unlock")
+	if end < 0 || route < end || unlock < route {
+		t.Errorf("record calls = %v, want end-op, then the reroute, then unlock", log)
 	}
 }
 
-// The reader's request does not wait out a turn end's resend: the delete answers while
-// the resolution still holds the steer lock, and the lock is released when it ends.
-func TestCmdSteerRemove_RepliesBeforeTheTurnEndIsResolved(t *testing.T) {
-	b := newSteerBridge()
-	q := clearingQueue()
-	q.opEnd = &SteerTurnEnd{TurnID: "t1"}
-	q.jobRowsGate = make(chan struct{})
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("CmdSteerRemove = %v, want success", err)
-		}
-	case <-time.After(5 * time.Second):
-		close(q.jobRowsGate)
-		t.Fatal("CmdSteerRemove did not reply while the turn end was still being resolved")
-	}
-	if slices.Contains(q.callLog(), "unlock") {
-		t.Errorf("the steer lock was released before the turn end resolved; calls were %v", q.callLog())
-	}
-	close(q.jobRowsGate)
-	q.waitUnlocked(t)
+// promptHolderHost names a started prompt as the admission's prompt holder.
+type promptHolderHost struct {
+	hostDouble
+	turn string
 }
 
-// A turn that closed under the op is resolved on its own budget: a clear that spent
-// the op's RPC budget must not leave the kept rows unsent once the dead bridge drains.
-func TestCmdSteerRemove_ATurnEndOutlivesTheOpsBudget(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		b := newSteerBridge()
-		b.onCall = func(method string) {
-			if method == marotte.MethodSessionSteerClear {
-				time.Sleep(steerRemoveBudget + time.Second)
-			}
-		}
-		exit := make(chan struct{})
-		go func() {
-			time.Sleep(steerRemoveBudget + 2*time.Second)
-			close(exit)
-		}()
-		h := newResendHost(b, AdmissionAcquired, 0, false)
-		q := clearingQueue()
-		q.opEnd = &SteerTurnEnd{TurnID: "t1", BridgeDeath: true, Exit: exit}
-		q.jobRows = []SteerRow{{Key: "steer-a", Text: "kept"}}
-		q.resentKeys = []string{"steer-a"}
-		q.resentText = "kept"
+func (h *promptHolderHost) PromptHolder(marotte.ChatID) (string, bool) { return h.turn, h.turn != "" }
 
-		if _, err := CmdSteerRemove(t.Context(), steerRolesOf(h, NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
-			t.Fatalf("CmdSteerRemove = %v, want success", err)
-		}
-		h.waitInflight(t)
-
-		if log := q.callLog(); !slices.Contains(log, "delivered") || slices.Contains(log, "unsent") {
-			t.Errorf("record calls = %v, want the kept rows delivered and never left unsent", log)
-		}
-		if len(h.opened) != 1 || h.opened[0].Text != "kept" {
-			t.Errorf("prompts opened = %+v, want the kept row as one prompt", h.opened)
-		}
-	})
+func (h *promptHolderHost) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
+	return marotte.TurnSourcePrompt, true
 }
 
 // A reader who closes the tab mid-delete must not strand the rows it kept: the
@@ -485,8 +411,6 @@ func TestCmdSteerClear_NothingInKASCostsNoClear(t *testing.T) {
 	}
 }
 
-// --- the turn end's resend ---
-
 // resendHost scripts admission for the turn-end resend and records the prompt
 // entry the resend opens.
 type resendHost struct {
@@ -515,7 +439,8 @@ func (h *resendHost) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.
 	return h.admit
 }
 
-func (h *resendHost) OpenTurn(_ context.Context, _ marotte.ChatID, _ marotte.TurnOpenSource, p *marotte.EntryPrompt, _ func(*marotte.Chat)) (string, error) {
+func (h *resendHost) OpenTurn(_ context.Context, _ marotte.ChatID, open TurnOpen) (string, error) {
+	p := open.Prompt
 	if h.openErr != nil {
 		return "", h.openErr
 	}
@@ -564,16 +489,21 @@ func (h *resendHost) waitInflight(t *testing.T) {
 	}
 }
 
+// drainRoles wires a resend host and a scripted record into the drain's roles.
+func drainRoles(h hostDouble, q *stubSteerQueue) *promptRoles {
+	return steerRolesOf(h, NewSteerLedger(), q)
+}
+
+var cleanClose = CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: TurnFence{Epoch: 1, Seq: 1}}
+
 // What a turn leaves unread goes back together, in order, as the next prompt, and
-// the prompt names the rows it carries.
-func TestResolveTurnEnd_ResendsTheRowsAsTheNextPrompt(t *testing.T) {
+// the prompt names the rows it carries; the rows retire only once it opened.
+func TestDrain_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
 	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
 	q := newStubSteerQueue()
-	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first"}, {Key: "steer-b", Text: "second"}}
-	q.resentKeys = []string{"steer-a", "steer-b"}
-	q.resentText = "first\n\nsecond"
+	q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}, {Key: "steer-b", Text: "second"}}
 
-	resolveTurnEnd(t.Context(), steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1", &SteerTurnEnd{TurnID: "t1"})
+	drainAfterClose(t.Context(), drainRoles(h, q), "c1", cleanClose, EndFacts{})
 	h.waitInflight(t)
 
 	if len(h.opened) != 1 {
@@ -582,124 +512,102 @@ func TestResolveTurnEnd_ResendsTheRowsAsTheNextPrompt(t *testing.T) {
 	if p := h.opened[0]; p.Text != "first\n\nsecond" || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
 		t.Errorf("prompt = %+v, want the rows joined in order, naming both keys", p)
 	}
-	if got := q.callLog(); !slices.Contains(got, "delivered") || slices.Index(got, "resent") > slices.Index(got, "delivered") {
-		t.Errorf("record calls = %v, want the rows delivered once the prompt opened", got)
+	if !slices.Equal(q.delivered, []string{"steer-a", "steer-b"}) {
+		t.Errorf("delivered = %v, want both keys retired after the open", q.delivered)
 	}
 }
 
-// A resend whose prompt cannot open keeps custody of the rows: they wait unsent for
-// the reader's next prompt rather than vanishing with the refused open.
-func TestResolveTurnEnd_APromptThatCannotOpenLeavesTheRowsUnsent(t *testing.T) {
-	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
-	h.openErr = errors.New("disk full")
-	q := newStubSteerQueue()
-	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first"}}
-	q.resentKeys = []string{"steer-a"}
-	q.resentText = "first"
+// A drain whose prompt cannot open keeps custody of the rows: they stay unsent
+// rather than vanishing with the refused open.
+func TestDrain_APromptThatCannotOpenLeavesTheRowsUnsent(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		name string
+	}{
+		{name: "the open fails", err: errors.New("disk full")},
+		{name: "a newer turn opened", err: ErrTurnSuperseded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
+			h.openErr = tc.err
+			q := newStubSteerQueue()
+			q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}}
 
-	resolveTurnEnd(t.Context(), steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1", &SteerTurnEnd{TurnID: "t1"})
+			drainAfterClose(t.Context(), drainRoles(h, q), "c1", cleanClose, EndFacts{})
 
-	log := q.callLog()
-	if !slices.Contains(log, "unsent") || slices.Contains(log, "delivered") {
-		t.Errorf("record calls = %v, want the rows left unsent and never delivered", log)
+			if len(q.delivered) != 0 {
+				t.Errorf("delivered = %v, want nothing retired by a refused open", q.delivered)
+			}
+		})
 	}
 }
 
-// A prompt the user sent first holds admission: the rows become its steers rather
-// than a second prompt behind it.
-func TestResolveTurnEnd_APromptHeldFirstTakesTheRowsAsSteers(t *testing.T) {
-	b := newSteerBridge()
-	h := newResendHost(b, AdmissionBusy, marotte.TurnSourcePrompt, true)
-	q := newStubSteerQueue()
-	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first"}, {Key: "steer-b", Text: "second"}}
-
-	resolveTurnEnd(t.Context(), steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1", &SteerTurnEnd{TurnID: "t1"})
-
-	log := q.callLog()
-	for _, want := range []string{"release", "route steer-a", "route steer-b"} {
-		if !slices.Contains(log, want) {
-			t.Errorf("record calls = %v, want %q", log, want)
-		}
-	}
-	if len(h.opened) != 0 {
-		t.Errorf("a prompt opened behind the held one: %+v", h.opened)
-	}
-	if got := len(b.callsOf(marotte.MethodSessionSteer)); got != 2 {
-		t.Errorf("steer calls = %d, want one per row", got)
-	}
-}
-
-// Any other holder (a spawn, a step) cannot read a steer, so the rows wait as
-// unsent for the reader's next prompt.
-func TestResolveTurnEnd_AnyOtherHolderLeavesTheRowsUnsent(t *testing.T) {
-	h := newResendHost(newSteerBridge(), AdmissionStarting, marotte.TurnSourceWorkflowStep, true)
-	q := newStubSteerQueue()
-	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first"}}
-
-	resolveTurnEnd(t.Context(), steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1", &SteerTurnEnd{TurnID: "t1"})
-
-	if !slices.Contains(q.callLog(), "unsent") {
-		t.Errorf("record calls = %v, want the rows left unsent", q.callLog())
-	}
-}
-
-// A dead bridge's frames must fold before anything is resent; a wait that ends
-// without the drain leaves the rows unsent rather than racing the dying process.
-func TestResolveTurnEnd_ADeadBridgeThatHasNotDrainedLeavesTheRowsUnsent(t *testing.T) {
+// A pending end belongs to a newer close or to a shutdown, so this close's drain
+// sends nothing while one is listed.
+func TestDrain_APendingEndHoldsBackEverySend(t *testing.T) {
 	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
 	q := newStubSteerQueue()
-	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first", InKAS: true}}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	q.ends = []SteerEnd{{Owner: "end-2", End: SteerTurnEnd{TurnSeq: 2}}}
+	q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}}
 
-	resolveTurnEnd(ctx, steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1",
-		&SteerTurnEnd{TurnID: "t1", BridgeDeath: true, Exit: make(chan struct{})})
+	drainAfterClose(t.Context(), drainRoles(h, q), "c1", cleanClose, EndFacts{})
 
-	if got := q.callLog(); !slices.Equal(got, []string{"job-rows", "unsent"}) {
-		t.Errorf("record calls = %v, want [job-rows unsent]", got)
-	}
-	if len(h.opened) != 0 {
-		t.Errorf("a prompt opened before the dead bridge drained: %+v", h.opened)
+	if slices.Contains(q.callLog(), "unsent-rows") || len(h.opened) != 0 {
+		t.Errorf("record calls = %v, opened = %d, want no send while an end is pending", q.callLog(), len(h.opened))
 	}
 }
 
-// Rows KAS may still hold (a send that landed after the turn's own clear) are
-// settled before the resend, so none is delivered twice: a dead buffer proves
-// them gone, a clear's reply proves it, and with an agent row waiting (a clear
-// would drop it) or a prompt holding the chat they stay for the next cursor.
-func TestResolveTurnEnd_StrayRowsAreSettledBeforeTheResend(t *testing.T) {
+// A close resolves only the ends of turns that opened at or before it, so an older
+// pipeline never consumes a newer close's end.
+func TestResolveEnds_LeavesANewerTurnsEnd(t *testing.T) {
+	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
+	q := newStubSteerQueue()
+	q.ends = []SteerEnd{{Owner: "end-1", End: SteerTurnEnd{TurnSeq: 1}}, {Owner: "end-2", End: SteerTurnEnd{TurnSeq: 2}}}
+	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first"}}
+
+	ResolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
+
+	if got := q.Ends("c1"); len(got) != 1 || got[0].Owner != "end-2" {
+		t.Errorf("ends left = %+v, want only the newer turn's", got)
+	}
+}
+
+// Rows KAS may still hold are settled before they go unsent, so none is delivered
+// twice: a dead buffer proves them gone, a clear's reply proves it, and with an
+// agent row waiting (a clear would drop it) or any admission holder they stay for
+// the next cursor.
+func TestResolveEnds_AStrayIsClearedOnlyWithNoHolder(t *testing.T) {
 	closed := make(chan struct{})
 	close(closed)
 	cases := []struct {
-		end       *SteerTurnEnd
+		end       SteerTurnEnd
 		name      string
 		wantLog   string
-		admit     AdmissionOutcome
 		holder    marotte.TurnOpenSource
 		held      bool
 		agentRows bool
 		wantClear bool
 	}{
-		{name: "a dead buffer", end: &SteerTurnEnd{BridgeDeath: true, Exit: closed}, wantLog: "strays-all"},
-		{name: "a clear's reply", end: &SteerTurnEnd{}, wantLog: "strays-all", wantClear: true},
-		{name: "an agent row waiting", end: &SteerTurnEnd{}, agentRows: true, wantLog: "release-in-kas"},
-		{
-			name: "a prompt holding the chat", end: &SteerTurnEnd{}, admit: AdmissionBusy,
-			held: true, holder: marotte.TurnSourcePrompt, wantLog: "release",
-		},
+		{name: "a dead buffer", end: SteerTurnEnd{BridgeDeath: true, Exit: closed}, wantLog: "strays-all"},
+		{name: "a clear's reply", wantLog: "strays-all", wantClear: true},
+		{name: "an agent row waiting", agentRows: true, wantLog: "release-in-kas"},
+		{name: "a prompt holding the chat", held: true, holder: marotte.TurnSourcePrompt, wantLog: "release-in-kas"},
+		{name: "a bare reservation", held: true, holder: marotte.TurnSourceLocalShell, wantLog: "release-in-kas"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newSteerBridge()
-			h := newResendHost(b, tc.admit, tc.holder, tc.held)
+			h := newResendHost(b, AdmissionAcquired, tc.holder, tc.held)
 			q := newStubSteerQueue()
 			q.agentRows = tc.agentRows
+			q.ends = []SteerEnd{{Owner: "end-1", End: tc.end}}
 			q.jobRows = []SteerRow{{Key: "steer-a", Text: "first", InKAS: true}}
 
-			resolveTurnEnd(t.Context(), steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1", tc.end)
+			ResolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
 
-			if !slices.Contains(q.callLog(), tc.wantLog) {
-				t.Errorf("record calls = %v, want %q", q.callLog(), tc.wantLog)
+			log := q.callLog()
+			if !slices.Contains(log, tc.wantLog) || !slices.Contains(log, "end-unsent") {
+				t.Errorf("record calls = %v, want %q and the end made unsent", log, tc.wantLog)
 			}
 			if got := len(b.callsOf(marotte.MethodSessionSteerClear)) == 1; got != tc.wantClear {
 				t.Errorf("clear issued = %v, want %v (calls %v)", got, tc.wantClear, b.methods())
@@ -711,27 +619,26 @@ func TestResolveTurnEnd_StrayRowsAreSettledBeforeTheResend(t *testing.T) {
 	}
 }
 
-// The closing prompt holds the chat's admission until its own reply, so the job
-// takes admission before it decides the strays: a clear issued earlier could drop
-// a row that prompt's turn has not read yet, and a holder check would always see
-// the closing turn.
-func TestResolveTurnEnd_TakesAdmissionBeforeClearingStrays(t *testing.T) {
-	b := newSteerBridge()
-	h := newResendHost(b, AdmissionAcquired, 0, false)
-	var order []string
-	h.onReserve = func() { order = append(order, "reserve") }
-	b.onCall = func(method string) { order = append(order, method) }
+// A dead bridge's frames must fold before its rows are sent as prompt text; a wait
+// that ends without the drain is reported, so the close's drain withholds them.
+func TestResolveEnds_ADeadBridgeThatHasNotDrainedIsReported(t *testing.T) {
+	was := ResendBridgeWait
+	ResendBridgeWait = time.Millisecond
+	t.Cleanup(func() { ResendBridgeWait = was })
+	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
 	q := newStubSteerQueue()
+	q.ends = []SteerEnd{{Owner: "end-1", End: SteerTurnEnd{BridgeDeath: true, Exit: make(chan struct{})}}}
 	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first", InKAS: true}}
 
-	resolveTurnEnd(t.Context(), steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1", &SteerTurnEnd{})
+	facts := ResolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
 
-	if want := []string{"reserve", marotte.MethodSessionSteerClear}; !slices.Equal(order, want) {
-		t.Errorf("order = %v, want %v", order, want)
+	if !facts.Death || !facts.Undrained {
+		t.Errorf("facts = %+v, want an undrained death", facts)
+	}
+	if got := q.callLog(); !slices.Contains(got, "end-unsent") {
+		t.Errorf("record calls = %v, want the rows made unsent", got)
 	}
 }
-
-// --- cancel and teardown ordering ---
 
 // The send-now arrow's row is recorded before the cancel goes out, so the turn
 // end it causes resends that row first; a cancel that never reached KAS ends no
@@ -754,7 +661,7 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 			host := removeHost(b)
 			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-			if _, err := CmdCancel(t.Context(), host, host, host, q, cmd); err != nil {
+			if _, err := CmdCancel(t.Context(), host, host, host, host, q, cmd); err != nil {
 				t.Fatalf("CmdCancel = %v", err)
 			}
 			if got := q.callLog(); !slices.Equal(got, tc.want) {
@@ -784,8 +691,12 @@ func (o orderTeardown) DeleteChatState(context.Context, marotte.ChatID) {
 	*o.log = append(*o.log, "delete")
 }
 
-func (o orderTeardown) DeleteChatStateByChain(context.Context, marotte.ChatID, []string) {
-	*o.log = append(*o.log, "delete-by-chain")
+func (o orderTeardown) DeleteChatStateByChain(_ context.Context, _ marotte.ChatID, _ []string, cause RunStopCause) {
+	entry := "delete-by-chain"
+	if cause == RunStopTabClosed {
+		entry += " tab-closed"
+	}
+	*o.log = append(*o.log, entry)
 }
 
 // The steer record is torn down BEFORE the teardown's cancel: the cancel ends the
@@ -798,11 +709,11 @@ func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 		want []string
 	}{
 		{name: "close", run: func(ctx context.Context, h hostDouble, td ChatTeardown) {
-			closeChatTeardown(ctx, h, h, td, "c1")
+			closeChatTeardown(ctx, h, h, h, td, "c1")
 		}, want: []string{"begin keep=true", marotte.MethodCancel, "close"}},
 		{name: "delete", run: func(ctx context.Context, h hostDouble, td ChatTeardown) {
-			deleteChatTeardown(ctx, h, h, td, "c1", []string{"sess-1"})
-		}, want: []string{"begin keep=false", marotte.MethodCancel, "delete-by-chain"}},
+			deleteChatTeardown(ctx, h, h, h, td, "c1", []string{"sess-1"})
+		}, want: []string{"begin keep=false", marotte.MethodCancel, "delete-by-chain tab-closed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var log []string

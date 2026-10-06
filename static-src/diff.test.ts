@@ -1,4 +1,3 @@
-// Table-driven tests for diff.ts — lineDiff, wordDiff and windowHunks.
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import {
@@ -12,12 +11,10 @@ import {
   type DiffLine,
 } from "./diff.js";
 
-/** What a valid edit script reconstructs from `newText`.
- *
- *  The rows carry no terminator, so replaying add+ctx and joining with "\n" gives
- *  back every LINE and not the final newline that ended the file. Spelled once for
- *  the time-budget case and the reconstruction invariant, which is what stops the
- *  two drifting into two different claims about the same script. */
+/**
+ * What a valid edit script reconstructs from `newText`: every line, without the final newline. Shared by the
+ * time-budget case and the reconstruction invariant so the two cannot drift.
+ */
 function withoutFinalNewline(s: string): string {
   return s.endsWith("\n") ? s.slice(0, -1) : s;
 }
@@ -158,29 +155,22 @@ describe("lineDiff", () => {
   }
 
   it("falls back to a coarse but valid script past the time budget", () => {
-    // 5100×5100 = 26M cells > TIME_BUDGET_CELLS (25M); every line differs
-    // so prefix/suffix trimming removes nothing.
+    // 5100×5100 = 26M cells > TIME_BUDGET_CELLS; every line differs, so the trim removes nothing.
     const n = 5100;
     const oldText = Array.from({ length: n }, (_, i) => `left ${String(i)}`).join("\n");
     const newText = Array.from({ length: n }, (_, i) => `right ${String(i)}`).join("\n");
     const result = lineDiff(oldText, newText);
     const s = stats(result);
-    // The fallback is still a VALID edit script: old = dels + ctx,
-    // new = adds + ctx, and replaying ctx+add reproduces the new text.
+    // The fallback is still a valid edit script.
     expect(s.dels + s.ctx).toBe(n);
     expect(s.adds + s.ctx).toBe(n);
     const reconstructed = result.filter((l) => l.kind !== "del").map((l) => l.text);
-    // Against the same expression the reconstruction invariant uses, rather than a
-    // raw `split`: this `newText` is `join("\n")`ed from non-empty strings so it
-    // never ends in a newline today, and a raw split would silently stop agreeing
-    // with the invariant if the generator ever produced one that did.
+    // Against the invariant's own expression, not a raw `split`, so the two keep agreeing if the generator changes.
     expect(reconstructed.join("\n")).toBe(withoutFinalNewline(newText));
   });
 
   it("bounded time: shared prefix/suffix keeps huge similar files on the exact path", () => {
-    // Two 100k-line files differing in one middle line: the trim reduces
-    // the exact-diff middle to 1×1, so this must produce a minimal script
-    // (no coarse fallback) and return quickly.
+    // One differing middle line: the trim reduces the exact middle to 1×1, so this must be minimal and fast.
     const n = 100_000;
     const lines = Array.from({ length: n }, (_, i) => `line ${String(i)}`);
     const oldText = lines.join("\n");
@@ -196,9 +186,7 @@ describe("lineDiff", () => {
 });
 
 describe("windowHunks", () => {
-  // The unit is the HUNK, which is the whole point of the replacement: keeping
-  // the first three CHANGED LINES showed a 12-line rewrite as a quarter of
-  // itself, cut mid-thought.
+  // The unit is the hunk: the first three changed lines once showed a 12-line rewrite as a quarter of itself.
   const ctx = (n: number, t: string): DiffLine => ({ kind: "ctx", oldNo: n, newNo: n, text: t });
   const del = (n: number, t: string): DiffLine => ({ kind: "del", oldNo: n, newNo: 0, text: t });
   const add = (n: number, t: string): DiffLine => ({ kind: "add", oldNo: 0, newNo: n, text: t });
@@ -216,8 +204,7 @@ describe("windowHunks", () => {
   it("keeps a whole hunk even when it exceeds maxRows, rather than cutting it", () => {
     const hunk = [del(1, "a"), del(2, "b"), add(1, "c"), add(2, "d"), add(3, "e")];
     const got = windowHunks(hunk, { maxRows: 2 });
-    // The first hunk always goes in whole: a half-hunk is the failure mode this
-    // function exists to remove.
+    // The first hunk always goes in whole.
     expect(got.lines).toEqual(hunk);
     expect(got.hunksOmitted).toBe(0);
   });
@@ -226,7 +213,6 @@ describe("windowHunks", () => {
     const lines = [del(1, "a"), add(1, "b"), ctx(2, "keep"), del(3, "c"), add(3, "d")];
     const got = windowHunks(lines, { maxRows: 2, context: 1 });
     expect(got.hunksOmitted).toBe(1);
-    // Nothing from the dropped hunk survives.
     expect(got.lines.some((l) => l.text === "c" || l.text === "d")).toBe(false);
   });
 
@@ -246,7 +232,6 @@ describe("windowHunks", () => {
     expect(texts).toContain("near-before");
     expect(texts).toContain("near-after");
     expect(texts).toContain("near-before2");
-    // The interior of a long context run is elided.
     expect(texts).not.toContain("middle");
     // A context run touching no hunk on its far side contributes nothing there.
     expect(texts).not.toContain("far-before");
@@ -262,16 +247,13 @@ describe("windowHunks", () => {
   it("drops trailing context that adjoins no later hunk", () => {
     const lines = [del(1, "x"), ctx(2, "n1"), ctx(3, "n2"), ctx(4, "n3")];
     const got = windowHunks(lines, { context: 1 });
-    // Only the side touching the hunk contributes, so the run's tail is not
-    // kept: there is nothing after it for the reader to orient against.
+    // Only the side touching the hunk contributes.
     expect(got.lines).toEqual([del(1, "x"), ctx(2, "n1")]);
   });
 
   it("keeps a hunk that exactly fills the remaining budget", () => {
     const lines = [del(1, "a"), add(1, "b"), ctx(2, "k1"), ctx(3, "k2"), del(4, "c"), add(4, "d")];
-    // 2 rows of hunk + 2 of context + 2 of hunk === maxRows, so the last hunk
-    // fits precisely. Cutting at the cap rather than past it would drop it and
-    // report a hunk omitted that the reader had room for.
+    // 2 hunk + 2 context + 2 hunk === maxRows, so the last hunk fits exactly; cutting past the cap would drop it.
     const got = windowHunks(lines, { maxRows: 6, context: 1 });
     expect(got).toEqual({ lines, hunksOmitted: 0 });
   });
@@ -294,7 +276,6 @@ describe("stats", () => {
 });
 
 describe("lineDelta", () => {
-  /** An n-line file, "line <i>\n" per line. */
   const bigFile = (n: number): string =>
     Array.from({ length: n }, (_, i) => `line ${String(i)}\n`).join("");
 
@@ -330,30 +311,14 @@ describe("lineDelta", () => {
   }
 
   it("counts a 2-line file creation as 2 lines on both surfaces", () => {
-    // This case used to PIN THE DEFECT, asserting 3 against 2 with its own name
-    // recording that the author knew: `splitLines` kept the empty element a final
-    // newline produces and the renderer drew its row, while `splitDeltaLines`
-    // dropped it. So one app answered a file's added-line count two ways — the
-    // pane said 28 where the turn footer and `git diff` both said 27.
+    // The pane once drew a row for the final newline while the footer did not (28 vs `git diff`'s 27).
     expect(stats(lineDiff("", "a\nb\n")).adds).toBe(2);
     expect(lineDelta("", "a\nb\n").added).toBe(2);
   });
 });
 
-// ---------------------------------------------------------------------------
-// A file's final newline is the writer's terminator, not a line.
-//
-// One split now serves the whole diff surface — the pane, the tool card's
-// preview, the editor's diff mode and the turn footer's `+N -M` — so a phantom
-// trailing added row is unrepresentable rather than filtered downstream. That
-// rule is `internal/buffer/linediff.go`'s `splitDiffLines` character for
-// character, which is what makes the two languages agree about one file.
-//
-// Three of the five agree-table rows below were GREEN before the change (the
-// non-terminated pair, the CRLF pair, and the terminated pair, where the phantom
-// row appeared on BOTH sides and cancelled out of the counts); the creation and
-// the emptied file are the two that were not. Every number is `git diff`'s.
-// ---------------------------------------------------------------------------
+// A file's final newline is the writer's terminator, not a line. One split serves the whole diff surface (pane, tool
+// card preview, editor diff mode, footer counts), matching `internal/buffer/linediff.go`'s `splitDiffLines` exactly.
 describe("a file's final newline is not a line", () => {
   it("renders a newline-terminated creation as exactly its own lines", () => {
     expect(lineDiff("", "a\nb\n")).toEqual([
@@ -363,9 +328,7 @@ describe("a file's final newline is not a line", () => {
   });
 
   it("renders a file NOT ending in a newline identically — the CONTROL", () => {
-    // Green before this change and after it, so it covers the arm that was always
-    // right rather than the fix. It is here to state the property the fix bought:
-    // the two spellings of a two-line file produce ONE answer.
+    // Both spellings of a two-line file give one answer.
     expect(lineDiff("", "a\nb")).toEqual([
       { kind: "add", oldNo: 0, newNo: 1, text: "a" },
       { kind: "add", oldNo: 0, newNo: 2, text: "b" },
@@ -373,9 +336,8 @@ describe("a file's final newline is not a line", () => {
   });
 
   it("counts a file that is only newlines by its empty lines", () => {
-    // Why the drop is a POP rather than stripping the trailing "\n" off the string
-    // first: a file holding one newline holds one (empty) line, which is what
-    // `git diff` counts, and stripping would leave "" — no lines at all.
+    // The drop is a pop, not a strip of the trailing "\n": a file holding one newline holds one empty line, as `git diff`
+    // counts it.
     expect(lineDiff("", "\n")).toEqual([{ kind: "add", oldNo: 0, newNo: 1, text: "" }]);
     expect(lineDiff("", "\n\n")).toEqual([
       { kind: "add", oldNo: 0, newNo: 1, text: "" },
@@ -399,9 +361,7 @@ describe("a file's final newline is not a line", () => {
 
   for (const c of agree) {
     it(`states one count for ${c.name}, on both surfaces`, () => {
-      // Both sides hardcoded rather than compared against each other: with one
-      // split behind both entry points, `stats(lineDiff(...)) === lineDelta(...)`
-      // is a tautology that could not fail for any change to the vocabulary.
+      // Both sides hardcoded: with one shared split, comparing `stats(lineDiff)` to `lineDelta` is a tautology.
       const s = stats(lineDiff(c.old, c.new));
       expect({ added: s.adds, removed: s.dels }, "the diff pane's count").toEqual({
         added: c.added,
@@ -415,24 +375,8 @@ describe("a file's final newline is not a line", () => {
   }
 
   it("renders a newline-only change as an UNCHANGED file — ACCEPTED RESIDUAL", () => {
-    // CHARACTERIZATION, not a property. `git diff` shows this change as one
-    // deletion plus one insertion carrying `\ No newline at end of file`; here both
-    // sides split to the same lines, so every row is CONTEXT and the change is
-    // invisible. Composed with `renderDiffPane`'s own all-context state (pinned in
-    // `diff-pane.test.ts`), the reader is told "No changes between these versions"
-    // for a file that did change.
-    //
-    // Accepted for three reasons. Newline-terminated files are near-universal, so
-    // the phantom row was on essentially every diff while a newline-only change is
-    // rare. `lineDelta` and the Go twin already reported 0/0 for it, so after the
-    // change the pane and the footer AGREE where they used to contradict each
-    // other — which is the property the whole fix is about. And the git-faithful
-    // remedy is that marker, which needs a new `DiffLine` kind threaded through
-    // `stats`, `windowHunks`, `wordMarks`, the pane's four row builders and the
-    // tool card's preview: larger than the bug, and a separate item.
-    //
-    // Pinned so nobody rediscovers it as a defect, and so a reader who does add
-    // the marker updates this case deliberately instead of reading it as a bug.
+    // Characterization: a newline-only change at EOF splits to identical lines, so every row is context and the pane says
+    // "No changes". Accepted: such changes are rare, and `lineDelta` and the Go twin already report 0/0, so the surfaces agree.
     for (const [before, after] of [
       ["a\nb", "a\nb\n"],
       ["a\nb\n", "a\nb"],
@@ -445,11 +389,7 @@ describe("a file's final newline is not a line", () => {
 });
 
 describe("lineDiff property-based invariants", () => {
-  /** Count the lines in a string, the way `splitLines` does but spelled
-   *  independently — a helper that called the production split would make every
-   *  invariant below a tautology. The `s === ""` guard is the no-lines case, and a
-   *  final newline is the writer's terminator rather than a line, so it does not
-   *  add one. */
+  /** Spelled independently of `splitLines`, or every invariant below would be a tautology. */
   function countLines(s: string): number {
     if (s === "") {
       return 0;
@@ -458,7 +398,6 @@ describe("lineDiff property-based invariants", () => {
     return s.endsWith("\n") ? n - 1 : n;
   }
 
-  /** Reconstruct the new text from diff output by taking add+ctx text in order. */
   function reconstructNew(lines: DiffLine[]): string {
     const parts: string[] = [];
     for (const l of lines) {
@@ -469,7 +408,7 @@ describe("lineDiff property-based invariants", () => {
     return parts.length === 0 ? "" : parts.join("\n");
   }
 
-  // Arbitrary for multi-line strings (small inputs — dense LCS path)
+  // Small multi-line inputs: the dense LCS path.
   const smallText = fc
     .array(fc.string({ minLength: 0, maxLength: 20 }), { minLength: 0, maxLength: 30 })
     .map((lines) => lines.join("\n"));
@@ -536,8 +475,7 @@ describe("lineDiff property-based invariants", () => {
     );
   });
 
-  // Hirschberg path: generate inputs exceeding SPACE_THRESHOLD (4M cells)
-  // 2001 lines × 2001 lines = ~4M+ cells
+  // Over SPACE_THRESHOLD (4M cells): 2001×2001 lines reaches the Hirschberg path.
   const largeText = fc
     .array(
       fc
@@ -547,12 +485,8 @@ describe("lineDiff property-based invariants", () => {
     )
     .map((lines) => lines.join("\n"));
 
-  // The two large-input properties override the global 10s fast-check
-  // interrupt: under Stryker's instrumentation a single 2001x2001-line run
-  // takes ~5s+, so 3 runs tripped interruptAfterTimeLimit and (via
-  // markInterruptAsFailure) failed the mutation dry run. 60s keeps the
-  // hang-safety bound without penalizing instrumented runs; the vitest
-  // per-test cap in vitest.stryker.config.ts sits above it.
+  // 60s, not the global 10s fast-check interrupt: under Stryker a 2001×2001 run takes ~5s and `markInterruptAsFailure`
+  // failed the dry run. The per-test cap in vitest.stryker.config.ts sits above it.
   it("Hirschberg path: invariants 1-3 hold for large inputs", () => {
     fc.assert(
       fc.property(largeText, largeText, (a, b) => {
@@ -579,17 +513,8 @@ describe("lineDiff property-based invariants", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Minimality, not just validity.
-//
-// The round-trip invariants above (adds+ctx === newText, and replaying the
-// script reproduces it) are satisfied by ANY valid edit script, including
-// "delete everything, add everything". They therefore say nothing about the
-// edit-distance table that decides WHICH lines pair up. These cases pin the
-// script itself on inputs small enough to work the optimum out by hand, which
-// is what catches an off-by-one in the table: the diff stays valid and turns
-// silently worse.
-// ---------------------------------------------------------------------------
+// Minimality, not just validity: any valid script satisfies the round-trip invariants, so these pin the script on
+// inputs small enough to solve by hand, which catches an off-by-one in the table.
 describe("lineDiff minimal edit scripts", () => {
   const cases: {
     name: string;
@@ -599,9 +524,7 @@ describe("lineDiff minimal edit scripts", () => {
     expected: DiffLine[];
   }[] = [
     {
-      // Both ends differ, so nothing is trimmed and the whole table is walked.
-      // Reaching the A/B pair costs two adds first, so the walk has to prefer
-      // an add over a del twice while the table still says the pair is coming.
+      // Both ends differ, so the whole table is walked; the walk must prefer an add twice while the pair is still coming.
       name: "adds precede a matching pair when the table says the pair is worth more",
       old: "X\nA\nB\nY",
       new: "Q\nC\nA\nB\nZ",
@@ -616,9 +539,7 @@ describe("lineDiff minimal edit scripts", () => {
       ],
     },
     {
-      // The first row of the table is the one an "i >= 0" loop bound is easiest
-      // to lose. Here the correct move at the very first cell is an add, so a
-      // missing first row shows up as a deleted A instead.
+      // The first row is the one an "i >= 0" bound is easiest to lose; a missing row shows as a deleted A.
       name: "a leading insertion is found from the first row of the table",
       old: "A\nB\nz",
       new: "X\nA\nB\nw",
@@ -631,9 +552,7 @@ describe("lineDiff minimal edit scripts", () => {
       ],
     },
     {
-      // "D" appears twice in the new text: anchoring the old D on the second
-      // one costs the B match. Both choices reconstruct the new text, only one
-      // is the shortest script.
+      // "D" appears twice in the new text; anchoring on the second costs the B match.
       name: "a repeated line is anchored where it keeps the most context",
       old: "E\nD\nB",
       new: "D\nC\nB\nD",
@@ -646,8 +565,7 @@ describe("lineDiff minimal edit scripts", () => {
       ],
     },
     {
-      // The B/A pair is only reachable by skipping past the earlier A and C
-      // copies; taking the first A instead leaves one context line, not two.
+      // The B/A pair is reachable only by skipping the earlier A and C copies.
       name: "duplicated old lines do not cost context",
       old: "C\nA\nC\nB\nA\nD\nB",
       new: "E\nB\nA",
@@ -663,8 +581,7 @@ describe("lineDiff minimal edit scripts", () => {
       ],
     },
     {
-      // Two trimmed suffix lines, so the suffix loop runs twice and its line
-      // numbers have to climb with it.
+      // Two trimmed suffix lines, so the suffix loop's line numbers must climb.
       name: "a two-line common suffix keeps its own line numbers",
       old: "X\nc\nd",
       new: "Y\nc\nd",
@@ -676,9 +593,7 @@ describe("lineDiff minimal edit scripts", () => {
       ],
     },
     {
-      // The mirror of "whitespace-only diff with ignoreWhitespace" above: there
-      // the OLD line carried the extra space, so normalizing only the old side
-      // was enough to pass. Here the new side is the one that needs it.
+      // The mirror case: here the new side needs normalizing.
       name: "ignoreWhitespace normalizes the new side too",
       old: "a",
       new: "  a",
@@ -704,20 +619,8 @@ describe("lineDiff minimal edit scripts", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// The linear-space path, with an optimum that is known by CONSTRUCTION.
-//
-// Every case below builds the new text out of the old one by deleting lines and
-// inserting lines that appear nowhere in the old text. A common subsequence can
-// only use retained lines, so the longest one is exactly "old length minus
-// deletions" — no second diff implementation is needed to know the answer, and
-// the counts hold even when the body is full of repeated lines.
-//
-// Each pair is sized just past SPACE_THRESHOLD (4M cells) after the
-// prefix/suffix trim, which is the only way to reach hirschbergDiff at all, and
-// each keeps two shared lines at both ends so the trim is exercised and the
-// recursion's line numbers are offset rather than starting at zero.
-// ---------------------------------------------------------------------------
+// The linear-space path, with an optimum known by construction: new text = old minus deletions plus lines absent from
+// the old, so the LCS is old length minus deletions. Each pair is just past SPACE_THRESHOLD after the trim.
 describe("lineDiff on the linear-space path", () => {
   const body = Array.from({ length: 2000 }, (_, i) => `L${String(i).padStart(4, "0")}`);
   const bodyNew = body
@@ -741,10 +644,7 @@ describe("lineDiff on the linear-space path", () => {
     "shared-3",
     "shared-4",
   ].join("\n");
-  // Computed inside each test rather than in a beforeAll: code a hook runs
-  // executes outside any test, and Stryker's perTest coverage then attributes
-  // the mutants it reaches to no test at all — it reports them "Survived, ran
-  // all tests" while running about one. Same fixture, four calls.
+  // Computed inside each test, not in beforeAll: Stryker's perTest coverage attributes hook-run code to no test.
   const sparseDiff = (): DiffLine[] => lineDiff(oldText, newText);
 
   it("keeps every line the two files still share", () => {
@@ -769,8 +669,7 @@ describe("lineDiff on the linear-space path", () => {
   });
 
   it("numbers a context line that sits at different rows in the two files", () => {
-    // Past the deleted L0500 the two files are one line out of step, which is
-    // the only place a single shared offset would look right and be wrong.
+    // Past the deleted L0500 the files are one line out of step, where a single shared offset would look right.
     expect(sparseDiff().find((l) => l.text === "L1500")).toEqual({
       kind: "ctx",
       oldNo: 1504,
@@ -815,9 +714,7 @@ describe("lineDiff on the linear-space path", () => {
   });
 
   it("finds every match when a third of the lines changed", () => {
-    // One change every three lines: 668 of 2004 body lines differ, so the
-    // scratch rows are rewritten constantly instead of coasting along a long
-    // diagonal of matches.
+    // One change every three lines, so the scratch rows are rewritten constantly.
     const changedA = Array.from({ length: 2004 }, (_, i) =>
       i % 3 === 0 ? `OLD-${String(i)}` : `SAME-${String(i)}`,
     );
@@ -832,10 +729,7 @@ describe("lineDiff on the linear-space path", () => {
   });
 
   it("finds every match when the body is 40 copies of every line", () => {
-    // 2000 lines drawn from 50 values, so almost every cell of the table has a
-    // match to weigh against its neighbours. The three deletions and two
-    // insertions are still counted exactly: FRESH-1/FRESH-2 appear nowhere in
-    // the old text, so no alignment can be longer than 1997 body lines.
+    // 2000 lines over 50 values; FRESH-1/FRESH-2 appear nowhere in the old text, so counts stay exact.
     const dup = Array.from({ length: 2000 }, (_, i) => `D-${String(i % 50)}`);
     const dropped = new Set([100, 700, 1300]);
     const dupNew = dup.flatMap((l, i) => {
@@ -862,14 +756,8 @@ describe("lineDiff on the linear-space path", () => {
   });
 
   it("reads the same edit distance whichever file is called old", () => {
-    // Two unrelated bodies over the same 50 values: the alignment has thousands
-    // of equally long candidates, so an exact count would only restate what the
-    // implementation happens to pick. What cannot depend on the argument order
-    // is the SIZE of the alignment — the longest common subsequence of two
-    // files is symmetric — so swapping the arguments must swap adds and dels
-    // and leave the context total alone. A scratch row that runs one line too
-    // far is visible here and nowhere else: it biases the split toward whichever
-    // file is walked first.
+    // Many equally long alignments, so only the size is checked: LCS is symmetric, so swapping arguments swaps adds and
+    // dels. A scratch row one line too far biases the split and shows only here.
     const noise = (seed: number): string[] => {
       let state = seed;
       return Array.from({ length: 2002 }, () => {
@@ -884,22 +772,15 @@ describe("lineDiff on the linear-space path", () => {
     expect(forward.ctx).toBe(backward.ctx);
     expect(forward.adds).toBe(backward.dels);
     expect(forward.dels).toBe(backward.adds);
-    // Non-vacuous: this pair really does share and really does differ.
     expect(forward.ctx).toBeGreaterThan(100);
     expect(forward.adds).toBeGreaterThan(1000);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Past the time budget the module stops looking for context on purpose. The
-// existing budget test above uses two files with nothing in common, where the
-// coarse script and the minimal one are the same thing; these two use files
-// that share 5000 lines, so going coarse is observable — and it must, because
-// the alternative is an unresponsive tab.
-// ---------------------------------------------------------------------------
+// These files share 5000 lines, so going coarse past the budget is observable, and required to keep the tab responsive.
 describe("lineDiff past the time budget", () => {
   const shared = Array.from({ length: 5000 }, (_, i) => `M${String(i).padStart(4, "0")}`);
-  // 5002x5002 = 25,020,004 cells after the trim, just past TIME_BUDGET_CELLS.
+  // 5002×5002 = 25,020,004 cells after the trim, just past TIME_BUDGET_CELLS.
   const coarseDiff = (): DiffLine[] =>
     lineDiff(
       ["OLD-FIRST", ...shared, "OLD-LAST"].join("\n"),
@@ -924,13 +805,8 @@ describe("lineDiff past the time budget", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The prefix and suffix trims walk toward each other over the SHORTER file, so
-// their shared bound is min(a, b). With max, a repeated line at the join is
-// counted twice — once as trimmed prefix and once as trimmed suffix — and the
-// edit that is really there is reported as context: the reader is shown a line
-// as unchanged when it was added, and one file's line numbers repeat.
-// ---------------------------------------------------------------------------
+// The prefix and suffix trims share the bound min(a, b): with max, a repeated line at the join is counted twice and
+// an added line is shown as context.
 describe("lineDiff prefix and suffix trimming", () => {
   it("does not count a repeated line as both prefix and suffix on an append", () => {
     expect(lineDiff("x\nx", "x\nx\nx")).toEqual([
@@ -949,37 +825,22 @@ describe("lineDiff prefix and suffix trimming", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The linear-space recursion bottoms out at ONE old line against a range of new
-// ones, and that base case emits three groups in order: the new lines before the
-// match, the match itself, and the new lines AFTER it. The fixtures above reach
-// the base case two thousand times over but almost always with the match at the
-// end of its range, so the third group is never emitted and its line numbering
-// is never read. One insertion every fourth line puts a new line behind a
-// matched one at the deepest level.
-//
-// 2001 old lines against 2502 new ones is 5.0M cells after the trim, past
-// SPACE_THRESHOLD, so this is the recursion and not the dense table.
-// ---------------------------------------------------------------------------
+// The recursion's base case (one old line against many new) emits before, match, after; this fixture reaches the
+// third group. 2001×2502 lines is 5.0M cells after the trim, so it is the recursion.
 describe("lineDiff on the linear-space path, one old line against many new", () => {
   const oldLines = Array.from({ length: 2001 }, (_, i) => `L${String(i).padStart(4, "0")}`);
   const newLines = oldLines.flatMap((l, i) => (i % 4 === 0 ? [l, `INS-${String(i)}`] : [l]));
   const oldText = oldLines.join("\n");
   const newText = newLines.join("\n");
-  // Computed per test rather than in a hook: a hook's work is attributed to no
-  // test under perTest coverage (see the note on sparseDiff above).
+  // Computed per test: see the note on sparseDiff above.
   const scatteredDiff = (): DiffLine[] => lineDiff(oldText, newText);
 
   it("keeps every insertion, including the one behind the last match", () => {
-    // 501 of the 2001 lines are followed by an insertion, nothing is deleted, and
-    // every old line survives.
     expect(stats(scatteredDiff())).toEqual({ adds: 501, dels: 0, ctx: 2001 });
   });
 
   it("numbers an insertion that follows its matched line", () => {
-    // The final insertion is the one the base case emits AFTER the match rather
-    // than before it, so it is the only entry in the whole diff whose number
-    // comes from that third group.
+    // The final insertion is emitted after its match, the only entry numbered by that third group.
     expect(scatteredDiff().find((l) => l.text === "INS-2000")).toEqual({
       kind: "add",
       oldNo: 0,
@@ -989,11 +850,7 @@ describe("lineDiff on the linear-space path, one old line against many new", () 
   });
 
   it("gives every entry the line number of the line its text came from", () => {
-    // The invariant behind every hand-checked number above, over a diff too long
-    // to enumerate: an entry addresses its own file at its own number, and the
-    // two files are walked strictly forward. A recursion that offsets one group
-    // by a constant stays a valid edit script and lands the reader on the wrong
-    // line.
+    // Every entry addresses its own file at its own number, and both files are walked strictly forward.
     let lastOld = 0;
     let lastNew = 0;
     for (const l of scatteredDiff()) {
@@ -1016,16 +873,10 @@ describe("lineDiff on the linear-space path, one old line against many new", () 
   });
 });
 
-// ---------------------------------------------------------------------------
-// The budget is a ceiling the input may reach: the guard is `>`, so an input of
-// exactly TIME_BUDGET_CELLS still gets the exact algorithm. The describe above
-// covers one cell past it; this covers the last input that is not past it, which
-// is the only place the comparison itself is visible.
-// ---------------------------------------------------------------------------
+// The guard is `>`, so exactly TIME_BUDGET_CELLS still gets the exact algorithm.
 describe("lineDiff at the time budget", () => {
   it("still finds the shared body at exactly the budget", () => {
-    // 5000x5000 = 25,000,000 cells after the trim, which trims nothing: both
-    // files differ on their first and last line.
+    // 5000×5000 = 25,000,000 cells; both files differ on their first and last line, so nothing is trimmed.
     const body = Array.from({ length: 4998 }, (_, i) => `B${String(i).padStart(4, "0")}`);
     const d = lineDiff(
       ["A-HEAD", ...body, "A-TAIL"].join("\n"),
@@ -1035,13 +886,8 @@ describe("lineDiff at the time budget", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Word-level diff. A line-level diff says a line changed; these say WHERE.
-// Every case names the exact substrings, because a range list is only useful if
-// it addresses the characters the reader is looking for.
-// ---------------------------------------------------------------------------
+// Word-level diff: each case names exact substrings.
 
-/** Slice a line by its ranges so a case can assert on text, not on offsets. */
 function marked(line: string, ranges: readonly CharRange[]): string[] {
   return ranges.map((r) => line.slice(r.start, r.end));
 }
@@ -1081,8 +927,7 @@ describe("wordDiff", () => {
   });
 
   it("declines a pair sharing no non-blank token", () => {
-    // Only whitespace matches, so there is nothing to point at inside the line
-    // and the row tint already says the whole line changed.
+    // Only whitespace matches, so the row tint already says the whole line changed.
     expect(wordDiff("\talpha beta", "\tgamma delta")).toBeNull();
   });
 
@@ -1091,17 +936,13 @@ describe("wordDiff", () => {
   });
 
   it("declines a scattered rewrite past the run budget", () => {
-    // Nine separate edits: alternating shared and changed tokens.
     const oldLine = "a 1 b 2 c 3 d 4 e 5 f 6 g 7 h 8 i 9";
     const newLine = "a x b x c x d x e x f x g x h x i x";
     expect(wordDiff(oldLine, newLine)).toBeNull();
   });
 
   it("declines a pair past the token budget, so a pathological line keeps the row tint", () => {
-    // `splitWords` emits one token per identifier run AND one per whitespace run, so 201
-    // words separated by single spaces is 401 tokens — one past MAX_WORD_TOKENS. The pair
-    // shares 400 of them, so without the budget the answer would be a perfectly good
-    // single-range mark; the point is that the line-level tint is cheaper than the table.
+    // `splitWords` emits a token per word and per whitespace run: 201 words is 401 tokens, one past MAX_WORD_TOKENS.
     const words = Array.from({ length: 201 }, (_, i) => `w${String(i)}`);
     const oldLine = words.join(" ");
     const newLine = words.map((w, i) => (i === 100 ? "CHANGED" : w)).join(" ");
@@ -1109,9 +950,7 @@ describe("wordDiff", () => {
   });
 
   it("marks the removed tail when the new line is a prefix of the old", () => {
-    // The main walk ends with the NEW side exhausted and old tokens left over, which is
-    // the only way the trailing-deletion drain runs: dropping an argument marks exactly
-    // the text that went, not the call that kept it.
+    // The walk ends with the new side exhausted, the only path into the trailing-deletion drain.
     const oldLine = "alpha beta";
     const newLine = "alpha";
     const wd = wordDiff(oldLine, newLine);
@@ -1160,7 +999,7 @@ describe("wordMarks", () => {
   });
 
   it("pairs within a run and never across a context line", () => {
-    // Without the context boundary these two would pair and mark "b"/"c".
+    // Without the context boundary these two would pair.
     const d = { kind: "del", oldNo: 1, newNo: 0, text: "a b" } as const;
     const c = { kind: "ctx", oldNo: 2, newNo: 1, text: "unchanged" } as const;
     const a = { kind: "add", oldNo: 0, newNo: 2, text: "a c" } as const;
