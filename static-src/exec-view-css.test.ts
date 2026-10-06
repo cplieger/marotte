@@ -983,3 +983,97 @@ describe("the run page's collapsed report ends on a whole line", () => {
     expect(straddling(text)).toEqual([]);
   });
 });
+
+describe("a run step's transcript spaces its blocks the way a chat turn does", () => {
+  function blocks(): HTMLElement[] {
+    const summary = document.createElement("summary");
+    summary.className = "reasoning-summary";
+    summary.textContent = "Thinking";
+    const reasoning = document.createElement("details");
+    reasoning.className = "reasoning-block msg-reasoning";
+    reasoning.appendChild(summary);
+
+    const code = document.createElement("code");
+    code.textContent = "work/after";
+    const p = document.createElement("p");
+    p.append("Step 1: confirm ", code, " equals wt.");
+    const message = document.createElement("div");
+    message.className = "message assistant";
+    message.appendChild(p);
+    const prose = document.createElement("div");
+    prose.className = "msg-row";
+    prose.appendChild(message);
+
+    const tool = (): HTMLElement => {
+      const card = document.createElement("div");
+      card.className = "tool-call";
+      card.textContent = "shell";
+      return card;
+    };
+    return [reasoning, tool(), prose, tool()];
+  }
+
+  function runBody(): { body: HTMLElement; ordered: HTMLElement[] } {
+    const first = document.createElement("div");
+    first.className = "ev-d-turn";
+    const firstBlocks = blocks();
+    first.append(...firstBlocks);
+    const second = document.createElement("div");
+    second.className = "ev-d-turn";
+    const lastTool = document.createElement("div");
+    lastTool.className = "tool-call";
+    lastTool.textContent = "shell";
+    second.appendChild(lastTool);
+    const body = document.createElement("div");
+    body.className = "ev-d-body";
+    body.append(first, second);
+    return { body, ordered: [...firstBlocks, lastTool] };
+  }
+
+  function gaps(ordered: readonly HTMLElement[]): number[] {
+    return ordered
+      .slice(1)
+      .map(
+        (next, i) => next.getBoundingClientRect().top - ordered[i]!.getBoundingClientRect().bottom,
+      );
+  }
+
+  it("puts the body's own gap between every block, within a turn and across turns", () => {
+    const { body, ordered } = runBody();
+    mount(body);
+    expect(parseFloat(getComputedStyle(body).rowGap)).toBe(12);
+    expect(gaps(ordered)).toEqual([12, 12, 12, 12]);
+  });
+
+  it("sets the prose in the chat's own type", () => {
+    const { body } = runBody();
+    const chat = document.createElement("div");
+    chat.className = "turn-body";
+    chat.append(...blocks());
+    const pair = document.createElement("div");
+    pair.append(body, chat);
+    mount(pair);
+    const runP = body.querySelector<HTMLElement>(".message.assistant p")!;
+    const chatP = chat.querySelector<HTMLElement>(".message.assistant p")!;
+    expect(css(runP, "font-size")).toBe("14px");
+    expect(css(runP, "font-size")).toBe(css(chatP, "font-size"));
+    expect(css(runP, "line-height")).toBe(css(chatP, "line-height"));
+  });
+
+  it("sets the prose's inline code as the chat's chip", () => {
+    const { body } = runBody();
+    const chat = document.createElement("div");
+    chat.className = "turn-body";
+    chat.append(...blocks());
+    const pair = document.createElement("div");
+    pair.append(body, chat);
+    mount(pair);
+    const runCode = body.querySelector(".message.assistant code")!;
+    const chatCode = chat.querySelector(".message.assistant code")!;
+    expect(css(runCode, "padding-inline-start")).toBe("4px");
+    expect(css(runCode, "padding-inline-start")).toBe(css(chatCode, "padding-inline-start"));
+    expect(css(runCode, "background-color")).toBe(css(chatCode, "background-color"));
+    expect(css(runCode, "font-family")).toBe(css(chatCode, "font-family"));
+    expect(css(runCode, "font-size")).toBe(css(chatCode, "font-size"));
+  });
+});

@@ -1019,6 +1019,12 @@
   display: none;
 }
 
+/* A step turn's mount point generates no box, so its blocks are flex items of
+   `.ev-d-body` and its gap spaces them. */
+.ev-d-turn {
+  display: contents;
+}
+
 .ev-d-empty {
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
