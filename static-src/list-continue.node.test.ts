@@ -11,7 +11,7 @@ function apply(value: string, e: Edit): string {
 /** `|` marks the new caret; null means the browser's plain line break. */
 function run(marked: string): string | null {
   const caret = marked.indexOf("|");
-  const value = marked.replace("|", "");
+  const value = marked.slice(0, caret) + marked.slice(caret + 1);
   const e = continueList(value, caret);
   if (e === null) {
     return null;

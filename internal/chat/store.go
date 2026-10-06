@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"golang.org/x/sync/singleflight"
@@ -271,7 +272,7 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 		// because a caller reading it as success would spawn a bridge for output discarded at
 		// persist.
 		if s.isTombstoned(chatID) {
-			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", chatID)
+			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", logsafe.Field(string(chatID)))
 			return "", ErrTombstoned
 		}
 		c = &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
@@ -292,7 +293,7 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	// A reassigned id would let s.save write under a mismatched per-chat mutex.
 	if c.ID != string(chatID) {
 		slog.Error("chat mutate: mutator reassigned chat id",
-			"expected", chatID, "got", c.ID)
+			"expected", logsafe.Field(string(chatID)), "got", logsafe.Field(c.ID))
 		return "", fmt.Errorf("chat mutate: mutator reassigned id %q → %q", chatID, c.ID)
 	}
 	c.CreatedAt = originalCreatedAt
@@ -309,7 +310,7 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	s.index.drop(chatID)
 	version := s.versions.BumpCounter(subject.KindChat, string(chatID))
 	s.broadcastMutation(ctx, chatID, c, exists)
-	slog.Debug("chat mutate", "chat_id", chatID, "existed", exists)
+	slog.Debug("chat mutate", "chat_id", logsafe.Field(string(chatID)), "existed", exists)
 	return version, nil
 }
 

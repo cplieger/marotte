@@ -160,11 +160,10 @@ function bytes(colour: string): [number, number, number, number] {
   if (ctx === null) {
     throw new Error("no 2d context");
   }
-  ctx.clearRect(0, 0, 1, 1);
-  ctx.fillStyle = "#000000";
-  ctx.fillStyle = colour;
   // A rejected string leaves fillStyle unchanged, so a typo would measure the previous colour.
-  expect(ctx.fillStyle, `Chromium parses ${colour}`).not.toBe("#000000");
+  expect(CSS.supports("color", colour), `Chromium parses ${colour}`).toBe(true);
+  ctx.clearRect(0, 0, 1, 1);
+  ctx.fillStyle = colour;
   ctx.fillRect(0, 0, 1, 1);
   const d = ctx.getImageData(0, 0, 1, 1).data;
   return [d[0] ?? 0, d[1] ?? 0, d[2] ?? 0, d[3] ?? 0];

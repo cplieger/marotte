@@ -86,7 +86,11 @@ function writtenByScript(): Set<string> {
       if (entry.isDirectory()) {
         walk(p);
       } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
-        for (const name of captures(readFileSync(p, "utf8"), /["'`](--[\w-]+)["'`]/g)) {
+        // Comments stripped: a doc comment naming a property in backticks is not a write.
+        for (const name of captures(
+          stripComments(readFileSync(p, "utf8")),
+          /["'`](--[\w-]+)["'`]/g,
+        )) {
           out.add(name);
         }
       }

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 )
@@ -42,7 +43,7 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	// sendable for this process's life.
 	if err := s.holdQueuedLocked(ctx, chatID, l); err != nil {
 		if cerr := l.Close(); cerr != nil {
-			slog.Warn("chat open: closing the unpublished log", "chat_id", chatID, "error", cerr)
+			slog.Warn("chat open: closing the unpublished log", "chat_id", logsafe.Field(string(chatID)), "error", cerr)
 		}
 		return nil, fmt.Errorf("chat open: settle queued rows: %w", err)
 	}

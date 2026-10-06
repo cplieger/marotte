@@ -28,7 +28,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
     return listReply.ok ? { ...listReply, data: decode(listReply.data) } : listReply;
   }),
   apiGetTyped: vi.fn(async (_path: string, decode: (v: unknown) => unknown) =>
-    serversReply === null ? null : decode(serversReply),
+    decode(serversReply),
   ),
 }));
 vi.mock("./confirm.js", async (importOriginal) => ({

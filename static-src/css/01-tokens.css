@@ -515,6 +515,8 @@
      * consumer written with a literal drifts silently, and
      * `skeleton-period.test.ts` sweeps every stylesheet for one. */
     --skeleton-dur: 2s;
+    /* INLINE FIELD's width; a host with another width sets it on itself. */
+    --skel-field-w: 10em;
     --icon-stroke-inline: 1;
     --icon-stroke-ui: 1;
     --icon-stroke-lg: 2;

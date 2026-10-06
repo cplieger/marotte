@@ -105,6 +105,16 @@ describe("reformPayloadLinks", () => {
     expect(host.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(URL_);
   });
 
+  it("never turns a guarded button with an unsafe scheme into a link", () => {
+    const b = document.createElement("button");
+    b.setAttribute("data-payload-url", "javascript:alert(1)");
+    host.append(b);
+    adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
+    reformPayloadLinks(host);
+    expect(host.firstElementChild).toBe(b);
+    expect(host.querySelector("a")).toBeNull();
+  });
+
   it("never touches an ordinary link", () => {
     const plain = linkAnchor();
     plain.setAttribute("href", "https://e.example/short");

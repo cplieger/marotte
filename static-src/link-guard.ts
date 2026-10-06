@@ -1,4 +1,5 @@
 import { effect, el, signal, touch } from "@cplieger/reactive";
+import { isSafeUrl } from "./utils-url.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
 /** On both forms of a guarded link, so a switch flip finds every one; its value is the address. */
@@ -80,7 +81,8 @@ export function reformPayloadLinks(root: ParentNode): void {
     const url = node.getAttribute(PAYLOAD_ATTR) ?? "";
     if (on && node.tagName === "A") {
       reseat(node, withheldButton(url));
-    } else if (!on && node.tagName === "BUTTON") {
+    } else if (!on && node.tagName === "BUTTON" && isSafeUrl(url)) {
+      // The attribute is read back from the document, so the renderer's scheme gate is re-applied here.
       const a = linkAnchor();
       a.setAttribute("href", url);
       reseat(node, a);
